@@ -1,0 +1,126 @@
+[
+  {
+    "id": "infra-01",
+    "category": "infra",
+    "function": "workspace-and-types",
+    "description": "初始化根级 pnpm 工作区与 @meiyukichan/claude-sdk 包脚手架，并定义全部 opencode 协议类型。创建 pnpm-workspace.yaml（packages: ['packages/*']）、根 package.json（private、type: module）、tsconfig.base.json（ESNext/bundler/strict 共享配置）。初始化 packages/sdk/claude 包：package.json 名为 @meiyukichan/claude-sdk、type: module，@anthropic-ai/claude-agent-sdk 声明为 peerDependency（由消费者提供），typescript/vitest 为 devDependency；tsconfig.json 继承 base。编写 src/types.ts 导出适配层所需的 opencode 协议类型：SessionV2Info、SessionMessagesResponse、SessionMessage（user/assistant/system）、PromptInput、SessionInputAdmitted、ModelRef、LocationRef、LocationInfo、ModelV2Info、GlobalEvent（{directory?, project?, workspace?, payload:{id, type, properties}}）、TokenUsage/Cost 以及错误类型（SessionNotFoundError、TimeoutError、InvalidRequestError 等）。字段定义与 specs 及 api.yaml 中 definitions 保持一致（例如 SessionV2Info 必填 id/projectID/cost/tokens/time/title/location；GlobalEvent.payload.id 使用 ^evt_ 前缀约束）。",
+    "acceptance_criteria": [
+      "根级 pnpm-workspace.yaml 存在且声明 packages: ['packages/*']；根 package.json 存在（private、type: module）",
+      "packages/sdk/claude/package.json 包名为 @meiyukichan/claude-sdk、type: module，@anthropic-ai/claude-agent-sdk 为 peerDependency，typescript/vitest 为 devDependency",
+      "packages/sdk/claude/tsconfig.json 继承 tsconfig.base.json，moduleResolution 为 bundler、strict 开启",
+      "src/types.ts 导出 SessionV2Info、SessionMessagesResponse、SessionInputAdmitted、ModelV2Info、GlobalEvent 等类型，字段与 specs 及 api.yaml 一致",
+      "在 packages/sdk/claude 下执行 tsc --noEmit 编译通过（无类型错误）"
+    ],
+    "tasks": [
+      "1.1 创建根级 pnpm 工作区：pnpm-workspace.yaml、根 package.json、tsconfig.base.json",
+      "1.2 初始化 packages/sdk/claude 包：package.json（@meiyukichan/claude-sdk、ESM、peerDependency @anthropic-ai/claude-agent-sdk）、tsconfig.json",
+      "1.3 编写 packages/sdk/claude/src/types.ts 定义全部 opencode 协议类型与错误类型",
+      "1.4 运行 tsc --noEmit 验证包编译通过"
+    ],
+    "files": [
+      "pnpm-workspace.yaml",
+      "package.json",
+      "tsconfig.base.json",
+      "packages/sdk/claude/package.json",
+      "packages/sdk/claude/tsconfig.json",
+      "packages/sdk/claude/src/types.ts"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Client-factory",
+      "furina/changes/claude-sdk-adapter/design.md#D8",
+      "furina/changes/claude-sdk-adapter/api.yaml#definitions"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "session-01",
+    "category": "session",
+    "function": "session-management",
+    "description": "实现会话管理核心：SessionState 后台状态与 SessionManager 方法集。SessionState（src/session-state.ts）封装每个会话的 Claude SDK Query 句柄、流式输入队列（push/yield）、SDKMessage 事件通道（原始 SDKMessage 通道，归一化由 event-01 负责）与后台 query 泵；后台启动 query({ prompt: 输入队列, options: { includePartialMessages: true, cwd, agent, model } })，消费首条 system/init 消息并捕获 session_id（带超时保护）。SessionManager（src/session.ts）维护 Map<sessionId, SessionState> 实现：create（后台启动 query 并在 init 后 resolve SessionV2Info，字段含 id/projectID/time/title/location/cost/tokens，location.directory 取客户端 cwd，agent 透传）、messages（包装 getSessionMessages 返回 SessionMessagesResponse{data, cursor}）、prompt（向会话输入队列 push SDKUserMessage 并返回 SessionInputAdmitted，id 以 msg_ 前缀生成；不存在的会话抛 SessionNotFoundError）、interrupt（调用 Query.interrupt()，空闲会话为 no-op）、wait（基于结果/状态变更事件驱动等待空闲，支持 timeout 参数，超时抛 TimeoutError）、close（关闭 Query 并从 Map 清理）。对应 spec session-management 的全部 Requirement，方法语义与 design.md D2/D5/D7 一致。",
+    "acceptance_criteria": [
+      "session.create() 后台启动 query()，捕获 system/init 的 session_id 后 resolve SessionV2Info（含 id、projectID、time、title、location、cost、tokens），location.directory 等于客户端 cwd",
+      "session.create({ agent: 'general-purpose' }) 将 agent 透传给 query() options 且 SessionV2Info 含该值；init 消息在超时时间内未到达时 reject 抛出超时错误",
+      "session.messages(sessionId, { limit, cursor }) 返回 SessionMessagesResponse{ data, cursor:{ previous?, next? } }，data 为 SessionMessage 数组",
+      "session.prompt(sessionId, { prompt: { text } }) 向该会话输入队列 push 一条 SDKUserMessage（type:'user'、role:'user'、parent_tool_use_id:null）并返回 SessionInputAdmitted（id 以 msg_ 开头）；向不存在的会话发送抛 SessionNotFoundError",
+      "session.interrupt(sessionId) 调用该会话 Query.interrupt()；空闲会话不抛错为 no-op",
+      "session.wait(sessionId, { timeout }) 在会话空闲后 resolve；超时（如 5 秒未空闲）reject 抛超时错误",
+      "后台 Map<sessionId, SessionState> 会话间状态隔离，并发会话互不影响；close 时关闭 Query、事件通道结束并从 Map 移除",
+      "test/session.test.ts 覆盖上述场景且全部通过"
+    ],
+    "tasks": [
+      "2.1 编写 packages/sdk/claude/src/session-state.ts：SessionState（Query 句柄、输入队列 push/yield、SDKMessage 事件通道、后台 query 泵、init 捕获超时保护）",
+      "2.2 编写 packages/sdk/claude/src/session.ts：SessionManager 实现 create/messages/prompt/interrupt/wait/close 与 Map 状态管理",
+      "2.3 编写 packages/sdk/claude/test/session.test.ts 覆盖会话管理场景",
+      "2.4 运行 vitest 测试并修复直至全部通过"
+    ],
+    "files": [
+      "packages/sdk/claude/src/session-state.ts",
+      "packages/sdk/claude/src/session.ts",
+      "packages/sdk/claude/test/session.test.ts"
+    ],
+    "dependencies": [
+      "infra-01"
+    ],
+    "spec_refs": [
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Create-session",
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Read-session-messages",
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Send-message-(prompt)",
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Interrupt-session-execution",
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Wait-for-session-idle",
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Session-state-management",
+      "furina/changes/claude-sdk-adapter/design.md#D2",
+      "furina/changes/claude-sdk-adapter/design.md#D5",
+      "furina/changes/claude-sdk-adapter/api.yaml#/client/session/create"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "event-01",
+    "category": "event",
+    "function": "model-and-events-and-client",
+    "description": "实现模型查询、事件系统（SDKMessage→GlobalEvent 归一化）与客户端工厂装配。src/events.ts 将 Claude SDKMessage 流归一化为 GlobalEvent 信封：system/init→session.created（properties.sessionID + info）、stream_event text_delta→message.part.delta（field:'text'）、stream_event input_json_delta→message.part.delta（field:'tool_input'）、assistant→message.part.updated（properties.sessionID + part，part 为 TextPart 或 ToolPart，与 EventMessagePartUpdated 的 {sessionID, part, time} 一致）、result success→session.next.step.ended（properties.finish/cost/tokens）、result error→session.error、system session_state_changed idle→session.idle；payload.id 以 evt_ 前缀生成；无对应类型的 SDKMessage 静默跳过。GlobalEventManager 提供 sessionEvents(sessionId)（读取会话后台通道并归一化为 AsyncIterable<GlobalEvent>，事件通道为回放型广播通道——晚订阅的消费者仍收到 session.created 等已发生事件，会话结束后流正常终止）与 global.event({ directory })（全局视图，只产出匹配 directory 的事件，省略 directory 时默认用客户端 cwd）。src/model.ts 实现 ModelManager.list()（惰性初始化并缓存控制 Query——见 design.md D9，包装 Query.supportedModels()，ModelInfo→ModelV2Info：value→id、displayName→name、providerID 固定 'anthropic'、status 默认 'active'、resolvedModel 保留在 variants），返回 { location: LocationInfo, data: ModelV2Info[] }。src/client.ts 实现 createClaudeClient({ cwd }) 工厂：返回含 session（create/messages/prompt/interrupt/wait/events）、model（list）、global（event）三个命名空间的客户端对象，cwd 作为默认 directory，不启动任何 HTTP 服务器。对应 spec model-providers 与 event-streaming 的全部 Requirement，及 session-management 的 Client factory Requirement。",
+    "acceptance_criteria": [
+      "client.model.list() 返回 { location, data }，data 为 ModelV2Info[]，每项含 id、providerID、name、status；location.directory 等于客户端 cwd；指定 location.directory 时返回其值；无会话时惰性初始化控制 Query（design.md D9）获取模型",
+      "ModelInfo→ModelV2Info 映射正确：value→id、displayName→name、providerID='anthropic'、status='active'；含 resolvedModel 时保留在 variants 供消费者使用",
+      "client.session.events(sessionId) 返回 AsyncIterable<GlobalEvent>，可 for await...of 消费；create() 之后订阅仍收到 session.created（事件回放）；会话 query() 完成后事件流在产出最终事件后正常结束（return）",
+      "client.global.event({ directory }) 只产出匹配该 directory 的事件且 GlobalEvent.directory 等于该值；省略 directory 时默认使用客户端 cwd 过滤",
+      "归一化映射正确：init→session.created、text_delta→message.part.delta(field:'text')、input_json_delta→message.part.delta(field:'tool_input')、assistant 每个内容块→message.part.updated(properties 含 part: TextPart|ToolPart)、result success→session.next.step.ended(finish/cost/tokens)、result error→session.error、idle→session.idle；无对应类型的 SDKMessage 被静默跳过不产出事件",
+      "每个 GlobalEvent 符合 { directory?, project?, workspace?, payload: { id, type, properties } }，payload.id 以 evt_ 开头，payload.type 为 opencode 事件类型字符串",
+      "createClaudeClient({ cwd }) 返回含 session/model/global 三个命名空间的客户端对象，且不启动 HTTP 服务器",
+      "test/events.test.ts、test/model.test.ts、test/client.test.ts 覆盖上述场景且全部通过"
+    ],
+    "tasks": [
+      "3.1 编写 packages/sdk/claude/src/events.ts：SDKMessage→GlobalEvent 归一化 + GlobalEventManager（sessionEvents + global.event 按 directory 过滤）",
+      "3.2 编写 packages/sdk/claude/src/model.ts：ModelManager.list + ModelInfo→ModelV2Info 映射",
+      "3.3 编写 packages/sdk/claude/src/client.ts：createClaudeClient 工厂组装 session/model/global 命名空间",
+      "3.4 编写 packages/sdk/claude/test/events.test.ts、test/model.test.ts、test/client.test.ts",
+      "3.5 运行全部 vitest 测试并修复直至通过"
+    ],
+    "files": [
+      "packages/sdk/claude/src/events.ts",
+      "packages/sdk/claude/src/model.ts",
+      "packages/sdk/claude/src/client.ts",
+      "packages/sdk/claude/test/events.test.ts",
+      "packages/sdk/claude/test/model.test.ts",
+      "packages/sdk/claude/test/client.test.ts"
+    ],
+    "dependencies": [
+      "infra-01",
+      "session-01"
+    ],
+    "spec_refs": [
+      "furina/changes/claude-sdk-adapter/specs/session-management/spec.md#Client-factory",
+      "furina/changes/claude-sdk-adapter/specs/model-providers/spec.md#List-models",
+      "furina/changes/claude-sdk-adapter/specs/model-providers/spec.md#ModelInfo-to-ModelV2Info-mapping",
+      "furina/changes/claude-sdk-adapter/specs/event-streaming/spec.md#Session-events-stream",
+      "furina/changes/claude-sdk-adapter/specs/event-streaming/spec.md#Global-event-stream-with-directory-filter",
+      "furina/changes/claude-sdk-adapter/specs/event-streaming/spec.md#SDKMessage-to-GlobalEvent-normalization",
+      "furina/changes/claude-sdk-adapter/specs/event-streaming/spec.md#GlobalEvent-envelope-structure",
+      "furina/changes/claude-sdk-adapter/design.md#D4",
+      "furina/changes/claude-sdk-adapter/design.md#D6",
+      "furina/changes/claude-sdk-adapter/api.yaml#/client/model/list"
+    ],
+    "status": "done"
+  }
+]

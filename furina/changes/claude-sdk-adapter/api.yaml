@@ -1,0 +1,784 @@
+# Swagger 2.0 API Specification
+# @meiyukichan/claude-sdk 适配器层方法级客户端契约
+#
+# 说明：本 change 不实现 HTTP 服务器（design.md Non-Goals：不实现 HTTP 服务器）。
+# 因此本文件以 Swagger 2.0 结构承载「方法级客户端契约」——paths 一节中每个路径代表一个
+# 客户端方法（client.<namespace>.<method>），而非真实 HTTP 端点。每个方法在 description
+# 中标注其对应的 opencode v2 协议操作（docs/sdk/openapi.json），作为上层消费者理解
+# 适配层接口与目标协议映射关系的参考契约。
+#
+# 目标协议参考：docs/sdk/openapi.json（OpenAPI 3.1.0，title=opencode）
+# 源接口参考：@anthropic-ai/claude-agent-sdk v0.3.227（docs/sdk/claude）
+
+swagger: "2.0"
+
+info:
+  title: "@meiyukichan/claude-sdk 适配器层 API"
+  version: "1.0.0"
+  description: |
+    将 Claude Code SDK（@anthropic-ai/claude-agent-sdk）的「本地进程 + AsyncGenerator 拉模型」
+    接口适配为 opencode API 协议（docs/sdk/openapi.json）风格的方法级客户端。本库不启动任何
+    HTTP 服务器；消费者通过 import 直接调用方法，流式数据以 AsyncIterable 返回。
+
+    使用方式：
+      const client = createClaudeClient({ cwd: '/path/to/project' });
+      const session = await client.session.create({ model: { id: 'sonnet', providerID: 'anthropic' } });
+      const admitted = await client.session.prompt(session.id, { prompt: { text: 'hello' } });
+      for await (const ev of client.session.events(session.id)) { /* GlobalEvent */ }
+
+    命名空间：session（会话管理）、model（模型）、global（全局事件）。
+    与 opencode v2 的对应关系（本文件各 path 的 description 已标注）：
+      - client.session.create    → v2.session.create    (POST /api/session)
+      - client.session.messages  → v2.session.messages  (GET /api/session/{id}/message)
+      - client.session.prompt    → v2.session.prompt    (POST /api/session/{id}/prompt)
+      - client.session.interrupt → v2.session.interrupt (POST /api/session/{id}/interrupt)
+      - client.session.wait      → v2.session.wait      (POST /api/session/{id}/wait)
+      - client.session.events    → v2.session.events    (GET /api/session/{id}/event)
+      - client.model.list        → v2.model.list        (GET /api/model)
+      - client.global.event      → global.event         (GET /global/event)
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+# --- Tags（能力域分组）---
+tags:
+  - name: session-management
+    description: "会话管理：创建会话、读取消息、发送消息、暂停（interrupt + wait）。对应 spec session-management。"
+  - name: model-providers
+    description: "模型：获取可用模型列表。对应 spec model-providers。"
+  - name: event-streaming
+    description: "事件：流式获取消息与会话/全局事件订阅，统一产出 GlobalEvent 信封。对应 spec event-streaming。"
+
+# --- Data Models ---
+definitions:
+
+  # ===== 通用基础类型 =====
+  LocationRef:
+    type: object
+    required:
+      - directory
+    properties:
+      directory:
+        type: string
+        description: "项目目录（绝对路径）。"
+      workspaceID:
+        type: string
+        pattern: "^wrk"
+        description: "工作区 ID（^wrk 前缀）。"
+
+  ModelRef:
+    type: object
+    required:
+      - id
+      - providerID
+    properties:
+      id:
+        type: string
+        description: "模型 ID（如 sonnet）。"
+      providerID:
+        type: string
+        description: "provider ID（本适配层固定为 anthropic）。"
+      variant:
+        type: string
+        description: "模型变体。"
+        example: "claude-sonnet-4-0"
+
+  TokenUsage:
+    type: object
+    properties:
+      input:
+        type: integer
+      output:
+        type: integer
+      reasoning:
+        type: integer
+      cache:
+        type: object
+        properties:
+          read:
+            type: integer
+          write:
+            type: integer
+
+  Cost:
+    type: object
+    properties:
+      total_cost_usd:
+        type: number
+        description: "累计成本（美元）。"
+      currency:
+        type: string
+        default: "USD"
+
+  # ===== 会话管理 =====
+  SessionV2Info:
+    type: object
+    required:
+      - id
+      - projectID
+      - cost
+      - tokens
+      - time
+      - title
+      - location
+    properties:
+      id:
+        type: string
+        description: "会话 ID。本适配层保留 Claude SDK 原始 session_id（如 UUID），不做 ^ses 前缀转换（见 design.md D7）。"
+      parentID:
+        type: string
+      projectID:
+        type: string
+        description: "项目 ID（由 cwd 编码生成）。"
+      agent:
+        type: string
+        description: "agent 名称，如 general-purpose。"
+      model:
+        $ref: "#/definitions/ModelRef"
+      cost:
+        $ref: "#/definitions/Cost"
+      tokens:
+        $ref: "#/definitions/TokenUsage"
+      time:
+        type: object
+        required:
+          - created
+          - updated
+        properties:
+          created:
+            type: string
+            format: date-time
+          updated:
+            type: string
+            format: date-time
+          archived:
+            type: string
+            format: date-time
+      title:
+        type: string
+        description: "会话标题。"
+      location:
+        $ref: "#/definitions/LocationRef"
+      subpath:
+        type: string
+      revert:
+        type: object
+
+  PromptInput:
+    type: object
+    required:
+      - text
+    properties:
+      text:
+        type: string
+        description: "用户输入文本。"
+      files:
+        type: array
+        description: "附件（PromptInputFileAttachment：uri/name/description/source）。"
+        items:
+          type: object
+          required:
+            - uri
+          properties:
+            uri:
+              type: string
+            name:
+              type: string
+            description:
+              type: string
+            source:
+              type: object
+      agents:
+        type: array
+        description: "agent 附件（PromptAgentAttachment：name/source）。"
+        items:
+          type: object
+          required:
+            - name
+          properties:
+            name:
+              type: string
+            source:
+              type: object
+
+  SessionInputAdmitted:
+    type: object
+    required:
+      - admittedSeq
+      - id
+      - sessionID
+      - prompt
+      - delivery
+      - timeCreated
+    properties:
+      admittedSeq:
+        type: integer
+        minimum: 0
+        description: "入队序号。"
+      id:
+        type: string
+        pattern: "^msg_"
+        description: "消息 ID（^msg_ 前缀，归一化时生成）。"
+      sessionID:
+        type: string
+        description: "会话 ID。"
+      prompt:
+        type: object
+        description: "Prompt 结构（text/files/agents）。"
+        properties:
+          text:
+            type: string
+      delivery:
+        type: string
+        enum:
+          - steer
+          - queue
+        description: "投递模式：steer=立即调度执行；queue=入队不执行（暂停语义）。本适配层当前使用 queue 语义。"
+      timeCreated:
+        type: string
+        format: date-time
+      promotedSeq:
+        type: integer
+        minimum: 0
+
+  SessionMessage:
+    type: object
+    description: "会话历史消息（对应 opencode SessionMessage 联合的 User/Assistant/System 子集）。"
+    properties:
+      id:
+        type: string
+        pattern: "^msg_"
+      type:
+        type: string
+        enum:
+          - user
+          - assistant
+          - system
+      time:
+        type: object
+        properties:
+          created:
+            type: string
+            format: date-time
+          completed:
+            type: string
+            format: date-time
+      text:
+        type: string
+        description: "user/system 消息文本。"
+      content:
+        type: array
+        description: "assistant 消息内容块（AssistantText / AssistantReasoning / AssistantTool）。"
+      finish:
+        type: string
+      cost:
+        type: number
+      tokens:
+        type: object
+
+  SessionMessagesResponse:
+    type: object
+    required:
+      - data
+      - cursor
+    properties:
+      data:
+        type: array
+        items:
+          $ref: "#/definitions/SessionMessage"
+      cursor:
+        type: object
+        properties:
+          previous:
+            type: string
+            description: "不透明分页游标（上一页）。"
+          next:
+            type: string
+            description: "不透明分页游标（下一页）。"
+
+  # ===== 模型 =====
+  ModelV2Info:
+    type: object
+    required:
+      - id
+      - providerID
+      - name
+      - status
+    properties:
+      id:
+        type: string
+        description: "模型 ID。映射自 ModelInfo.value。"
+      providerID:
+        type: string
+        description: "provider ID，本适配层固定为 'anthropic'。"
+      family:
+        type: string
+      name:
+        type: string
+        description: "显示名。映射自 ModelInfo.displayName。"
+      api:
+        type: object
+        description: "模型 API 元信息（本适配层可省略）。"
+      capabilities:
+        type: object
+        description: "模型能力（如 supportsEffort/supportsAdaptiveThinking）。"
+      variants:
+        type: array
+        items:
+          type: object
+        description: "模型变体列表；resolvedModel（规范 wire id）保留于此，供消费者使用。"
+      time:
+        type: object
+        properties:
+          released:
+            type: string
+            format: date-time
+      cost:
+        type: array
+        items:
+          type: object
+      status:
+        type: string
+        enum:
+          - alpha
+          - beta
+          - deprecated
+          - active
+        default: active
+        description: "模型状态，本适配层默认 'active'。"
+      enabled:
+        type: boolean
+        default: true
+      limit:
+        type: object
+        properties:
+          context:
+            type: integer
+          input:
+            type: integer
+          output:
+            type: integer
+
+  LocationInfo:
+    type: object
+    required:
+      - directory
+      - project
+    properties:
+      directory:
+        type: string
+      workspaceID:
+        type: string
+        pattern: "^wrk"
+      project:
+        type: object
+        required:
+          - id
+          - directory
+        properties:
+          id:
+            type: string
+          directory:
+            type: string
+
+  ModelListResponse:
+    type: object
+    required:
+      - location
+      - data
+    properties:
+      location:
+        $ref: "#/definitions/LocationInfo"
+      data:
+        type: array
+        items:
+          $ref: "#/definitions/ModelV2Info"
+
+  # ===== 事件 =====
+  GlobalEventPayload:
+    type: object
+    required:
+      - id
+      - type
+      - properties
+    properties:
+      id:
+        type: string
+        pattern: "^evt_"
+        description: "事件 ID（^evt_ 前缀）。"
+      type:
+        type: string
+        description: "opencode 事件类型字符串（如 session.created / message.part.delta / session.next.step.ended / session.error / session.idle）。"
+      properties:
+        type: object
+        description: "事件负载（按类型不同）。常见字段：sessionID、messageID、partID、field、delta、info、finish、cost、tokens、error、status。"
+
+  GlobalEvent:
+    type: object
+    required:
+      - payload
+    properties:
+      directory:
+        type: string
+        description: "事件所属项目目录。"
+      project:
+        type: string
+      workspace:
+        type: string
+      payload:
+        $ref: "#/definitions/GlobalEventPayload"
+
+  # ===== 错误类型（对应 opencode 错误 schema）=====
+  SessionNotFoundError:
+    type: object
+    required:
+      - _tag
+      - sessionID
+      - message
+    properties:
+      _tag:
+        type: string
+        enum:
+          - SessionNotFoundError
+      sessionID:
+        type: string
+      message:
+        type: string
+
+  TimeoutError:
+    type: object
+    required:
+      - _tag
+      - message
+    properties:
+      _tag:
+        type: string
+        enum:
+          - TimeoutError
+      message:
+        type: string
+      timeoutMs:
+        type: integer
+
+  InvalidRequestError:
+    type: object
+    required:
+      - _tag
+      - message
+    properties:
+      _tag:
+        type: string
+        enum:
+          - InvalidRequestError
+      message:
+        type: string
+      kind:
+        type: string
+      field:
+        type: string
+
+# --- API Endpoints（客户端方法，非 HTTP 端点）---
+paths:
+
+  # ====== ① 创建会话 ======
+  /client/session/create:
+    post:
+      tags:
+        - session-management
+      summary: "client.session.create(options) — 创建 Claude 会话"
+      description: |
+        创建新 Claude 会话。内部后台启动 Claude SDK query()（流式输入模式），从首条 system/init
+        消息的 session_id 捕获会话 ID。返回符合 opencode SessionV2Info 的对象。
+        对应 opencode v2：v2.session.create（POST /api/session）。
+        约束：session.create() 在 session_id 捕获后 resolve，不阻塞等待后续消息；启动超时 reject。
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            properties:
+              model:
+                $ref: "#/definitions/ModelRef"
+                description: "会话模型，如 { id: 'sonnet', providerID: 'anthropic' }。"
+              agent:
+                type: string
+                description: "agent 名称，透传给 query() options.agent，如 'general-purpose'。"
+              location:
+                $ref: "#/definitions/LocationRef"
+                description: "省略时使用客户端 cwd 作为默认 location。"
+      responses:
+        200:
+          description: "会话创建成功。"
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: "#/definitions/SessionV2Info"
+        408:
+          description: "system/init 超时未到达，session.create() reject 并抛出 TimeoutError。"
+          schema:
+            $ref: "#/definitions/TimeoutError"
+        400:
+          description: "参数无效。"
+          schema:
+            $ref: "#/definitions/InvalidRequestError"
+
+  # ====== ② 读取会话消息 ======
+  /client/session/messages:
+    get:
+      tags:
+        - session-management
+      summary: "client.session.messages(sessionId, options?) — 读取会话历史消息"
+      description: |
+        读取指定会话的历史消息。内部调用 Claude SDK getSessionMessages()。
+        对应 opencode v2：v2.session.messages（GET /api/session/{sessionID}/message）。
+        返回 SessionMessagesResponse { data, cursor }。
+      parameters:
+        - name: sessionId
+          in: path
+          type: string
+          required: true
+          description: "会话 ID。"
+        - name: body
+          in: body
+          schema:
+            type: object
+            properties:
+              limit:
+                type: integer
+                description: "返回消息条数上限。"
+              cursor:
+                type: string
+                description: "不透明分页游标，用于请求下一页。"
+              order:
+                type: string
+                enum:
+                  - asc
+                  - desc
+      responses:
+        200:
+          description: "消息列表。"
+          schema:
+            $ref: "#/definitions/SessionMessagesResponse"
+        404:
+          description: "会话不存在。"
+          schema:
+            $ref: "#/definitions/SessionNotFoundError"
+
+  # ====== ③ 发送消息 ======
+  /client/session/prompt:
+    post:
+      tags:
+        - session-management
+      summary: "client.session.prompt(sessionId, input) — 向会话发送消息"
+      description: |
+        向指定会话发送消息。通过向该会话的流式输入队列 push SDKUserMessage 实现：
+        { type:'user', message:{ role:'user', content:text }, parent_tool_use_id:null }。
+        返回符合 opencode SessionInputAdmitted 的对象。
+        对应 opencode v2：v2.session.prompt（POST /api/session/{sessionID}/prompt）。
+        对不存在的会话抛出 SessionNotFoundError。
+      parameters:
+        - name: sessionId
+          in: path
+          type: string
+          required: true
+          description: "会话 ID。"
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            required:
+              - prompt
+            properties:
+              id:
+                type: string
+                pattern: "^msg_"
+                description: "消息 ID（^msg_ 前缀，可省略由适配层生成）。"
+              prompt:
+                $ref: "#/definitions/PromptInput"
+              delivery:
+                type: string
+                enum:
+                  - steer
+                  - queue
+                default: queue
+                description: "投递模式。"
+              resume:
+                type: boolean
+                default: true
+                description: "resume=false 时仅入队不调度执行（opencode 暂停语义）。"
+      responses:
+        200:
+          description: "消息已入队。"
+          schema:
+            type: object
+            properties:
+              data:
+                $ref: "#/definitions/SessionInputAdmitted"
+        404:
+          description: "会话不存在。"
+          schema:
+            $ref: "#/definitions/SessionNotFoundError"
+        400:
+          description: "请求无效。"
+          schema:
+            $ref: "#/definitions/InvalidRequestError"
+
+  # ====== ④ 中断会话执行 ======
+  /client/session/interrupt:
+    post:
+      tags:
+        - session-management
+      summary: "client.session.interrupt(sessionId) — 中断当前执行"
+      description: |
+        中断指定会话当前正在执行的 agent loop。内部调用 Claude SDK Query.interrupt()。
+        对应 opencode v2：v2.session.interrupt（POST /api/session/{sessionID}/interrupt）。
+        空闲会话中断为 no-op（不抛错）。
+        前置条件：CLI 需通告 interrupt_receipt_v1 能力；无能力时降级为 close()（见 design.md）。
+      parameters:
+        - name: sessionId
+          in: path
+          type: string
+          required: true
+          description: "会话 ID。"
+      responses:
+        204:
+          description: "中断已受理（或空闲会话 no-op）。"
+        404:
+          description: "会话不存在。"
+          schema:
+            $ref: "#/definitions/SessionNotFoundError"
+
+  # ====== ⑤ 等待会话空闲 ======
+  /client/session/wait:
+    post:
+      tags:
+        - session-management
+      summary: "client.session.wait(sessionId, options?) — 等待会话空闲"
+      description: |
+        等待指定会话的 agent loop 变为空闲状态。基于结果消息/状态变更事件驱动，避免高频轮询。
+        对应 opencode v2：v2.session.wait（POST /api/session/{sessionID}/wait）。
+        超时 reject 抛出 TimeoutError。
+      parameters:
+        - name: sessionId
+          in: path
+          type: string
+          required: true
+        - name: body
+          in: body
+          schema:
+            type: object
+            properties:
+              timeout:
+                type: integer
+                description: "超时毫秒数。"
+      responses:
+        204:
+          description: "会话已空闲。"
+        408:
+          description: "超时。"
+          schema:
+            $ref: "#/definitions/TimeoutError"
+        404:
+          description: "会话不存在。"
+          schema:
+            $ref: "#/definitions/SessionNotFoundError"
+
+  # ====== ⑥ 获取模型 ======
+  /client/model/list:
+    get:
+      tags:
+        - model-providers
+      summary: "client.model.list(options?) — 获取可用模型列表"
+      description: |
+        获取可用模型列表。内部调用 Claude SDK Query.supportedModels()，将 ModelInfo
+        映射为 ModelV2Info：value→id、displayName→name、providerID 固定 'anthropic'、
+        status 默认 'active'。resolvedModel 保留在 variants 中。
+        对应 opencode v2：v2.model.list（GET /api/model）。
+        返回 { location: LocationInfo, data: ModelV2Info[] }。
+      parameters:
+        - name: body
+          in: body
+          schema:
+            type: object
+            properties:
+              location:
+                type: object
+                properties:
+                  directory:
+                    type: string
+                    description: "省略时使用客户端 cwd。"
+                  workspace:
+                    type: string
+      responses:
+        200:
+          description: "模型列表。"
+          schema:
+            $ref: "#/definitions/ModelListResponse"
+        503:
+          description: "获取模型失败（Claude CLI 未就绪）。"
+
+  # ====== ⑦ 流式获取会话事件 ======
+  /client/session/events:
+    get:
+      tags:
+        - event-streaming
+      summary: "client.session.events(sessionId) — 流式获取会话事件"
+      description: |
+        返回该会话的 AsyncIterable<GlobalEvent>。事件源为该会话后台 query() 产出的 SDKMessage 流，
+        经归一化转换为 GlobalEvent 信封（session.created / message.part.delta /
+        message.part.updated / session.next.step.ended / session.error / session.idle）。
+        消费者通过 for await...of 消费；会话 query() 完成后事件流在最终事件后正常结束。
+        对应 opencode v2：v2.session.events（GET /api/session/{sessionID}/event，SSE）。
+      parameters:
+        - name: sessionId
+          in: path
+          type: string
+          required: true
+      responses:
+        200:
+          description: "AsyncIterable<GlobalEvent>（方法返回，非 HTTP SSE）。"
+          schema:
+            type: object
+            properties:
+              asyncIterable:
+                type: string
+                description: "AsyncIterable<GlobalEvent>，消费者 for await...of 迭代；每项为 GlobalEvent（见 definitions.GlobalEvent）。"
+        404:
+          description: "会话不存在。"
+          schema:
+            $ref: "#/definitions/SessionNotFoundError"
+
+  # ====== ⑧ 全局事件订阅 ======
+  /client/global/event:
+    get:
+      tags:
+        - event-streaming
+      summary: "client.global.event(options?) — 订阅全局事件（按 directory 过滤）"
+      description: |
+        返回全局事件 AsyncIterable<GlobalEvent>。options.directory 提供时只产出匹配该 directory
+        （项目）的事件；省略时使用客户端 cwd 作为默认过滤 directory。产出的 GlobalEvent.directory
+        等于过滤 directory。
+        对应 opencode legacy：global.event（GET /global/event，SSE）。
+        与 client.session.events(id) 共享同一套 SDKMessage → GlobalEvent 归一化逻辑（design.md D4）。
+      parameters:
+        - name: body
+          in: body
+          schema:
+            type: object
+            properties:
+              directory:
+                type: string
+                description: "项目目录过滤条件；省略时默认用客户端 cwd。"
+      responses:
+        200:
+          description: "AsyncIterable<GlobalEvent>（方法返回，非 HTTP SSE）；每项为 GlobalEvent（见 definitions.GlobalEvent）。"
+          schema:
+            type: object
+            properties:
+              asyncIterable:
+                type: string

@@ -1,0 +1,18 @@
+{
+  "name": "claude-session-chat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "基于 @anthropic-ai/claude-agent-sdk 的交互式会话脚本（创建 session、发送消息、流式获取）",
+  "scripts": {
+    "chat": "tsx conversation.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
