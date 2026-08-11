@@ -1,14 +1,15 @@
 {
   "framework": "@meiyukichan/furina",
   "version": "1.0.3",
-  "changes": [
+  "changes": [],
+  "archive": [
     {
       "name": "claude-sdk-adapter",
-      "path": "furina/changes/claude-sdk-adapter",
+      "path": "furina/archive/2026-08-11-claude-sdk-adapter",
       "description": "在packages/sdk/claude下编写@meiyukichan/claude-sdk适配器层SDK，将Claude Code SDK接口逐步适配为openapi.json协议，覆盖会话创建、消息发送暂停、模型获取、流式消息与事件系统",
       "createdAt": "2026-08-11T14:39:46.347Z",
-      "features": 0,
-      "todo": 0,
+      "closedAt": "2026-08-11T17:29:29.848Z",
+      "features": 3,
       "artifacts": [
         {
           "id": "proposal",
@@ -21,9 +22,16 @@
         {
           "id": "specs",
           "outputPath": "furina/changes/claude-sdk-adapter/specs/**/*.md"
+        },
+        {
+          "id": "api",
+          "outputPath": "furina/changes/claude-sdk-adapter/api.yaml"
+        },
+        {
+          "id": "plan",
+          "outputPath": "furina/changes/claude-sdk-adapter/plan.json"
         }
       ]
     }
-  ],
-  "archive": []
+  ]
 }
