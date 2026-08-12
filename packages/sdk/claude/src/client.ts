@@ -22,7 +22,7 @@ import type {
   SessionPromptInput,
   SessionWaitOptions,
 } from './session';
-import type { QueryFactory } from './session-state';
+import type { QueryFactory, RespondPermissionInput, RespondQuestionInput } from './session-state';
 
 /** createClaudeClient 构造参数。 */
 export interface CreateClientOptions {
@@ -42,6 +42,10 @@ export interface ClaudeSessionNamespace {
   interrupt(sessionId: string): Promise<void>;
   wait(sessionId: string, options?: SessionWaitOptions): Promise<void>;
   events(sessionId: string): AsyncIterable<GlobalEvent>;
+  /** 回复挂起的权限申请（canUseTool 桥接）；requestID 为 permission.asked 事件的 properties.id。 */
+  respondPermission(sessionId: string, input: RespondPermissionInput): void;
+  /** 回复挂起的问题提问（AskUserQuestion 桥接）；requestID 为 question.asked 事件的 properties.id。 */
+  respondQuestion(sessionId: string, input: RespondQuestionInput): void;
 }
 
 /** client.model 命名空间。 */
@@ -98,6 +102,12 @@ export function createClaudeClient(options: CreateClientOptions): ClaudeClient {
       },
       events(sessionId) {
         return globalEvents.sessionEvents(sessionId);
+      },
+      respondPermission(sessionId, input) {
+        return sessions.respondPermission(sessionId, input);
+      },
+      respondQuestion(sessionId, input) {
+        return sessions.respondQuestion(sessionId, input);
       },
     },
     model: {

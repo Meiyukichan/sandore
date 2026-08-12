@@ -292,6 +292,10 @@ describe('事件类型（event-streaming）', () => {
       | 'session.next.step.ended'
       | 'session.error'
       | 'session.idle'
+      | 'permission.asked'
+      | 'permission.replied'
+      | 'question.asked'
+      | 'question.replied'
     >();
   });
 

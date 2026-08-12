@@ -21,15 +21,24 @@
 import { getSessionMessages, query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   GetSessionMessagesOptions,
+  PermissionMode,
   SDKMessage,
   SDKUserMessage,
   SessionMessage as SDKStoredMessage,
+  ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 
 import { SessionNotFoundError, SessionState } from './session-state';
-import type { QueryFactory, SessionPhase } from './session-state';
+import type {
+  QueryFactory,
+  RespondPermissionInput,
+  RespondQuestionInput,
+  SessionPhase,
+  ToolAuthMode,
+} from './session-state';
 import type {
   Delivery,
+  GlobalEvent,
   LocationRef,
   MessageID,
   ModelRef,
@@ -56,6 +65,20 @@ export interface CreateSessionOptions {
   firstMessage?: string;
   /** system/init 捕获超时毫秒数（覆盖 SessionManager 默认）。 */
   initTimeoutMs?: number;
+  /** 允许的工具白名单（透传给 query options.allowedTools）。 */
+  allowedTools?: string[];
+  /** 禁止的工具黑名单（透传给 query options.disallowedTools）。 */
+  disallowedTools?: string[];
+  /** 权限模式：default 触发受限工具权限（配合 canUseTool 桥接）；acceptEdits/bypassPermissions 自动放行。 */
+  permissionMode?: PermissionMode;
+  /** 自定义系统提示词（string 或 string 数组）。 */
+  systemPrompt?: string | string[];
+  /** 单回合最大轮数。 */
+  maxTurns?: number;
+  /** 扩展思考配置。 */
+  thinking?: ThinkingConfig;
+  /** 权限/问题桥接开关；缺省启用。disabled 时不注入 canUseTool。 */
+  toolAuth?: ToolAuthMode;
 }
 
 /** 会话消息读取参数（对应 opencode v2 的 limit + cursor + order）。 */
@@ -134,6 +157,13 @@ export class SessionManager {
       agent: options.agent,
       model: options.model?.id,
       initTimeoutMs: options.initTimeoutMs ?? this.initTimeoutMs,
+      allowedTools: options.allowedTools,
+      disallowedTools: options.disallowedTools,
+      permissionMode: options.permissionMode,
+      systemPrompt: options.systemPrompt,
+      maxTurns: options.maxTurns,
+      thinking: options.thinking,
+      toolAuth: options.toolAuth,
       onInit: (sessionId) => {
         // pending→created：以真实 session_id 登记（占位 id 保留为别名，兼容已持有占位 id 的调用方）。
         this.sessions.set(sessionId, state);
@@ -235,6 +265,24 @@ export class SessionManager {
   events(sessionId: string): AsyncIterable<SDKMessage> {
     const state = this.getState(sessionId);
     return state.events;
+  }
+
+  /** 订阅会话控制事件流（permission.asked/question.asked 等桥接产出的 GlobalEvent，回放型）。 */
+  controlEvents(sessionId: string): AsyncIterable<GlobalEvent> {
+    const state = this.getState(sessionId);
+    return state.controlEvents;
+  }
+
+  /** 回复挂起的权限申请（canUseTool 桥接）：requestID 为 permission.asked 的 properties.id。 */
+  respondPermission(sessionId: string, input: RespondPermissionInput): void {
+    const state = this.getState(sessionId);
+    state.respondPermission(input);
+  }
+
+  /** 回复挂起的问题提问（AskUserQuestion 桥接）：requestID 为 question.asked 的 properties.id。 */
+  respondQuestion(sessionId: string, input: RespondQuestionInput): void {
+    const state = this.getState(sessionId);
+    state.respondQuestion(input);
   }
 
   /** 关闭会话：关闭 Query、结束事件通道并从 Map 移除。 */

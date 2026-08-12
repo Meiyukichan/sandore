@@ -68,7 +68,9 @@ export class GlobalEventManager {
     void this.feedGlobal(sessionId);
   }
 
-  /** 返回该会话归一化后的 AsyncIterable<GlobalEvent>；会话不存在抛 SessionNotFoundError。 */
+  /** 返回该会话归一化后的 AsyncIterable<GlobalEvent>；会话不存在抛 SessionNotFoundError。
+   * 合并 SDKMessage 归一化流（session.created、message.part.delta/updated、step.ended 等）与控制事件流
+   * （permission.asked、question.asked 等 canUseTool 桥接产出）。 */
   sessionEvents(sessionId: string): AsyncIterable<GlobalEvent> {
     // pending→created 后调用方可能以真实 session_id 订阅（design.md D2.1）：目录先查注册表，
     // 未命中则经 SessionManager 解析占位别名并回退到会话自身目录，保证真实 id 也能取到 directory。
@@ -76,7 +78,8 @@ export class GlobalEventManager {
     const directory = this.directories.get(sessionId) ?? this.sessions.getDirectory(resolved);
     // 同步查找会话：SessionManager.events 对不存在会话抛 SessionNotFoundError。
     const raw = this.sessions.events(sessionId);
-    return this.normalize(raw, directory);
+    const control = this.sessions.controlEvents(sessionId);
+    return mergeAsyncIterables(this.normalize(raw, directory), control);
   }
 
   /** 返回全局事件流；只产出匹配 directory 的事件（省略时用客户端 cwd），GlobalEvent.directory 等于过滤值。 */
@@ -410,6 +413,83 @@ function makePartId(): PartID {
 /** 归一化消息 ID：Anthropic 的 BetaMessage.id 已是 ^msg_ 前缀，缺失时补前缀。 */
 function asMessageId(id: string): MessageID {
   return (id.startsWith('msg_') ? id : `msg_${id}`) as MessageID;
+}
+
+/** 合并流的结束标记。 */
+const MERGE_DONE = Symbol('merge-done');
+/** 合并流的错误标记（携带原因）。 */
+const MERGE_ERROR = Symbol('merge-error');
+
+/**
+ * 合并两个 AsyncIterable 为一个：两端并发拉取，事件按到达顺序入队产出；两者都结束后终止。
+ * 用于 sessionEvents 合并 SDKMessage 归一化流与控制事件流（两个回放通道均缓冲全部事件，
+ * 并发拉取保证任一端挂起时另一端的事件仍被消费——顺序拉取会在 A 挂起时饿死 B）。
+ * 任一端抛错：向消费者抛出，并终止另一端。
+ */
+async function* mergeAsyncIterables<T>(
+  a: AsyncIterable<T>,
+  b: AsyncIterable<T>,
+): AsyncGenerator<T> {
+  const itA = a[Symbol.asyncIterator]();
+  const itB = b[Symbol.asyncIterator]();
+  const queue: Array<T | typeof MERGE_DONE | { [MERGE_ERROR]: unknown }> = [];
+  let waiters: Array<() => void> = [];
+  let doneA = false;
+  let doneB = false;
+  let aborted = false;
+
+  const notify = (): void => {
+    const ws = waiters;
+    waiters = [];
+    for (const w of ws) w();
+  };
+
+  const feed = async (
+    it: AsyncIterator<T>,
+    markDone: (v: boolean) => void,
+  ): Promise<void> => {
+    try {
+      while (!aborted) {
+        const { value, done } = await it.next();
+        if (done) break;
+        queue.push(value);
+        notify();
+      }
+    } catch (error) {
+      queue.push({ [MERGE_ERROR]: error });
+      notify();
+      aborted = true;
+      return;
+    } finally {
+      markDone(true);
+      queue.push(MERGE_DONE);
+      notify();
+    }
+  };
+
+  void feed(itA, (v) => { doneA = v; });
+  void feed(itB, (v) => { doneB = v; });
+
+  while (true) {
+    if (aborted) return;
+    if (queue.length === 0) {
+      if (doneA && doneB) return;
+      await new Promise<void>((resolve) => {
+        waiters.push(resolve);
+      });
+      continue;
+    }
+    const item = queue.shift() as T | typeof MERGE_DONE | { [MERGE_ERROR]: unknown };
+    if (typeof item === 'symbol' && item === MERGE_DONE) {
+      if (doneA && doneB) return;
+      continue;
+    }
+    if (item !== null && typeof item === 'object' && MERGE_ERROR in item) {
+      aborted = true;
+      throw item[MERGE_ERROR];
+    }
+    yield item as T;
+  }
 }
 
 /** 由 cwd 编码生成 projectID（确定性：路径段 ASCII 保留，非 ASCII 按字节转 %XX，段以 - 连接）。 */

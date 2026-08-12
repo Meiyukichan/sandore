@@ -12,13 +12,21 @@
  * close() 后进入 ended。生命周期阶段 phase：pending（create 已返回未捕获 init）→ created（init 捕获，design.md D2.1）。
  */
 import type {
+  CanUseTool,
+  PermissionMode,
+  PermissionResult,
   SDKControlInterruptResponse,
   SDKMessage,
   SDKSessionStateChangedMessage,
   SDKUserMessage,
+  ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 
 import type {
+  GlobalEvent,
+  PermissionReply,
+  QuestionAnswer,
+  QuestionInfo,
   SessionNotFoundError as SessionNotFoundErrorShape,
   TimeoutError as TimeoutErrorShape,
 } from './types';
@@ -29,12 +37,77 @@ export type SessionStateValue = 'starting' | 'idle' | 'running' | 'requires_acti
 /** 会话生命周期阶段（design.md D2.1）：pending=create 已返回但未捕获真实 session_id；created=已捕获（首个 prompt 触发 init 后）。 */
 export type SessionPhase = 'pending' | 'created';
 
+/** 工具授权方式（canUseTool 桥接行为）：启用则工具调用触发 permission.asked/question.asked 事件并挂起等待回复。 */
+export type ToolAuthMode = 'bridge' | 'disabled';
+
 /** query() options 的适配层子集（透传给 Claude SDK Options）。 */
 export interface SessionQueryOptions {
   cwd?: string;
   agent?: string;
   model?: string;
   includePartialMessages?: boolean;
+  /** 允许的工具白名单（工具名数组，透传给 SDK Options.allowedTools）。 */
+  allowedTools?: string[];
+  /** 禁止的工具黑名单。 */
+  disallowedTools?: string[];
+  /** 权限模式：default 触发受限工具权限；acceptEdits/bypassPermissions 自动放行。 */
+  permissionMode?: PermissionMode;
+  /** 自定义系统提示词（string 或字符串数组）。 */
+  systemPrompt?: string | string[];
+  /** 单回合最大轮数。 */
+  maxTurns?: number;
+  /** 扩展思考配置（透传给 SDK Options.thinking）。 */
+  thinking?: ThinkingConfig;
+  /** 工具权限回调（权限/问题桥接内部使用，通常不直接暴露给消费者）。 */
+  canUseTool?: CanUseTool;
+  /** 工具配置（如 askUserQuestion 预览格式）。 */
+  toolConfig?: { askUserQuestion?: { previewFormat?: 'markdown' | 'html' } };
+}
+
+/** 权限申请事件载荷（permission.asked 的 properties，requestID 为 per_ 前缀）。 */
+export interface PermissionRequestInfo {
+  /** 请求 ID（^per 前缀，respondPermission 的 requestID 依据）。 */
+  id: string;
+  /** 会话 ID。 */
+  sessionID: string;
+  /** 权限描述（如 "Bash(...)"）。 */
+  permission: string;
+  /** 规则模式（本适配层为空数组）。 */
+  patterns: string[];
+  /** 元数据（含工具入参与阻塞路径）。 */
+  metadata: Record<string, unknown>;
+  /** 常驻允许选项（本适配层为空数组）。 */
+  always: string[];
+  /** 关联的工具调用。 */
+  tool?: { messageID: string; callID: string };
+}
+
+/** 问题提问事件载荷（question.asked 的 properties，requestID 为 que_ 前缀）。 */
+export interface QuestionRequestInfo {
+  /** 请求 ID（^que 前缀，respondQuestion 的 requestID 依据）。 */
+  id: string;
+  /** 会话 ID。 */
+  sessionID: string;
+  /** 待回答的问题数组。 */
+  questions: QuestionInfo[];
+  /** 关联的工具调用。 */
+  tool?: { messageID: string; callID: string };
+}
+
+/** 权限回复参数（client.session.respondPermission 入参）。 */
+export interface RespondPermissionInput {
+  /** 待回复的权限请求 ID（permission.asked 的 properties.id）。 */
+  requestID: string;
+  /** 回复：once=仅本次允许；always=会话内常驻允许；reject=拒绝。 */
+  reply: PermissionReply;
+}
+
+/** 问题回复参数（client.session.respondQuestion 入参）。 */
+export interface RespondQuestionInput {
+  /** 待回复的问题请求 ID（question.asked 的 properties.id）。 */
+  requestID: string;
+  /** 答案映射：question → 所选 label 或 label 数组（多选）。 */
+  answers: QuestionAnswer;
 }
 
 /**
@@ -101,6 +174,24 @@ export interface SessionStateOptions {
   onError?: (error: unknown) => void;
   /** close() 后回调（create() 借此从 Map 清理）。 */
   onClose?: () => void;
+  /** 允许的工具白名单（透传给 query options.allowedTools）。 */
+  allowedTools?: string[];
+  /** 禁止的工具黑名单（透传给 query options.disallowedTools）。 */
+  disallowedTools?: string[];
+  /** 权限模式（default 触发受限工具权限；acceptEdits/bypassPermissions 自动放行）。 */
+  permissionMode?: PermissionMode;
+  /** 自定义系统提示词（string 或 string 数组，透传给 query options.systemPrompt）。 */
+  systemPrompt?: string | string[];
+  /** 单回合最大轮数（透传给 query options.maxTurns）。 */
+  maxTurns?: number;
+  /** 扩展思考配置（透传给 query options.thinking）。 */
+  thinking?: ThinkingConfig;
+  /** 权限/问题桥接开关；缺省启用。disabled 时不注入 canUseTool（受限工具按 permissionMode 行为处理）。 */
+  toolAuth?: ToolAuthMode;
+  /** 权限申请事件回调（permission.asked 产出时触发，供事件层投递）。 */
+  onPermissionRequest?: (request: PermissionRequestInfo) => void;
+  /** 问题提问事件回调（question.asked 产出时触发，供事件层投递）。 */
+  onQuestionRequest?: (request: QuestionRequestInfo) => void;
 }
 
 /** 原始 SDKMessage 回放型广播通道：缓冲所有消息，晚订阅者从缓冲回放，close 后流终止。 */
@@ -183,11 +274,31 @@ class ReplaySubscriber<T> {
 export class SessionState {
   private readonly query: QueryLike;
   private readonly channel = new ReplayChannel<SDKMessage>();
+  /** 控制事件通道（permission.asked/question.asked 等桥接产出，直接为 GlobalEvent）。 */
+  private readonly controlChannel = new ReplayChannel<GlobalEvent>();
   private readonly pending: SDKUserMessage[] = [];
   private readonly initTimeoutMs: number;
   private readonly onInit?: (sessionId: string) => void;
   private readonly onError?: (error: unknown) => void;
   private readonly onClose?: () => void;
+  private readonly onPermissionRequest?: (request: PermissionRequestInfo) => void;
+  private readonly onQuestionRequest?: (request: QuestionRequestInfo) => void;
+  private readonly bridgeEnabled: boolean;
+
+  /** 挂起的权限请求：requestID → resolve（respondPermission 时 resolve canUseTool 的 Promise）。 */
+  private readonly pendingPermissions = new Map<
+    string,
+    { resolve: (result: PermissionResult) => void; reject: (reason: unknown) => void }
+  >();
+  /** 挂起的问题请求：requestID → 原问题 + resolve（respondQuestion 时 resolve canUseTool 的 Promise）。 */
+  private readonly pendingQuestions = new Map<
+    string,
+    {
+      questions: QuestionInfo[];
+      resolve: (result: PermissionResult) => void;
+      reject: (reason: unknown) => void;
+    }
+  >();
 
   private wake: (() => void) | null = null;
   private closed = false;
@@ -206,6 +317,9 @@ export class SessionState {
     this.onInit = options.onInit;
     this.onError = options.onError;
     this.onClose = options.onClose;
+    this.onPermissionRequest = options.onPermissionRequest;
+    this.onQuestionRequest = options.onQuestionRequest;
+    this.bridgeEnabled = options.toolAuth !== 'disabled';
     this.query = options.queryFn({
       prompt: this.inputQueue(),
       options: {
@@ -213,6 +327,17 @@ export class SessionState {
         agent: options.agent,
         model: options.model,
         includePartialMessages: true,
+        allowedTools: options.allowedTools,
+        disallowedTools: options.disallowedTools,
+        permissionMode: options.permissionMode,
+        systemPrompt: options.systemPrompt,
+        maxTurns: options.maxTurns,
+        thinking: options.thinking,
+        // 桥接：受限工具与 AskUserQuestion 走 canUseTool → permission.asked/question.asked 事件 + 挂起等待回复。
+        canUseTool: this.bridgeEnabled ? this.bridgeCanUseTool.bind(this) : undefined,
+        toolConfig: this.bridgeEnabled
+          ? { askUserQuestion: { previewFormat: 'markdown' as const } }
+          : undefined,
       },
     });
     void this.pump();
@@ -249,6 +374,74 @@ export class SessionState {
   /** SDKMessage 事件通道（回放型）：每次访问返回新订阅。 */
   get events(): AsyncIterable<SDKMessage> {
     return this.channel.subscribe();
+  }
+
+  /** 控制事件通道（permission.asked/question.asked 等桥接产出的 GlobalEvent，回放型）。 */
+  get controlEvents(): AsyncIterable<GlobalEvent> {
+    return this.controlChannel.subscribe();
+  }
+
+  /**
+   * 回复挂起的权限申请（canUseTool 桥接）：once/always → 放行（always 附常驻规则）；reject → 拒绝。
+   * requestID 为 permission.asked 事件的 properties.id（^per 前缀）。不存在该请求抛 SessionNotFoundError。
+   */
+  respondPermission(input: RespondPermissionInput): void {
+    const pending = this.pendingPermissions.get(input.requestID);
+    if (pending === undefined) {
+      throw new SessionNotFoundError(input.requestID, `permission request not found: ${input.requestID}`);
+    }
+    this.pendingPermissions.delete(input.requestID);
+    if (input.reply === 'reject') {
+      pending.resolve({ behavior: 'deny', message: 'rejected by user' });
+    } else {
+      pending.resolve({
+        behavior: 'allow',
+        // always：向 SDK 建议常驻允许该工具，后续不再触发权限申请。
+        updatedPermissions:
+          input.reply === 'always'
+            ? [
+                {
+                  type: 'addRules' as const,
+                  rules: [{ toolName: input.requestID }],
+                  behavior: 'allow' as const,
+                  destination: 'session' as const,
+                },
+              ]
+            : undefined,
+      });
+    }
+    // 产出 permission.replied 事件（properties 对齐 openapi EventPermissionReplied）。
+    this.controlChannel.write(
+      makeControlEvent('permission.replied', {
+        sessionID: this.sessionIdValue ?? this.directory,
+        requestID: input.requestID,
+        reply: input.reply,
+      }, this.directory),
+    );
+  }
+
+  /**
+   * 回复挂起的问题提问（AskUserQuestion 桥接）：answers 为 question → label 映射，
+   * 作为 updatedInput 返回给模型（对齐 user-input.md 的 {questions, answers} 响应格式）。
+   */
+  respondQuestion(input: RespondQuestionInput): void {
+    const pending = this.pendingQuestions.get(input.requestID);
+    if (pending === undefined) {
+      throw new SessionNotFoundError(input.requestID, `question request not found: ${input.requestID}`);
+    }
+    this.pendingQuestions.delete(input.requestID);
+    pending.resolve({
+      behavior: 'allow',
+      updatedInput: { questions: pending.questions, answers: input.answers },
+    });
+    // 产出 question.replied 事件。
+    this.controlChannel.write(
+      makeControlEvent('question.replied', {
+        sessionID: this.sessionIdValue ?? this.directory,
+        requestID: input.requestID,
+        answers: input.answers,
+      }, this.directory),
+    );
   }
 
   /** 向流式输入队列 push 一条用户消息；返回会话内自增序号（admittedSeq）。 */
@@ -328,7 +521,7 @@ export class SessionState {
     await this.query.interrupt();
   }
 
-  /** 关闭 Query、结束事件通道并触发 onClose 回调。 */
+  /** 关闭 Query、结束事件通道、拒绝挂起的权限/问题请求并触发 onClose 回调。 */
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -338,6 +531,8 @@ export class SessionState {
     this.idle = true;
     this.notifyIdle();
     this.channel.close();
+    this.controlChannel.close();
+    this.rejectPending();
     this.onClose?.();
   }
 
@@ -432,7 +627,130 @@ export class SessionState {
     this.notifyIdle(this.error);
     this.wake?.();
     this.channel.close();
+    this.controlChannel.close();
+    this.rejectPending();
     // 与 close() 幂等：closed 守卫保证只触发一次，SessionManager 借此从 Map 清理。
     this.onClose?.();
   }
+
+  // ---------------------------------------------------------------------------
+  // canUseTool 桥接（design.md D2.1 扩展）：受限工具 → permission.asked；AskUserQuestion → question.asked。
+  // 返回 Promise 挂起，直到 respondPermission/respondQuestion 回复后 resolve。
+  // ---------------------------------------------------------------------------
+
+  /** canUseTool 桥接入口：按工具名分流（AskUserQuestion → 问题提问；其他受限工具 → 权限申请）。 */
+  private bridgeCanUseTool(
+    toolName: string,
+    input: Record<string, unknown>,
+    context: { title?: string; blockedPath?: string; decisionReason?: string },
+  ): Promise<PermissionResult | null> {
+    if (toolName === 'AskUserQuestion') {
+      return this.bridgeQuestion(toolName, input);
+    }
+    return this.bridgePermission(toolName, input, context);
+  }
+
+  /** 权限申请桥接：产出 permission.asked 事件并挂起，等待 respondPermission。 */
+  private bridgePermission(
+    toolName: string,
+    input: Record<string, unknown>,
+    context: { title?: string; blockedPath?: string; decisionReason?: string },
+  ): Promise<PermissionResult | null> {
+    const requestID = `per_${crypto.randomUUID()}`;
+    const sessionID = this.sessionIdValue ?? this.directory;
+    const request: PermissionRequestInfo = {
+      id: requestID,
+      sessionID,
+      permission: `${toolName}(${summarizeToolInput(input)})`,
+      patterns: [],
+      metadata: {
+        toolInput: input,
+        blockedPath: context.blockedPath,
+        decisionReason: context.decisionReason,
+      },
+      always: [],
+      tool: { messageID: sessionID, callID: requestID },
+    };
+    this.controlChannel.write(
+      makeControlEvent('permission.asked', request, this.directory),
+    );
+    this.onPermissionRequest?.(request);
+    return new Promise<PermissionResult | null>((resolve, reject) => {
+      this.pendingPermissions.set(requestID, { resolve, reject });
+    });
+  }
+
+  /** 问题提问桥接：产出 question.asked 事件并挂起，等待 respondQuestion。 */
+  private bridgeQuestion(
+    _toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<PermissionResult | null> {
+    const requestID = `que_${crypto.randomUUID()}`;
+    const sessionID = this.sessionIdValue ?? this.directory;
+    const questions = extractQuestions(input);
+    const request: QuestionRequestInfo = {
+      id: requestID,
+      sessionID,
+      questions,
+      tool: { messageID: sessionID, callID: requestID },
+    };
+    this.controlChannel.write(
+      makeControlEvent('question.asked', request, this.directory),
+    );
+    this.onQuestionRequest?.(request);
+    return new Promise<PermissionResult | null>((resolve, reject) => {
+      this.pendingQuestions.set(requestID, { questions, resolve, reject });
+    });
+  }
+
+  /** 拒绝全部挂起的权限/问题请求（close / 泵结束时调用，避免悬挂 Promise）。 */
+  private rejectPending(): void {
+    for (const { reject } of this.pendingPermissions.values()) {
+      reject(new SessionNotFoundError(this.sessionIdValue ?? this.directory, 'session closed'));
+    }
+    this.pendingPermissions.clear();
+    for (const { reject } of this.pendingQuestions.values()) {
+      reject(new SessionNotFoundError(this.sessionIdValue ?? this.directory, 'session closed'));
+    }
+    this.pendingQuestions.clear();
+  }
+}
+
+/** 构造控制事件 GlobalEvent 信封（payload.id 以 evt_ 前缀生成，properties 为桥接载荷）。 */
+function makeControlEvent(
+  type: GlobalEvent['payload']['type'],
+  properties: Record<string, unknown> | PermissionRequestInfo | QuestionRequestInfo,
+  directory: string | undefined,
+): GlobalEvent {
+  const event: GlobalEvent = {
+    directory,
+    payload: {
+      // 模板字面量拼接保证 ^evt_ 前缀，断言收窄（与 events.ts makeEvent 同构）。
+      id: `evt_${crypto.randomUUID()}` as GlobalEvent['payload']['id'],
+      type,
+      properties: properties as Record<string, unknown>,
+    },
+  };
+  return event;
+}
+
+/** 从 AskUserQuestion 工具入参提取 questions 数组（容错：缺失时返回空数组）。 */
+function extractQuestions(input: Record<string, unknown>): QuestionInfo[] {
+  const raw = input.questions;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is QuestionInfo => {
+    if (typeof item !== 'object' || item === null) return false;
+    const q = item as Record<string, unknown>;
+    return typeof q.question === 'string' && typeof q.header === 'string';
+  });
+}
+
+/** 将工具入参摘要为权限描述（如 "Bash(npm run build)"），用于 permission.asked 的 permission 字段。 */
+function summarizeToolInput(input: Record<string, unknown>): string {
+  const command = input.command;
+  if (typeof command === 'string') {
+    return command.length > 60 ? `${command.slice(0, 60)}…` : command;
+  }
+  const keys = Object.keys(input);
+  return keys.length > 0 ? keys.join(',') : '…';
 }

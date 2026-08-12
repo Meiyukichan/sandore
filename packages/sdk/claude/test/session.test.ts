@@ -28,6 +28,7 @@ import type { SessionMessagesOptions, SessionPromptInput } from '../src/session'
 import { SessionNotFoundError, TimeoutError } from '../src/session-state';
 import type { QueryFactory, QueryLike, SessionQueryOptions } from '../src/session-state';
 import type {
+  GlobalEvent,
   SessionInputAdmitted,
   SessionMessagesResponse,
   SessionV2Info,
@@ -773,5 +774,157 @@ describe('类型导出', () => {
   it('SessionMessagesOptions 为可构造的类型', () => {
     const options: SessionMessagesOptions = { limit: 10, cursor: 'offset:5', order: 'asc' };
     expect(options).toEqual({ limit: 10, cursor: 'offset:5', order: 'asc' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canUseTool 桥接：受限工具 → permission.asked/question.asked 事件 + respond 回复（design.md D2.1 扩展）
+// ---------------------------------------------------------------------------
+
+/** 触发 canUseTool 的最小 options（SDK CanUseTool 第三个参数结构子集）。 */
+function toolContext(): { signal: AbortSignal; toolUseID: string; requestId: string } {
+  return { signal: new AbortController().signal, toolUseID: 'tu_1', requestId: 'req_1' };
+}
+
+describe('canUseTool 桥接（权限/问题）', () => {
+  it('启用桥接时注入 canUseTool，toolAuth disabled 时不注入', async () => {
+    const h1 = createHarness();
+    await createSession(h1);
+    expect(h1.lastQueryOptions?.canUseTool).toBeDefined();
+
+    const h2 = createHarness();
+    const promise = h2.manager.create({ firstMessage: 'hi', toolAuth: 'disabled' });
+    h2.fake.pushMessage(initMessage('ses-dis'));
+    await promise;
+    expect(h2.lastQueryOptions?.canUseTool).toBeUndefined();
+  });
+
+  it('受限工具触发 permission.asked，respondPermission once 放行并产出 permission.replied', async () => {
+    const h = createHarness();
+    const session = await createSession(h);
+    const canUseTool = h.lastQueryOptions?.canUseTool;
+    expect(canUseTool).toBeDefined();
+
+    const events: GlobalEvent[] = [];
+    void (async () => {
+      for await (const e of h.manager.controlEvents(session.id)) {
+        events.push(e);
+      }
+    })();
+
+    const promise = canUseTool!('Bash', { command: 'ls' }, toolContext());
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.payload.type === 'permission.asked')).toBe(true);
+    });
+    const asked = events.find((e) => e.payload.type === 'permission.asked');
+    const props = asked?.payload.properties as Record<string, unknown>;
+    const requestID = props.id as string;
+    expect(requestID.startsWith('per_')).toBe(true);
+    expect(props.sessionID).toBe(session.id);
+    expect((props.permission as string).startsWith('Bash(')).toBe(true);
+
+    h.manager.respondPermission(session.id, { requestID, reply: 'once' });
+    const result = await promise;
+    expect(result?.behavior).toBe('allow');
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.payload.type === 'permission.replied')).toBe(true);
+    });
+    const replied = events.find((e) => e.payload.type === 'permission.replied');
+    expect((replied?.payload.properties as Record<string, unknown>).reply).toBe('once');
+  });
+
+  it('respondPermission reject 拒绝工具（behavior deny）', async () => {
+    const h = createHarness();
+    const session = await createSession(h);
+    const canUseTool = h.lastQueryOptions!.canUseTool!;
+
+    const events: GlobalEvent[] = [];
+    void (async () => {
+      for await (const e of h.manager.controlEvents(session.id)) {
+        events.push(e);
+      }
+    })();
+
+    const promise = canUseTool('Write', { file_path: '/tmp/a.txt' }, toolContext());
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.payload.type === 'permission.asked')).toBe(true);
+    });
+    const asked = events.find((e) => e.payload.type === 'permission.asked');
+    const requestID = (asked?.payload.properties as Record<string, unknown>).id as string;
+    h.manager.respondPermission(session.id, { requestID, reply: 'reject' });
+    const result = await promise;
+    expect(result?.behavior).toBe('deny');
+  });
+
+  it('AskUserQuestion 触发 question.asked，respondQuestion 返回答案', async () => {
+    const h = createHarness();
+    const session = await createSession(h);
+    const canUseTool = h.lastQueryOptions!.canUseTool!;
+
+    const events: GlobalEvent[] = [];
+    void (async () => {
+      for await (const e of h.manager.controlEvents(session.id)) {
+        events.push(e);
+      }
+    })();
+
+    const questions = [
+      { question: 'Which format?', header: 'Format', options: [{ label: 'A' }, { label: 'B' }] },
+    ];
+    const promise = canUseTool('AskUserQuestion', { questions }, toolContext());
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.payload.type === 'question.asked')).toBe(true);
+    });
+    const asked = events.find((e) => e.payload.type === 'question.asked');
+    const props = asked?.payload.properties as Record<string, unknown>;
+    const requestID = props.id as string;
+    expect(requestID.startsWith('que_')).toBe(true);
+    expect(props.sessionID).toBe(session.id);
+
+    h.manager.respondQuestion(session.id, { requestID, answers: { 'Which format?': 'A' } });
+    const result = await promise;
+    expect(result?.behavior).toBe('allow');
+    const updated = (result as { updatedInput?: unknown }).updatedInput as {
+      answers: Record<string, unknown>;
+    };
+    expect(updated.answers).toEqual({ 'Which format?': 'A' });
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.payload.type === 'question.replied')).toBe(true);
+    });
+  });
+
+  it('close 时挂起的权限/问题请求被 reject（不悬挂 Promise）', async () => {
+    const h = createHarness();
+    const session = await createSession(h);
+    const canUseTool = h.lastQueryOptions!.canUseTool!;
+
+    const promise = canUseTool('Bash', { command: 'ls' }, toolContext());
+    h.manager.close(session.id);
+    await expect(promise).rejects.toThrow();
+  });
+
+  it('sessionEvents 合并控制事件与归一化事件：同流产出 permission.asked 与 session.created', async () => {
+    const h = createHarness();
+    const session = await createSession(h);
+    const canUseTool = h.lastQueryOptions!.canUseTool!;
+    const { GlobalEventManager } = await import('../src/events');
+    const gem = new GlobalEventManager({ sessions: h.manager, cwd: '/tmp/project' });
+    const seen: string[] = [];
+    const consumer = (async () => {
+      for await (const e of gem.sessionEvents(session.id)) {
+        seen.push(e.payload.type);
+        if (e.payload.type === 'permission.asked') {
+          const requestID = (e.payload.properties as Record<string, unknown>).id as string;
+          h.manager.respondPermission(session.id, { requestID, reply: 'once' });
+        }
+      }
+    })();
+    // 触发一次权限申请（先于消费：回放通道保证事件不丢）。
+    const p = canUseTool('Bash', { command: 'ls' }, toolContext());
+    await p;
+    h.manager.close(session.id);
+    await consumer;
+    expect(seen).toContain('session.created');
+    expect(seen).toContain('permission.asked');
   });
 });

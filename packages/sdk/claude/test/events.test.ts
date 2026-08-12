@@ -704,6 +704,44 @@ describe('sessionEvents（会话事件流）', () => {
 
     expect(() => harness.events.sessionEvents('ses-nonexistent')).toThrow(/session not found/);
   });
+
+  it('消息流挂起时控制事件（permission.asked）仍被消费（merge 并发拉取）', async () => {
+    const harness = createHarness();
+    await createSession(harness);
+    const canUseTool = harness.lastQueryOptions?.canUseTool;
+    expect(canUseTool).toBeDefined();
+
+    const seen: GlobalEvent[] = [];
+    const consumer = (async () => {
+      for await (const ev of harness.events.sessionEvents('ses-1')) {
+        seen.push(ev);
+      }
+    })();
+
+    // 消息流无新消息（挂起），但控制事件应被独立消费——这是 mergeAsyncIterables 并发拉取的回归锁。
+    // （顺序拉取会卡在消息流的 next() 上，永远不消费控制事件。）
+    const promise = canUseTool!('Bash', { command: 'ls' }, {
+      signal: new AbortController().signal,
+      toolUseID: 'tu_1',
+      requestId: 'req_1',
+    });
+    await flush();
+    await flush();
+    const asked = seen.find((ev) => ev.payload.type === 'permission.asked');
+    expect(asked).toBeDefined();
+    const requestID = (asked!.payload.properties as Record<string, unknown>).id as string;
+    harness.manager.respondPermission('ses-1', { requestID, reply: 'once' });
+    await promise;
+    await flush();
+    harness.fake.end();
+    await flush();
+    await flush();
+    await consumer;
+
+    expect(seen.map((ev) => ev.payload.type)).toContain('permission.asked');
+    expect(seen.map((ev) => ev.payload.type)).toContain('session.created');
+    expect(seen.map((ev) => ev.payload.type)).toContain('permission.replied');
+  });
 });
 
 // ---------------------------------------------------------------------------

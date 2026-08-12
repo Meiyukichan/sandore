@@ -33,14 +33,43 @@ export type ModelStatus = 'alpha' | 'beta' | 'deprecated' | 'active';
 /** 工具调用块状态。 */
 export type ToolState = 'pending' | 'running' | 'completed' | 'error';
 
-/** opencode 全局事件类型（适配层 SDKMessage → GlobalEvent 映射的子集，见 specs event-streaming）。 */
+/** 权限申请回复（opencode permission.replied 的 reply 枚举）。 */
+export type PermissionReply = 'once' | 'always' | 'reject';
+
+/** 问题选项（opencode QuestionInfo.options 元素，AskUserQuestion 工具 input）。 */
+export interface QuestionOption {
+  label: string;
+  description?: string;
+  preview?: string;
+}
+
+/** 问题信息（opencode QuestionInfo，question.asked 的 questions 元素）。 */
+export interface QuestionInfo {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+}
+
+/** 问题回复（question.replied 的 answers；question → 所选 label 或自由文本）。 */
+export type QuestionAnswer = Record<string, string | string[]>;
+
+/**
+ * opencode 全局事件类型（适配层 SDKMessage → GlobalEvent 映射的子集，见 specs event-streaming）。
+ * 权限申请/回复与问题提问/回复由 canUseTool 桥接产出（session-state.ts）。
+ */
 export type GlobalEventType =
   | 'session.created'
   | 'message.part.delta'
   | 'message.part.updated'
   | 'session.next.step.ended'
   | 'session.error'
-  | 'session.idle';
+  | 'session.idle'
+  | 'permission.asked'
+  | 'permission.replied'
+  | 'question.asked'
+  | 'question.replied';
 
 /** 位置引用：标识会话/事件所属的项目目录。 */
 export interface LocationRef {
