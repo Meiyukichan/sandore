@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["conversation.ts"]
+  "include": ["conversation.ts", "e2e.ts"]
 }
