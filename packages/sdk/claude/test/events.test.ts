@@ -160,6 +160,27 @@ function hookStartedMessage(sessionId: string): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+/** 构造 user 消息（tool_result carrier）：content 含 tool_result 块（tool_use_id 关联），模拟真实 Claude 返回。 */
+function userToolResultMessage(
+  sessionId: string,
+  toolUseId: string,
+  content: string,
+  isError: boolean,
+): SDKMessage {
+  return {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: toolUseId, content, is_error: isError },
+      ],
+    },
+    parent_tool_use_id: null,
+    uuid: crypto.randomUUID(),
+    session_id: sessionId,
+  } as unknown as SDKMessage;
+}
+
 /** 刷新一次宏任务队列，让后台 query 泵的异步迭代推进。 */
 async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -447,29 +468,45 @@ describe('SDKMessage → GlobalEvent 归一化映射', () => {
     expect(part1.text).toBe('second block');
   });
 
-  it('assistant tool_use 内容块 → message.part.updated（part 为 ToolPart）', async () => {
+  it('assistant tool_use → running 态 part；tool_result 更新为 completed 态（含 output，真实匹配 Claude 返回）', async () => {
     const harness = createHarness();
     await createSession(harness);
     const seen = await readSessionEvents(harness, (fake) => {
+      // assistant 产出 tool_use → running 态 part。
       fake.pushMessage(
         assistantMessage('ses-1', [
           { type: 'tool_use', id: 'toolu_01', name: 'Bash', input: { command: 'ls' } },
         ]),
       );
+      // 后续 user 消息携带 tool_result（tool_use_id 匹配）→ 更新同 partID 为 completed + output。
+      fake.pushMessage(
+        userToolResultMessage('ses-1', 'toolu_01', 'file1.txt\nfile2.txt', false),
+      );
     });
 
     const updated = seen.filter((ev) => ev.payload.type === 'message.part.updated');
-    expect(updated).toHaveLength(1);
-    const part = updated[0]!.payload.properties.part as Record<string, unknown>;
-    expect(part.type).toBe('tool');
-    expect(part.callID).toBe('toolu_01');
-    expect(part.tool).toBe('Bash');
-    // openapi ToolState 为对象（status/input/time），非字符串。
-    expect(part.state).toMatchObject({ status: 'completed', input: { command: 'ls' } });
-    expect(part.id).toMatch(/^prt/);
+    expect(updated).toHaveLength(2);
+    // 第一条：running 态（input + title + time.start，无 output）。
+    const runningPart = updated[0]!.payload.properties.part as Record<string, unknown>;
+    expect(runningPart.type).toBe('tool');
+    expect(runningPart.callID).toBe('toolu_01');
+    expect(runningPart.tool).toBe('Bash');
+    expect(runningPart.state).toMatchObject({ status: 'running', input: { command: 'ls' } });
+    expect(runningPart.id).toMatch(/^prt/);
+    // 第二条：completed 态（同 partID，含 output/title/time.end）。
+    const completedPart = updated[1]!.payload.properties.part as Record<string, unknown>;
+    expect(completedPart.id).toBe(runningPart.id);
+    expect(completedPart.callID).toBe('toolu_01');
+    expect(completedPart.tool).toBe('Bash');
+    expect(completedPart.state).toMatchObject({
+      status: 'completed',
+      input: { command: 'ls' },
+      output: 'file1.txt\nfile2.txt',
+    });
+    expect((completedPart.state as Record<string, unknown>).time).toMatchObject({ end: expect.any(Number) });
     // M1：工具入参移入 metadata（ToolPart schema additionalProperties:false，无 input 字段）。
-    expect(part.metadata).toEqual({ input: { command: 'ls' } });
-    expect('input' in part).toBe(false);
+    expect(runningPart.metadata).toEqual({ input: { command: 'ls' } });
+    expect('input' in runningPart).toBe(false);
   });
 
   it('流式 delta 与 assistant 完整消息的 partID 一致（按 content 块序号关联，消费方可合并）', async () => {

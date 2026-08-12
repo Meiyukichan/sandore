@@ -143,6 +143,15 @@ class StreamNormalizer {
   private messageIdValue: string | undefined;
   /** 按内容块序号捕获的 partID；稀疏数组，未捕获序号为 undefined（assistant 时回退生成）。 */
   private partIdValues: Array<PartID | undefined> = [];
+  /**
+   * 跨消息工具调用状态：callID → 对应 tool part 定位与工具元信息（partID/sessionID/messageID/name/input）。
+   * assistant 的 tool_use 块产出 running 态 part 后登记，后续 user 消息的 tool_result
+   * （tool_use_id 匹配）到达时更新同一 partID 为 completed/error（openapi "part 更新"语义）。
+   */
+  private readonly pendingTools = new Map<
+    string,
+    { partID: PartID; sessionID: string; messageID: MessageID; name: string; input: unknown }
+  >();
 
   /** 将一条 SDKMessage 归一化为 0..n 条 GlobalEvent；无对应类型返回空数组（静默跳过）。 */
   handle(message: SDKMessage, directory: string | undefined): GlobalEvent[] {
@@ -153,10 +162,12 @@ class StreamNormalizer {
         return this.handleStreamEvent(message, directory);
       case 'assistant':
         return this.handleAssistant(message, directory);
+      case 'user':
+        return this.handleToolResult(message, directory);
       case 'result':
         return this.handleResult(message, directory);
       default:
-        // user / status / task_notification / hook_* 等：无对应 opencode 事件类型，静默跳过。
+        // status / task_notification / hook_* 等：无对应 opencode 事件类型，静默跳过。
         return [];
     }
   }
@@ -240,12 +251,81 @@ class StreamNormalizer {
     const content = message.message.content;
     for (let i = 0; i < content.length; i++) {
       // 按内容块数组序号复用流式阶段捕获的 partID，使 updated 与 delta 的 partID 一致（M2）。
-      const part = mapContentBlock(content[i], message.session_id, messageID, this.partIdValues[i], time);
+      const block = content[i];
+      if (block.type === 'tool_use') {
+        // tool_use：产出 running 态 part，并登记 callID→partID，供后续 tool_result 更新为 completed/error。
+        const partID = this.partIdValues[i] ?? makePartId();
+        this.pendingTools.set(block.id, {
+          partID,
+          sessionID: message.session_id,
+          messageID,
+          name: block.name,
+          input: block.input,
+        });
+        const part: ToolPart = {
+          id: partID,
+          sessionID: message.session_id,
+          messageID,
+          type: 'tool',
+          callID: block.id,
+          tool: block.name,
+          state: {
+            status: 'running',
+            input: block.input,
+            title: extractToolTitle(block),
+            time: { start: time },
+          },
+          metadata: { input: block.input },
+        };
+        events.push(
+          makeEvent('message.part.updated', { sessionID: message.session_id, part, time }, directory),
+        );
+        continue;
+      }
+      const part = mapContentBlock(block, message.session_id, messageID, this.partIdValues[i], time);
       if (part !== undefined) {
         events.push(
           makeEvent('message.part.updated', { sessionID: message.session_id, part, time }, directory),
         );
       }
+    }
+    return events;
+  }
+
+  /**
+   * 处理 user 消息中的 tool_result 块：按 tool_use_id 匹配先前登记的 tool part，
+   * 产出更新后的 message.part.updated（state: completed/error，含 output/title/time.end）。
+   * 未匹配到 pending tool（如权限拒绝/时序异常）时静默跳过。
+   */
+  private handleToolResult(
+    message: Extract<SDKMessage, { type: 'user' }>,
+    directory: string | undefined,
+  ): GlobalEvent[] {
+    const content = message.message.content;
+    if (!Array.isArray(content)) return [];
+    const events: GlobalEvent[] = [];
+    for (const block of content) {
+      if (block.type !== 'tool_result') continue;
+      const pending = this.pendingTools.get(block.tool_use_id);
+      if (pending === undefined) continue;
+      this.pendingTools.delete(block.tool_use_id);
+      const { partID, sessionID, messageID, name, input } = pending;
+      const parsedTime = message.timestamp !== undefined ? Date.parse(message.timestamp) : NaN;
+      const endTime = Number.isNaN(parsedTime) ? Date.now() : parsedTime;
+      const output = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+      const state: ToolPart['state'] = block.is_error
+        ? { status: 'error', input, error: output, time: { end: endTime } }
+        : { status: 'completed', input, output, title: name, time: { end: endTime } };
+      const part: ToolPart = {
+        id: partID,
+        sessionID,
+        messageID,
+        type: 'tool',
+        callID: block.tool_use_id,
+        tool: name,
+        state,
+      };
+      events.push(makeEvent('message.part.updated', { sessionID, part, time: endTime }, directory));
     }
     return events;
   }
@@ -301,8 +381,26 @@ function makePartIdFromIndex(index: number): PartID {
   return `prt_${index}` as PartID;
 }
 
+/** 提取工具标题（tool_use 块无顶层 title，取 input.description 或工具名作为展示标题）。 */
+function extractToolTitle(block: { name: string; input: unknown }): string | undefined {
+  const input = block.input;
+  if (
+    typeof input === 'object' &&
+    input !== null &&
+    'description' in input &&
+    typeof (input as { description?: unknown }).description === 'string'
+  ) {
+    const description = (input as { description: string }).description;
+    if (description !== '') {
+      return description;
+    }
+  }
+  return block.name;
+}
+
 /**
- * 将 assistant 内容块映射为 TextPart / ToolPart；无对应类型（thinking 等）返回 undefined。
+ * 将 assistant 文本内容块映射为 TextPart；无对应类型（thinking 等）返回 undefined。
+ * tool_use 块由 handleAssistant 单独处理（running 态 part + pendingTools 登记，供 tool_result 更新）。
  * partId 为流式阶段按内容块序号捕获的 ID（缺失时生成），保证与 delta 的 partID 一致（M2）。
  */
 function mapContentBlock(
@@ -310,43 +408,19 @@ function mapContentBlock(
   sessionID: string,
   messageID: MessageID,
   partId: PartID | undefined,
-  time: number,
+  _time: number,
 ): Part | undefined {
-  switch (block.type) {
-    case 'text': {
-      const part: TextPart = {
-        id: partId ?? makePartId(),
-        sessionID,
-        messageID,
-        type: 'text',
-        text: block.text,
-      };
-      return part;
-    }
-    case 'tool_use': {
-      const part: ToolPart = {
-        id: partId ?? makePartId(),
-        sessionID,
-        messageID,
-        type: 'tool',
-        callID: block.id,
-        tool: block.name,
-        // openapi ToolPart.state 为对象（ToolState 联合，required）；适配层仅构造 completed 变体
-        // （status+input+time 核心字段，output/title 需工具结果数据，暂缺）。
-        state: {
-          status: 'completed',
-          input: block.input,
-          time: { start: time, end: time },
-        },
-        // 工具入参同时保留在 metadata（ToolPart schema additionalProperties:false 无 input，M1）。
-        metadata: { input: block.input },
-      };
-      return part;
-    }
-    default:
-      // thinking 等无对应 GlobalEvent 的内容块，静默跳过。
-      return undefined;
+  if (block.type !== 'text') {
+    // thinking 等无对应 GlobalEvent 的内容块，静默跳过。
+    return undefined;
   }
+  return {
+    id: partId ?? makePartId(),
+    sessionID,
+    messageID,
+    type: 'text',
+    text: block.text,
+  };
 }
 
 /** 由 result success 的 usage 映射 tokens（input/output/cache，非零才产出）。 */
