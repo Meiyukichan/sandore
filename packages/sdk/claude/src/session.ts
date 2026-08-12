@@ -458,7 +458,7 @@ function extractAssistantContent(message: unknown): SessionMessageAssistantConte
         type: 'tool',
         id: typeof block.id === 'string' ? block.id : '',
         name: block.name,
-        state: 'completed',
+        state: { status: 'completed', input: block.input },
         time: {},
       });
     }

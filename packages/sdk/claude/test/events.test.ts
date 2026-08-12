@@ -464,7 +464,8 @@ describe('SDKMessage → GlobalEvent 归一化映射', () => {
     expect(part.type).toBe('tool');
     expect(part.callID).toBe('toolu_01');
     expect(part.tool).toBe('Bash');
-    expect(part.state).toBe('completed');
+    // openapi ToolState 为对象（status/input/time），非字符串。
+    expect(part.state).toMatchObject({ status: 'completed', input: { command: 'ls' } });
     expect(part.id).toMatch(/^prt/);
     // M1：工具入参移入 metadata（ToolPart schema additionalProperties:false，无 input 字段）。
     expect(part.metadata).toEqual({ input: { command: 'ls' } });

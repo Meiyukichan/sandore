@@ -251,11 +251,17 @@ describe('内容块类型（Part）', () => {
     expect(part.text).toBe('hello');
   });
 
-  it('ToolPart：必填 id/sessionID/messageID/type/callID/tool/state，metadata 可选且无 input', () => {
+  it('ToolPart：必填 id/sessionID/messageID/type/callID/tool/state（对象），metadata 可选且无 input', () => {
     expectTypeOf<ToolPart['callID']>().toEqualTypeOf<string>();
     expectTypeOf<ToolPart['tool']>().toEqualTypeOf<string>();
     expectTypeOf<ToolPart['state']>().toEqualTypeOf<ToolState>();
-    expectTypeOf<ToolState>().toEqualTypeOf<'pending' | 'running' | 'completed' | 'error'>();
+    // openapi ToolState 为对象联合（ToolStateCompleted 含 status/input/output/time 等）。
+    expectTypeOf<ToolState>().toEqualTypeOf<
+      | { status: 'pending'; input: unknown; raw: string }
+      | { status: 'running'; input: unknown; title?: string; metadata?: Record<string, unknown>; time?: { start?: number; end?: number } }
+      | { status: 'completed'; input: unknown; output?: unknown; title?: string; metadata?: Record<string, unknown>; time?: { start?: number; end?: number } }
+      | { status: 'error'; input: unknown; error: string; metadata?: Record<string, unknown>; time?: { start?: number; end?: number } }
+    >();
     // M1：工具入参移入 metadata（schema additionalProperties:false，input 字段被移除）。
     expectTypeOf<ToolPart['metadata']>().toEqualTypeOf<Record<string, unknown> | undefined>();
     expectTypeOf<ToolPart>().not.toHaveProperty('input');
@@ -266,10 +272,11 @@ describe('内容块类型（Part）', () => {
       type: 'tool',
       callID: 'toolu_01',
       tool: 'Bash',
-      state: 'completed',
+      state: { status: 'completed', input: { command: 'ls' }, time: { start: 1, end: 2 } },
     };
     expect(part.type).toBe('tool');
     expect(part.callID).toBe('toolu_01');
+    expect(part.state.status).toBe('completed');
   });
 
   it('Part 为 TextPart | ToolPart 联合', () => {

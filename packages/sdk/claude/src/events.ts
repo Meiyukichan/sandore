@@ -240,7 +240,7 @@ class StreamNormalizer {
     const content = message.message.content;
     for (let i = 0; i < content.length; i++) {
       // 按内容块数组序号复用流式阶段捕获的 partID，使 updated 与 delta 的 partID 一致（M2）。
-      const part = mapContentBlock(content[i], message.session_id, messageID, this.partIdValues[i]);
+      const part = mapContentBlock(content[i], message.session_id, messageID, this.partIdValues[i], time);
       if (part !== undefined) {
         events.push(
           makeEvent('message.part.updated', { sessionID: message.session_id, part, time }, directory),
@@ -310,6 +310,7 @@ function mapContentBlock(
   sessionID: string,
   messageID: MessageID,
   partId: PartID | undefined,
+  time: number,
 ): Part | undefined {
   switch (block.type) {
     case 'text': {
@@ -330,8 +331,14 @@ function mapContentBlock(
         type: 'tool',
         callID: block.id,
         tool: block.name,
-        state: 'completed',
-        // 工具入参移入 metadata（ToolPart schema additionalProperties:false 无 input，M1）。
+        // openapi ToolPart.state 为对象（ToolState 联合，required）；适配层仅构造 completed 变体
+        // （status+input+time 核心字段，output/title 需工具结果数据，暂缺）。
+        state: {
+          status: 'completed',
+          input: block.input,
+          time: { start: time, end: time },
+        },
+        // 工具入参同时保留在 metadata（ToolPart schema additionalProperties:false 无 input，M1）。
         metadata: { input: block.input },
       };
       return part;

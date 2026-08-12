@@ -30,8 +30,26 @@ export type MessageType = 'user' | 'assistant' | 'system';
 /** 模型状态。适配层默认 'active'。 */
 export type ModelStatus = 'alpha' | 'beta' | 'deprecated' | 'active';
 
-/** 工具调用块状态。 */
-export type ToolState = 'pending' | 'running' | 'completed' | 'error';
+/** 工具调用状态状态值（openapi ToolState 联合的 status 判别）。 */
+export type ToolStateStatus = 'pending' | 'running' | 'completed' | 'error';
+
+/** 工具调用块状态（openapi ToolState 联合。适配层仅构造 completed 变体，字段为 subset：
+ * status+input+time 核心必填；output/title 等需工具结果数据的字段暂缺）。 */
+export type ToolState =
+  | { status: 'pending'; input: unknown; raw: string }
+  | { status: 'running'; input: unknown; title?: string; metadata?: Record<string, unknown>; time?: { start?: number; end?: number } }
+  | { status: 'completed'; input: unknown; output?: unknown; title?: string; metadata?: Record<string, unknown>; time?: { start?: number; end?: number } }
+  | { status: 'error'; input: unknown; error: string; metadata?: Record<string, unknown>; time?: { start?: number; end?: number } };
+
+/** 历史消息中工具调用块状态（openapi SessionMessageToolState 联合的简化 subset：
+ * status 必填；input/content/structured 等可选——历史消息映射为适配层简化表示）。 */
+export interface SessionMessageToolState {
+  status: ToolStateStatus;
+  input?: unknown;
+  content?: unknown[];
+  structured?: unknown;
+  error?: unknown;
+}
 
 /** 权限申请回复（opencode permission.replied 的 reply 枚举）。 */
 export type PermissionReply = 'once' | 'always' | 'reject';
@@ -184,7 +202,7 @@ export interface SessionMessageAssistantTool {
   id: string;
   name: string;
   provider?: string;
-  state: ToolState;
+  state: SessionMessageToolState;
   time: MessageTime;
 }
 
