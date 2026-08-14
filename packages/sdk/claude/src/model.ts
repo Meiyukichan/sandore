@@ -13,8 +13,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { ModelInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { QueryFactory, QueryLike } from './session-state';
-import type { ModelListResponse, ModelV2Info } from './types';
+import type { QueryFactory, QueryLike } from './session-state.js';
+import type { ModelListResponse, ModelV2Info } from './types.js';
 
 /** ModelManager 构造参数。 */
 export interface ModelManagerOptions {

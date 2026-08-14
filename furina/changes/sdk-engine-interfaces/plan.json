@@ -1,0 +1,173 @@
+[
+  {
+    "id": "foundation-01",
+    "category": "foundation",
+    "function": "包公共入口与构建配置 + 依赖注入与查询接口扩展基座",
+    "description": "建立 @meiyukichan/claude-sdk 的包公共入口与构建产物消费能力（package-entry spec），使引擎可经包名 import。新增 src/index.ts re-export 全部公开 API（createClaudeClient、ClaudeClient、CreateClientOptions 及 session/model/global 相关公开类型）。package.json 补齐 main/module/exports/types/files/scripts.build；tsconfig.json 增 outDir/declaration 产出 dist；确认 dist/ 已加入版本忽略（根 .gitignore 已有）。同步适配 scripts/e2e.ts 的引用方式（源码路径直引 → 包名）。同时落地 design.md D13 的依赖注入扩展与 D1/D3 的前置接口扩展：SessionManagerOptions 新增 forkSessionFn/deleteSessionFn/listSubagentsFn/getSubagentMessagesFn 注入点（默认指向 SDK 模块级函数，已核验 sdk.d.ts L700/L530/L1009/L796），QueryLike 接口扩展 rewindFiles(userMessageId, options?)/setPermissionMode(mode) 方法签名（sdk.d.ts L2563/L2377）。本 feature 只建骨架不改行为，后续 feature 复用注入点。",
+    "acceptance_criteria": [
+      "执行 `cd packages/sdk/claude && npm run build` 产出 dist/index.js 与 dist/index.d.ts（tsc 编译通过，declaration 开启）",
+      "package.json 含 main/types 指向 dist/index.js 与 dist/index.d.ts，exports 映射 `.` 到 dist，files 含 dist，scripts.build 为 tsc",
+      "src/index.ts re-export createClaudeClient 工厂、ClaudeClient 类型、CreateClientOptions 及全部公开类型；`import { createClaudeClient } from '@meiyukichan/claude-sdk'` 类型与运行时可解析",
+      "dist/ 目录不进入 git 版本控制",
+      "SessionManagerOptions 新增 4 个注入点且默认指向 SDK 模块级函数；注入自定义 mock 后 SessionManager 使用注入值（测试断言）",
+      "QueryLike 接口类型包含 rewindFiles 与 setPermissionMode 方法签名；现有 FakeQuery 等实现能通过类型检查",
+      "scripts/e2e.ts 的 createClaudeClient 导入改为包名 @meiyukichan/claude-sdk（不再直引 src/client）"
+    ],
+    "tasks": [
+      "1.1 新增 src/index.ts：re-export createClaudeClient、ClaudeClient 与 session/model/global 命名空间类型及 CreateClientOptions 等全部公开 API",
+      "1.2 package.json 补 main/module/exports/types/files/scripts.build 字段（exports 映射 import/require 均指向 dist）",
+      "1.3 tsconfig.json 增 outDir: dist、declaration: true（composite 视 monorepo 需求）；验证根 .gitignore 已含 dist/",
+      "1.4 在 session.ts 的 SessionManagerOptions 增加 forkSessionFn/deleteSessionFn/listSubagentsFn/getSubagentMessagesFn 可选注入点，构造器默认赋 SDK 模块级函数（forkSession/deleteSession/listSubagents/getSubagentMessages）",
+      "1.5 在 session-state.ts 的 QueryLike 接口增加 rewindFiles 与 setPermissionMode 方法签名（结构子集，与 SDK Query 一致）",
+      "1.6 编写测试：注入 mock 的 forkSessionFn/deleteSessionFn 等被 SessionManager 使用；QueryLike 结构类型校验；index.ts 导出符号在类型层面可达",
+      "1.7 将 scripts/e2e.ts 的 `from '../packages/sdk/claude/src/client'` 改为 `from '@meiyukichan/claude-sdk'`，并验证本地 dev 可解析（build 产物或 tsconfig paths）"
+    ],
+    "files": [
+      "packages/sdk/claude/src/index.ts",
+      "packages/sdk/claude/package.json",
+      "packages/sdk/claude/tsconfig.json",
+      "packages/sdk/claude/src/session.ts",
+      "packages/sdk/claude/src/session-state.ts",
+      "packages/sdk/claude/test/session.test.ts",
+      "packages/sdk/claude/test/types.test.ts",
+      "scripts/e2e.ts"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/sdk-engine-interfaces/specs/package-entry/spec.md#requirement-package-public-entry",
+      "furina/changes/sdk-engine-interfaces/specs/package-entry/spec.md#requirement-packagejson-exports-and-build",
+      "furina/changes/sdk-engine-interfaces/design.md#D11",
+      "furina/changes/sdk-engine-interfaces/design.md#D13"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "session-01",
+    "category": "session",
+    "function": "结构化 parts 发送 + 会话运行时管理 + 交互控制（问题拒绝与待处理查询）",
+    "description": "落地 structured-prompt-parts、session-management 与 interactive-control 三个能力的行为实现。prompt 方面：PromptInput 类型增加可选 parts?: Array<{type:'text',text:string}>；makeUserMessage 扩展为接受 string | parts 数组，parts 时构造 content 为内容块数组的 SDKUserMessage（parts 与 text 互斥，同时提供时 parts 优先，空数组传空数组）；prompt 入参增加可选 permissionMode，提供且与当前模式不同时先调 Query.setPermissionMode 再 push。会话生命周期：新增 session.setPermissionMode(sessionId, mode)（透传 Query.setPermissionMode，仅 streaming input mode）；新增 session.delete(sessionId)（先 close 本地 SessionState 清理 Map，再调注入的 deleteSessionFn(resolvedId, { dir }) 删磁盘会话文件，区分于 close 仅清内存）；session.create 透传 title 到返回的 SessionV2Info.title；session.messages 支持 before 消息 ID 游标（透传 getSessionMessagesFn 的 before，与 offset cursor 互斥且 before 优先）。交互控制：SessionState 新增 rejectQuestion(requestID) 方法——对挂起的问题 Promise resolve 为 { behavior:'deny', message:'rejected by user' }（与 respondPermission 的 reject 对称），并产出 question.rejected 控制事件（properties 含 sessionID 与 requestID，requestID 为 ^que_ 前缀）；GlobalEventType 联合增加 'question.rejected'；SessionState 新增 listPendingPermissions()/listPendingQuestions() 返回挂起 Map 的值快照（深拷贝 requestID + 载荷，不含 resolve/reject 函数）；SessionManager 与 client.session 透传三个方法。全部经 SessionManager → client.session 命名空间透传。",
+    "acceptance_criteria": [
+      "client.session.prompt 传 `{ prompt: { parts: [{type:'text',text:'a'},{type:'text',text:'b'}] } }` 时输入队列收到 content 为 `[{type:'text',text:'a'},{type:'text',text:'b'}]` 的 SDKUserMessage；仅 text 时 content 为字符串；同时提供时 parts 优先；空 parts 数组时 content 为空数组",
+      "PromptInput 类型含可选 parts 字段，`{ prompt: { parts: [{type:'text',text:'a'}] } }` 通过类型检查（types.test.ts 断言）",
+      "prompt 传 permissionMode 且与当前模式不同时，push 前调用 Query.setPermissionMode(mode)；未传时不变",
+      "client.session.setPermissionMode('ses-xxx', 'acceptEdits') 调用该会话 Query.setPermissionMode('acceptEdits')；不存在会话抛 SessionNotFoundError",
+      "client.session.delete('ses-xxx') 先 close SessionState（Query 关闭、事件通道结束、从 Map 移除），再调 deleteSessionFn('ses-xxx', { dir })；不存在会话抛 SessionNotFoundError",
+      "client.session.create({ title: 'my-session' }) 返回的 SessionV2Info.title === 'my-session'",
+      "client.session.messages('ses-xxx', { limit: 10, before: 'msg-123' }) 使 getSessionMessagesFn options 含 before: 'msg-123'；before 与 cursor 同时提供时 before 优先",
+      "client.session.rejectQuestion('ses-xxx', { requestID: 'que_123' }) 使挂起的问题 Promise resolve 为 `{ behavior:'deny', message:'rejected by user' }`，并产出 question.rejected 事件（properties 含 sessionID 与 requestID）",
+      "rejectQuestion 对不存在的 requestID 抛 SessionNotFoundError 或等价错误",
+      "GlobalEventType 联合包含 'question.rejected'（types.test.ts 断言）；question.rejected 经 session.events / global.event 事件流可达",
+      "client.session.listPendingPermissions('ses-xxx') 返回挂起权限请求快照数组（元素含 ^per_ 前缀 requestID 与 permission/patterns/metadata/tool 等载荷）；无挂起时返回空数组；不影响内部挂起状态",
+      "client.session.listPendingQuestions('ses-xxx') 返回挂起问题请求快照数组（元素含 ^que_ 前缀 requestID 与 questions 载荷）；无挂起时返回空数组"
+    ],
+    "tasks": [
+      "2.1 types.ts 的 PromptInput 增加可选 parts?: Array<{ type: 'text'; text: string }>；GlobalEventType 增加 'question.rejected'；session.ts 的 SessionMessagesOptions 增加 before?: string、SessionPromptInput 增加 permissionMode?: PermissionMode、CreateSessionOptions 增加 title?: string",
+      "2.2 扩展 makeUserMessage 接受 string | parts 数组（parts 时构造 content 块数组；无 parts 回退现有单文本）；prompt() 优先走 parts 路径，SessionInputAdmitted.prompt 回填入参形状",
+      "2.3 prompt() 增加 permissionMode 处理：提供且与当前会话模式不同时先 await Query.setPermissionMode(mode) 再 push",
+      "2.4 SessionState 增加 setPermissionMode(mode) 方法（透传 this.query.setPermissionMode）；SessionManager.setPermissionMode 与 client.session 命名空间透传",
+      "2.5 SessionManager.delete(sessionId)：getState 校验 → state.close() 清理 → 用 resolveSessionId 得真实 id → this.deleteSessionFn(resolvedId, { dir: state.directory })；client.session 命名空间透传",
+      "2.6 create() 的 buildInfo 使用 options.title ?? ''；messages() 在 options.before 提供时透传给 getSessionMessagesFn（before 优先，忽略 offset cursor）",
+      "2.7 session-state.ts 新增 rejectQuestion(input)：查挂起问题 Map，resolve `{ behavior:'deny', message:'rejected by user' }`，产出 question.rejected 控制事件（properties 含 sessionID/requestID），不存在抛 SessionNotFoundError",
+      "2.8 session-state.ts 新增 listPendingPermissions()/listPendingQuestions()：返回挂起 Map 的值快照（剥离 resolve/reject，深拷贝载荷）",
+      "2.9 session.ts 的 SessionManager 透传 rejectQuestion/listPendingPermissions/listPendingQuestions；client.ts 的 ClaudeSessionNamespace 增加对应方法并接线",
+      "2.10 编写测试：parts 三种场景（parts 优先/回退单文本/空数组）、prompt permissionMode 切换、setPermissionMode、delete（先 close 再调 deleteSessionFn、不存在会话抛错）、create title 透传、messages before 透传与互斥、rejectQuestion（deny 语义 + question.rejected 事件 + 不存在抛错）、listPendingPermissions/listPendingQuestions（快照/空数组）"
+    ],
+    "files": [
+      "packages/sdk/claude/src/types.ts",
+      "packages/sdk/claude/src/session.ts",
+      "packages/sdk/claude/src/session-state.ts",
+      "packages/sdk/claude/src/client.ts",
+      "packages/sdk/claude/test/session.test.ts",
+      "packages/sdk/claude/test/client.test.ts",
+      "packages/sdk/claude/test/types.test.ts"
+    ],
+    "dependencies": [
+      "foundation-01"
+    ],
+    "spec_refs": [
+      "furina/changes/sdk-engine-interfaces/specs/structured-prompt-parts/spec.md#requirement-structured-prompt-parts",
+      "furina/changes/sdk-engine-interfaces/specs/structured-prompt-parts/spec.md#requirement-promptinput-parts-type-extension",
+      "furina/changes/sdk-engine-interfaces/specs/session-management/spec.md#requirement-delete-session",
+      "furina/changes/sdk-engine-interfaces/specs/session-management/spec.md#requirement-set-permission-mode-at-runtime",
+      "furina/changes/sdk-engine-interfaces/specs/session-management/spec.md#requirement-prompt-with-per-message-permission-mode",
+      "furina/changes/sdk-engine-interfaces/specs/session-management/spec.md#requirement-create-session",
+      "furina/changes/sdk-engine-interfaces/specs/session-management/spec.md#requirement-read-session-messages",
+      "furina/changes/sdk-engine-interfaces/specs/session-management/spec.md#requirement-send-message-prompt",
+      "furina/changes/sdk-engine-interfaces/specs/interactive-control/spec.md#requirement-reject-question",
+      "furina/changes/sdk-engine-interfaces/specs/interactive-control/spec.md#requirement-questionrejected-event-type",
+      "furina/changes/sdk-engine-interfaces/specs/interactive-control/spec.md#requirement-list-pending-permissions",
+      "furina/changes/sdk-engine-interfaces/specs/interactive-control/spec.md#requirement-list-pending-questions",
+      "furina/changes/sdk-engine-interfaces/design.md#D2",
+      "furina/changes/sdk-engine-interfaces/design.md#D3",
+      "furina/changes/sdk-engine-interfaces/design.md#D4",
+      "furina/changes/sdk-engine-interfaces/design.md#D5",
+      "furina/changes/sdk-engine-interfaces/design.md#D6",
+      "furina/changes/sdk-engine-interfaces/design.md#D9",
+      "furina/changes/sdk-engine-interfaces/design.md#D12"
+    ],
+    "status": "in_progress"
+  },
+  {
+    "id": "retry-01",
+    "category": "retry",
+    "function": "会话重试三模式（revert/unrevert/fork）+ 事件流增强（AbortSignal + subtask 归一化）+ 命令与 MCP 状态查询命名空间",
+    "description": "落地 session-retry、event-streaming 与 command-and-mcp-query 三个能力的行为实现。会话重试：session.create options 支持 enableFileCheckpointing?: boolean（为 true 时透传 query options 的 enableFileCheckpointing 并设置 extraArgs: { 'replay-user-messages': null } 以获取 checkpoint UUID）。新增 session.revert(sessionId, messageId)——对话层调 forkSession(sessionId, { upToMessageId: messageId, dir }) 分叉新会话（历史截断到 messageId 含），文件层若原会话启用 checkpointing 则对原会话 Query 调 rewindFiles(messageId)，返回 { newSessionId, originalSessionId }，原会话句柄保留；新增 session.unrevert(sessionId)——维护 revert 映射 newSessionId → originalSessionId，unrevert 切回原会话并返回 originalSessionId；新增 session.fork(sessionId, messageId?)——调 forkSession 分叉新会话并注册进 SessionManager（messageId 省略全量复制），原会话不变；revert/fork 的新会话经 SessionManager 注册（复用 create 的 init 捕获路径或直接 resume，见 Open Questions #3，实现阶段验证）。事件流增强：session.events 与 global.event 的 options 支持可选 signal?: AbortSignal，归一化 async generator 内监听 signal，abort 时 break 并清理订阅（for await 正常退出不抛错）；StreamNormalizer 新增 subtask 子 Agent 内容块映射——assistant 消息含 Agent/Task 工具调用块或 subtask 类型块时产出 message.part.updated 且 part 携带 subSessionId（从 tool_result output 或 listSubagents/getSubagentMessages 提取），无子会话信息时仍产出 part（subSessionId 为 undefined）。命令与 MCP 查询：client 新增 command 与 mcp 命名空间——command.list() 返回可用斜杠命令列表（每元素至少含命令名，可含描述），mcp.status() 返回已注册 MCP 服务器状态列表（每元素至少含名称与连接状态，可含工具列表）；实现经 SDK 控制请求通道或模块级能力获取（command.list 底层来源见 design Open Questions #1，实现阶段核验 sdk.d.ts 与 slash-commands 文档，若 SDK 未暴露模块级函数则经 Query 控制请求通道封装）。",
+    "acceptance_criteria": [
+      "client.session.create({ firstMessage: 'hello', enableFileCheckpointing: true }) 使 query options 含 enableFileCheckpointing: true 且 extraArgs 含 'replay-user-messages': null；未传时无此设置",
+      "client.session.revert('ses-xxx', 'msg-123')（已启用 checkpointing）调 forkSession('ses-xxx', { upToMessageId: 'msg-123', dir }) 并对原会话 Query 调 rewindFiles('msg-123')，返回 { newSessionId, originalSessionId: 'ses-xxx' }，原会话句柄存活；未启用 checkpointing 时不调 rewindFiles；不存在会话抛 SessionNotFoundError",
+      "revert 后 client.session.unrevert('ses-fork-1') 返回 originalSessionId: 'ses-xxx'，调用方可继续在原会话 prompt/events；对无 revert 映射的会话抛错误",
+      "client.session.fork('ses-xxx', 'msg-123') 调 forkSession('ses-xxx', { upToMessageId: 'msg-123', dir }) 并返回与原会话不同的 newSessionId，原会话历史与句柄不受影响；fork('ses-xxx') 省略 messageId 时全量复制；不存在会话抛 SessionNotFoundError",
+      "newSessionId 的会话经 SessionManager 注册（可 prompt/events）",
+      "session.events('ses-xxx', { signal }) 与 global.event({ directory, signal }) 在 abort 后 for await 循环正常退出且不抛 abort 错误；未提供 signal 时行为不变",
+      "assistant 消息含子 Agent 工具调用块且 tool_result 携带子会话信息时产出 message.part.updated，part 含 subSessionId；无子会话信息时仍产出 part（subSessionId 为 undefined）；不再静默跳过 subtask 块",
+      "client.command.list() 返回斜杠命令数组（每元素含命令名）；无命令时返回空数组",
+      "client.mcp.status() 返回 MCP 服务器状态数组（每元素含名称与连接状态）；无服务器时返回空数组",
+      "client 对象暴露 command 与 mcp 命名空间（client.test.ts 断言 typeof client.command.list === 'function'、client.mcp.status === 'function'）"
+    ],
+    "tasks": [
+      "3.1 session-state.ts 的 SessionStateOptions/query options 支持 enableFileCheckpointing 透传与 extraArgs: { 'replay-user-messages': null }；session.ts create 透传该选项",
+      "3.2 session.ts 新增 revert(sessionId, messageId, options?)：校验会话存在 → 调注入的 forkSessionFn(sessionId, { upToMessageId: messageId, dir }) → 若原会话启用 checkpointing 对原会话 Query 调 rewindFiles(messageId) → 登记 revert 映射（newSessionId → originalSessionId）→ 新会话注册进 Map → 返回 { newSessionId, originalSessionId }",
+      "3.3 session.ts 新增 unrevert(sessionId)：查 revert 映射，命中返回 originalSessionId（原会话句柄保留）；未命中抛错误",
+      "3.4 session.ts 新增 fork(sessionId, messageId?, options?)：调 forkSessionFn 分叉（messageId 省略不传 upToMessageId）→ 新会话注册进 Map → 返回 { newSessionId }（或含 originalSessionId）；不复用/关闭原会话",
+      "3.5 事件流 AbortSignal：events.ts 的 GlobalEventOptions 与 session.events 签名增加 signal?: AbortSignal，归一化/过滤 generator 监听 signal（abort 时 break + return，清理订阅）",
+      "3.6 events.ts 的 StreamNormalizer 新增 subtask 映射：识别 Agent/Task 工具调用块与 subtask 类型块，从 tool_result output 或注入的 listSubagentsFn/getSubagentMessagesFn 提取子会话 ID，产出含 subSessionId 的 message.part.updated；无子会话信息时仍产出 part",
+      "3.7 新增 src/command-mcp.ts（或等价实现文件）：实现 command.list() 与 mcp.status()（经 SDK 控制请求通道/模块级函数获取；实现阶段核验 sdk.d.ts 导出与 docs/sdk/claude/slash-commands.md）",
+      "3.8 client.ts 新增 command/mcp 命名空间并接线；构造参数或 options 预留目录/dir 透传；index.ts 补充导出 command/mcp 相关类型",
+      "3.9 编写测试：enableFileCheckpointing 透传、revert 双层语义（checkpointing 开/关两分支 + 不存在会话）、unrevert（命中/未命中）、fork（指定点/全量 + 原会话不变 + 新会话可操作）、AbortSignal 两种流 + 未提供时行为不变、subtask 含/不含 subSessionId 两种场景、command.list 与 mcp.status（注入 mock 返回/空数组）、client 命名空间暴露"
+    ],
+    "files": [
+      "packages/sdk/claude/src/session.ts",
+      "packages/sdk/claude/src/session-state.ts",
+      "packages/sdk/claude/src/events.ts",
+      "packages/sdk/claude/src/client.ts",
+      "packages/sdk/claude/src/types.ts",
+      "packages/sdk/claude/src/index.ts",
+      "packages/sdk/claude/src/command-mcp.ts",
+      "packages/sdk/claude/test/session.test.ts",
+      "packages/sdk/claude/test/events.test.ts",
+      "packages/sdk/claude/test/client.test.ts",
+      "packages/sdk/claude/test/command-mcp.test.ts"
+    ],
+    "dependencies": [
+      "foundation-01",
+      "session-01"
+    ],
+    "spec_refs": [
+      "furina/changes/sdk-engine-interfaces/specs/session-retry/spec.md#requirement-revert-session",
+      "furina/changes/sdk-engine-interfaces/specs/session-retry/spec.md#requirement-unrevert-session",
+      "furina/changes/sdk-engine-interfaces/specs/session-retry/spec.md#requirement-fork-session",
+      "furina/changes/sdk-engine-interfaces/specs/session-retry/spec.md#requirement-file-checkpointing-option",
+      "furina/changes/sdk-engine-interfaces/specs/event-streaming/spec.md#requirement-abortsignal-for-event-streams",
+      "furina/changes/sdk-engine-interfaces/specs/event-streaming/spec.md#requirement-subtask-part-normalization",
+      "furina/changes/sdk-engine-interfaces/specs/event-streaming/spec.md#requirement-session-events-stream",
+      "furina/changes/sdk-engine-interfaces/specs/event-streaming/spec.md#requirement-global-event-stream-with-directory-filter",
+      "furina/changes/sdk-engine-interfaces/specs/command-and-mcp-query/spec.md#requirement-command-list",
+      "furina/changes/sdk-engine-interfaces/specs/command-and-mcp-query/spec.md#requirement-mcp-status",
+      "furina/changes/sdk-engine-interfaces/design.md#D1",
+      "furina/changes/sdk-engine-interfaces/design.md#D7",
+      "furina/changes/sdk-engine-interfaces/design.md#D8",
+      "furina/changes/sdk-engine-interfaces/design.md#D10"
+    ],
+    "status": "pending"
+  }
+]

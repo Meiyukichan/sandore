@@ -5,8 +5,27 @@
  * 交叉参考 docs/sdk/openapi.json（目标协议）与 specs/**\/*.md。
  * 编译期断言（expectTypeOf）由 tsc --noEmit 验证；值构造断言由 vitest 运行时验证。
  */
+import type {
+  PermissionMode,
+  RewindFilesResult,
+  SDKControlInterruptResponse,
+  SDKMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
+import {
+  createClaudeClient,
+  SessionNotFoundError as SessionNotFoundErrorClass,
+  TimeoutError as TimeoutErrorClass,
+} from '../src/index';
+import type {
+  ClaudeClient,
+  ClaudeGlobalNamespace,
+  ClaudeModelNamespace,
+  ClaudeSessionNamespace,
+  CreateClientOptions,
+} from '../src/index';
+import type { QueryLike } from '../src/session-state';
 import type {
   ClaudeSDKError,
   Cost,
@@ -357,5 +376,90 @@ describe('错误类型（_tag 判别联合）', () => {
       message: 'session not found',
     };
     expect(error._tag).toBe('SessionNotFoundError');
+  });
+});
+
+describe('QueryLike 接口扩展（design.md D13）', () => {
+  it('QueryLike 包含 rewindFiles/setPermissionMode 方法签名（可选成员，结构子集）', () => {
+    type RewindFilesFn = NonNullable<QueryLike['rewindFiles']>;
+    expectTypeOf<RewindFilesFn>().toEqualTypeOf<
+      (userMessageId: string, options?: { dryRun?: boolean }) => Promise<RewindFilesResult>
+    >();
+    type SetPermissionModeFn = NonNullable<QueryLike['setPermissionMode']>;
+    expectTypeOf<SetPermissionModeFn>().toEqualTypeOf<(mode: PermissionMode) => Promise<void>>();
+  });
+
+  it('仅实现现有 6 成员的简化实现（如测试 FakeQuery）仍可赋给 QueryLike（新方法为可选）', () => {
+    interface MinimalQuery {
+      next(...args: [] | [unknown]): Promise<IteratorResult<SDKMessage, void>>;
+      return(value?: unknown): Promise<IteratorResult<SDKMessage, void>>;
+      throw(error?: unknown): Promise<IteratorResult<SDKMessage, void>>;
+      [Symbol.asyncIterator](): AsyncGenerator<SDKMessage, void>;
+      interrupt(): Promise<SDKControlInterruptResponse | undefined>;
+      close(): void;
+    }
+    expectTypeOf<MinimalQuery>().toMatchTypeOf<QueryLike>();
+  });
+
+  it('实现含 rewindFiles/setPermissionMode 的完整 Query 结构可赋给 QueryLike', () => {
+    interface FullQuery {
+      next(...args: [] | [unknown]): Promise<IteratorResult<SDKMessage, void>>;
+      return(value?: unknown): Promise<IteratorResult<SDKMessage, void>>;
+      throw(error?: unknown): Promise<IteratorResult<SDKMessage, void>>;
+      [Symbol.asyncIterator](): AsyncGenerator<SDKMessage, void>;
+      interrupt(): Promise<SDKControlInterruptResponse | undefined>;
+      close(): void;
+      rewindFiles(
+        userMessageId: string,
+        options?: { dryRun?: boolean },
+      ): Promise<RewindFilesResult>;
+      setPermissionMode(mode: PermissionMode): Promise<void>;
+    }
+    expectTypeOf<FullQuery>().toMatchTypeOf<QueryLike>();
+  });
+});
+
+describe('包公共入口（src/index.ts, design.md D11）', () => {
+  it('re-export createClaudeClient 工厂并可创建客户端（运行时可解析）', () => {
+    expect(createClaudeClient).toBeTypeOf('function');
+    const client = createClaudeClient({ cwd: '/tmp/project' });
+    expect(typeof client.session.create).toBe('function');
+    expect(typeof client.session.messages).toBe('function');
+    expect(typeof client.session.prompt).toBe('function');
+    expect(typeof client.session.interrupt).toBe('function');
+    expect(typeof client.session.wait).toBe('function');
+    expect(typeof client.session.events).toBe('function');
+    expect(typeof client.model.list).toBe('function');
+    expect(typeof client.global.event).toBe('function');
+    expect(typeof client.close).toBe('function');
+    client.close();
+  });
+
+  it('CreateClientOptions/ClaudeClient/命名空间类型从包入口可达（类型层面）', () => {
+    expectTypeOf<CreateClientOptions>().toHaveProperty('cwd');
+    expectTypeOf<ClaudeClient>().toHaveProperty('session');
+    expectTypeOf<ClaudeClient>().toHaveProperty('model');
+    expectTypeOf<ClaudeClient>().toHaveProperty('global');
+    expectTypeOf<ClaudeClient>().toHaveProperty('close');
+    expectTypeOf<ClaudeSessionNamespace>().toHaveProperty('create');
+    expectTypeOf<ClaudeSessionNamespace>().toHaveProperty('prompt');
+    expectTypeOf<ClaudeSessionNamespace>().toHaveProperty('messages');
+    expectTypeOf<ClaudeSessionNamespace>().toHaveProperty('respondPermission');
+    expectTypeOf<ClaudeSessionNamespace>().toHaveProperty('respondQuestion');
+    expectTypeOf<ClaudeModelNamespace>().toHaveProperty('list');
+    expectTypeOf<ClaudeGlobalNamespace>().toHaveProperty('event');
+    const options: CreateClientOptions = { cwd: '/tmp/project' };
+    expect(options.cwd).toBe('/tmp/project');
+  });
+
+  it('错误类（SessionNotFoundError/TimeoutError）从包入口可达（运行时构造）', () => {
+    expect(SessionNotFoundErrorClass).toBeTypeOf('function');
+    expect(TimeoutErrorClass).toBeTypeOf('function');
+    const notFound = new SessionNotFoundErrorClass('ses-1');
+    expect(notFound._tag).toBe('SessionNotFoundError');
+    expect(notFound.sessionID).toBe('ses-1');
+    const timeout = new TimeoutErrorClass('timed out', 100);
+    expect(timeout._tag).toBe('TimeoutError');
+    expect(timeout.timeoutMs).toBe(100);
   });
 });

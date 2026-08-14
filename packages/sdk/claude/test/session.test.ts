@@ -15,6 +15,12 @@
  * 测试采用依赖注入：SessionManager 构造接收 queryFn / getSessionMessagesFn，
  * 以可控的 FakeQuery 模拟 Claude SDK 的 query()（AsyncGenerator + interrupt/close）。
  */
+import {
+  deleteSession,
+  forkSession,
+  getSubagentMessages,
+  listSubagents,
+} from '@anthropic-ai/claude-agent-sdk';
 import type {
   GetSessionMessagesOptions,
   SDKMessage,
@@ -774,6 +780,52 @@ describe('类型导出', () => {
   it('SessionMessagesOptions 为可构造的类型', () => {
     const options: SessionMessagesOptions = { limit: 10, cursor: 'offset:5', order: 'asc' };
     expect(options).toEqual({ limit: 10, cursor: 'offset:5', order: 'asc' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SessionManager 依赖注入扩展（design.md D13）：forkSessionFn/deleteSessionFn 等 4 个注入点
+// 本 feature 只建骨架不改行为（暂无公开方法调用这些函数），故经 bracket 访问私有字段断言构造器接线：
+// 未注入时默认指向 SDK 模块级函数；注入 mock 后 SessionManager 使用注入值。
+// ---------------------------------------------------------------------------
+
+describe('SessionManager 依赖注入扩展（design.md D13）', () => {
+  it('未注入时 4 个注入点默认指向 SDK 模块级函数', () => {
+    const manager = new SessionManager({ cwd: '/tmp/project' });
+    const internals = manager as unknown as {
+      forkSessionFn: unknown;
+      deleteSessionFn: unknown;
+      listSubagentsFn: unknown;
+      getSubagentMessagesFn: unknown;
+    };
+    expect(internals.forkSessionFn).toBe(forkSession);
+    expect(internals.deleteSessionFn).toBe(deleteSession);
+    expect(internals.listSubagentsFn).toBe(listSubagents);
+    expect(internals.getSubagentMessagesFn).toBe(getSubagentMessages);
+  });
+
+  it('注入自定义 mock 后 SessionManager 使用注入值（而非默认 SDK 函数）', () => {
+    const forkSessionFn = vi.fn(async () => ({ sessionId: 'fork-1' }));
+    const deleteSessionFn = vi.fn(async () => undefined);
+    const listSubagentsFn = vi.fn(async () => ['sub-1']);
+    const getSubagentMessagesFn = vi.fn(async () => [] as SDKStoredMessage[]);
+    const manager = new SessionManager({
+      cwd: '/tmp/project',
+      forkSessionFn,
+      deleteSessionFn,
+      listSubagentsFn,
+      getSubagentMessagesFn,
+    });
+    const internals = manager as unknown as {
+      forkSessionFn: unknown;
+      deleteSessionFn: unknown;
+      listSubagentsFn: unknown;
+      getSubagentMessagesFn: unknown;
+    };
+    expect(internals.forkSessionFn).toBe(forkSessionFn);
+    expect(internals.deleteSessionFn).toBe(deleteSessionFn);
+    expect(internals.listSubagentsFn).toBe(listSubagentsFn);
+    expect(internals.getSubagentMessagesFn).toBe(getSubagentMessagesFn);
   });
 });
 

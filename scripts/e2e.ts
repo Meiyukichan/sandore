@@ -18,8 +18,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createClaudeClient } from '../packages/sdk/claude/src/client';
-import type { GlobalEvent, QuestionInfo } from '../packages/sdk/claude/src/types';
+import { createClaudeClient } from '@meiyukichan/claude-sdk';
+import type { GlobalEvent, QuestionInfo } from '@meiyukichan/claude-sdk';
 
 // ---------------------------------------------------------------------------
 // 配置

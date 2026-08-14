@@ -8,21 +8,21 @@
  * cwd 作为默认 directory（会话创建与事件过滤）；本库不启动任何 HTTP 服务器（D1）。
  * client.close() 关闭全部会话、控制 Query 与全局事件通道。
  */
-import type { GlobalEvent, ModelListResponse, SessionInputAdmitted, SessionMessagesResponse, SessionV2Info } from './types';
+import type { GlobalEvent, ModelListResponse, SessionInputAdmitted, SessionMessagesResponse, SessionV2Info } from './types.js';
 
-import { GlobalEventManager } from './events';
-import type { GlobalEventOptions } from './events';
-import { ModelManager } from './model';
-import type { ModelListOptions } from './model';
-import { SessionManager } from './session';
+import { GlobalEventManager } from './events.js';
+import type { GlobalEventOptions } from './events.js';
+import { ModelManager } from './model.js';
+import type { ModelListOptions } from './model.js';
+import { SessionManager } from './session.js';
 import type {
   CreateSessionOptions,
   GetSessionMessagesFn,
   SessionMessagesOptions,
   SessionPromptInput,
   SessionWaitOptions,
-} from './session';
-import type { QueryFactory, RespondPermissionInput, RespondQuestionInput } from './session-state';
+} from './session.js';
+import type { QueryFactory, RespondPermissionInput, RespondQuestionInput } from './session-state.js';
 
 /** createClaudeClient 构造参数。 */
 export interface CreateClientOptions {

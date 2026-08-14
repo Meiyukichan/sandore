@@ -17,7 +17,7 @@
  */
 import type { NonNullableUsage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import { SessionManager } from './session';
+import { SessionManager } from './session.js';
 import type {
   EventID,
   GlobalEvent,
@@ -26,7 +26,7 @@ import type {
   PartID,
   TextPart,
   ToolPart,
-} from './types';
+} from './types.js';
 
 /** GlobalEventManager 构造参数。 */
 export interface GlobalEventManagerOptions {

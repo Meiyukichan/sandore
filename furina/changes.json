@@ -1,7 +1,30 @@
 {
   "framework": "@meiyukichan/furina",
   "version": "1.0.3",
-  "changes": [],
+  "changes": [
+    {
+      "name": "sdk-engine-interfaces",
+      "path": "furina/changes/sdk-engine-interfaces",
+      "description": "补足工作流引擎所需的 SDK 接口能力，评估 packages/sdk/claude 是否满足 agentic-native 引擎的权限申请与问题选择等事件需求",
+      "createdAt": "2026-08-12T13:53:31.008Z",
+      "features": 0,
+      "todo": 0,
+      "artifacts": [
+        {
+          "id": "proposal",
+          "outputPath": "furina/changes/sdk-engine-interfaces/proposal.md"
+        },
+        {
+          "id": "design",
+          "outputPath": "furina/changes/sdk-engine-interfaces/design.md"
+        },
+        {
+          "id": "specs",
+          "outputPath": "furina/changes/sdk-engine-interfaces/specs/**/*.md"
+        }
+      ]
+    }
+  ],
   "archive": [
     {
       "name": "claude-sdk-adapter",
@@ -13,23 +36,23 @@
       "artifacts": [
         {
           "id": "proposal",
-          "outputPath": "furina/changes/claude-sdk-adapter/proposal.md"
+          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/proposal.md"
         },
         {
           "id": "design",
-          "outputPath": "furina/changes/claude-sdk-adapter/design.md"
+          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/design.md"
         },
         {
           "id": "specs",
-          "outputPath": "furina/changes/claude-sdk-adapter/specs/**/*.md"
+          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/specs/**/*.md"
         },
         {
           "id": "api",
-          "outputPath": "furina/changes/claude-sdk-adapter/api.yaml"
+          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/api.yaml"
         },
         {
           "id": "plan",
-          "outputPath": "furina/changes/claude-sdk-adapter/plan.json"
+          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/plan.json"
         }
       ]
     }

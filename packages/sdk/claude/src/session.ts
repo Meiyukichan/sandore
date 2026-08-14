@@ -18,24 +18,36 @@
  * 别名键（resolveSessionId 归一化），location.directory 取客户端 cwd；projectID 由 cwd 编码生成；
  * prompt 的 message ID 以 msg_ 前缀生成。
  */
-import { getSessionMessages, query } from '@anthropic-ai/claude-agent-sdk';
+import {
+  deleteSession,
+  forkSession,
+  getSessionMessages,
+  getSubagentMessages,
+  listSubagents,
+  query,
+} from '@anthropic-ai/claude-agent-sdk';
 import type {
+  ForkSessionOptions,
+  ForkSessionResult,
   GetSessionMessagesOptions,
+  GetSubagentMessagesOptions,
+  ListSubagentsOptions,
   PermissionMode,
   SDKMessage,
   SDKUserMessage,
   SessionMessage as SDKStoredMessage,
+  SessionMutationOptions,
   ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 
-import { SessionNotFoundError, SessionState } from './session-state';
+import { SessionNotFoundError, SessionState } from './session-state.js';
 import type {
   QueryFactory,
   RespondPermissionInput,
   RespondQuestionInput,
   SessionPhase,
   ToolAuthMode,
-} from './session-state';
+} from './session-state.js';
 import type {
   Delivery,
   GlobalEvent,
@@ -48,7 +60,7 @@ import type {
   SessionMessageAssistantContent,
   SessionMessagesResponse,
   SessionV2Info,
-} from './types';
+} from './types.js';
 
 /** 会话创建参数（client.session.create 入参）。 */
 export interface CreateSessionOptions {
@@ -113,6 +125,31 @@ export type GetSessionMessagesFn = (
   options?: GetSessionMessagesOptions,
 ) => Promise<SDKStoredMessage[]>;
 
+/** 分叉会话函数（依赖注入点，默认 Claude SDK forkSession；design.md D13/D1）。 */
+export type ForkSessionFn = (
+  sessionId: string,
+  options?: ForkSessionOptions,
+) => Promise<ForkSessionResult>;
+
+/** 删除会话函数（依赖注入点，默认 Claude SDK deleteSession；design.md D13/D6）。 */
+export type DeleteSessionFn = (
+  sessionId: string,
+  options?: SessionMutationOptions,
+) => Promise<void>;
+
+/** 列出子 Agent 函数（依赖注入点，默认 Claude SDK listSubagents；design.md D13/D7）。 */
+export type ListSubagentsFn = (
+  sessionId: string,
+  options?: ListSubagentsOptions,
+) => Promise<string[]>;
+
+/** 获取子 Agent 消息函数（依赖注入点，默认 Claude SDK getSubagentMessages；design.md D13/D7）。 */
+export type GetSubagentMessagesFn = (
+  sessionId: string,
+  agentId: string,
+  options?: GetSubagentMessagesOptions,
+) => Promise<SDKStoredMessage[]>;
+
 /** SessionManager 构造参数。 */
 export interface SessionManagerOptions {
   /** 客户端工作目录（会话创建默认 location 与 getSessionMessages 的 dir）。 */
@@ -121,6 +158,14 @@ export interface SessionManagerOptions {
   queryFn?: QueryFactory;
   /** 获取会话历史消息的函数（默认 Claude SDK getSessionMessages）。 */
   getSessionMessagesFn?: GetSessionMessagesFn;
+  /** 分叉会话函数（默认 Claude SDK forkSession）。 */
+  forkSessionFn?: ForkSessionFn;
+  /** 删除会话函数（默认 Claude SDK deleteSession）。 */
+  deleteSessionFn?: DeleteSessionFn;
+  /** 列出子 Agent 函数（默认 Claude SDK listSubagents）。 */
+  listSubagentsFn?: ListSubagentsFn;
+  /** 获取子 Agent 消息函数（默认 Claude SDK getSubagentMessages）。 */
+  getSubagentMessagesFn?: GetSubagentMessagesFn;
   /** system/init 捕获默认超时毫秒数。 */
   initTimeoutMs?: number;
 }
@@ -138,12 +183,20 @@ export class SessionManager {
   private readonly cwd: string;
   private readonly queryFn: QueryFactory;
   private readonly getSessionMessagesFn: GetSessionMessagesFn;
+  private readonly forkSessionFn: ForkSessionFn;
+  private readonly deleteSessionFn: DeleteSessionFn;
+  private readonly listSubagentsFn: ListSubagentsFn;
+  private readonly getSubagentMessagesFn: GetSubagentMessagesFn;
   private readonly initTimeoutMs: number;
 
   constructor(options: SessionManagerOptions) {
     this.cwd = options.cwd;
     this.queryFn = options.queryFn ?? query;
     this.getSessionMessagesFn = options.getSessionMessagesFn ?? getSessionMessages;
+    this.forkSessionFn = options.forkSessionFn ?? forkSession;
+    this.deleteSessionFn = options.deleteSessionFn ?? deleteSession;
+    this.listSubagentsFn = options.listSubagentsFn ?? listSubagents;
+    this.getSubagentMessagesFn = options.getSubagentMessagesFn ?? getSubagentMessages;
     this.initTimeoutMs = options.initTimeoutMs ?? DEFAULT_INIT_TIMEOUT_MS;
   }
 

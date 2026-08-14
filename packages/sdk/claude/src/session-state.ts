@@ -15,6 +15,7 @@ import type {
   CanUseTool,
   PermissionMode,
   PermissionResult,
+  RewindFilesResult,
   SDKControlInterruptResponse,
   SDKMessage,
   SDKSessionStateChangedMessage,
@@ -29,7 +30,7 @@ import type {
   QuestionInfo,
   SessionNotFoundError as SessionNotFoundErrorShape,
   TimeoutError as TimeoutErrorShape,
-} from './types';
+} from './types.js';
 
 /** 会话状态值（starting=init 前；running=执行中；idle=空闲；requires_action=等待用户输入；ended=已关闭）。 */
 export type SessionStateValue = 'starting' | 'idle' | 'running' | 'requires_action' | 'ended';
@@ -122,6 +123,15 @@ export interface QueryLike {
   [Symbol.asyncIterator](): AsyncGenerator<SDKMessage, void>;
   interrupt(): Promise<SDKControlInterruptResponse | undefined>;
   close(): void;
+  /** 将文件回滚到指定用户消息之前的状态（需 enableFileCheckpointing；design.md D13/D1）。
+   * 可选成员：结构子集，SDK Query 满足；测试 FakeQuery 等简化实现不受影响。 */
+  rewindFiles?(
+    userMessageId: string,
+    options?: { dryRun?: boolean },
+  ): Promise<RewindFilesResult>;
+  /** 切换权限模式（仅 streaming input mode 可用；design.md D13/D3）。
+   * 可选成员：结构子集，SDK Query 满足；测试 FakeQuery 等简化实现不受影响。 */
+  setPermissionMode?(mode: PermissionMode): Promise<void>;
 }
 
 /** 创建 Query 的工厂（依赖注入点，默认 Claude SDK query）。 */
