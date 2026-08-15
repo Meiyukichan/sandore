@@ -3,58 +3,14 @@
   "version": "1.0.3",
   "changes": [
     {
-      "name": "sdk-engine-interfaces",
-      "path": "furina/changes/sdk-engine-interfaces",
-      "description": "补足工作流引擎所需的 SDK 接口能力，评估 packages/sdk/claude 是否满足 agentic-native 引擎的权限申请与问题选择等事件需求",
-      "createdAt": "2026-08-12T13:53:31.008Z",
+      "name": "task-1-skeleton",
+      "path": "furina/changes/task-1-skeleton",
+      "description": "实现 sandore DAG 工作流引擎作为 DSH 插件的第一步骨架，包含 4 个包、Service Definition 与最小端到端链路",
+      "createdAt": "2026-08-15T09:24:49.919Z",
       "features": 0,
       "todo": 0,
-      "artifacts": [
-        {
-          "id": "proposal",
-          "outputPath": "furina/changes/sdk-engine-interfaces/proposal.md"
-        },
-        {
-          "id": "design",
-          "outputPath": "furina/changes/sdk-engine-interfaces/design.md"
-        },
-        {
-          "id": "specs",
-          "outputPath": "furina/changes/sdk-engine-interfaces/specs/**/*.md"
-        }
-      ]
+      "artifacts": []
     }
   ],
-  "archive": [
-    {
-      "name": "claude-sdk-adapter",
-      "path": "furina/archive/2026-08-11-claude-sdk-adapter",
-      "description": "在packages/sdk/claude下编写@meiyukichan/claude-sdk适配器层SDK，将Claude Code SDK接口逐步适配为openapi.json协议，覆盖会话创建、消息发送暂停、模型获取、流式消息与事件系统",
-      "createdAt": "2026-08-11T14:39:46.347Z",
-      "closedAt": "2026-08-11T17:29:29.848Z",
-      "features": 3,
-      "artifacts": [
-        {
-          "id": "proposal",
-          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/proposal.md"
-        },
-        {
-          "id": "design",
-          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/design.md"
-        },
-        {
-          "id": "specs",
-          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/specs/**/*.md"
-        },
-        {
-          "id": "api",
-          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/api.yaml"
-        },
-        {
-          "id": "plan",
-          "outputPath": "furina/archive/2026-08-11-claude-sdk-adapter/plan.json"
-        }
-      ]
-    }
-  ]
+  "archive": []
 }
