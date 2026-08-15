@@ -21,3 +21,4 @@ example/
 package-lock.json
 coverage*
 docs/engine/MASE.md
+docs/engine/dynamic-workflow-engine.md
