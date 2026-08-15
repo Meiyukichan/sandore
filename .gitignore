@@ -20,3 +20,4 @@ full_coverage.txt
 example/
 package-lock.json
 coverage*
+docs/engine/MASE.md
