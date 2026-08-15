@@ -1,18 +1,27 @@
 /**
- * step-runner.ts（StepRunner）的单元测试：shell 成功/非零退出/超时/中止，
- * prompt 成功/终端失败/provider-model 三层回退。
+ * step-runner.ts（StepRunner）的单元测试：shell 成功/非零退出/超时/中止/stdin
+ * 注入，prompt 成功/终端失败/provider-model 三层回退/透传变量替换，agent 可续接
+ * 子代理/fillParams，skill/mcp 名称校验与前缀。
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-runner.spec
  */
 import { Context } from '@deepseek-ai/cordis';
-import type { LlmRuntime } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm';
 import { describe, expect, it } from 'vitest';
 
 import type { WorkflowStep } from '../../workflow/src/schema.ts';
+import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { textChunks } from '../../workflow/tests/mocks/llm.ts';
 import { FakeLlm } from '../../workflow/tests/mocks/llm.ts';
 import { FakeShell } from '../../workflow/tests/mocks/shell.ts';
+import { FakeSubagents } from '../../workflow/tests/mocks/subagents.ts';
+import { FakeSubprocess } from '../../workflow/tests/mocks/subprocess.ts';
 import { StepRunner } from './step-runner.ts';
 import type { StepRunRequest, StepRunnerConfig } from './step-runner.ts';
+
+/** 提取文本 ContentBlock 的纯文本（非文本块返回空串）。 */
+function textOf(block: ContentBlock | undefined): string {
+  return block !== undefined && block.type === 'text' ? block.text : '';
+}
 
 /** 组装 shell Step 定义（可选 Step 级 timeout，单位分钟）。 */
 function shellStep(command: string, timeout?: number): WorkflowStep {
@@ -23,18 +32,59 @@ function shellStep(command: string, timeout?: number): WorkflowStep {
   };
 }
 
-/** 组装 prompt Step 定义（可选 providerId/modelId）。 */
-function promptStep(options?: { providerId?: string; modelId?: string }): WorkflowStep {
+/** 组装带 inputFrom 的 shell Step 定义。 */
+function shellStepWithInputFrom(command: string): WorkflowStep {
+  return {
+    id: 'step-sh',
+    command: { type: 'shell', value: { command } },
+    inputFrom: [{ id: 'in-1', path: 'stg-x.step-p' }],
+  };
+}
+
+/** 组装 prompt Step 定义（可选 providerId/modelId/promptText）。 */
+function promptStep(options?: { providerId?: string; modelId?: string; promptText?: string }): WorkflowStep {
   return {
     id: 'step-p',
     command: {
       type: 'prompt',
       value: {
-        promptText: 'summarize the input',
+        promptText: options?.promptText ?? 'summarize the input',
         ...(options?.providerId === undefined ? {} : { providerId: options.providerId }),
         ...(options?.modelId === undefined ? {} : { modelId: options.modelId }),
       },
     },
+  };
+}
+
+/** 组装 agent Step 定义（可选 providerId/modelId/agentParamsTemplate）。 */
+function agentStep(options?: { providerId?: string; modelId?: string; agentParamsTemplate?: string }): WorkflowStep {
+  return {
+    id: 'step-a',
+    command: {
+      type: 'agent',
+      value: {
+        promptText: 'code-reviewer',
+        ...(options?.agentParamsTemplate === undefined ? {} : { agentParamsTemplate: options.agentParamsTemplate }),
+        ...(options?.providerId === undefined ? {} : { providerId: options.providerId }),
+        ...(options?.modelId === undefined ? {} : { modelId: options.modelId }),
+      },
+    },
+  };
+}
+
+/** 组装 skill Step 定义。 */
+function skillStep(promptText: string): WorkflowStep {
+  return {
+    id: 'step-sk',
+    command: { type: 'skill', value: { promptText } },
+  };
+}
+
+/** 组装 mcp Step 定义。 */
+function mcpStep(promptText: string): WorkflowStep {
+  return {
+    id: 'step-m',
+    command: { type: 'mcp', value: { promptText } },
   };
 }
 
@@ -49,19 +99,28 @@ function request(step: WorkflowStep, overrides?: Partial<StepRunRequest>): StepR
   };
 }
 
-/** 组装 StepRunner 测试环境（注入 mock llm/shell）。 */
+/** 组装 StepRunner 测试环境（注入 mock llm/shell/subagents/agents/subprocess）。 */
 function harness(config: StepRunnerConfig = { defaultTimeoutMs: 60000 }): {
   ctx: Context;
   llm: FakeLlm;
   shell: FakeShell;
+  subagents: FakeSubagents;
+  agents: FakeAgentRegistry;
+  subprocess: FakeSubprocess;
   runner: StepRunner;
 } {
   const ctx = new Context();
   const llm = new FakeLlm();
   const shell = new FakeShell();
+  const subagents = new FakeSubagents();
+  const agents = new FakeAgentRegistry();
+  const subprocess = new FakeSubprocess();
   ctx.provide('llm', llm as unknown as LlmRuntime);
   ctx.provide('shell', shell);
-  return { ctx, llm, shell, runner: new StepRunner(ctx, config) };
+  ctx.provide('subagents', subagents);
+  ctx.provide('agents', agents);
+  ctx.provide('subprocess', subprocess);
+  return { ctx, llm, shell, subagents, agents, subprocess, runner: new StepRunner(ctx, config) };
 }
 
 describe('StepRunner shell', () => {
@@ -144,6 +203,114 @@ describe('StepRunner shell', () => {
 
     await expect(runner.run(request(shellStep('sleep 10')))).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
   });
+
+  it('uses subprocess.spawn with JSON stdin when inputFrom resolves to content', async () => {
+    const { subprocess, shell, runner } = harness();
+    const previousOutputs = [{ name: 'prev', id: 'step-p', returnPrompt: 'hello', files: [] }];
+
+    await runner.run(request(shellStepWithInputFrom('node read-stdin.js'), { previousOutputs }));
+
+    expect(subprocess.specs).toHaveLength(1);
+    expect(shell.specs).toHaveLength(0);
+    expect(subprocess.specs[0]?.stdio.stdin).toEqual({ data: JSON.stringify(previousOutputs) });
+    expect(subprocess.specs[0]?.argv[0]).toBe('/usr/bin/node');
+  });
+
+  it('still uses shell.run for a simple shell step without stdin/env injection', async () => {
+    const { subprocess, shell, runner } = harness();
+    shell.runHandler = async spec => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: 'hello', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
+
+    await expect(runner.run(request(shellStep('echo hello')))).resolves.toEqual({
+      output: [{ type: 'text', text: 'hello' }],
+    });
+    expect(shell.specs).toHaveLength(1);
+    expect(subprocess.specs).toHaveLength(0);
+  });
+
+  it('uses subprocess.spawn with merged env when non-empty passThroughVars are present', async () => {
+    const { subprocess, shell, runner } = harness();
+    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+
+    await runner.run(
+      request(shellStep('echo $projectName'), { passThroughVars: { projectName: 'sandore', empty: '' } }),
+    );
+
+    expect(subprocess.specs).toHaveLength(1);
+    expect(shell.specs).toHaveLength(0);
+    expect(subprocess.specs[0]?.env).toEqual({ projectName: 'sandore' });
+  });
+
+  it('injects in-loop-turn and all-loop-turn into subprocess env when loopTurn > 0', async () => {
+    const { subprocess, runner } = harness();
+    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+
+    await runner.run(
+      request(shellStep('echo hi'), {
+        passThroughVars: { projectName: 'sandore' },
+        loopTurn: 3,
+        loopMaxIterations: 5,
+      }),
+    );
+
+    expect(subprocess.specs[0]?.env).toEqual({
+      projectName: 'sandore',
+      'in-loop-turn': '3',
+      'all-loop-turn': '5',
+    });
+  });
+
+  it('does not inject empty passThroughVars and stays on the simple path when nothing non-empty remains', async () => {
+    const { subprocess, shell, runner } = harness();
+    shell.runHandler = async spec => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: '', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
+
+    await runner.run(request(shellStep('echo hi'), { passThroughVars: { empty: '' } }));
+
+    expect(subprocess.specs).toHaveLength(0);
+    expect(shell.specs).toHaveLength(1);
+  });
+
+  it('maps subprocess timedOut to STEP_TIMEOUT', async () => {
+    const { subprocess, runner } = harness();
+    subprocess.outcomeHandler = () => ({ exitCode: null, signal: 'SIGTERM', timedOut: true });
+
+    await expect(
+      runner.run(request(shellStep('sleep 10'), { passThroughVars: { a: '1' } })),
+    ).rejects.toMatchObject({ code: 'STEP_TIMEOUT' });
+  });
+
+  it('replaces ${projectName} in the shell command with its passThroughVar value', async () => {
+    const { subprocess, runner } = harness();
+    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+
+    await runner.run(request(shellStep('echo ${projectName}'), { passThroughVars: { projectName: 'sandore' } }));
+
+    expect(subprocess.specs[0]?.argv).toEqual(['/usr/bin/echo', 'sandore']);
+  });
+
+  it('splits a quoted shell command preserving spaces within quotes', async () => {
+    const { subprocess, runner } = harness();
+    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+
+    await runner.run(request(shellStep('echo "hello world"'), { passThroughVars: { a: '1' } }));
+
+    expect(subprocess.specs[0]?.argv).toEqual(['/usr/bin/echo', 'hello world']);
+  });
 });
 
 describe('StepRunner prompt', () => {
@@ -192,5 +359,182 @@ describe('StepRunner prompt', () => {
 
     expect(llm.calls[0]?.provider).toBe('b');
     expect(llm.calls[0]?.model).toBe('b-model');
+  });
+
+  it('replaces ${projectName} with passThroughVar and leaves unknown vars intact', async () => {
+    const { llm, runner } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('ok');
+
+    await runner.run(
+      request(promptStep({ promptText: 'build ${projectName} for ${unknown}' }), {
+        passThroughVars: { projectName: 'sandore' },
+      }),
+    );
+
+    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    expect(promptText).toContain('sandore');
+    expect(promptText).not.toContain('${projectName}');
+    expect(promptText).toContain('${unknown}');
+  });
+});
+
+describe('StepRunner agent', () => {
+  it('runs via continuable subagent and returns sessionMeta with real childId', async () => {
+    const { subagents, agents, runner } = harness();
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'agent output' }]));
+    agents.register(child);
+
+    const result = await runner.run(request(agentStep({ providerId: 'p', modelId: 'm' })));
+
+    expect(subagents.continuableStarts).toHaveLength(1);
+    expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).toContain('code-reviewer');
+    expect(result.output).toEqual([{ type: 'text', text: 'agent output' }]);
+    expect(result.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'agent' });
+  });
+
+  it('prefixes agent prompt with 使用 Agent： when name is in agents', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      agents: ['code-reviewer'],
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await runner.run(request(agentStep()));
+
+    expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).toContain('使用 Agent：code-reviewer');
+  });
+
+  it('injects 当前Step参数 sub-section when agentParamsTemplate is defined', async () => {
+    const { subagents, agents, llm, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    llm.streamHandler = () => textChunks('{"lintErrorCount": 3}');
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await runner.run(request(agentStep({ agentParamsTemplate: '审查：${lintErrorCount} 个错误' })));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('{"lintErrorCount": 3}');
+  });
+
+  it('falls back to agentParamsTemplate raw text when fillParams temp session errors', async () => {
+    const { subagents, agents, llm, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    llm.streamHandler = () => textChunks('', { kind: 'error', failure: { message: 'boom', code: 'X' } });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('TEMPLATE_RAW');
+  });
+
+  it('falls back to agentParamsTemplate raw text when fillParams temp session aborts', async () => {
+    const { subagents, agents, llm, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    llm.streamHandler = () => textChunks('', { kind: 'aborted', failure: { message: 'cancelled', code: 'X' } });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('TEMPLATE_RAW');
+  });
+
+  it('falls back to agentParamsTemplate raw text when fillParams temp session stream throws', async () => {
+    const { subagents, agents, llm, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    llm.streamHandler = () => (async function* () {
+      yield { type: 'block-start', index: 0, blockType: 'text' };
+      throw new Error('stream exploded');
+    })();
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('TEMPLATE_RAW');
+  });
+});
+
+describe('StepRunner skill/mcp', () => {
+  it('prefixes skill prompt with 使用 skill： when name is in skills', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      skills: ['code-review-skill'],
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await runner.run(request(skillStep('code-review-skill')));
+
+    expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).toContain('使用 skill：code-review-skill');
+  });
+
+  it('falls back to plain prompt without error when skill name is not in skills', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      skills: ['other-skill'],
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await expect(runner.run(request(skillStep('unknown-skill')))).resolves.toBeDefined();
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('unknown-skill');
+    expect(promptText).not.toContain('使用 skill：');
+  });
+
+  it('prefixes mcp prompt with 使用 MCP： when name is in mcps', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      mcps: ['filesystem-mcp'],
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await runner.run(request(mcpStep('filesystem-mcp')));
+
+    expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).toContain('使用 MCP：filesystem-mcp');
   });
 });

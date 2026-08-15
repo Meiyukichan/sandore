@@ -8,9 +8,12 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 
 import type {
+  AskUserQuestionPayload,
   BranchMeta,
   CommandConfig,
+  FinalizeAssessResult,
   FinalizeMeta,
+  GateEvalResult,
   InputFromItem,
   OutputToItem,
   PassThroughVar,
@@ -20,9 +23,12 @@ import type {
 } from './schema.ts'
 
 export type {
+  AskUserQuestionPayload,
   BranchMeta,
   CommandConfig,
+  FinalizeAssessResult,
   FinalizeMeta,
+  GateEvalResult,
   InputFromItem,
   OutputToItem,
   PassThroughVar,
@@ -145,19 +151,11 @@ export interface PendingQuestion {
   questions: AskUserQuestionPayload
 }
 
-/** 向用户提问的载荷。 */
-export interface AskUserQuestionPayload {
-  questions: Array<{
-    id: string
-    question: string
-    header?: string
-    options?: Array<{
-      label: string
-      description?: string
-    }>
-    multi_select?: boolean
-  }>
-}
+/** 收尾最终结果（done/ask/error 三态联合）。 */
+export type FinalizeOutcome =
+  | { type: 'done'; completionType: 'completed'; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
+  | { type: 'ask'; assessResult: FinalizeAssessResult }
+  | { type: 'error'; errorDetail: string; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
 
 /** 等待用户决定的权限请求。 */
 export interface PendingPermission {

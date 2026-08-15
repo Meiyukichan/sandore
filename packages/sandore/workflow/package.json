@@ -39,6 +39,8 @@
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
     "@deepseek-ai/dsh-storage": "0.1.0-rc.6",
     "@deepseek-ai/dsh-storage-domain": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subagent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.6",
     "@deepseek-ai/schemastery": "3.18.1"
   },
   "devDependencies": {
@@ -50,6 +52,8 @@
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
     "@deepseek-ai/dsh-storage": "0.1.0-rc.6",
     "@deepseek-ai/dsh-storage-domain": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subagent": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.6",
     "@deepseek-ai/schemastery": "3.18.1"
   }
 }

@@ -126,6 +126,8 @@
 - 不要过度思考，你的职责不是设计或者开发
 ```
 
+> **DSH 映射**：`runTempSession()` → `ctx.llm.stream()`（一次性只读临时推理，红线规则作为 system prompt 约束，provider/model 走 Task 2 §6.2 的三层回退）。返回的 `paramsText` 进入主会话结构化提示词的「### 当前Step参数」子节。**Task 3 必须实现**（`agentParamsTemplate` schema 字段的消费者；不实现则该字段无消费、agent 类型退化为 prompt 类型）。
+
 ### 1.4 权限自动回复（notifyPermission）
 
 收到 `permission.asked` 事件时，先尝试 `autoReplyPermission()`（V2.3: 通过 `_getPermissionMode()` 动态获取权限模式）：
@@ -139,6 +141,8 @@
 > v2.4.2 的 `resolveRawInputOutputs()` 将 `inputFrom` 解析的 Step 输出 JSON 数组写入子进程 stdin。DSH 中 `ctx.shell.run()` 是高层 `bash -c`（无 stdin 注入），需改用 `ctx.subprocess.spawn()`（提供原始 stdio 流）。简单命令用 `ctx.shell.run()`，需 stdin 交互/流式输出/终端会话用 `ctx.subprocess.spawn()`。
 
 > **shell Step 的沙箱**：DSH 的 shell 执行受沙箱约束（`ctx.sandbox`，`SandboxMode = 'read-only'|'workspace-write'|'danger-full-access'`；`ctx.shell.get sandboxMode()`）。工作流 Step 的 shell 命令默认走当前组合的沙箱模式，产物写入需 `workspace-write` 及以上。这与 sandore 引擎的 `permissionMode` 是正交的两个维度：`permissionMode` 控制 AI Agent 的权限自动回复，`sandboxMode` 控制 shell/fs 的系统级限制。
+
+> **Task 3 落地范围（完整实现 stdin/env 注入，无需「建接缝」）**：`ctx.subprocess` 是 DSH 现成服务（`resolveExecutable`/`spawn`/`spawnTerminal`），sandore 以软依赖 `ctx.get('subprocess')` 获取即可，**不是新建类型声明**。落地点：① shell Step 有 `inputFrom` 时把解析 JSON 数组写 stdin；② 分支 shell（`evaluateBash`）做透传变量替换（`replacePassThroughVars`）+ 环境变量注入（非空 `passThroughVars` + 循环迭代上下文 `in-loop-turn`/`all-loop-turn`）+ stdin 注入（`readStepOutputForStdin` 读 output.json）。简单命令（无注入需求）仍走 `ctx.shell.run()`。
 
 ---
 

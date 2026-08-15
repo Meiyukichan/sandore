@@ -43,23 +43,49 @@
       "artifacts": [
         {
           "id": "proposal",
-          "outputPath": "furina/changes/task-2-minimal-engine/proposal.md"
+          "outputPath": "furina/archive/2026-08-15-task-2-minimal-engine/proposal.md"
         },
         {
           "id": "design",
-          "outputPath": "furina/changes/task-2-minimal-engine/design.md"
+          "outputPath": "furina/archive/2026-08-15-task-2-minimal-engine/design.md"
         },
         {
           "id": "specs",
-          "outputPath": "furina/changes/task-2-minimal-engine/specs/**/*.md"
+          "outputPath": "furina/archive/2026-08-15-task-2-minimal-engine/specs/**/*.md"
         },
         {
           "id": "api",
-          "outputPath": "furina/changes/task-2-minimal-engine/api.yaml"
+          "outputPath": "furina/archive/2026-08-15-task-2-minimal-engine/api.yaml"
         },
         {
           "id": "plan",
-          "outputPath": "furina/changes/task-2-minimal-engine/plan.json"
+          "outputPath": "furina/archive/2026-08-15-task-2-minimal-engine/plan.json"
+        }
+      ]
+    },
+    {
+      "name": "task-3-full-dag",
+      "path": "furina/archive/2026-08-15-task-3-full-dag",
+      "description": "补齐完整 DAG 能力：agent/skill/mcp Step 可续接子代理、分支评估、循环与嵌套循环、Finalize 拆分透传变量与门禁审查，完成 Task 3。",
+      "createdAt": "2026-08-15T16:17:01.408Z",
+      "closedAt": "2026-08-15T21:25:40.269Z",
+      "features": 6,
+      "artifacts": [
+        {
+          "id": "proposal",
+          "outputPath": "furina/changes/task-3-full-dag/proposal.md"
+        },
+        {
+          "id": "design",
+          "outputPath": "furina/changes/task-3-full-dag/design.md"
+        },
+        {
+          "id": "specs",
+          "outputPath": "furina/changes/task-3-full-dag/specs/**/*.md"
+        },
+        {
+          "id": "plan",
+          "outputPath": "furina/changes/task-3-full-dag/plan.json"
         }
       ]
     }

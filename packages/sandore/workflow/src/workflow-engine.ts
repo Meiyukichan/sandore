@@ -34,6 +34,7 @@ import type {
 } from './types.ts';
 import { parseWorkflowYaml } from './yaml-parser.ts';
 
+import { FinalizeManager } from '../../microflow/src/finalize-manager.ts';
 import { StageExecutor } from '../../microflow/src/stage-executor.ts';
 import type { StageStepHooks } from '../../microflow/src/stage-executor.ts';
 import type { StepRunnerConfig } from '../../microflow/src/step-runner.ts';
@@ -265,7 +266,15 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     await this.persistState(active);
     this.emitStart(session, info);
 
-    const navigator = new WorkflowDagNavigator(definition);
+    const runnerConfig = this.runnerConfig(definition);
+    const navigator = new WorkflowDagNavigator(
+      definition,
+      this.ctx,
+      runnerConfig,
+      { activeLoopStack: active.state.activeLoopStack, activeLoopIterationStack: active.state.activeLoopIterationStack },
+    );
+    const loopManager = navigator.loopManagerInstance;
+    const finalizeManager = new FinalizeManager(this.ctx, runnerConfig);
     let stageId = navigator.currentNodeId;
 
     while (stageId !== '') {
@@ -298,9 +307,13 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           jobId: active.state.jobId,
           taskId: active.state.taskId,
         },
-        runnerConfig: this.runnerConfig(),
+        runnerConfig,
         signal,
         hooks,
+        loopManager,
+        finalizeManager,
+        resolveNextNodes: (nodeId, context) => navigator.resolveNextNodes(nodeId, context),
+        visitCounts: active.state.visitCounts,
         onPersist: async (executed) => {
           // 逐 Step 持久化：每个 Step 完成后立即追加到 executedSteps 并落盘，
           // 崩溃恢复时无需等待 Stage 结束即可读到已完成的 Step 快照。
@@ -349,6 +362,14 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         return;
       }
 
+      if (result.status === 'interacting') {
+        // Step 收尾判定为 ask：Step 进入 interacting，等待用户回复（Task 4 接续）。
+        this.markStageStatus(active, stageId, 'interacting');
+        active.state = { ...active.state, status: 'interacting', updatedAt: now() };
+        await this.persistState(active);
+        return;
+      }
+
       this.markStageStatus(active, stageId, 'completed');
       navigator.setStageContract(stageId, result.stageContract);
       active.state = {
@@ -381,11 +402,14 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     };
   }
 
-  private runnerConfig(): StepRunnerConfig {
+  private runnerConfig(definition: WorkflowDefinition): StepRunnerConfig {
     return {
       defaultTimeoutMs: this.config.defaultTimeoutMs ?? 7200000,
       ...(this.config.defaultProvider === undefined ? {} : { defaultProvider: this.config.defaultProvider }),
       ...(this.config.defaultModel === undefined ? {} : { defaultModel: this.config.defaultModel }),
+      skills: definition.skills,
+      mcps: definition.mcps,
+      agents: definition.agents,
     };
   }
 

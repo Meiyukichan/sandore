@@ -64,7 +64,7 @@ export const CommandConfigSchema = z.discriminatedUnion('type', [
   }),
 ])
 
-/** Step 输入绑定项：`path` 为 `stageId.stepId[.outputToId]` 引用，`regex` 为文件路径匹配。 */
+/** Step 输入绑定项：`path` 为 `stageId.stepId[.outputToId]` 引用，`regex` 对 Step/Stage 输出文本做正则匹配。 */
 export const InputFromItemSchema = z.object({
   id: z.string(),
   path: z.string().optional(),
@@ -188,6 +188,44 @@ export const StepSessionMetaSchema = z.object({
   command: z.enum(['shell', 'prompt', 'agent', 'skill', 'mcp']),
 })
 
+/** 向用户提问的载荷（对齐 DSH `ask_user_question`）。 */
+export const AskUserQuestionPayloadSchema = z.object({
+  questions: z.array(z.object({
+    id: z.string(),
+    question: z.string(),
+    header: z.string().optional(),
+    options: z.array(z.object({
+      label: z.string(),
+      description: z.string().optional(),
+    })).optional(),
+    multi_select: z.boolean().optional(),
+  })),
+})
+
+/** 收尾第 1 部分（Assessor）结果。 */
+export const FinalizeAssessResultSchema = z.object({
+  completionType: z.enum(['completed', 'ask']),
+  passThroughVars: z.record(z.string(), z.string()),
+  askQuestion: AskUserQuestionPayloadSchema.optional(),
+  errorDetail: z.string().optional(),
+  forkSessionId: z.string(),
+  assessmentRaw: z.string(),
+})
+
+/** 收尾第 2 部分（GateEvaluator）结果。 */
+export const GateEvalResultSchema = z.object({
+  gatesPassed: z.boolean(),
+  primaryPassed: z.boolean().optional(),
+  secondaryPassed: z.boolean().optional(),
+  gateDetails: z.object({
+    primary: z.object({ enabled: z.boolean(), passed: z.boolean().optional() }),
+    secondary: z.object({ enabled: z.boolean(), passed: z.boolean().optional(), prompt: z.string().optional() }),
+  }).optional(),
+  errorDetail: z.string().optional(),
+  gateSessionId: z.string(),
+  assessmentRaw: z.string(),
+})
+
 /** Step 收尾状态元数据。 */
 export const FinalizeMetaSchema = z.object({
   status: z.enum(['evaluating', 'completed', 'ask']),
@@ -195,6 +233,10 @@ export const FinalizeMetaSchema = z.object({
   gateSessionId: z.string().optional(),
   directory: z.string().optional(),
   errorDetail: z.string().optional(),
+  // Task 3 新增：完成判定与两会话结果（精确形状见上方 FinalizeAssessResultSchema/GateEvalResultSchema）。
+  completionType: z.enum(['completed', 'ask']).optional(),
+  assessResult: FinalizeAssessResultSchema.optional(),
+  gateResult: GateEvalResultSchema.optional(),
 })
 
 /** 分支/循环评估元数据。 */
@@ -348,6 +390,9 @@ export type WorkflowStage = z.infer<typeof WorkflowStageSchema>
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>
 export type StepSessionMeta = z.infer<typeof StepSessionMetaSchema>
 export type FinalizeMeta = z.infer<typeof FinalizeMetaSchema>
+export type FinalizeAssessResult = z.infer<typeof FinalizeAssessResultSchema>
+export type GateEvalResult = z.infer<typeof GateEvalResultSchema>
+export type AskUserQuestionPayload = z.infer<typeof AskUserQuestionPayloadSchema>
 export type BranchMeta = z.infer<typeof BranchMetaSchema>
 export type SessionMessage = z.infer<typeof SessionMessageSchema>
 export type RetryRecord = z.infer<typeof RetryRecordSchema>

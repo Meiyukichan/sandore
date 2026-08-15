@@ -1,29 +1,65 @@
 /**
- * 单 Step 执行器（shell / prompt）。
+ * 单 Step 执行器（shell / prompt / agent / skill / mcp）。
  *
- * shell Step 走 `ctx.shell.resolve(request)` → `ctx.shell.run(spec)`，读
- * `ShellRunResult` 判定成功/失败（非零退出/超时/中止 resolve 为结果而非
- * reject）；prompt Step 走三层 provider/model 回退（Step 定义 → 引擎 Config →
- * `ctx.llm` 目录兜底）后 `ctx.llm.stream()`，聚合 block-end 为 `ContentBlock[]`，
- * `finish.reason.kind === 'error'`（或 'aborted'）为终端失败。
+ * shell Step 走 `ctx.shell.resolve(request)` → `ctx.shell.run(spec)`（简单命令，
+ * 无 stdin/env 注入需求）；存在 stdin（`inputFrom` 解析到内容）或非空透传变量
+ * 注入需求时改走 `ctx.subprocess.spawn()`（`stdin: { data }` 写 JSON、`env` 合并）。
+ * prompt Step 走三层 provider/model 回退（Step 定义 → 引擎 Config → `ctx.llm`
+ * 目录兜底）后 `ctx.llm.stream()`，聚合 block-end 为 `ContentBlock[]`；agent /
+ * skill / mcp 三类走可续接子代理（`startContinuable` → `ctx.agents.get(childId)`
+ * → `whenIdle` → `finalAssistantOutput`），agent 定义 `agentParamsTemplate` 时先
+ * `fillParams` 临时会话填充「### 当前Step参数」子节。所有提示词/命令构建前先
+ * `replacePassThroughVars` 替换 `${xxx}` 透传变量（含循环上下文变量）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-runner
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
-import type { ContentBlock, GenerateOptions, LlmRuntime } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, GenerateOptions } from '@deepseek-ai/dsh-llm';
 
 import { SandoreError } from './errors.ts';
+import { idMatches, replacePassThroughVars } from './file-utils.ts';
+import {
+  buildShellEnv,
+  describeError,
+  resolvePassThroughVars,
+  resolveProviderModel as resolveModelRoute,
+  splitCommand,
+  textSummary,
+} from './internal.ts';
+import { finalAssistantOutput } from './subagents.ts';
+import type { Agent } from './subagents.ts';
 import type { CommandConfig, WorkflowStep } from '../../workflow/src/schema.ts';
-import type { ShellExecRequest, ShellRunResult } from '../../workflow/src/shell.ts';
+import type { ShellExecRequest, ShellRunResult, SubprocessSpawnSpec } from '../../workflow/src/shell.ts';
 
 type ShellCommand = Extract<CommandConfig, { type: 'shell' }>;
 type PromptCommand = Extract<CommandConfig, { type: 'prompt' }>;
+type AgentCommand = Extract<CommandConfig, { type: 'agent' }>;
+type SkillCommand = Extract<CommandConfig, { type: 'skill' }>;
+type McpCommand = Extract<CommandConfig, { type: 'mcp' }>;
 
-/** StepRunner 的引擎级配置（provider/model 三层回退的 L2 来源）。 */
+/** 走可续接子代理的三种命令类型（与 prompt 的临时会话路径区分）。 */
+type SubagentCommand = AgentCommand | SkillCommand | McpCommand;
+
+/** prompt/agent/skill/mcp 四种命令的 value（provider/model 三层回退的取值域）。 */
+type ModelRoutedValue =
+  | PromptCommand['value']
+  | AgentCommand['value']
+  | SkillCommand['value']
+  | McpCommand['value'];
+
+/** StepRunner 的引擎级配置（provider/model 三层回退的 L2 来源 + 名称校验数据源）。 */
 export interface StepRunnerConfig {
   readonly defaultTimeoutMs: number;
   readonly defaultProvider?: string;
   readonly defaultModel?: string;
+  /** 工作流级 skills 名称数组（skill 类型名称校验数据源）。 */
+  readonly skills?: readonly string[];
+  /** 工作流级 mcps 名称数组（mcp 类型名称校验数据源）。 */
+  readonly mcps?: readonly string[];
+  /** 工作流级 agents 名称数组（agent 类型名称校验数据源）。 */
+  readonly agents?: readonly string[];
+  /** 宿主主代理（子代理 parent）；缺省时使用最小桩对象。 */
+  readonly hostAgent?: Agent;
 }
 
 /** 前置 Step 的输出摘要（prompt 结构化提示词的参考信息）。 */
@@ -41,66 +77,206 @@ export interface StepRunRequest {
   readonly originalInput: string;
   readonly previousOutputs: readonly PreviousStepOutput[];
   readonly signal?: AbortSignal;
+  /** 当前透传变量（键为变量名，值为已解析字符串）。 */
+  readonly passThroughVars?: Readonly<Record<string, string>>;
+  /** 当前循环迭代序号（1-based；不在循环中缺省视为 0）。 */
+  readonly loopTurn?: number;
+  /** 活跃循环 `maxIterations`（不在循环中缺省视为 0）。 */
+  readonly loopMaxIterations?: number;
+}
+
+/** 单 Step 执行结果附带的会话元数据（agent/skill/mcp 返回真实 childId）。 */
+export interface StepRunSessionMeta {
+  readonly childId?: string;
+  readonly synthetic: boolean;
+  readonly command: CommandConfig['type'];
 }
 
 /** 单 Step 执行结果（成功时的输出块）。 */
 export interface StepRunResult {
   readonly output: ContentBlock[];
+  readonly sessionMeta?: StepRunSessionMeta;
 }
 
 /** 结构化提示词主头部。 */
 const PROMPT_MAIN_HEADER =
   '你是严谨准确的Step执行Agent，你的任务是参考`## 参考信息`和`## 前置Steps输出`中的信息，\n准确完成`## 你的任务`中的要求。';
 
+/** fillParams 临时会话的任务指令。 */
+const FILL_PARAMS_TASK =
+  '你的唯一任务是根据这个参数模板，然后根据（## 输入信息）中的信息，\n或者你可以进行一定程度的探索后，将参数模板的内容按照模板格式填充后返回这个结果！';
+
+/** fillParams 临时会话的红线规则（只读，禁止文件改动与过度探索）。 */
+const FILL_PARAMS_RED_LINES = [
+  '禁止编辑或者创建或者删除任何文件',
+  '禁止过度探索，你的任务是根据已有信息，做足够探索后尽快返回这个参数模板结果',
+  '不要过度思考，你的职责不是设计或者开发',
+] as const;
+
+/** 构造缺省 hostAgent 时的最小 parent 桩（每次返回新对象，避免跨 run 共享可变 `session.events`）。 */
+function createHostAgentStub(): Agent {
+  return {
+    id: 'sandore-host',
+    options: {},
+    session: { events: [] },
+    status: 'idle',
+    whenIdle: async () => {},
+  };
+}
+
+/** 渲染「## 前置Steps输出与产物」子节（无前置输出返回空）。 */
+function renderPreviousOutputs(previousOutputs: readonly PreviousStepOutput[]): string[] {
+  if (previousOutputs.length === 0) {
+    return [];
+  }
+  const sections: string[] = ['', '## 前置Steps输出与产物'];
+  for (const previous of previousOutputs) {
+    sections.push(`### 前置Step: ${previous.name} (${previous.id})`);
+    sections.push(`<${previous.id}>`);
+    sections.push('  <output>');
+    for (const line of previous.returnPrompt.split('\n')) {
+      sections.push(`    ${line}`);
+    }
+    sections.push('  </output>');
+    sections.push('  <artifacts>');
+    for (const file of previous.files) {
+      sections.push(`    - ${file}`);
+    }
+    sections.push('  </artifacts>');
+    sections.push(`</${previous.id}>`);
+  }
+  return sections;
+}
+
+/** 命中名称数组时加前缀，未命中回退纯提示词。 */
+function prefixIfAllowed(resolved: string, prefix: string, name: string, allowed: readonly string[] | undefined): string {
+  if (allowed !== undefined && allowed.includes(name)) {
+    return `${prefix}${resolved}`;
+  }
+  return resolved;
+}
+
+/** 按命令类型构建「## 你的任务」内容（透传变量替换 + 名称校验前缀）。 */
+function buildTaskText(
+  command: SubagentCommand | PromptCommand,
+  vars: Readonly<Record<string, string>>,
+  skills: readonly string[] | undefined,
+  mcps: readonly string[] | undefined,
+  agents: readonly string[] | undefined,
+): string {
+  const name = command.value.promptText;
+  const resolved = replacePassThroughVars(name, vars);
+  switch (command.type) {
+    case 'agent':
+      return prefixIfAllowed(resolved, '使用 Agent：', name, agents);
+    case 'skill':
+      return prefixIfAllowed(resolved, '使用 skill：', name, skills);
+    case 'mcp':
+      return prefixIfAllowed(resolved, '使用 MCP：', name, mcps);
+    default:
+      return resolved;
+  }
+}
+
 /**
- * 构建 prompt Step 的结构化提示词（主头部 + `## 你的任务` + `## 参考信息` +
- * `## 前置Steps输出与产物`）。
+ * 构建结构化提示词（主头部 + `## 你的任务` + `## 参考信息` + 可选
+ * `### 当前Step参数` + `## 前置Steps输出与产物`）。
  */
 function buildPromptText(
-  step: WorkflowStep,
-  command: PromptCommand,
+  taskText: string,
   originalInput: string,
   previousOutputs: readonly PreviousStepOutput[],
+  paramsText: string | undefined,
 ): string {
   const sections: string[] = [];
   sections.push(PROMPT_MAIN_HEADER);
   sections.push('');
   sections.push('## 你的任务');
-  sections.push(command.value.promptText);
+  sections.push(taskText);
   sections.push('');
   sections.push('## 参考信息');
   sections.push('### 用户原始需求');
   sections.push(originalInput);
+  if (paramsText !== undefined) {
+    sections.push('### 当前Step参数');
+    sections.push(paramsText);
+  }
+  sections.push(...renderPreviousOutputs(previousOutputs));
+  return sections.join('\n');
+}
 
-  if (previousOutputs.length > 0) {
-    sections.push('');
-    sections.push('## 前置Steps输出与产物');
-    for (const previous of previousOutputs) {
-      sections.push(`### 前置Step: ${previous.name} (${previous.id})`);
-      sections.push(`<${previous.id}>`);
-      sections.push('  <output>');
-      for (const line of previous.returnPrompt.split('\n')) {
-        sections.push(`    ${line}`);
+/** 构建 fillParams 临时会话提示词（输入信息 + 参数模板 + 任务指令 + 红线规则）。 */
+function buildFillParamsPrompt(
+  originalInput: string,
+  previousOutputs: readonly PreviousStepOutput[],
+  template: string,
+): string {
+  const sections: string[] = [];
+  sections.push('## 输入信息');
+  sections.push('### 用户原始需求');
+  sections.push(originalInput);
+  sections.push(...renderPreviousOutputs(previousOutputs));
+  sections.push('');
+  sections.push('## 参数模板');
+  sections.push(template);
+  sections.push('');
+  sections.push('## 你的任务');
+  sections.push(FILL_PARAMS_TASK);
+  sections.push('');
+  sections.push('## 红线规则');
+  for (const rule of FILL_PARAMS_RED_LINES) {
+    sections.push(`- ${rule}`);
+  }
+  return sections.join('\n');
+}
+
+/** 从 `inputFrom` 的 `stageId.stepId[.outputToId]` 路径取 Step 段 id。 */
+function stepIdFromPath(path: string): string {
+  const segments = path.split('.');
+  return segments[1] ?? segments[0] ?? path;
+}
+
+/** 解析 shell Step 的 stdin：`inputFrom` 命中前置输出时返回 JSON 序列化，否则 undefined。 */
+function resolveShellStdin(step: WorkflowStep, previousOutputs: readonly PreviousStepOutput[]): string | undefined {
+  const inputFrom = step.inputFrom;
+  if (inputFrom === undefined || inputFrom.length === 0) {
+    return undefined;
+  }
+  const matched: PreviousStepOutput[] = [];
+  for (const item of inputFrom) {
+    if (item.regex !== undefined) {
+      let regex: RegExp;
+      try {
+        regex = new RegExp(item.regex);
+      } catch {
+        continue;
       }
-      sections.push('  </output>');
-      sections.push('  <artifacts>');
-      for (const file of previous.files) {
-        sections.push(`    - ${file}`);
+      for (const previous of previousOutputs) {
+        if (regex.test(previous.returnPrompt)) {
+          matched.push(previous);
+        }
       }
-      sections.push('  </artifacts>');
-      sections.push(`</${previous.id}>`);
+    } else if (item.path !== undefined) {
+      const stepId = stepIdFromPath(item.path);
+      for (const previous of previousOutputs) {
+        if (idMatches(previous.id, stepId)) {
+          matched.push(previous);
+        }
+      }
     }
   }
-
-  return sections.join('\n');
+  if (matched.length === 0) {
+    return undefined;
+  }
+  return JSON.stringify(matched);
 }
 
 /**
  * 单 Step 执行器。
  *
  * 构造时绑定 `ctx` 与引擎级配置；`run()` 按 `step.command.type` 分发到
- * shell/prompt 两条路径。成功返回 `{ output: ContentBlock[] }`，失败抛
- * `SandoreError`（超时 → `STEP_TIMEOUT`，其余 → `STEP_EXECUTION`）。
+ * shell/prompt/agent/skill/mcp 五条路径。成功返回 `{ output: ContentBlock[] }`，
+ * 失败抛 `SandoreError`（超时 → `STEP_TIMEOUT`，其余 → `STEP_EXECUTION`）。
  */
 export class StepRunner {
   constructor(
@@ -119,20 +295,79 @@ export class StepRunner {
         return await this.runShell(command, request);
       case 'prompt':
         return await this.runPrompt(command, request);
+      case 'agent':
+      case 'skill':
+      case 'mcp':
+        return await this.runSubagent(command, request);
       default:
-        throw new SandoreError(`unsupported step command type '${command.type}'`, 'STEP_EXECUTION');
+        // 穷尽 5 类型后 `command` 已收窄为 never；此处仅防御运行期注入的未知命令类型。
+        throw new SandoreError(
+          `unsupported step command type '${(command as CommandConfig).type}'`,
+          'STEP_EXECUTION',
+        );
     }
   }
 
   private async runShell(command: ShellCommand, request: StepRunRequest): Promise<StepRunResult> {
+    const resolvedCommand = replacePassThroughVars(
+      command.value.command,
+      resolvePassThroughVars(request.passThroughVars, request.loopTurn, request.loopMaxIterations),
+    );
+    const stdin = resolveShellStdin(request.step, request.previousOutputs);
+    const env = buildShellEnv(request.passThroughVars, request.loopTurn, request.loopMaxIterations);
+    if (stdin === undefined && env === undefined) {
+      return await this.runShellSimple(resolvedCommand, request);
+    }
+    return await this.runShellSubprocess(resolvedCommand, stdin, env, request);
+  }
+
+  private async runShellSimple(command: string, request: StepRunRequest): Promise<StepRunResult> {
     const shellRequest: ShellExecRequest = {
-      command: command.value.command,
+      command,
       timeoutMs: this.stepTimeoutMs(request.step),
       ...(request.workdir === undefined ? {} : { workdir: request.workdir }),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     };
     const spec = this.ctx.shell.resolve(shellRequest);
     const result = await this.ctx.shell.run(spec);
+    return this.toShellResult(result);
+  }
+
+  private async runShellSubprocess(
+    command: string,
+    stdin: string | undefined,
+    env: Record<string, string> | undefined,
+    request: StepRunRequest,
+  ): Promise<StepRunResult> {
+    const tokens = splitCommand(command);
+    const program = tokens[0] ?? command;
+    const args = tokens.slice(1);
+    const executable = await this.ctx.subprocess.resolveExecutable(program, env, request.signal);
+    const spec: SubprocessSpawnSpec = {
+      argv: [executable, ...args],
+      cwd: request.workdir,
+      stdio: {
+        stdin: stdin === undefined ? 'ignore' : { data: stdin },
+        stdout: { maxBytes: 1024 * 1024 },
+        stderr: { maxBytes: 1024 * 1024 },
+      },
+      graceMs: this.stepTimeoutMs(request.step),
+      ...(env === undefined ? {} : { env }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    };
+    const handle = this.ctx.subprocess.spawn(spec);
+    const outcome = await handle.done;
+    const stdout = handle.collected.stdout?.readFrom(0);
+    const stderr = handle.collected.stderr?.readFrom(0);
+    const result: ShellRunResult = {
+      exitCode: outcome.exitCode,
+      signal: outcome.signal,
+      timedOut: outcome.timedOut ?? false,
+      aborted: request.signal?.aborted ?? false,
+      timeoutMs: this.stepTimeoutMs(request.step),
+      stdout: { text: stdout?.text ?? '', truncated: stdout?.lossy ?? false },
+      stderr: { text: stderr?.text ?? '', truncated: stderr?.lossy ?? false },
+    };
     return this.toShellResult(result);
   }
 
@@ -157,8 +392,15 @@ export class StepRunner {
   }
 
   private async runPrompt(command: PromptCommand, request: StepRunRequest): Promise<StepRunResult> {
-    const route = await this.resolveProviderModel(command);
-    const promptText = buildPromptText(request.step, command, request.originalInput, request.previousOutputs);
+    const route = await this.resolveProviderModel(command.value);
+    const taskText = buildTaskText(
+      command,
+      resolvePassThroughVars(request.passThroughVars, request.loopTurn, request.loopMaxIterations),
+      this.config.skills,
+      this.config.mcps,
+      this.config.agents,
+    );
+    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, undefined);
     const message = createUserMessage({
       source: { kind: 'user' },
       content: [{ type: 'text', text: promptText }],
@@ -184,34 +426,86 @@ export class StepRunner {
     return { output };
   }
 
-  private async resolveProviderModel(command: PromptCommand): Promise<{ provider: string; model: string }> {
-    const { providerId, modelId } = command.value;
-    // L1：Step 定义 providerId + modelId 成对提供才用。
-    if (providerId !== undefined && modelId !== undefined) {
-      return { provider: providerId, model: modelId };
-    }
-    // L2：引擎 Config defaultProvider + defaultModel 成对配置才用。
-    if (this.config.defaultProvider !== undefined && this.config.defaultModel !== undefined) {
-      return { provider: this.config.defaultProvider, model: this.config.defaultModel };
-    }
-    // L3：`ctx.llm` 目录兜底（listProviders 同步、listModels 异步）。
-    const provider = this.llm().listProviders()[0];
-    if (provider === undefined) {
-      throw new SandoreError('no LLM provider available', 'STEP_EXECUTION');
-    }
-    const models = await this.llm().listModels(provider.id);
-    const model = models[0];
-    if (model === undefined) {
-      throw new SandoreError(`no LLM model available for provider '${provider.id}'`, 'STEP_EXECUTION');
-    }
-    this.ctx.logger.warn(
-      `sandore: prompt step falls back to directory provider '${provider.id}' model '${model.id}'`,
+  private async runSubagent(command: SubagentCommand, request: StepRunRequest): Promise<StepRunResult> {
+    const paramsText =
+      command.type === 'agent' && command.value.agentParamsTemplate !== undefined
+        ? await this.fillParams(command, command.value.agentParamsTemplate, request)
+        : undefined;
+    const route = await this.resolveProviderModel(command.value);
+    const taskText = buildTaskText(
+      command,
+      resolvePassThroughVars(request.passThroughVars, request.loopTurn, request.loopMaxIterations),
+      this.config.skills,
+      this.config.mcps,
+      this.config.agents,
     );
-    return { provider: provider.id, model: model.id };
+    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, paramsText);
+    const started = await this.ctx.subagents.startContinuable({
+      provider: route.provider,
+      label: `step ${request.step.id}`,
+      request: {
+        prompt: [{ type: 'text', text: promptText }],
+        parent: this.resolveParent(),
+        agentOptions: { provider: route.provider, model: route.model },
+      },
+      signal: request.signal ?? new AbortController().signal,
+    });
+    const child = this.ctx.agents.get(started.childId);
+    if (child === undefined) {
+      throw new SandoreError(`subagent '${started.childId}' not found in registry`, 'STEP_EXECUTION');
+    }
+    await child.whenIdle();
+    const output = finalAssistantOutput(child.session.events);
+    if (output === undefined) {
+      throw new SandoreError('subagent produced no assistant output', 'STEP_EXECUTION');
+    }
+    return { output, sessionMeta: { childId: started.childId, synthetic: false, command: command.type } };
   }
 
-  /** `ctx.llm`（类型来自 dsh-llm 的 Context 增强）。 */
-  private llm(): LlmRuntime {
-    return this.ctx.llm;
+  /** 用临时会话按模板填充参数；失败（error/aborted/抛错）回退模板原文。 */
+  private async fillParams(command: AgentCommand, template: string, request: StepRunRequest): Promise<string> {
+    const route = await this.resolveProviderModel(command.value);
+    const promptText = buildFillParamsPrompt(request.originalInput, request.previousOutputs, template);
+    const message = createUserMessage({
+      source: { kind: 'user' },
+      content: [{ type: 'text', text: promptText }],
+    });
+    const options: GenerateOptions = {
+      provider: route.provider,
+      model: route.model,
+      messages: [message],
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    };
+    try {
+      const assembler = new BlockAssembler();
+      for await (const chunk of this.ctx.llm.stream(options)) {
+        assembler.push(chunk);
+      }
+      const finish = assembler.finish;
+      if (finish.kind === 'error' || finish.kind === 'aborted') {
+        this.ctx.logger.warn(`sandore: fillParams temp session ${finish.kind}, falling back to template`);
+        return template;
+      }
+      const text = textSummary(assembler.blocks());
+      return text === '' ? template : text;
+    } catch (error) {
+      this.ctx.logger.warn(`sandore: fillParams temp session failed: ${describeError(error)}`);
+      return template;
+    }
+  }
+
+  private async resolveProviderModel(value: ModelRoutedValue): Promise<{ provider: string; model: string }> {
+    return resolveModelRoute(
+      value,
+      this.config,
+      this.ctx.llm,
+      (provider, model) =>
+        this.ctx.logger.warn(`sandore: step falls back to directory provider '${provider}' model '${model}'`),
+    );
+  }
+
+  /** 子代理 parent：优先 config.hostAgent，缺省用最小桩对象。 */
+  private resolveParent(): Agent {
+    return this.config.hostAgent ?? createHostAgentStub();
   }
 }

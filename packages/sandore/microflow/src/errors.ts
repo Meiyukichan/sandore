@@ -28,6 +28,10 @@ export type SandoreErrorCode =
   | 'STEP_EXECUTION'
   | 'INVALID_OPERATION'
   | 'CANCELLED'
+  // 收尾/门禁/会话错误（fatal）
+  | 'FINALIZE_FAILED'
+  | 'GATE_FAILED'
+  | 'SESSION_LOST'
   // 恢复性错误（non-fatal）
   | 'PERSISTENCE_FAILED';
 

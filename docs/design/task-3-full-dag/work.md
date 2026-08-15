@@ -14,9 +14,9 @@
 
 ## 产出（`microflow` 为主 + `workflow` 调度）
 1. `packages/sandore/microflow/`：**Stage 内部执行能力补全**
-   - `step-runner.ts`：agent 类型（`ctx.subagents.startContinuable()` + `child.whenIdle()` 等待 + `finalAssistantOutput(child.session.events)` 读输出）；skill/mcp（工作流级 `skills`/`mcps` 数组名称校验 + prompt 前缀）
-   - `branch-evaluator.ts`：两阶段（start/collect），agent 分支用 `ctx.llm.stream()`，shell 分支用 `ctx.shell.run()`；`extractExpectation`/`matchesExpectation`
-   - `loop-manager.ts`：`activeLoopStack`/`activeLoopIterationStack`、ID 后缀、`checkLoopBreak`（maxIterations + breakCondition）、扁平 `executedSteps` + `loopIteration`/`loopMeta`
+   - `step-runner.ts`：agent 类型（**`fillParams` 参数填充**——有 `agentParamsTemplate` 时先用临时 `ctx.llm.stream()` 按模板填充参数，再 `ctx.subagents.startContinuable()` 投递；`child.whenIdle()` 等待 + `finalAssistantOutput(child.session.events)` 读输出）；shell 类型补 **stdin 注入**（有 `inputFrom` 时 `ctx.subprocess.spawn()` 把解析 JSON 数组写 stdin，简单命令仍 `ctx.shell.run()`）；skill/mcp（工作流级 `skills`/`mcps` 数组名称校验 + prompt 前缀）
+   - `branch-evaluator.ts`：两阶段（start/collect），agent 分支用 `ctx.llm.stream()`，shell 分支做**透传变量替换 + 环境变量注入 + stdin 注入**（`ctx.subprocess.spawn()`，简单命令 `ctx.shell.run()`）；`extractExpectation`/`matchesExpectation`
+   - `loop-manager.ts`：`activeLoopStack`/`activeLoopIterationStack`、ID 后缀、`checkLoopBreak`（maxIterations + breakCondition）、扁平 `executedSteps` + `loopIteration`/`loopMeta`；**循环迭代上下文注入**（`buildLoopIterationPath()` 取 `loopIteration`/`loopMaxIterations` → Shell 环境变量 `in-loop-turn`/`all-loop-turn` + Agent `${in-loop-turn}`/`${all-loop-turn}` 变量替换）
    - `finalize-manager.ts`：`FinalizeAssessor`（fork 会话完成判定 + 透传变量提取 + ask 转换）+ `GateEvaluator`（独立新 session 双门审查）
    - `file-utils.ts`：变量替换 + glob→regex 转换 + OutputTo 产物搜索
 2. `packages/sandore/workflow/`：**DAG 调度**
@@ -30,8 +30,8 @@
 - **事件**：沿用 13 个 `sandore/*` 事件；`step-completed` 增补 `output`（`finalAssistantOutput` 最终结果）
 
 ## 验证标准（Task 3 完成门槛）
-- agent Step 可续接子代理真实跑一轮，`inputFrom` 引用前置输出正确，产物收集到 `{uuid}_output.json`
-- 分支正确路由；循环迭代路径 `loopIteration` 正确（嵌套为数组 `[1,2]`）、maxIterations 硬上限生效
+- agent Step 可续接子代理真实跑一轮；有 `agentParamsTemplate` 时 `fillParams` 用临时会话填充参数（`paramsText` 进入结构化提示词的「当前Step参数」子节）；`inputFrom` 引用前置输出正确，产物收集到 `{uuid}_output.json`
+- 分支正确路由；循环迭代路径 `loopIteration` 正确（嵌套为数组 `[1,2]`）、maxIterations 硬上限生效；循环迭代上下文注入正确（Shell `in-loop-turn`/`all-loop-turn` 环境变量 + Agent `${in-loop-turn}`/`${all-loop-turn}` 替换）
 - Finalize：透传变量提取 + `completionType`（completed/ask）+ 门禁审查 + `ask` → `AskUserQuestionPayload`
 - 完整 DAG 端到端：带分支 + 循环 + 门禁 + 透传变量的 YAML → 执行 → 正确路由/迭代/收尾 → 工作流完成
 

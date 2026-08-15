@@ -1,11 +1,12 @@
 /**
- * Stage 内部执行器（Task 2 简化：按 `steps` 数组顺序线性执行）。
+ * Stage 内部执行器（Task 3：`resolveNextNodes` 驱动的 DAG 调度循环）。
  *
- * 逐个调用 {@link StepRunner} 执行 Stage 内 Step，收集 `ExecutedStepDefault[]`，
- * 组装 `StageContract`（stageId/stageName/status/artifacts/passThroughVars/
- * contractArtifacts/completedAt），并透传 `passThroughVars`。失败即中止后续
- * Step，返回整体 `status` 与 `errorDetail`。每个 Step 完成后经 `onPersist`
- * 钩子通知引擎逐 Step 持久化。
+ * 以批量工作队列逐节点执行：路由节点（带 `loop`/`branches` 且无 `command`）直接解析
+ * 下一批；命令节点经 {@link StepRunner} 执行后经 {@link FinalizeManager} 收尾（透传
+ * 变量提取 + 门禁审查），再经 `resolveNextNodes` 解析下一批。循环节点经
+ * {@link LoopManager} 生成带后缀 id、`loopIteration` 与 `visitCount`；agent/skill/mcp
+ * 的真实子代理 `sessionMeta`（`synthetic:false`）透传到 `ExecutedStepDefault`。
+ * 每个 Step 完成后经 `onPersist` 钩子通知引擎逐 Step 持久化。
  * @module @deepseek-ai/dsh-sandore-microflow/src/stage-executor
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -17,9 +18,12 @@ import type {
   StageContract,
   StepStatus,
 } from '../../workflow/src/types.ts';
-import type { WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '../../workflow/src/schema.ts';
+import type { Gates, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '../../workflow/src/schema.ts';
+import type { ResolveNextNodesContext, ResolveNextNodesResult } from '../../workflow/src/dag-navigator.ts';
 
+import { FinalizeManager } from './finalize-manager.ts';
 import { describeError, textSummary } from './internal.ts';
+import { LoopManager } from './loop-manager.ts';
 import { StepRunner } from './step-runner.ts';
 import type { StepRunnerConfig, PreviousStepOutput } from './step-runner.ts';
 
@@ -63,6 +67,14 @@ export interface StageExecutorOptions {
   readonly hooks?: StageStepHooks;
   /** 单个 Step 完成/失败后的持久化回调（由引擎注入，逐 Step 持久化状态快照）。 */
   readonly onPersist?: (executedStep: ExecutedStepDefault) => Promise<void> | void;
+  /** 循环管理器（引擎共享：ID 后缀 + 迭代路径）。 */
+  readonly loopManager: LoopManager;
+  /** 收尾管理器（透传变量提取 + 门禁审查）。 */
+  readonly finalizeManager: FinalizeManager;
+  /** Step 级调度单一入口（由引擎绑定 `WorkflowDagNavigator.resolveNextNodes`）。 */
+  readonly resolveNextNodes: (nodeId: string, context: ResolveNextNodesContext) => Promise<ResolveNextNodesResult>;
+  /** 节点访问计数（引擎共享，持久化于 `WorkflowTaskState.visitCounts`）。 */
+  readonly visitCounts: Record<string, number>;
 }
 
 /** Stage 执行结果。 */
@@ -98,6 +110,15 @@ function toPassThroughValue(passThroughVar: PassThroughVar): PassThroughVarValue
     description: passThroughVar.description,
     ...(passThroughVar.refresh === undefined ? {} : { refresh: passThroughVar.refresh }),
   };
+}
+
+/** 透传变量运行时值 → 字符串映射（供 shell/prompt 注入）。 */
+function toVarMap(vars: Record<string, PassThroughVarValue>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(vars)) {
+    result[name] = value.value;
+  }
+  return result;
 }
 
 /** 将已完成 Step 映射为 prompt 参考信息。 */
@@ -142,11 +163,27 @@ function finalizeStageContract(
   };
 }
 
+/** 三级门禁浅合并（workflow → stage → step，后者覆盖前者）。 */
+function mergeGates(workflowDef: WorkflowDefinition, stageDef: WorkflowStage, step: WorkflowStep): Gates | undefined {
+  const workflowGates = workflowDef.gates;
+  const stageGates = stageDef.gates;
+  const stepGates = step.gates;
+  if (workflowGates === undefined && stageGates === undefined && stepGates === undefined) {
+    return undefined;
+  }
+  return {
+    ...(workflowGates ?? {}),
+    ...(stageGates ?? {}),
+    ...(stepGates ?? {}),
+  };
+}
+
 /**
  * Stage 内部执行器。
  *
- * 构造时绑定 Stage 定义、共享状态与 StepRunner 配置；`execute()` 按 `steps`
- * 数组顺序执行，遇到失败即中止，最终返回 StageContract 与执行结果。
+ * 构造时绑定 Stage 定义、共享状态、StepRunner 配置与调度依赖（LoopManager /
+ * FinalizeManager / resolveNextNodes）；`execute()` 以批量队列执行 Step DAG，遇到
+ * 失败即中止，最终返回 StageContract 与执行结果。
  */
 export class StageExecutor {
   private readonly runner: StepRunner;
@@ -155,76 +192,204 @@ export class StageExecutor {
     this.runner = new StepRunner(options.ctx, options.runnerConfig);
   }
 
-  /** 执行本 Stage 内全部 Step。 */
+  /** 执行本 Stage 内全部 Step（DAG 调度循环）。 */
   async execute(): Promise<StageExecutionResult> {
-    const { stageDef, input, sharedState, signal, hooks } = this.options;
+    const { stageDef, input, sharedState, signal, hooks, loopManager, finalizeManager, resolveNextNodes, visitCounts } = this.options;
     const executedSteps: ExecutedStepDefault[] = [];
     const previousOutputs: PreviousStepOutput[] = [];
+    const passThroughVars: Record<string, PassThroughVarValue> = {
+      ...(input.passThroughVars as Record<string, PassThroughVarValue>),
+      ...collectPassThroughVars(stageDef),
+    };
     let status: StepStatus = 'completed';
     let errorDetail: string | undefined;
 
+    const stepIndex = new Map<string, WorkflowStep>();
     for (const step of stageDef.steps) {
-      const childId = synthesizeChildId(step.id);
-      const command = step.command;
-      const executed: ExecutedStepDefault = {
-        type: 'default',
-        id: childId,
-        stepId: step.id,
-        stageId: stageDef.id,
-        name: step.name ?? step.id,
-        status: 'running',
-        ...(command === undefined ? {} : { command }),
-        ...(step.inputFrom === undefined ? {} : { inputFrom: step.inputFrom }),
-        ...(step.outputTo === undefined ? {} : { outputTo: step.outputTo }),
-        ...(step.passThroughVars === undefined ? {} : { passThroughVars: step.passThroughVars }),
-        ...(command === undefined
-          ? {}
-          : { sessionMeta: { childId, synthetic: true, command: command.type } }),
-        visitCount: 1,
-      };
-
-      hooks?.onStepStart(step, childId);
-
-      if (command === undefined) {
-        const message = `step '${step.id}' has no command`;
-        executed.status = 'failed';
-        executed.error = message;
-        executedSteps.push(executed);
-        hooks?.onStepFailed(step, childId, message);
-        await this.options.onPersist?.(executed);
-        status = 'failed';
-        errorDetail = message;
-        break;
-      }
-
-      try {
-        const result = await this.runner.run({
-          step,
-          workdir: sharedState.cwd,
-          originalInput: input.originalInput,
-          previousOutputs,
-          ...(signal === undefined ? {} : { signal }),
-        });
-        executed.status = 'completed';
-        executed.output = result.output;
-        executedSteps.push(executed);
-        previousOutputs.push(toPreviousOutput(executed));
-        hooks?.onStepCompleted(step, childId, result.output);
-        await this.options.onPersist?.(executed);
-      } catch (error) {
-        const message = describeError(error);
-        executed.status = 'failed';
-        executed.error = message;
-        executedSteps.push(executed);
-        hooks?.onStepFailed(step, childId, message);
-        await this.options.onPersist?.(executed);
-        status = 'failed';
-        errorDetail = message;
-        break;
-      }
+      stepIndex.set(step.id, step);
     }
 
-    const passThroughVars = collectPassThroughVars(stageDef);
+    let batch: string[] = [];
+    const firstStep = stageDef.steps[0];
+    if (firstStep !== undefined) {
+      batch.push(firstStep.id);
+    }
+
+    const buildContext = (): ResolveNextNodesContext => ({
+      visitCounts,
+      passThroughVars: toVarMap(passThroughVars),
+      ...(signal === undefined ? {} : { signal }),
+    });
+
+    while (batch.length > 0) {
+      const nextBatch: string[] = [];
+      for (const nodeId of batch) {
+        const step = stepIndex.get(nodeId);
+        if (step === undefined) {
+          // 跨阶段或 Stage 级目标：由引擎 tryAdvanceStage 承接。
+          continue;
+        }
+
+        const isRoutingNode = step.command === undefined && (step.loop !== undefined || step.branches !== undefined);
+        if (isRoutingNode) {
+          const routed = await resolveNextNodes(nodeId, buildContext());
+          // 分支决策点产出路由条目（记录 branchMeta）；循环控制点仅在 breakCondition
+          // 评估跳出时回写 loopMeta 路由条目（循环体步骤记录迭代与 loopIteration）。
+          if (step.branches !== undefined) {
+            const inLoopRouting = loopManager.buildLoopIterationPath().length > 0;
+            const routingChildId = inLoopRouting ? loopManager.getActualStepId(step.id) : synthesizeChildId(step.id);
+            const routingEntry: ExecutedStepDefault = {
+              type: 'default',
+              id: routingChildId,
+              stepId: step.id,
+              stageId: stageDef.id,
+              name: step.name ?? step.id,
+              status: 'completed',
+              visitCount: (visitCounts[nodeId] ?? 0) + 1,
+              ...(inLoopRouting ? { loopIteration: loopManager.buildLoopIterationPath() } : {}),
+              ...(routed.branchMeta === undefined ? {} : { branchMeta: routed.branchMeta }),
+            };
+            visitCounts[nodeId] = routingEntry.visitCount;
+            executedSteps.push(routingEntry);
+            await this.options.onPersist?.(routingEntry);
+          } else if (step.loop !== undefined && routed.loopMeta !== undefined) {
+            // 纯路由循环节点在 breakCondition 跳出时回写 loopMeta（checkLoopBreak 两阶段
+            // 产出的 evaluating → completed 评估现场），持久化到 executedSteps。
+            const routingEntry: ExecutedStepDefault = {
+              type: 'default',
+              id: synthesizeChildId(step.id),
+              stepId: step.id,
+              stageId: stageDef.id,
+              name: step.name ?? step.id,
+              status: 'completed',
+              visitCount: visitCounts[nodeId] ?? 0,
+              loopMeta: routed.loopMeta,
+            };
+            executedSteps.push(routingEntry);
+            await this.options.onPersist?.(routingEntry);
+          }
+          nextBatch.push(...routed.nextNodeIds);
+          continue;
+        }
+
+        const command = step.command;
+        const inLoop = loopManager.buildLoopIterationPath().length > 0;
+        const childId = inLoop ? loopManager.getActualStepId(step.id) : synthesizeChildId(step.id);
+        const executed: ExecutedStepDefault = {
+          type: 'default',
+          id: childId,
+          stepId: step.id,
+          stageId: stageDef.id,
+          name: step.name ?? step.id,
+          status: 'running',
+          ...(command === undefined ? {} : { command }),
+          ...(step.inputFrom === undefined ? {} : { inputFrom: step.inputFrom }),
+          ...(step.outputTo === undefined ? {} : { outputTo: step.outputTo }),
+          ...(step.passThroughVars === undefined ? {} : { passThroughVars: step.passThroughVars }),
+          ...(command === undefined
+            ? {}
+            : { sessionMeta: { childId, synthetic: true, command: command.type } }),
+          visitCount: (visitCounts[nodeId] ?? 0) + 1,
+          ...(inLoop ? { loopIteration: loopManager.buildLoopIterationPath() } : {}),
+        };
+        visitCounts[nodeId] = executed.visitCount;
+
+        hooks?.onStepStart(step, childId);
+
+        if (command === undefined) {
+          const message = `step '${step.id}' has no command`;
+          executed.status = 'failed';
+          executed.error = message;
+          executedSteps.push(executed);
+          hooks?.onStepFailed(step, childId, message);
+          await this.options.onPersist?.(executed);
+          return this.buildResult(stageDef, executedSteps, 'failed', passThroughVars, message);
+        }
+
+        try {
+          const loopContext = loopManager.getLoopIterationContext();
+          const result = await this.runner.run({
+            step,
+            workdir: sharedState.cwd,
+            originalInput: input.originalInput,
+            previousOutputs,
+            passThroughVars: toVarMap(passThroughVars),
+            loopTurn: loopContext.loopTurn,
+            loopMaxIterations: loopContext.loopMaxIterations,
+            ...(signal === undefined ? {} : { signal }),
+          });
+          executed.status = 'completed';
+          executed.output = result.output;
+          if (result.sessionMeta !== undefined) {
+            executed.sessionMeta = {
+              childId: result.sessionMeta.childId ?? childId,
+              synthetic: result.sessionMeta.synthetic,
+              command: result.sessionMeta.command,
+            };
+          }
+          executedSteps.push(executed);
+          previousOutputs.push(toPreviousOutput(executed));
+          hooks?.onStepCompleted(step, result.sessionMeta?.childId ?? childId, result.output);
+
+          const gates = mergeGates(this.options.workflowDef, stageDef, step);
+          const finalizeOutcome = await finalizeManager.finalizeStep({
+            step,
+            executedStep: executed,
+            ...(executed.sessionMeta?.childId === undefined ? {} : { stepSessionId: executed.sessionMeta.childId }),
+            context: { input: input.originalInput, output: textSummary(executed.output) },
+            ...(gates === undefined ? {} : { gates }),
+            workdir: sharedState.cwd,
+            passThroughVars,
+            ...(signal === undefined ? {} : { signal }),
+          });
+
+          if (finalizeOutcome.type === 'ask') {
+            // Task 4 接交互等待循环；Task 3 仅置 interacting 标记并中止 Stage。
+            await this.options.onPersist?.(executed);
+            return this.buildResult(stageDef, executedSteps, 'interacting', passThroughVars, undefined);
+          }
+          if (finalizeOutcome.type === 'error') {
+            const message = finalizeOutcome.errorDetail;
+            executed.status = 'failed';
+            executed.error = message;
+            hooks?.onStepFailed(step, result.sessionMeta?.childId ?? childId, message);
+            await this.options.onPersist?.(executed);
+            return this.buildResult(stageDef, executedSteps, 'failed', passThroughVars, message);
+          }
+
+          const routed = await resolveNextNodes(nodeId, buildContext());
+          if (routed.branchMeta !== undefined) {
+            executed.branchMeta = routed.branchMeta;
+          }
+          if (routed.loopMeta !== undefined) {
+            executed.loopMeta = routed.loopMeta;
+          }
+          await this.options.onPersist?.(executed);
+          nextBatch.push(...routed.nextNodeIds);
+        } catch (error) {
+          const message = describeError(error);
+          executed.status = 'failed';
+          executed.error = message;
+          executedSteps.push(executed);
+          hooks?.onStepFailed(step, childId, message);
+          await this.options.onPersist?.(executed);
+          return this.buildResult(stageDef, executedSteps, 'failed', passThroughVars, message);
+        }
+      }
+      batch = [...new Set(nextBatch)];
+    }
+
+    return this.buildResult(stageDef, executedSteps, status, passThroughVars, errorDetail);
+  }
+
+  /** 组装 Stage 执行结果。 */
+  private buildResult(
+    stageDef: WorkflowStage,
+    executedSteps: ExecutedStepDefault[],
+    status: StepStatus,
+    passThroughVars: Record<string, PassThroughVarValue>,
+    errorDetail: string | undefined,
+  ): StageExecutionResult {
     const stageContract = finalizeStageContract(stageDef, executedSteps, status, passThroughVars, errorDetail);
     return { stageContract, executedSteps, passThroughVars, status, ...(errorDetail === undefined ? {} : { errorDetail }) };
   }

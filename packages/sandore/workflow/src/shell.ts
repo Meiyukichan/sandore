@@ -60,8 +60,83 @@ export interface ShellExecutor {
   start(spec: ShellExecSpec): unknown;
 }
 
+// ── subprocess 接缝（stdin/env 注入与原始 stdio） ─────────────────────────
+
+/** stdin 处置：`ignore` 挂 `/dev/null`；`pipe` 暴露原始流；`{ data }` 写入字节后关闭。 */
+export type SubprocessStdinMode = 'ignore' | 'pipe' | { readonly data: string };
+
+/** 有界内存收集，可选全量溢出文件。 */
+export interface SubprocessCollect {
+  maxBytes: number;
+  spill?: { maxBytes: number };
+}
+
+/** stdout/stderr 处置：`pipe` 原始流；`inherit` 透传父描述符；对象为有界收集。 */
+export type SubprocessOutputMode = 'pipe' | 'inherit' | SubprocessCollect;
+
+/** 每流 stdio 处置（全显式，无默认值）。 */
+export interface SubprocessStdio {
+  stdin: SubprocessStdinMode;
+  stdout: SubprocessOutputMode;
+  stderr: SubprocessOutputMode;
+}
+
+/** 完整指定的 spawn 请求：`argv[0]` 为程序，从不 shell 解释。 */
+export interface SubprocessSpawnSpec {
+  argv: readonly string[];
+  cwd: string;
+  stdio: SubprocessStdio;
+  /** SIGTERM→SIGKILL 升级与 drain 的宽限期（毫秒）。 */
+  graceMs: number;
+  signal?: AbortSignal;
+  env?: Record<string, string>;
+}
+
+/** 一次已关闭子进程的退出事实（Node `close` 词汇）。 */
+export interface SubprocessOutcome {
+  exitCode: number | null;
+  signal: string | null;
+  /** 执行器自身超时（graceMs 到期 SIGTERM→SIGKILL）是首个终止原因。 */
+  timedOut?: boolean;
+}
+
+/** 一次增量读取。 */
+export interface SubprocessOutputRead {
+  text: string;
+  nextOffset: number;
+  lossy: boolean;
+  spillPath?: string;
+}
+
+/** 按偏移的增量读取。 */
+export interface SubprocessOutputReader {
+  readFrom(fromByte: number): SubprocessOutputRead;
+}
+
+/** collect 模式各流的偏移读取器。 */
+export interface SubprocessCollectedOutputs {
+  readonly stdout?: SubprocessOutputReader;
+  readonly stderr?: SubprocessOutputReader;
+}
+
+/** 活子进程句柄：原始树根进程，退出后收集输出仍可读。 */
+export interface SubprocessHandle {
+  readonly pid: number;
+  readonly collected: SubprocessCollectedOutputs;
+  readonly done: Promise<SubprocessOutcome>;
+  terminate(): void;
+  waitForExit(signal?: AbortSignal): Promise<boolean>;
+}
+
+/** `ctx.subprocess` 能力接缝：可执行路径解析 + 受管子进程树启动。 */
+export interface SubprocessRuntime {
+  resolveExecutable(command: string, env?: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<string>;
+  spawn(spec: SubprocessSpawnSpec): SubprocessHandle;
+}
+
 declare module '@deepseek-ai/cordis' {
   interface Context {
     shell: ShellExecutor;
+    subprocess: SubprocessRuntime;
   }
 }

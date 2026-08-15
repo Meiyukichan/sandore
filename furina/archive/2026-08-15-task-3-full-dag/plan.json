@@ -1,0 +1,251 @@
+[
+  {
+    "id": "foundation-01",
+    "category": "foundation",
+    "function": "运行时接缝与类型基座",
+    "description": "建立 Task 3 的结构接缝与类型/依赖基座。新建 microflow/src/subagents.ts 接缝：声明 ctx.subagents（startContinuable/followup/interrupt/start）、ctx.agents（get/create/resume）、AgentHandle（whenIdle/session.events）的最小结构类型，并在接缝内实现 finalAssistantOutput（选最后一条非空 assistant message → 回退累计 text-delta → undefined）。在 workflow/src/shell.ts 扩展 SubprocessRuntime 接缝（spawn/resolveExecutable 结构类型）并声明 ctx.subprocess。microflow/src/errors.ts 补 FINALIZE_FAILED/GATE_FAILED/SESSION_LOST 错误码。workflow/src/schema.ts 的 FinalizeMetaSchema 补 completionType/assessResult/gateResult 三个可选字段。workflow/src/types.ts 定义并 re-export FinalizeAssessResult/GateEvalResult/FinalizeOutcome 三个结果类型。microflow/workflow 两个 package.json 补 @deepseek-ai/dsh-subagent/dsh-agent/dsh-session peerDependencies。新增 workflow/tests/mocks 下的 subagents/agents/subprocess 三个测试桩（严格按 DSH 源码行为建模：startContinuable 在 inbox 接受时 resolve、whenIdle 语义、finalAssistantOutput 规则）。",
+    "acceptance_criteria": [
+      "tsc --noEmit 通过，ctx.subagents / ctx.agents / ctx.subprocess 三个上下文键类型可用",
+      "finalAssistantOutput 对空 events 返回 undefined；对含一条 assistant 文本消息的 events 返回该文本块数组；对仅含多条 text-delta 的 events 返回累计文本",
+      "SandoreErrorCode 联合类型包含 FINALIZE_FAILED / GATE_FAILED / SESSION_LOST",
+      "FinalizeMetaSchema.parse 接受含 completionType/assessResult/gateResult 的对象，且不含这三个字段的旧持久化状态仍能通过 parse",
+      "subagents/agents/subprocess 三个桩均可被 ctx.provide 注入；subagents 桩的 startContinuable 返回 childId 且 inbox 接受时 resolve"
+    ],
+    "tasks": [
+      "1.1 新建 microflow/src/subagents.ts 结构接缝并实现 finalAssistantOutput",
+      "1.2 在 workflow/src/shell.ts 扩展 SubprocessRuntime 接缝并声明 ctx.subprocess",
+      "1.3 microflow/src/errors.ts 补三个错误码",
+      "1.4 workflow/src/schema.ts FinalizeMetaSchema 扩展三个可选字段",
+      "1.5 workflow/src/types.ts 定义并 re-export 三个结果类型",
+      "1.6 microflow/package.json 与 workflow/package.json 补 peerDependencies",
+      "1.7 新增 workflow/tests/mocks/subagents.ts、agents.ts、subprocess.ts 桩",
+      "1.8 microflow/src/index.ts 导出 subagents 接缝"
+    ],
+    "files": [
+      "packages/sandore/microflow/src/subagents.ts",
+      "packages/sandore/microflow/src/errors.ts",
+      "packages/sandore/microflow/src/index.ts",
+      "packages/sandore/microflow/package.json",
+      "packages/sandore/workflow/src/shell.ts",
+      "packages/sandore/workflow/src/schema.ts",
+      "packages/sandore/workflow/src/types.ts",
+      "packages/sandore/workflow/package.json",
+      "packages/sandore/workflow/tests/mocks/subagents.ts",
+      "packages/sandore/workflow/tests/mocks/agents.ts",
+      "packages/sandore/workflow/tests/mocks/subprocess.ts"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/task-3-full-dag/design.md#D8-结构接缝与依赖声明",
+      "furina/changes/task-3-full-dag/design.md#D1-agent-step-会话模式",
+      "furina/changes/task-3-full-dag/design.md#D3-shell-stdin/env-注入",
+      "furina/changes/task-3-full-dag/specs/finalize-management/spec.md#FinalizeMeta-扩展与结果类型",
+      "furina/changes/task-3-full-dag/specs/agent-step-execution/spec.md#agent-类型-step-用可续接子代理执行"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "artifact-01",
+    "category": "artifact-collection",
+    "function": "产物收集与输入解析工具",
+    "description": "新建 microflow/src/file-utils.ts，提供 Task 3 的纯函数工具集：(1) replacePassThroughVars——将 ${xxx} 替换为透传变量值，支持 ${in-loop-turn}（当前迭代序号，1-based，非循环为 0）与 ${all-loop-turn}（活跃循环 maxIterations，非循环为 0），未定义变量保留原文；(2) globToRegex——* → [^/]*、** → .*（跳过后续 /）、? → [^/]、其余字符转义；(3) glob/regex 自动区分——含 * / ? 且无正则特征按 glob，否则按字面路径（outputTo.regex 字段优先）；(4) findFilesByGlob / findFilesByRegex / walkDir 递归文件搜索，返回绝对路径数组；(5) {uuid}_output.json 读写——写入结构 { sessionId, output: { returnPrompt, artifacts: [{id, value: string[]}] } }；(6) InputFrom 就近匹配——支持 stg-xxx（Stage 级倒序最近优先）、stg-xxx.step-xxx（Step 级从当前往前最近匹配，idMatches 支持后缀 actualId.startsWith(targetId + '-')）、stg-xxx.step-xxx.opt-xxx（OutputTo 级）三种 path，无 inputFrom 回退前一执行条目，regex 模式遍历全部输出做正则匹配。",
+    "acceptance_criteria": [
+      "globToRegex('artifacts/*.md') 匹配 artifacts/report.md 但不匹配 artifacts/sub/report.md",
+      "replacePassThroughVars 将 ${a} 替换为值、${in-loop-turn} 替换为当前迭代序号、未定义变量保留原文",
+      "findFilesByGlob 对 build/**/report.md 返回递归命中的绝对路径数组",
+      "写入 {uuid}_output.json 后读回结构含 sessionId 与 output.artifacts[].value（string[]）",
+      "InputFrom Step 级就近匹配能命中循环内带后缀 id 的最近一次迭代输出，无 inputFrom 时回退前一条执行条目"
+    ],
+    "tasks": [
+      "2.1 实现 replacePassThroughVars（含 in-loop-turn/all-loop-turn 特殊变量）",
+      "2.2 实现 globToRegex 与 glob/regex 自动区分",
+      "2.3 实现 walkDir / findFilesByGlob / findFilesByRegex",
+      "2.4 实现 {uuid}_output.json 读写",
+      "2.5 实现 InputFrom 就近匹配（三种 path + 回退 + regex 模式）",
+      "2.6 新建 file-utils.spec.ts 覆盖上述工具并挂接 microflow/src/index.ts 导出"
+    ],
+    "files": [
+      "packages/sandore/microflow/src/file-utils.ts",
+      "packages/sandore/microflow/src/file-utils.spec.ts",
+      "packages/sandore/microflow/src/index.ts"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/task-3-full-dag/specs/artifact-collection/spec.md#glob→regex-转换",
+      "furina/changes/task-3-full-dag/specs/artifact-collection/spec.md#glob/regex-自动区分",
+      "furina/changes/task-3-full-dag/specs/artifact-collection/spec.md#文件搜索",
+      "furina/changes/task-3-full-dag/specs/artifact-collection/spec.md#uuid_output.json-产物文件",
+      "furina/changes/task-3-full-dag/specs/artifact-collection/spec.md#InputFrom-就近匹配",
+      "furina/changes/task-3-full-dag/specs/artifact-collection/spec.md#透传变量替换工具",
+      "furina/changes/task-3-full-dag/design.md#D7-InputFrom-就近匹配与产物文件"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "agent-exec-01",
+    "category": "step-execution",
+    "function": "agent/skill/mcp/shell Step 执行",
+    "description": "改造 microflow/src/step-runner.ts 补齐五类 Step 执行：(1) agent 类型走可续接子代理——按 command.providerId > 引擎 defaultProvider 三层回退选定 provider 后 ctx.subagents.startContinuable 创建子代理，ctx.agents.get(childId) hold 引用，await child.whenIdle() 后以 finalAssistantOutput(child.session.events) 读取最终输出作为 Step output，sessionMeta 记录真实 childId（synthetic: false）；(2) 定义 agentParamsTemplate 时先 fillParams——ctx.llm.stream() 临时会话（输入为前置 Step 输出展开 + 参数模板 + 任务指令 + 禁止编辑/创建/删除文件红线规则），返回文本作 paramsText 注入结构化提示词「### 当前Step参数」子节，失败回退模板原文并告警；(3) skill/mcp/agent 校验 promptText 是否在 workflow.skills/mcps/agents 数组，命中加前缀「使用 skill：/使用 MCP：」，未命中回退纯提示词不抛错；skill/mcp 与 agent 相同走子代理路径；(4) shell 存在 stdin 需求（command.stdin 或 inputFrom 解析到内容）或需注入非空透传变量时改走 ctx.subprocess.spawn（stdin 写入 JSON、env 合并非空透传变量含 in-loop-turn/all-loop-turn），否则维持 ctx.shell.run 简单路径；(5) 构建提示词/命令前先 replacePassThroughVars 做 ${xxx} 替换。prompt 类型保持 Task 2 的 ctx.llm.stream 临时会话不变。",
+    "acceptance_criteria": [
+      "agent Step 完成一轮：startContinuable 被调用且首条提示词随 request.prompt 投递，whenIdle 后 finalAssistantOutput 结果成为 Step output，sessionMeta 为 { childId: 真实SessionId, synthetic: false, command: 'agent' }",
+      "定义 agentParamsTemplate 时子代理收到的 prompt 含「### 当前Step参数」子节；临时会话 error/aborted 时不中止且 paramsText 回退模板原文",
+      "skill Step 的 promptText 命中 workflow.skills 时提示词以「使用 skill：」前缀开头；未命中时回退纯提示词且不抛错",
+      "shell Step 配置 inputFrom 且解析到内容时经 ctx.subprocess.spawn 执行、解析 JSON 写入 stdin；无注入需求时仍走 ctx.shell.run",
+      "提示词中 ${projectName} 被替换为透传变量值，未定义变量保留原文"
+    ],
+    "tasks": [
+      "3.1 实现 agent 类型的可续接子代理执行路径（startContinuable → whenIdle → finalAssistantOutput）",
+      "3.2 实现 fillParams 参数填充与失败回退",
+      "3.3 实现 skill/mcp/agent 名称校验与 prompt 前缀",
+      "3.4 实现 shell 的 stdin/env 注入与 subprocess 路径切换",
+      "3.5 将 replacePassThroughVars 接入提示词/命令构建",
+      "3.6 扩展 step-runner.spec.ts 覆盖 agent/skill/mcp/stdin 场景"
+    ],
+    "files": [
+      "packages/sandore/microflow/src/step-runner.ts",
+      "packages/sandore/microflow/src/step-runner.spec.ts"
+    ],
+    "dependencies": [
+      "foundation-01",
+      "artifact-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-3-full-dag/specs/agent-step-execution/spec.md#agent-类型-step-用可续接子代理执行",
+      "furina/changes/task-3-full-dag/specs/agent-step-execution/spec.md#agent-step-的-fillParams-参数填充",
+      "furina/changes/task-3-full-dag/specs/agent-step-execution/spec.md#skill/mcp-类型-step-名称校验与-prompt-前缀",
+      "furina/changes/task-3-full-dag/specs/agent-step-execution/spec.md#skill/mcp/agent/prompt-会话承载",
+      "furina/changes/task-3-full-dag/specs/agent-step-execution/spec.md#shell-step-stdin-与环境变量注入",
+      "furina/changes/task-3-full-dag/specs/agent-step-execution/spec.md#透传变量替换与循环上下文变量",
+      "furina/changes/task-3-full-dag/design.md#D2-fillParams-临时会话填充"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "flow-eval-01",
+    "category": "flow-control",
+    "function": "分支两阶段评估与循环管理",
+    "description": "实现 Stage 内的条件流控评估，含两个模块。新建 microflow/src/branch-evaluator.ts：两阶段 start/collect/evaluate（agent/prompt/skill/mcp 分支经 ctx.llm.stream 临时会话、shell 分支经 ctx.shell.run 或 ctx.subprocess.spawn）；shell 分支依次做透传变量替换 → 环境变量注入 → stdin 注入；extractExpectation 三级解析（JSON 取 branchExpectation → regex 回退 → raw.trim()）；public extractBreakResult（JSON 取 shouldBreak → regex 回退 → raw.trim()）供循环跳出复用；matchesExpectation（regex 特征做正则匹配否则字符串相等）；分支评估提示词含分支列表 + 返回格式要求 + 红线规则。新建 microflow/src/loop-manager.ts：activeLoopStack/activeLoopIterationStack 维护与 push/pop；4 位 hex ID 后缀（stepIdSuffixMap、getActualStepId、stripIdSuffix，同迭代同后缀）；buildLoopIterationPath 生成嵌套 loopIteration 数组（如 [1,2]）；checkLoopBreak 按 visitCount >= maxIterations 硬上限优先 → breakCondition 两阶段评估（agent 模式 extractBreakResult === 'true' 跳出，shell 模式 matchesExpectation 匹配 breakExpectation）→ 跳出后 resetLoopVisitCounts + popActiveLoop + exitTo 入队；循环迭代上下文注入（Shell env 的 in-loop-turn/all-loop-turn 与 replacePassThroughVars 的 ${in-loop-turn}/${all-loop-turn} 替换）。",
+    "acceptance_criteria": [
+      "BranchEvaluator 对 agent 条件经 ctx.llm.stream 创建临时会话，对 shell 条件直接执行且 sessionHandle 为 null",
+      "extractExpectation 对标准 JSON、夹带非 JSON 文本、纯文本三种输入分别正确提取",
+      "extractBreakResult 对含 shouldBreak:true 的输出返回字符串 'true'；matchesExpectation 对 regex 与字符串两种 expectation 正确匹配",
+      "循环内 Step 迭代生成 4 位 hex 后缀 id（stepId 为原始 id），嵌套循环条目 loopIteration 为 [1,2]",
+      "visitCount 达到 maxIterations 时立即跳出（不发 AI 评估）；breakCondition 评估为 true/匹配 breakExpectation 时跳出并写入 loopMeta completed",
+      "循环内 shell Step 环境变量含 in-loop-turn（当前迭代）与 all-loop-turn（maxIterations）；非循环时为 0"
+    ],
+    "tasks": [
+      "4.1 实现 branch-evaluator.ts 两阶段 start/collect/evaluate",
+      "4.2 实现 shell 分支三注入（透传替换/环境变量/stdin）",
+      "4.3 实现 extractExpectation/extractBreakResult/matchesExpectation 与分支评估提示词",
+      "4.4 实现 loop-manager.ts 活跃循环栈/迭代栈与 ID 后缀机制",
+      "4.5 实现 checkLoopBreak（maxIterations 硬上限 + breakCondition 两阶段）",
+      "4.6 实现循环迭代上下文注入（env 与变量替换）",
+      "4.7 新建 branch-evaluator.spec.ts 与 loop-manager.spec.ts 并挂接 index.ts 导出"
+    ],
+    "files": [
+      "packages/sandore/microflow/src/branch-evaluator.ts",
+      "packages/sandore/microflow/src/loop-manager.ts",
+      "packages/sandore/microflow/src/branch-evaluator.spec.ts",
+      "packages/sandore/microflow/src/loop-manager.spec.ts",
+      "packages/sandore/microflow/src/index.ts"
+    ],
+    "dependencies": [
+      "foundation-01",
+      "artifact-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-3-full-dag/specs/branch-evaluation/spec.md#BranchEvaluator-两阶段执行",
+      "furina/changes/task-3-full-dag/specs/branch-evaluation/spec.md#shell-分支评估三注入",
+      "furina/changes/task-3-full-dag/specs/branch-evaluation/spec.md#extractExpectation-三级解析",
+      "furina/changes/task-3-full-dag/specs/branch-evaluation/spec.md#extractBreakResult-解析",
+      "furina/changes/task-3-full-dag/specs/branch-evaluation/spec.md#matchesExpectation-分支匹配",
+      "furina/changes/task-3-full-dag/specs/loop-management/spec.md#活跃循环栈与迭代路径栈",
+      "furina/changes/task-3-full-dag/specs/loop-management/spec.md#循环迭代-ID-后缀机制",
+      "furina/changes/task-3-full-dag/specs/loop-management/spec.md#扁平-executedSteps-与-loopIteration-路径",
+      "furina/changes/task-3-full-dag/specs/loop-management/spec.md#checkLoopBreak-跳出检测",
+      "furina/changes/task-3-full-dag/specs/loop-management/spec.md#循环迭代上下文注入",
+      "furina/changes/task-3-full-dag/design.md#D4-循环扁平化与-ID-后缀"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "finalize-01",
+    "category": "finalize",
+    "function": "Step 收尾拆分（Assessor + GateEvaluator）",
+    "description": "新建 microflow/src/finalize-manager.ts 实现收尾拆分。FinalizeAssessor：session 类型 Step（agent/prompt/skill/mcp）经 ctx.sessions.fork(stepSessionId)（boundary 省略取源最后一条事件避免 OPEN_TURN）创建 fork 会话评估，shell 类型经 ctx.llm.stream 临时会话（stdout 作输入），fork 失败降级临时会话并记 finalizeMeta.errorDetail；评估一次合并完成判定 completionType: completed|ask 与透传变量提取 passThroughVars，提示词含 stepContext（input/output/artifacts XML 块）+ 透传变量列表 + 返回 JSON 格式 + 红线规则，解析三级回退；completionType=ask 时把 askQuestion 转 AskUserQuestionPayload（questions[] 含 id/question/header?/options?/multi_select?，对齐 DSH ask_user_question schema）并标记 interacting。GateEvaluator：恒开独立新临时会话，primary gate（产物存在 + 完成度 → taskStatus done|error）+ secondary gate（secondaryEnabled 时注入 secondaryPrompt → gateStatus done|error），gatesPassed=true 后再验证所有 outputTo 文件存在、缺失覆盖为 false。finalizeStep 编排：跳过检查（无未解析透传变量 + 无门禁 → 直接 done 零 AI 调用）→ assessor.assess → ask 注入载荷 + interacting 返回 ask / completed 继续 → 有 enabled 门禁时 gateEvaluator.evaluate → gatesPassed 判定 done/error → 回写 passThroughVars（保留 refresh）→ 同步 finalizeMeta 到 executedSteps → persistState。",
+    "acceptance_criteria": [
+      "session 类型 Step 收尾经 ctx.sessions.fork 创建 fork 会话（forkSessionId 返回）；fork 抛错时降级临时会话且 Step 不失败",
+      "assess 输出含 passThroughVars 时正确提取并回写（保留 refresh 标志）；completionType=ask 时 FinalizeAssessResult.askQuestion 携带问题载荷",
+      "ask 载荷的 questions[0] 保留 id/question/options 字段，Step 状态置 interacting，门禁评估不执行",
+      "primary gate 通过且产物存在时 gatesPassed=true；AI 门禁通过但某 outputTo 文件缺失时 gatesPassed 覆盖为 false",
+      "无透传变量且无门禁时 finalize 零 AI 调用直接返回 done；完整 finalize 的 executedSteps 条目 finalizeMeta 含 status/completionType/assessResult/gateResult"
+    ],
+    "tasks": [
+      "5.1 实现 FinalizeAssessor（fork/临时会话 + completionType + 透传提取 + ask 转换）",
+      "5.2 实现 ask 转 AskUserQuestionPayload 与 interacting 标记",
+      "5.3 实现 GateEvaluator（独立 session 双门审查 + 产物存在验证）",
+      "5.4 实现 finalizeStep 编排（跳过检查/assess/gate/回写/同步/persist）",
+      "5.5 新建 finalize-manager.spec.ts 并挂接 index.ts 导出"
+    ],
+    "files": [
+      "packages/sandore/microflow/src/finalize-manager.ts",
+      "packages/sandore/microflow/src/finalize-manager.spec.ts",
+      "packages/sandore/microflow/src/index.ts"
+    ],
+    "dependencies": [
+      "foundation-01",
+      "artifact-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-3-full-dag/specs/finalize-management/spec.md#FinalizeAssessor-会话策略",
+      "furina/changes/task-3-full-dag/specs/finalize-management/spec.md#完成判定与透传变量提取",
+      "furina/changes/task-3-full-dag/specs/finalize-management/spec.md#ask-转-AskUserQuestionPayload",
+      "furina/changes/task-3-full-dag/specs/finalize-management/spec.md#GateEvaluator-独立-session-双门审查",
+      "furina/changes/task-3-full-dag/specs/finalize-management/spec.md#finalizeStep-编排",
+      "furina/changes/task-3-full-dag/design.md#D5-Finalize-拆分两会话策略"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "dag-sched-01",
+    "category": "dag-scheduling",
+    "function": "DAG 调度与引擎接入",
+    "description": "将分支/循环/finalize 流控接入真实执行链路。改造 workflow/src/dag-navigator.ts：新增 resolveNextNodes(node, state) 作为 Step 级调度单一入口，按 Loop（loopTo 优先级 loop.next > 分支评估 > node.next 仅同阶段）> Branches（BranchEvaluator 评估路由到 expectation 匹配分支，无 expectation 的并行分支始终执行）> Next（[node.next]）> tryAdvanceStage 的优先级；Step 级跳转目标限于同 Stage（跨阶段由 tryAdvanceStage 承接），无匹配分支走默认推进并保留 branchMeta 现场。改造 microflow/src/stage-executor.ts：线性 for 循环改为 resolveNextNodes 驱动的调度循环，逐节点解析下一批入队执行，并行分支全部执行后汇合（汇合节点只执行一次）；接入 LoopManager（迭代后缀 id、loopIteration 路径、visitCount）、FinalizeManager（每 Step 完成后 finalizeStep 编排）与真实 childId（agent/skill/mcp 为 startContinuable 返回的 SessionId，prompt 为临时会话标识，shell 为 null，synthetic: false）。改造 workflow/src/workflow-engine.ts：Stage 主循环保留，engine 管 Stage 间推进与事件/持久化、stage-executor 管 Stage 内 Step DAG；透传变量回写、sessionMeta 真实 childId、step-completed.output 填最终输出。",
+    "acceptance_criteria": [
+      "resolveNextNodes 对带 expectation 的分支路由到匹配分支的 next；含无 expectation 分支时该并行分支始终纳入下一批",
+      "resolveNextNodes 无匹配分支时走 node.next 或 tryAdvanceStage 并保留 branchMeta 原始评估结果",
+      "StageExecutor 的两个并行分支各自完成后指向同一汇合节点时汇合节点只执行一次",
+      "agent Step 的 sandore/step-completed 事件 sessionMeta 含真实 childId（synthetic:false）与 output: ContentBlock[]（子代理最终输出）",
+      "完整 DAG YAML（分支 + 循环 + 门禁 + 透传变量）端到端跑通并得到 completed 终态"
+    ],
+    "tasks": [
+      "6.1 workflow/src/dag-navigator.ts 实现 resolveNextNodes 优先级调度与跨阶段隔离",
+      "6.2 microflow/src/stage-executor.ts 改为 resolveNextNodes 驱动调度循环并接入 LoopManager/FinalizeManager/真实 childId",
+      "6.3 workflow/src/workflow-engine.ts 接入流控与真实 childId、透传变量回写",
+      "6.4 扩展 workflow-engine.spec.ts 增加完整 DAG 端到端 YAML 测试"
+    ],
+    "files": [
+      "packages/sandore/workflow/src/dag-navigator.ts",
+      "packages/sandore/microflow/src/stage-executor.ts",
+      "packages/sandore/workflow/src/workflow-engine.ts",
+      "packages/sandore/workflow/src/workflow-engine.spec.ts"
+    ],
+    "dependencies": [
+      "foundation-01",
+      "artifact-01",
+      "agent-exec-01",
+      "flow-eval-01",
+      "finalize-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-3-full-dag/specs/dag-scheduling/spec.md#resolveNextNodes-优先级调度",
+      "furina/changes/task-3-full-dag/specs/dag-scheduling/spec.md#跨阶段隔离",
+      "furina/changes/task-3-full-dag/specs/dag-scheduling/spec.md#stage-executor-DAG-化",
+      "furina/changes/task-3-full-dag/specs/dag-scheduling/spec.md#真实子代理-childId-接入",
+      "furina/changes/task-3-full-dag/specs/loop-management/spec.md#循环目标优先级与跨阶段隔离",
+      "furina/changes/task-3-full-dag/design.md#D6-DAG-调度-resolveNextNodes-单一入口",
+      "furina/changes/task-3-full-dag/design.md#D9-事件与-childId-升级"
+    ],
+    "status": "done"
+  }
+]
