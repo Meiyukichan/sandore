@@ -2,9 +2,34 @@
  * 工作流引擎的基础词汇（browser-safe 持久化类型）。
  *
  * 本文件仅包含 `type`/`interface` 声明，无运行时依赖。深层依赖类型
- * （`CommandConfig`/`InputFromItem` 等）在 Task 1 以 `unknown` 占位，
- * Task 2/3 实现真实引擎时收紧为具体结构（接口名与 13 个基础类型不变）。
+ * （`CommandConfig`/`InputFromItem` 等）从 `schema.ts` 收紧为真实结构
+ * （接口名与 13 个基础类型不变）。
  */
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+
+import type {
+  BranchMeta,
+  CommandConfig,
+  FinalizeMeta,
+  InputFromItem,
+  OutputToItem,
+  PassThroughVar,
+  RetryRecord,
+  SessionMessage,
+  StepSessionMeta,
+} from './schema.ts'
+
+export type {
+  BranchMeta,
+  CommandConfig,
+  FinalizeMeta,
+  InputFromItem,
+  OutputToItem,
+  PassThroughVar,
+  RetryRecord,
+  SessionMessage,
+  StepSessionMeta,
+}
 
 /** 运行中的工作流实例的身份快照（`taskId` 即实例 ID）。 */
 export interface DagRunInfo {
@@ -52,25 +77,6 @@ export interface DagInstanceState {
   updatedAt: string
 }
 
-/** Step 命令配置（Task 2/3 收紧为真实结构）。 */
-export type CommandConfig = unknown
-/** Step 输入绑定项（Task 2/3 收紧为真实结构）。 */
-export type InputFromItem = unknown
-/** Step 输出绑定项（Task 2/3 收紧为真实结构）。 */
-export type OutputToItem = unknown
-/** Step 透传变量（Task 2/3 收紧为真实结构）。 */
-export type PassThroughVar = unknown
-/** Step 会话元数据（Task 2/3 收紧为真实结构）。 */
-export type StepSessionMeta = unknown
-/** 收尾元数据（Task 2/3 收紧为真实结构）。 */
-export type FinalizeMeta = unknown
-/** 分支元数据（Task 2/3 收紧为真实结构）。 */
-export type BranchMeta = unknown
-/** 会话消息记录（Task 2/3 收紧为真实结构）。 */
-export type SessionMessage = unknown
-/** 重试记录（Task 2/3 收紧为真实结构）。 */
-export type RetryRecord = unknown
-
 /** 已执行 Step 的默认实现快照。 */
 export interface ExecutedStepDefault {
   type: 'default'
@@ -97,6 +103,7 @@ export interface ExecutedStepDefault {
   loopMeta?: BranchMeta
   retryHistory?: RetryRecord[]
   parentSessionId?: string
+  output?: ContentBlock[]
 }
 
 /** 工作流 DAG 中单个 Stage 的状态快照。 */

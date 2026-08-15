@@ -1,0 +1,826 @@
+swagger: "2.0"
+
+info:
+  title: "Sandore Engine Host RPC API"
+  version: "1.0.0"
+  description: |
+    Task 2「引擎最小可用」将 `sandore.*` Host RPC 命名空间从 Task 1 的单一 `ping` 方法
+    扩展为 ~20 个方法（定义 CRUD / Job CRUD / 实例生命周期 / 产物查询 / Provider 转发）。
+
+    **调用方式说明（非 HTTP）**：本文件用 Swagger 2.0 结构描述 Host RPC 接口
+    （`TypertRemoteService` + `@Remote('method')`，namespace 为 `sandore`）。
+    客户端通过 `host.call('sandore.<method>', ...)` 调用，`basePath: /sandore` 对应
+    命名空间，各 path 段对应 RPC 方法名。所有方法均 `async`，参数经 zod 校验后
+    转发到 `SandorePersistence` / `SandoreEngineRuntime` / `ctx.llm`，RPC 层不含业务逻辑。
+
+host: "host"
+basePath: "/sandore"
+schemes:
+  - internal
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+tags:
+  - name: Meta
+    description: "健康检查（Task 1 保留）。"
+  - name: Definitions
+    description: "工作流定义 CRUD（storageDomain `definitions` 表）。"
+  - name: Jobs
+    description: "Job CRUD（storageDomain `jobs` 表）。"
+  - name: Instances
+    description: "实例生命周期（storageDomain `state` 表快照）。"
+  - name: Artifacts
+    description: "实例产物查询。"
+  - name: LLM
+    description: "LLM Provider / Model 转发。"
+
+definitions:
+
+  ErrorResponse:
+    type: object
+    required:
+      - code
+      - message
+    properties:
+      code:
+        type: string
+        description: |
+          `SandoreErrorCode` 联合类型（Task 2 用到的子集）：
+          YAML_PARSE / DEFINITION_INVALID / NODE_NOT_FOUND / STEP_TIMEOUT /
+          STEP_EXECUTION / INVALID_OPERATION / PERSISTENCE_FAILED。
+      message:
+        type: string
+        description: "人类可读错误描述。"
+      fatal:
+        type: boolean
+        description: "`SandoreError` 的 fatal 标志，默认 true。"
+
+  WorkflowDefinitionRecord:
+    type: object
+    required:
+      - id
+      - yaml
+      - name
+      - version
+      - createdAt
+      - updatedAt
+    properties:
+      id:
+        type: string
+        description: "workflowId，键，格式 `wfl-{uuid}`。"
+      yaml:
+        type: string
+        description: "YAML 文本（`z.string().max(65536)` 上限）。"
+      name:
+        type: string
+        description: "定义名（来自 YAML 解析结果）。"
+      version:
+        type: string
+        description: "定义版本号。"
+      description:
+        type: string
+        description: "可选描述。"
+      createdAt:
+        type: string
+        format: date-time
+      updatedAt:
+        type: string
+        format: date-time
+
+  JobRecord:
+    type: object
+    required:
+      - id
+      - name
+      - workflowId
+      - createdAt
+      - updatedAt
+    properties:
+      id:
+        type: string
+        description: "jobId，键，自动生成。"
+      name:
+        type: string
+      workflowId:
+        type: string
+        description: "关联定义（必须存在于 definitions 表）。"
+      cwd:
+        type: string
+        description: "可选工作目录。"
+      createdAt:
+        type: string
+        format: date-time
+      updatedAt:
+        type: string
+        format: date-time
+
+  DagRun:
+    type: object
+    required:
+      - instanceId
+      - status
+    properties:
+      instanceId:
+        type: string
+        description: "`YYYYMMDD-HHmmss-{3位随机}` 格式。"
+      status:
+        type: string
+        enum:
+          - running
+        description: "fire-and-forget 启动后立即返回 running。"
+
+  InstanceSummary:
+    type: object
+    required:
+      - instanceId
+      - jobId
+      - workflowId
+      - status
+      - createdAt
+      - updatedAt
+    properties:
+      instanceId:
+        type: string
+      jobId:
+        type: string
+      workflowId:
+        type: string
+      status:
+        type: string
+        enum:
+          - pending
+          - running
+          - completed
+          - failed
+          - aborted
+      createdAt:
+        type: string
+        format: date-time
+      updatedAt:
+        type: string
+        format: date-time
+
+  StepSessionMeta:
+    type: object
+    required:
+      - childId
+      - synthetic
+      - command
+    properties:
+      childId:
+        type: string
+        description: "`step-{stepId}-{execId}`（execId = crypto.randomUUID() 前 8 位）。"
+      synthetic:
+        type: boolean
+        description: "true 表示占位合成（Task 3 agent Step 用真实 SessionId + false）。"
+      command:
+        type: string
+        enum:
+          - shell
+          - prompt
+          - agent
+          - skill
+          - mcp
+
+  ExecutedStep:
+    type: object
+    required:
+      - stepId
+      - stageId
+      - status
+      - sessionMeta
+    properties:
+      stepId:
+        type: string
+      stageId:
+        type: string
+      status:
+        type: string
+        enum:
+          - pending
+          - running
+          - completed
+          - failed
+          - skipped
+      output:
+        type: array
+        items:
+          type: object
+        description: "shell 为 stdout.text 包装的 text block、prompt 为聚合的 ContentBlock[]；统一为 ContentBlock[]。"
+      error:
+        type: string
+        description: "失败时的错误摘要（含 stderr / failure.message）。"
+      sessionMeta:
+        $ref: "#/definitions/StepSessionMeta"
+      startedAt:
+        type: string
+        format: date-time
+      completedAt:
+        type: string
+        format: date-time
+
+  StageContract:
+    type: object
+    required:
+      - stageId
+      - stageName
+      - status
+    properties:
+      stageId:
+        type: string
+      stageName:
+        type: string
+      status:
+        type: string
+        enum:
+          - pending
+          - running
+          - completed
+          - failed
+      artifacts:
+        type: array
+        items:
+          type: object
+        description: "聚合各 Step 的 outputTo 产物。"
+      completedAt:
+        type: string
+        format: date-time
+
+  WorkflowTaskState:
+    type: object
+    required:
+      - taskId
+      - jobId
+      - workflowId
+      - status
+      - originalInput
+      - executedSteps
+      - stageInfos
+      - createdAt
+      - updatedAt
+    properties:
+      taskId:
+        type: string
+        description: "instanceId。"
+      jobId:
+        type: string
+      workflowId:
+        type: string
+      cwd:
+        type: string
+      status:
+        type: string
+        enum:
+          - pending
+          - running
+          - completed
+          - failed
+          - aborted
+      originalInput:
+        type: string
+      currentStageId:
+        type: string
+      executedSteps:
+        type: array
+        items:
+          $ref: "#/definitions/ExecutedStep"
+      stageInfos:
+        type: array
+        items:
+          type: object
+      pendingQueue:
+        type: array
+        items:
+          type: string
+        description: "线性执行时存当前待执行 stepId（DAG 字段 Task 3 用）。"
+      stageContracts:
+        type: object
+        additionalProperties:
+          $ref: "#/definitions/StageContract"
+        description: "stageId → 已完成 Stage 的产物契约（Record<string, StageContract>）。"
+      createdAt:
+        type: string
+        format: date-time
+      updatedAt:
+        type: string
+        format: date-time
+
+  ArtifactEntry:
+    type: object
+    required:
+      - stepId
+      - stageId
+    properties:
+      stepId:
+        type: string
+      stageId:
+        type: string
+      outputToId:
+        type: string
+        description: "outputTo 产物 id（`opt-*`）。"
+      files:
+        type: array
+        items:
+          type: string
+        description: "产物文件路径列表。"
+      returnPrompt:
+        type: string
+        description: "prompt Step 的输出文本（若存在）。"
+
+paths:
+
+  # ====== Meta ======
+  /ping:
+    get:
+      tags:
+        - Meta
+      summary: "健康检查往返（Task 1 保留）"
+      responses:
+        200:
+          description: "服务在线。"
+          schema:
+            type: object
+            required:
+              - pong
+              - service
+              - time
+            properties:
+              pong:
+                type: boolean
+                example: true
+              service:
+                type: string
+                example: "sandore"
+              time:
+                type: string
+                format: date-time
+
+  # ====== Definitions ======
+  /listDefinitions:
+    get:
+      tags:
+        - Definitions
+      summary: "列出全部工作流定义"
+      responses:
+        200:
+          description: "定义列表（definitions 表 entries() 全量）。"
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/WorkflowDefinitionRecord"
+
+  /createDefinition:
+    post:
+      tags:
+        - Definitions
+      summary: "创建定义（解析 + 验证 YAML 后存 yaml 文本与元数据）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - yaml
+            properties:
+              yaml:
+                type: string
+                description: "合法 V2（或可自动转换的 V1）工作流 YAML。"
+      responses:
+        200:
+          description: "创建成功，返回 `wfl-{uuid}` 前缀的记录。"
+          schema:
+            $ref: "#/definitions/WorkflowDefinitionRecord"
+        400:
+          description: "YAML 语法错误或定义校验失败。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /updateDefinition:
+    post:
+      tags:
+        - Definitions
+      summary: "更新定义元数据"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - id
+            properties:
+              id:
+                type: string
+              input:
+                type: object
+                description: "待更新的元数据字段（name/version/description）。"
+      responses:
+        200:
+          description: "更新后的记录。"
+          schema:
+            $ref: "#/definitions/WorkflowDefinitionRecord"
+        400:
+          description: "定义不存在。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /deleteDefinition:
+    post:
+      tags:
+        - Definitions
+      summary: "删除定义（不级联删除实例）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - id
+            properties:
+              id:
+                type: string
+      responses:
+        200:
+          description: "删除结果；重复删除幂等（返回 false/not-found，不抛错）。"
+          schema:
+            type: boolean
+
+  /getYaml:
+    post:
+      tags:
+        - Definitions
+      summary: "读取定义原始 YAML 文本"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - id
+            properties:
+              id:
+                type: string
+      responses:
+        200:
+          description: "YAML 文本。"
+          schema:
+            type: string
+        400:
+          description: "定义不存在。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /updateYaml:
+    post:
+      tags:
+        - Definitions
+      summary: "重新验证后覆盖定义的 YAML 文本"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - id
+              - yaml
+            properties:
+              id:
+                type: string
+              yaml:
+                type: string
+      responses:
+        200:
+          description: "覆盖成功。"
+          schema:
+            $ref: "#/definitions/WorkflowDefinitionRecord"
+        400:
+          description: "非法 YAML 拒绝，存储中的 yaml 保持旧值。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  # ====== Jobs ======
+  /listJobs:
+    get:
+      tags:
+        - Jobs
+      summary: "列出 Job（可按 workflowId 过滤）"
+      parameters:
+        - name: workflowId
+          in: query
+          type: string
+          required: false
+      responses:
+        200:
+          description: "Job 列表。"
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/JobRecord"
+
+  /createJob:
+    post:
+      tags:
+        - Jobs
+      summary: "创建 Job（校验 workflowId 存在于 definitions 表）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - name
+              - workflowId
+            properties:
+              name:
+                type: string
+              workflowId:
+                type: string
+              cwd:
+                type: string
+      responses:
+        200:
+          description: "创建成功。"
+          schema:
+            $ref: "#/definitions/JobRecord"
+        400:
+          description: "workflowId 不存在（INVALID_OPERATION）。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /getJob:
+    post:
+      tags:
+        - Jobs
+      summary: "按 id 读取 Job"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - id
+            properties:
+              id:
+                type: string
+      responses:
+        200:
+          description: "Job 记录。"
+          schema:
+            $ref: "#/definitions/JobRecord"
+        400:
+          description: "Job 不存在。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /updateJob:
+    post:
+      tags:
+        - Jobs
+      summary: "更新 Job 元数据"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - id
+            properties:
+              id:
+                type: string
+              input:
+                type: object
+                description: "待更新字段（name/cwd 等）。"
+      responses:
+        200:
+          description: "更新后的记录。"
+          schema:
+            $ref: "#/definitions/JobRecord"
+
+  /deleteJob:
+    post:
+      tags:
+        - Jobs
+      summary: "删除 Job（不级联删除实例）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - id
+            properties:
+              id:
+                type: string
+      responses:
+        200:
+          description: "删除结果；重复删除幂等。"
+          schema:
+            type: boolean
+
+  # ====== Instances ======
+  /listInstances:
+    get:
+      tags:
+        - Instances
+      summary: "列出实例摘要（从 state 表 entries() 派生，可按 jobId 过滤）"
+      parameters:
+        - name: jobId
+          in: query
+          type: string
+          required: false
+      responses:
+        200:
+          description: "实例摘要列表。"
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/InstanceSummary"
+
+  /startInstance:
+    post:
+      tags:
+        - Instances
+      summary: "启动实例（转发 ctx.sandoreEngine.startInstance，返回 DagRun）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - jobId
+              - originalInput
+            properties:
+              jobId:
+                type: string
+              originalInput:
+                type: string
+              cwd:
+                type: string
+      responses:
+        200:
+          description: "实例已创建并 fire-and-forget 启动；state 表立即可读回快照。"
+          schema:
+            $ref: "#/definitions/DagRun"
+        400:
+          description: "Job/定义不存在或 YAML 非法，state 表无新条目。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /getInstanceState:
+    post:
+      tags:
+        - Instances
+      summary: "读取实例完整状态快照"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+            properties:
+              jobId:
+                type: string
+                description: "可选，用于定位/校验。"
+              instanceId:
+                type: string
+      responses:
+        200:
+          description: "完整 WorkflowTaskState（内存运行表优先读、state 表兜底读）。"
+          schema:
+            $ref: "#/definitions/WorkflowTaskState"
+        400:
+          description: "实例不存在。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /deleteInstance:
+    post:
+      tags:
+        - Instances
+      summary: "删除实例（state 表删除）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+            properties:
+              instanceId:
+                type: string
+      responses:
+        200:
+          description: "删除结果。"
+          schema:
+            type: boolean
+
+  /abortInstance:
+    post:
+      tags:
+        - Instances
+      summary: "中止运行中实例（转发引擎，非运行态抛错）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+            properties:
+              instanceId:
+                type: string
+      responses:
+        200:
+          description: "中止触发成功，实例终态 aborted。"
+          schema:
+            $ref: "#/definitions/WorkflowTaskState"
+        400:
+          description: "非运行态（completed/failed/aborted）调用抛 INVALID_OPERATION。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  # ====== Artifacts ======
+  /getArtifacts:
+    post:
+      tags:
+        - Artifacts
+      summary: "查询实例产物（从 state 快照遍历 executedSteps / stageContracts）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+            properties:
+              instanceId:
+                type: string
+              stageId:
+                type: string
+                description: "可选，按 stageId 过滤。"
+      responses:
+        200:
+          description: "产物条目列表。"
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/ArtifactEntry"
+        400:
+          description: "实例不存在。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  # ====== LLM ======
+  /listProviders:
+    get:
+      tags:
+        - LLM
+      summary: "列出 LLM Provider（转发 ctx.llm.listProviders()）"
+      responses:
+        200:
+          description: "Provider 列表。"
+          schema:
+            type: array
+            items:
+              type: object
+
+  /listModels:
+    post:
+      tags:
+        - LLM
+      summary: "列出某 Provider 的模型（转发 ctx.llm.listModels(provider)）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - provider
+            properties:
+              provider:
+                type: string
+      responses:
+        200:
+          description: "Model 列表。"
+          schema:
+            type: array
+            items:
+              type: object

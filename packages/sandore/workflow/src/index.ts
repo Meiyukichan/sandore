@@ -22,6 +22,9 @@ import type {
 } from './types.ts'
 
 export type * from './types.ts'
+export * from './errors.ts'
+export * from './schema.ts'
+export * from './yaml-parser.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

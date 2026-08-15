@@ -1,0 +1,140 @@
+[
+  {
+    "id": "schema-01",
+    "category": "engine-schema",
+    "function": "类型体系与 YAML 解析",
+    "description": "补齐 workflow 包依赖（zod / yaml / @deepseek-ai/dsh-storage-domain）并建立 vitest 测试基建（根 devDependency + 根 vitest.config.ts）。新增 errors.ts（SandoreError extends HarnessError，fatal 标志 + SandoreErrorCode 联合类型）；新增 schema.ts：三层 Zod Schema + z.infer TS 类型——定义层（WorkflowDefinition/WorkflowStage/WorkflowStep/CommandConfig 五类型 discriminated union：agent/prompt/shell/skill/mcp，判别字段顶层 type、变体字段嵌套于 value）、运行时层（WorkflowTaskState 不含 permissionMode/userChatMessages/defaultSessionMeta，StepSessionMeta={childId,synthetic,command}，ExecutedStepDefault 新增 output?: ContentBlock[]）、存储层（WorkflowDefinitionRecord yaml max 65536 / JobRecord，导出 sandoreDomainSpec=defineDomain({name:'sandore',version:1,tables:{definitions,jobs,state}})，domainTable<K,V>(valueSchema) 写法）。新增 yaml-parser.ts：parseWorkflowYaml（yaml.parseDocument prettyErrors → V2 检测 stages[].steps[] / V1 检测 stages[].scenarios[] → convertLegacyToV2 把 Scenario 展平为 Step → WorkflowDefinitionSchema.parse → 引用完整性校验 next/inputFrom/outputTo；语法错误抛 SandoreError('YAML_PARSE')、验证失败抛 SandoreError('DEFINITION_INVALID',{cause})）+ serializeWorkflowYaml（round-trip）。types.ts 的 9 个 unknown 占位收紧为 import type from schema 的真实结构（13 个基础类型接口名不变），index.ts 导出新模块。schema/yaml-parser 单测覆盖验证标准。",
+    "acceptance_criteria": [
+      "workflow 包 package.json 新增 @deepseek-ai/dsh-storage-domain@0.1.0-rc.6、zod、yaml 依赖；根 package.json devDependencies 新增 vitest 且根 vitest.config.ts 存在",
+      "WorkflowDefinitionSchema.parse(合法 V2 对象) 成功且 settings.defaultTimeout 默认 120、maxConcurrentAgents 默认 4；缺 stages 抛含字段路径（如 stages）的 ZodError",
+      "CommandConfigSchema 为判别字段顶层 type（变体字段嵌套于 value）的五类型 discriminated union，解析 {type:'shell',value:{command:'echo hi'}} 得 shell 变体，未知 type（如 docker）抛错",
+      "WorkflowTaskStateSchema 无 permissionMode/userChatMessages/defaultSessionMeta 字段；含 2 条 executedSteps 的完整 state 对象 round-trip 深层相等",
+      "StepSessionMetaSchema = { childId:string, synthetic:boolean, command:'shell'|'prompt'|'agent'|'skill'|'mcp' }",
+      "sandoreDomainSpec 的域名/表名（sandore/definitions/jobs/state）全部匹配 /^[a-z][a-z0-9_]*$/；WorkflowDefinitionRecordSchema.parse 拒绝超过 65536 字符的 yaml",
+      "parseWorkflowYaml 解析 docs/engine/dynamic-workflow-engine.md 附录 A 的 V2 示例成功；语法错误（如 stages: [ Unclosed）抛 SandoreError 且 code==='YAML_PARSE'、message 含行列信息；step 的 next 指向不存在 id 抛 SandoreError('DEFINITION_INVALID')",
+      "V1 三级 stages[].scenarios[].tasks[] 自动转为两级 stages[].steps[] 且 Zod 验证通过；同一 stage 同时含 steps[] 与 scenarios[] 抛 SandoreError('DEFINITION_INVALID')",
+      "serializeWorkflowYaml(def) → parseWorkflowYaml(result) round-trip 深层相等",
+      "SandoreError instanceof HarnessError（@deepseek-ai/dsh-llm），默认 fatal===true，可传 { fatal:false } 覆盖"
+    ],
+    "tasks": [
+      "1.1 补依赖：workflow 包加 zod/yaml/@deepseek-ai/dsh-storage-domain，根加 vitest 与 vitest.config.ts",
+      "1.2 新增 errors.ts（SandoreError extends HarnessError + fatal + SandoreErrorCode 联合类型）",
+      "1.3 新增 schema.ts（定义层/运行时层/存储层三层 Zod Schema + TS 类型 + sandoreDomainSpec）",
+      "1.4 新增 yaml-parser.ts（V1/V2 解析 + convertLegacyToV2 + Zod 验证 + 引用完整性 + serializeWorkflowYaml）",
+      "1.5 收紧 types.ts 的 9 个 unknown 占位为 import type from schema；index.ts 导出新模块",
+      "1.6 编写 schema.spec.ts / yaml-parser.spec.ts 并全绿"
+    ],
+    "files": [
+      "package.json",
+      "vitest.config.ts",
+      "packages/sandore/workflow/package.json",
+      "packages/sandore/workflow/src/errors.ts",
+      "packages/sandore/workflow/src/schema.ts",
+      "packages/sandore/workflow/src/yaml-parser.ts",
+      "packages/sandore/workflow/src/types.ts",
+      "packages/sandore/workflow/src/index.ts",
+      "packages/sandore/workflow/src/schema.spec.ts",
+      "packages/sandore/workflow/src/yaml-parser.spec.ts"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/task-2-minimal-engine/specs/engine-schema/spec.md",
+      "furina/changes/task-2-minimal-engine/design.md",
+      "furina/changes/task-2-minimal-engine/api.yaml"
+    ],
+    "status": "in_progress"
+  },
+  {
+    "id": "crud-02",
+    "category": "engine-crud",
+    "function": "定义/Job/实例 CRUD 与持久化",
+    "description": "新增 persistence.ts（SandorePersistence）：在 [Service.init] 中 await ctx.storageDomain.open(sandoreDomainSpec) 打开 sandore 域、ctx.effect 挂 Domain.close() 释放，暴露 definitions/jobs/state 三 KvTable 句柄与 saveWorkflowState(state)（state.put(instanceId, state) 全量覆盖）。扩展 remote.ts（SandoreRemote 保留 ping）：定义 CRUD listDefinitions/createDefinition/updateDefinition/deleteDefinition/getYaml/updateYaml、Job CRUD listJobs(workflowId?)/createJob/getJob/updateJob/deleteJob、实例生命周期 listInstances(jobId?)/startInstance/deleteInstance/getInstanceState/abortInstance、产物 getArtifacts(instanceId, stageId?)、Provider 转发 listProviders/listModels。RPC 层只做 zod 参数校验 + 转发到引擎/存储域，无业务逻辑；createDefinition 内部 parse+验证 YAML→生成 wfl-{uuid}→存 yaml 文本+元数据；createJob 校验 workflowId 存在；listInstances 从 state 表 entries() 按 jobId 过滤派生摘要；deleteDefinition/deleteJob 不级联删除实例。测试用内存 mock storageDomain（tests/mocks/storage-domain.ts，Map 版 KvTable）。",
+    "acceptance_criteria": [
+      "Provider 启动时 sandore 域打开成功、三表句柄可解析、卸载时 Domain.close() 被调用；同一 instanceId 连续两次 saveWorkflowState 后 state.get 返回最后一次完整快照（无残留旧字段）",
+      "createDefinition({yaml:合法 V2}) 后 listDefinitions 含 wfl- 前缀记录（yaml 文本 + name 来自解析），getYaml(id) 返回原文；非法 YAML createDefinition 抛 SandoreError 且 definitions 表无新记录",
+      "updateYaml(id, 非法 YAML) 抛 SandoreError 且存储 yaml 保持旧值；deleteDefinition(id) 后列表不含该记录，重复删除幂等（返回 false/not-found 不抛错）",
+      "createJob({workflowId:'wfl-nonexistent'}) 抛类型化错误；listJobs(workflowA) 仅返回关联 workflowA 的 Job",
+      "startInstance({jobId, originalInput}) 返回 { instanceId, status } 且 state 表立即可读回含 originalInput 的完整快照；listInstances(jobA) 仅返回 jobA 摘要；deleteInstance 后 getInstanceState 抛 not-found 类型化错误且 listInstances 不含该实例",
+      "对 completed 状态实例 abortInstance 抛 SandoreError('INVALID_OPERATION')",
+      "getArtifacts 从 completed 实例（shell outputTo 产物文件 + prompt returnPrompt）返回含 {stepId,stageId,outputToId,files,returnPrompt} 的条目，可按 stageId 过滤",
+      "listProviders()/listModels(provider) 透传 mock llm（1 provider/1 model）；ping 保留返回 { pong:true, service:'sandore', time:ISO }"
+    ],
+    "tasks": [
+      "2.1 新增 persistence.ts（SandorePersistence + sandore 域打开/关闭 + 三表句柄 + saveWorkflowState）",
+      "2.2 新增 tests/mocks/storage-domain.ts（内存 mock storageDomain，Map 版 KvTable）",
+      "2.3 扩展 remote.ts 定义 CRUD（listDefinitions/createDefinition/updateDefinition/deleteDefinition/getYaml/updateYaml）",
+      "2.4 扩展 remote.ts Job CRUD（listJobs/createJob/getJob/updateJob/deleteJob）",
+      "2.5 扩展 remote.ts 实例生命周期（listInstances/startInstance/deleteInstance/getInstanceState/abortInstance）+ getArtifacts + listProviders/listModels（保留 ping）",
+      "2.6 编写 persistence.spec.ts / remote.spec.ts 并全绿"
+    ],
+    "files": [
+      "packages/sandore/workflow/src/persistence.ts",
+      "packages/sandore/workflow/src/remote.ts",
+      "packages/sandore/workflow/src/persistence.spec.ts",
+      "packages/sandore/workflow/src/remote.spec.ts",
+      "tests/mocks/storage-domain.ts"
+    ],
+    "dependencies": [
+      "schema-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-2-minimal-engine/specs/engine-crud/spec.md",
+      "furina/changes/task-2-minimal-engine/design.md",
+      "furina/changes/task-2-minimal-engine/api.yaml"
+    ],
+    "status": "pending"
+  },
+  {
+    "id": "execution-03",
+    "category": "engine-execution",
+    "function": "线性工作流执行",
+    "description": "补齐 microflow 包（package.json peerDependencies + scripts、src/index.ts 导出）并实现 step-runner.ts（shell Step：ctx.shell.resolve({command: command.value.command, workdir, timeoutMs})→ctx.shell.run，exitCode===0 且非 timedOut/aborted 为成功、stdout.text 包装为 text ContentBlock 输出，非零退出/超时/中止→SandoreError('STEP_EXECUTION') 含 stderr 摘要，超时映射 STEP_TIMEOUT 语义；prompt Step：结构化提示词（主头部+## 你的任务+## 参考信息+## 前置Steps输出与产物）→LLM 三层回退 provider/model（Step 定义 providerId/modelId → Config defaultProvider/defaultModel → ctx.llm.listProviders()[0]+listModels()[0]，全空抛 'no LLM provider available'）→ctx.llm.stream→聚合 block-end 为 ContentBlock[]，finish.reason.kind==='error' 抛 STEP_EXECUTION）与 stage-executor.ts（Stage 内按 steps 数组顺序执行 + StageContract 组装 + passThroughVars 透传，返回 {stageContract,executedSteps,passThroughVars,status,errorDetail?}）。新增 workflow 包 dag-navigator.ts（节点索引 + tryAdvanceStage 跟随 Stage.next）与 workflow-engine.ts（SandoreEngineRuntime extends SandoreEngine 作为 default export：static inject 不变、static Config 含 defaultTimeoutMs(7200000)/maxConcurrentSteps(0)/defaultProvider?/defaultModel?；startInstance 同步完成读定义→parse→生成 YYYYMMDD-HHmmss-xxx instanceId→初始化 pending 快照→state.put→fire-and-forget execute→返回 {instanceId,status:'running'}；execute Stage 级线性主循环；实现 startInstance/getState/abortInstance 3 方法、其余 8 方法抛 SandoreError('INVALID_OPERATION','not implemented')；每次状态变化双发 sandore/* 事件（ctx.emit + session.append 安全包装 try/catch）+ persistState；childId=step-{stepId}-{execId 前 8 位} 合成 sessionMeta={childId,synthetic:true,command}；abortInstance 设 AbortSignal→主循环退出→aborted 终态 + sandore/aborted）。保留 SandoreEngineStub named export。集成测试（tests/mocks/llm.ts/shell.ts/sessions.ts）覆盖 startInstance→completed 线性流与事件序断言。",
+    "acceptance_criteria": [
+      "SandoreEngineRuntime 为 default export、extends SandoreEngine，实现 startInstance/getState/abortInstance，其余 8 方法（recoverInstance/replyQuestion/replyPermission/pauseStep/resumeStep/pauseAllSteps/resumeAllSteps/retryStep）抛 SandoreError 且 message 含 'not implemented'；SandoreEngineStub 仍为 named export 可用",
+      "startInstance 的 workflowId 在 definitions 表不存在时抛 SandoreError 且 state 表无新条目；返回后 getState(instanceId) 立即可读（至少 pending/running 状态与 originalInput）",
+      "「Stage1 含 shell Step → Stage2 含 prompt Step」定义执行到终态：status==='completed'、executedSteps 两条均 completed、stageInfos 两 Stage 均 completed",
+      "事件发射顺序严格为 start → stage-start(stg1) → step-start(step1) → step-completed(step1) → stage-completed(stg1) → stage-start(stg2) → step-start(step2) → step-completed(step2) → stage-completed(stg2) → end",
+      "Stage 内多 Step（A 输出被 B 引用）按定义顺序执行：A 先入 executedSteps、B 后执行；StageContract 的 stageId/stageName/status='completed'/artifacts/completedAt 正确",
+      "shell 成功（exitCode 0）Step 输出为 [{type:'text',text:stdout.text}]（ContentBlock[]）、status completed；非零退出（stderr 'boom'）→ 实例 failed、executedSteps[].error 含 'boom'、sandore/step-failed 发射；timeout 极小且 timedOut:true → 失败为 STEP_TIMEOUT 语义",
+      "prompt 成功输出 ContentBlock[]（step-completed 事件 payload 的 output 即该数组）；finish.reason={kind:'error',failure} → 实例 failed 含 failure.message；listProviders() 空且定义/Config 未指定 → SandoreError('STEP_EXECUTION') message 含 'no LLM provider available'；Step 定义 providerId 'a' + Config 'b' + llm 'c' → 实际用 'a'（定义优先）",
+      "双发可观测：线性流完成后 fake ctx.emit 记录 10 个事件、fake session.append 记录同序 Session 事件；某个 ctx.emit listener 抛异常时引擎继续执行到 completed",
+      "childId 匹配 /^step-step-abc-[0-9a-f]{8}$/、executedSteps[].sessionMeta.synthetic===true 且 command 正确",
+      "运行中 shell Step 挂起时 abortInstance → 终态 aborted、sandore/aborted 事件发射、state 快照状态 aborted；对 completed 实例 abortInstance 抛 SandoreError('INVALID_OPERATION')",
+      "完成后 state 表读回快照 status=completed、executedSteps.length===2（含 sessionMeta/output）、stageContracts 两条；第二步失败后快照 status=failed、第二条 executedSteps[].error 非空、第一条保持 completed"
+    ],
+    "tasks": [
+      "3.1 补齐 microflow 包（package.json peerDependencies + scripts、src/index.ts）",
+      "3.2 实现 step-runner.ts（shell + prompt + LLM 三层回退 + 结构化提示词）",
+      "3.3 实现 stage-executor.ts（Stage 内顺序执行 + StageContract 组装 + passThroughVars）",
+      "3.4 新增 tests/mocks/llm.ts、tests/mocks/shell.ts、tests/mocks/sessions.ts",
+      "3.5 实现 dag-navigator.ts（节点索引 + tryAdvanceStage 跟随 Stage.next）",
+      "3.6 实现 workflow-engine.ts（SandoreEngineRuntime + startInstance/getState/abortInstance + Stage 级线性主循环 + 事件双发 + persistState + childId 合成）",
+      "3.7 切换 index.ts default export 为 SandoreEngineRuntime、保留 SandoreEngineStub named export",
+      "3.8 编写 step-runner.spec.ts / workflow-engine.spec.ts 集成测试并全绿"
+    ],
+    "files": [
+      "packages/sandore/microflow/package.json",
+      "packages/sandore/microflow/src/index.ts",
+      "packages/sandore/microflow/src/step-runner.ts",
+      "packages/sandore/microflow/src/stage-executor.ts",
+      "packages/sandore/microflow/src/step-runner.spec.ts",
+      "packages/sandore/workflow/src/dag-navigator.ts",
+      "packages/sandore/workflow/src/workflow-engine.ts",
+      "packages/sandore/workflow/src/index.ts",
+      "packages/sandore/workflow/src/workflow-engine.spec.ts",
+      "tests/mocks/llm.ts",
+      "tests/mocks/shell.ts",
+      "tests/mocks/sessions.ts"
+    ],
+    "dependencies": [
+      "schema-01",
+      "crud-02"
+    ],
+    "spec_refs": [
+      "furina/changes/task-2-minimal-engine/specs/engine-execution/spec.md",
+      "furina/changes/task-2-minimal-engine/design.md",
+      "furina/changes/task-2-minimal-engine/api.yaml"
+    ],
+    "status": "pending"
+  }
+]

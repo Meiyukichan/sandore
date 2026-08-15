@@ -713,6 +713,26 @@ getInstanceArtifacts(jobId, instanceId, stageId?): InstanceArtifactsData
 | `WorkflowLoopManager` / `WorkflowRecoveryManager` / `WorkflowSseManager` / `WorkflowInteractionManager` / `WorkflowLifecycleManager` | 保留逻辑；SSE/事件改为 DSH 事件系统；交互改为 DSH 交互服务 |
 | `StatePersistence`（work.json + chat.json） | **重点改造**：改为 DSH 存储域（见 §4.1） |
 
+### 5.1A 事件发射约定（D5：`ctx.emit` + `session.append` 双发）
+
+> 来源：dsh-workflow §5.5。`sandore/*` 有**双重角色**，引擎在每次状态变化时**双发**：
+
+| 通道 | 载荷 | 用途 |
+|---|---|---|
+| `ctx.emit('sandore/…', info, …)` | `(info: DagRunInfo, stepId, childId, …)`（observe-only emit + 数据快照，首参 `DagRunInfo`） | Cordis 进程内事件——引擎内部模块 `ctx.on('sandore/…')` 监听（为 Task 4 interaction/lifecycle/recovery 铺路） |
+| `hostSession.append('sandore/…', payload)` | `{ stepId, childId, … }`（扁平可序列化对象） | Session 事件——写宿主 Session log，驱动前端 `ConversationNodeDefinition` 折叠（D8 讨论面板）+ apiproxy `session/event` 帧透传 |
+
+**关键**：
+- `session.append` 是**必需**（D8 讨论面板折叠 + apiproxy 透传的前提，不能只有 `ctx.emit`）
+- `ctx.emit` 是 D5 的「引擎内部触发源」，对齐 DSH `tool-workflow` 范式（`ctx.on('workflow/*')` 触发源 + `session.append('tool-workflow/*')` 写 log）；Task 2 虽暂无内部消费者，但**从第一天建立正确范式**，Task 4 交互/生命周期模块直接 `ctx.on('sandore/…')` 复用
+- 统一封装 `emitSandoreEvent(type, info, payload)` 辅助函数：`ctx.emit` 传 `(info, …)` 多参数，`session.append` 传扁平可序列化对象，避免每个发射点手写两遍
+
+**childId 占位（Task 2 shell/prompt 无子代理）**：
+- Task 2 的 shell（`ctx.shell.run`）/ prompt（`ctx.llm.stream`）均无子代理 Session，但 `step-start`/`step-completed`/`step-failed` 的 `childId` 是必填 string
+- **占位规则**：`childId = step-{stepId}-{execId}`（`execId` = 本次执行的唯一短 id，如 `randomUUID().slice(0, 8)`），并写入 `executedSteps[].sessionMeta = { childId, synthetic: true, command: 'shell' | 'prompt' }`
+- **`synthetic: true` 标记**：让 Task 5 前端 renderer 区分「占位 childId」vs「真实子代理 SessionId」——`synthetic=true` 时点击 `sandore-step` 节点**不跳转**（无子对话页，避免 `ctx.sessions.open(占位id)` 报错），仅内联展示结果
+- **Task 3 迁移**：agent 类型用 `ctx.subagents.startContinuable()` 的真实 SessionId，`synthetic: false`；shell/prompt 保持合成占位
+
 ### 5.2 Step 执行器映射（关键）
 
 > 来源：dsh-workflow §5.3
@@ -1101,6 +1121,12 @@ static createStepStarter(runner): (stepId) => Promise<{output, outputFileName?}>
 > - 使用 `ctx.llm.stream()` 进行一次性推理（无需完整会话管理）
 > - 或使用 `ctx.subagents.start()` 创建一次性子代理
 > - 结构化提示词构建逻辑保留不变
+>
+> **provider/model 解析（三层回退，DSH 无 SDK 默认模型，需引擎自兜底）**：
+> - **L1 定义优先**：Step 的 `providerId` + `modelId` **成对提供才用**（对齐 v2.6 的 `providerId && modelId` AND 逻辑——缺一个整体视为缺省，不拆开）
+> - **L2 引擎 Config 兜底**：`static Config` 增加 `defaultProvider`/`defaultModel`（schemastery，成对配置才用；遵循 DSH「No hardcoded tunables」，不硬编码）
+> - **L3 目录最后兜底**：`ctx.llm.listProviders()[0]` + `ctx.llm.listModels(provider)[0]`（保证「Config 也没配」时仍能跑，记 warn 日志）
+> - 解析结果拼成 `GenerateOptions` 的 `provider`/`model` 字段传给 `ctx.llm.stream()`（DSH 的 `resolveCallFor` 要求 `config.model` 必需，无自动默认模型）
 
 **结构化提示词模板** (V2.5 重构)：
 
@@ -1364,6 +1390,9 @@ class SandoreEngineRuntime extends SandoreEngine {
   static Config = z.object({
     defaultTimeoutMs: z.natural().default(7200000),
     maxConcurrentSteps: z.natural().default(0),   // 0 = 不限
+    // prompt Step 缺省模型兜底（三层回退 L2，见 §6.2；成对配置才用，缺省 undefined → 走 L3 目录兜底）
+    defaultProvider: z.string().optional(),
+    defaultModel: z.string().optional(),
     // 注：无 permissionMode（权限修正后废弃——子代理继承宿主 Session 的 permission preset）
   })
 }
@@ -1382,6 +1411,20 @@ Task 2 的验证标准是：**能跑通一个「shell Step → prompt Step」的
 3. **实例启动**：启动实例，引擎执行 Stage 1 的 shell Step → shell 命令完成 → Stage 推进 → Stage 2 的 prompt Step → LLM 推理完成 → Stage 推进 → 所有 Stage 完成 → status = completed
 4. **状态查询**：通过 `getInstanceState` 查询，确认 status = completed，executedSteps 包含两个已完成的 Step
 5. **持久化验证**：通过 `storageDomain` 读取 work.json 状态快照，确认包含完整的执行记录
+
+### 7.1 测试策略（vitest + 内存 mock，对齐 DSH）
+
+> 仓库当前无测试框架。Task 2 起建立 vitest 测试，分两层：
+
+| 层 | 范围 | mock 策略 |
+|---|---|---|
+| **纯单元测试** | YAML 解析（V1/V2 合法/非法 → 类型化错误）、Zod Schema 校验、InputFrom/OutputTo 路径解析、透传变量替换 | **零 mock**（纯函数，不依赖 DSH 服务） |
+| **轻量集成测试** | 线性执行调度（StageExecutor + StepRunner：shell → prompt 到 completed）、CRUD + 持久化 | **内存 mock DSH 服务**：`SqliteStorageBackend(':memory:')`（或 storage-domain 的 `MemoryStorageBackend`）+ fake `ctx.llm` adapter（`registerAdapter`，stream 返回固定 `[{type:'text',text:…}]`）+ mock `ctx.shell`（`resolve`/`run` 返回固定 stdout） |
+
+**约定**：
+- 根 `package.json` 加 `"test": "vitest run"` + devDependency `vitest`（对齐 DSH 根仓库）；workflow/microflow 各带 `tests/*.spec.ts`
+- **不引入 test-support 重量级集成测试**（`llm-mock-server`/`agent-loop-testkit`）：Task 2 最小可用阶段重点是「调度逻辑 + 类型化错误」，真实 cordis 组合 + 真实 LLM 的 e2e/snapshot 留到 Task 5 固化阶段
+- 测试断言对齐验证路径：① 定义/Job CRUD 往返；② shell→prompt 线性流到 `completed` + `sandore/*` 事件按序；③ storageDomain 读回 state 快照；④ 非法 YAML/缺省 provider/model 抛类型化错误
 
 ---
 

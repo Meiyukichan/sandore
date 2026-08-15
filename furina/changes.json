@@ -1,7 +1,30 @@
 {
   "framework": "@meiyukichan/furina",
   "version": "1.0.3",
-  "changes": [],
+  "changes": [
+    {
+      "name": "task-2-minimal-engine",
+      "path": "furina/changes/task-2-minimal-engine",
+      "description": "实现引擎最小可用：类型体系+YAML解析+定义/Job/实例CRUD+存储域持久化+线性工作流执行(shell/prompt Step)",
+      "createdAt": "2026-08-15T12:02:39.844Z",
+      "features": 0,
+      "todo": 0,
+      "artifacts": [
+        {
+          "id": "proposal",
+          "outputPath": "furina/changes/task-2-minimal-engine/proposal.md"
+        },
+        {
+          "id": "design",
+          "outputPath": "furina/changes/task-2-minimal-engine/design.md"
+        },
+        {
+          "id": "specs",
+          "outputPath": "furina/changes/task-2-minimal-engine/specs/**/*.md"
+        }
+      ]
+    }
+  ],
   "archive": [
     {
       "name": "task-1-skeleton",
@@ -13,23 +36,23 @@
       "artifacts": [
         {
           "id": "proposal",
-          "outputPath": "furina/changes/task-1-skeleton/proposal.md"
+          "outputPath": "furina/archive/2026-08-15-task-1-skeleton/proposal.md"
         },
         {
           "id": "design",
-          "outputPath": "furina/changes/task-1-skeleton/design.md"
+          "outputPath": "furina/archive/2026-08-15-task-1-skeleton/design.md"
         },
         {
           "id": "specs",
-          "outputPath": "furina/changes/task-1-skeleton/specs/**/*.md"
+          "outputPath": "furina/archive/2026-08-15-task-1-skeleton/specs/**/*.md"
         },
         {
           "id": "api",
-          "outputPath": "furina/changes/task-1-skeleton/api.yaml"
+          "outputPath": "furina/archive/2026-08-15-task-1-skeleton/api.yaml"
         },
         {
           "id": "plan",
-          "outputPath": "furina/changes/task-1-skeleton/plan.json"
+          "outputPath": "furina/archive/2026-08-15-task-1-skeleton/plan.json"
         }
       ]
     }
