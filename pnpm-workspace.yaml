@@ -1,0 +1,4 @@
+packages:
+  - packages/sandore/*
+allowBuilds:
+  esbuild: false

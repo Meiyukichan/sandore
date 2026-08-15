@@ -1,0 +1,92 @@
+[
+  {
+    "id": "engine-01",
+    "category": "engine",
+    "function": "monorepo 工作区与引擎 seam/RPC 骨架",
+    "description": "在 greenfield 仓库建立根 pnpm monorepo 工作区（根 package.json / pnpm-workspace.yaml / tsconfig.base.json）与 packages/sandore/workflow 引擎包：定义 13 个基础类型（types.ts）、SandoreEngine 抽象类（11 个实例级抽象方法，super(ctx,'sandoreEngine')）、sandore/* 13 事件双声明（Cordis Events 首参 info: DagRunInfo + Session SessionEventMap 纯数据载荷）、空 Provider 桩（schemastery static Config 无 permissionMode + static inject 覆盖 7 个 DSH 服务），并实现 sandore.ping Host RPC（TypertRemoteService + @Remote('ping')）。同时建立 microflow / tool 两个空占位包。所有 @deepseek-ai/* 依赖以 peerDependencies 0.1.0-rc.5 从 npm 解析，devDependencies 同名同版本供 typecheck，不 link 本地 DSH、不改 DSH 源码。",
+    "acceptance_criteria": [
+      "根 package.json 含 name:'sandore'、private:true、packageManager:'pnpm@11.7.0'、engines.node>=22、type:'module'、scripts.typecheck 与 scripts.build，devDependencies 含 typescript/tsdown/tsx",
+      "pnpm-workspace.yaml 的 packages 含 packages/sandore/*，workflow/microflow/tool/ui 4 个包均在 workspace 内",
+      "workflow 包导出 SandoreEngine 抽象类，构造调用 super(ctx,'sandoreEngine')，declare module '@deepseek-ai/cordis' 合并 Context 与 13 个 sandore/* Events（首参 info: DagRunInfo）",
+      "declare module '@deepseek-ai/dsh-session/types' 合并 13 个同名 SessionEventMap（纯数据载荷），不存在 default-session-mounted 与 user-message 虚构事件",
+      "13 个基础类型全部导出且被事件声明/抽象方法签名正确引用；sandore/step-completed 的 output 为 ContentBlock[]（type-only import from @deepseek-ai/dsh-llm）",
+      "Provider 桩 default export、extends SandoreEngine、static Config 含 defaultTimeoutMs/maxConcurrentSteps 且无 permissionMode、static inject 覆盖 sessions/sessionPersistence/subagents/llm/shell/fs/storageDomain",
+      "remote.ts 定义 SandoreRemote extends TypertRemoteService，super(ctx,'sandore')，@Remote('ping') 返回 { pong: true, service:'sandore', time:string } 桩数据，不含 harness.handle 动态原型写法",
+      "microflow/tool 各含 package.json（正确包名、type:'module'）与 tsconfig.json（extends 根 tsconfig.base.json），无 StageExecutor/StepRunner/模型工具实现",
+      "workflow 包 peerDependencies 含 cordis/dsh-session/dsh-llm/dsh-typert-protocol/dsh-agent/dsh-storage 且版本均为 0.1.0-rc.5，无 file:/link: 依赖",
+      "pnpm install 后根级 pnpm run typecheck 对后端各包退出码为 0"
+    ],
+    "tasks": [
+      "1.1 创建根 package.json、pnpm-workspace.yaml、tsconfig.base.json",
+      "1.2 创建 packages/sandore/workflow 包（package.json + tsconfig.json）",
+      "1.3 定义 13 个基础类型（types.ts）",
+      "1.4 定义 SandoreEngine 抽象类 + 11 方法 + 13 事件双声明 + Provider 桩（index.ts）",
+      "1.5 实现 sandore.ping RPC（remote.ts）",
+      "1.6 创建 microflow / tool 空占位包",
+      "1.7 根级 pnpm run typecheck 通过"
+    ],
+    "files": [
+      "package.json",
+      "pnpm-workspace.yaml",
+      "tsconfig.base.json",
+      "packages/sandore/workflow/package.json",
+      "packages/sandore/workflow/tsconfig.json",
+      "packages/sandore/workflow/src/types.ts",
+      "packages/sandore/workflow/src/index.ts",
+      "packages/sandore/workflow/src/remote.ts",
+      "packages/sandore/microflow/package.json",
+      "packages/sandore/microflow/tsconfig.json",
+      "packages/sandore/tool/package.json",
+      "packages/sandore/tool/tsconfig.json"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/task-1-skeleton/specs/monorepo-workspace/spec.md",
+      "furina/changes/task-1-skeleton/specs/engine-seam/spec.md",
+      "furina/changes/task-1-skeleton/specs/engine-rpc/spec.md",
+      "furina/changes/task-1-skeleton/design.md",
+      "furina/changes/task-1-skeleton/api.yaml"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "ui-01",
+    "category": "ui",
+    "function": "sidebar 工作流入口与 ping 往返",
+    "description": "创建 packages/sandore/ui 包（@deepseek-ai/dsh-client-ui-sandore）的 Client 插件：通过 ctx.slots.inject('sidebar.footer.action', ...) 注册 id 为 sandore-btn 的工作流按钮（位于设置上方，适配 wide 宽/窄 rail 模式），点击切换 WorkflowPanel 占位（header 含「编排」toggle +「新增」按钮 + 三态列表占位），并在面板内通过 host.call('sandore.ping') 展示返回 JSON 验证端到端链路。复用 DSH 公开扩展点（ui-primitives/theme/locale/标准 hook），不能复用之处照 DSH 风格自绘，不 import DSH 私有组件、不改 DSH 源码。package.json 声明 type:module、exports['./client']、dsh.client（platform:web + inject 清单），并提供 Host 半空入口 src/index.ts。",
+    "acceptance_criteria": [
+      "ui 包 package.json 含 type:'module'、exports 的 './client' 子路径、dsh.client（platform:'web' + inject 数组），且 src/index.ts 存在（Host 半空 apply）",
+      "client 侧通过 ctx.slots.inject('sidebar.footer.action', ...) 注册 id 为 sandore-btn 的按钮，位于设置上方，不修改 DSH ui-sidebar 源码",
+      "按钮在 sidebar wide=false（56px 窄 rail）与宽栏模式下均正常渲染（owner props wide 适配）",
+      "点击按钮切换 WorkflowPanel 展开/收起；面板 header 含「编排」toggle +「新增」按钮 + 三态列表占位",
+      "面板内触发 host.call('sandore.ping') 返回 JSON 桩数据且无错误",
+      "使用 DSH 公开扩展点（ui-primitives/theme/locale/hook）或 DSH 风格自绘，无 DSH 私有模块 import",
+      "根级 pnpm run typecheck 对 ui 包通过"
+    ],
+    "tasks": [
+      "2.1 创建 packages/sandore/ui 包（package.json + tsconfig.json + Host 半 src/index.ts）",
+      "2.2 实现 client 入口与 sidebar.footer.action 按钮注册（src/client/index.ts）",
+      "2.3 实现 WorkflowButton 组件（适配宽窄 rail）",
+      "2.4 实现 WorkflowPanel 占位（header + 三态列表）",
+      "2.5 面板内 host.call('sandore.ping') 往返验证",
+      "2.6 ui 包 typecheck 通过"
+    ],
+    "files": [
+      "packages/sandore/ui/package.json",
+      "packages/sandore/ui/tsconfig.json",
+      "packages/sandore/ui/src/index.ts",
+      "packages/sandore/ui/src/client/index.ts",
+      "packages/sandore/ui/src/client/WorkflowButton.tsx",
+      "packages/sandore/ui/src/client/WorkflowPanel.tsx"
+    ],
+    "dependencies": [
+      "engine-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-1-skeleton/specs/ui-entry/spec.md",
+      "furina/changes/task-1-skeleton/design.md",
+      "furina/changes/task-1-skeleton/api.yaml"
+    ],
+    "status": "done"
+  }
+]

@@ -1,0 +1,71 @@
+swagger: "2.0"
+
+info:
+  title: "Sandore Workflow Engine Host RPC"
+  version: "0.1.0-rc.5"
+  description: |
+    DSH 内部 Host RPC（Typert 协议）契约，用于工作流引擎 DSH 插件（task-1-skeleton）的端到端验证。
+    本阶段仅暴露一个最小 `sandore.ping` 桩端点：Client 插件通过 `host.call('sandore.ping')`
+    发起调用，验证 Host/Client 往返链路。真实引擎定义/Job CRUD RPC 留待 Task 2 扩展。
+
+    > 说明：该接口为 DSH 内部 Typert Remote 协议（非 HTTP），以 `TypertRemoteService + @Remote`
+    > 声明；本 Swagger 文档以 `路径 = "<命名空间>/<方法>"` 的抽象形式描述 RPC 契约，供 Client 侧对齐调用。
+
+host: "sandore.rpc.internal"
+basePath: "/"
+schemes:
+  - internal
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+# --- Tags ---
+tags:
+  - name: Health
+    description: "服务健康/往返验证。"
+
+# --- Data Models ---
+definitions:
+
+  PingResponse:
+    type: object
+    description: "`sandore.ping` 桩返回数据（非真实引擎状态）。"
+    required:
+      - pong
+      - service
+      - time
+    properties:
+      pong:
+        type: boolean
+        description: "恒为 true，表示往返成功。"
+        example: true
+      service:
+        type: string
+        description: "服务命名空间标识。"
+        example: "sandore"
+      time:
+        type: string
+        format: date-time
+        description: "Host 侧生成时间戳（ISO 8601 字符串）。"
+
+# --- API Endpoints ---
+paths:
+
+  /sandore/ping:
+    post:
+      tags:
+        - Health
+      summary: "ping 往返验证"
+      description: |
+        最小 Host RPC 端点。实现为 `class SandoreRemote extends TypertRemoteService`，
+        `super(ctx, 'sandore')` + `@Remote('ping')`，完整端点名 `sandore.ping`。
+        无请求参数，返回固定桩数据。Client 侧以 `host.call('sandore.ping')` 调用。
+      produces:
+        - application/json
+      responses:
+        200:
+          description: "RPC 往返成功，返回桩 JSON。"
+          schema:
+            $ref: "#/definitions/PingResponse"

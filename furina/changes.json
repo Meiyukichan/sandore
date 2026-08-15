@@ -1,16 +1,37 @@
 {
   "framework": "@meiyukichan/furina",
   "version": "1.0.3",
-  "changes": [
+  "changes": [],
+  "archive": [
     {
       "name": "task-1-skeleton",
-      "path": "furina/changes/task-1-skeleton",
+      "path": "furina/archive/2026-08-15-task-1-skeleton",
       "description": "实现 sandore DAG 工作流引擎作为 DSH 插件的第一步骨架，包含 4 个包、Service Definition 与最小端到端链路",
       "createdAt": "2026-08-15T09:24:49.919Z",
-      "features": 0,
-      "todo": 0,
-      "artifacts": []
+      "closedAt": "2026-08-15T10:59:57.892Z",
+      "features": 2,
+      "artifacts": [
+        {
+          "id": "proposal",
+          "outputPath": "furina/changes/task-1-skeleton/proposal.md"
+        },
+        {
+          "id": "design",
+          "outputPath": "furina/changes/task-1-skeleton/design.md"
+        },
+        {
+          "id": "specs",
+          "outputPath": "furina/changes/task-1-skeleton/specs/**/*.md"
+        },
+        {
+          "id": "api",
+          "outputPath": "furina/changes/task-1-skeleton/api.yaml"
+        },
+        {
+          "id": "plan",
+          "outputPath": "furina/changes/task-1-skeleton/plan.json"
+        }
+      ]
     }
-  ],
-  "archive": []
+  ]
 }
