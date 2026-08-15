@@ -102,7 +102,7 @@ export const DagBranchSchema = z.object({
 
 /** DAG 循环控制。 */
 export const DagLoopSchema = z.object({
-  breakCondition: z.lazy(() => CommandConfigSchema).optional(),
+  breakCondition: CommandConfigSchema.optional(),
   breakExpectation: z.string().optional(),
   next: z.string().optional(),
   maxIterations: z.number(),

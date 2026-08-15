@@ -46,7 +46,9 @@ function describeError(error: unknown): string {
 
 /** 将 V1 的单个 Task 转为 V2 Step（`prompt`（旧 `PromptConfig`）→ `command`）。 */
 function convertTaskToStep(task: unknown): Record<string, unknown> {
-  if (!isRecord(task)) return { id: '' }
+  if (!isRecord(task)) {
+    throw new SandoreError('V1 task must be an object', 'DEFINITION_INVALID')
+  }
   const { prompt, ...rest } = task
   if (isRecord(prompt)) {
     const type = typeof prompt.type === 'string' ? prompt.type : ''
@@ -55,7 +57,11 @@ function convertTaskToStep(task: unknown): Record<string, unknown> {
   return { ...rest }
 }
 
-/** 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`（Scenario 的 `next` 落到其最后一个 Step）。 */
+/**
+ * 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`：同一 Scenario 内相邻 Task 依次接
+ * `next`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个 Step（指向下一
+ * Scenario 的首个 Task）。显式 `next` 不被覆盖。
+ */
 function convertStage(stage: Record<string, unknown>): Record<string, unknown> {
   const scenarios = stage.scenarios
   if (!Array.isArray(scenarios)) return stage
@@ -66,6 +72,13 @@ function convertStage(stage: Record<string, unknown>): Record<string, unknown> {
     if (!isRecord(scenario)) continue
     const tasks = Array.isArray(scenario.tasks) ? scenario.tasks : []
     const converted = tasks.map(convertTaskToStep)
+    // 同一 Scenario 内相邻 Task 依次设 next，形成线性链。
+    for (let index = 0; index + 1 < converted.length; index++) {
+      const current = converted[index]
+      const following = converted[index + 1]
+      if (current === undefined || following === undefined) continue
+      if (current.next === undefined) current.next = following.id
+    }
     scenarioSteps.set(String(scenario.id), converted)
     steps.push(...converted)
   }
@@ -127,8 +140,9 @@ interface FlowNode {
 /**
  * 校验节点 ID 引用完整性：
  * - `next`（含 `branches[].next`、`loop.next`、`loop.exitTo`）引用的节点 ID 均存在；
+ * - `stage.next` 必须指向 Stage 节点（Step 节点会被 DAG 导航静默跳过）；
  * - `inputFrom[].path` 的 `stageId[.stepId[.outputToId]]` 前两段（Stage/Step 节点 ID）存在。
- * 不存在时抛 `SandoreError('DEFINITION_INVALID')`。
+ * 不满足时抛 `SandoreError('DEFINITION_INVALID')`。
  */
 function validateReferences(definition: WorkflowDefinition): void {
   const stageIds = new Set(definition.stages.map(stage => stage.id))
@@ -157,6 +171,10 @@ function validateReferences(definition: WorkflowDefinition): void {
 
   for (const stage of definition.stages) {
     checkNode(stage, 'stage')
+    // `stage.next` 只推进 Stage 级主循环，指向 Step 会导致后续 Stage 被静默跳过。
+    if (stage.next !== undefined && !stageIds.has(stage.next)) {
+      throw new SandoreError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, 'DEFINITION_INVALID')
+    }
     for (const step of stage.steps) checkNode(step, 'step')
   }
   for (const step of definition.steps ?? []) checkNode(step, 'step')

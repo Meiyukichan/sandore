@@ -42,7 +42,7 @@
       "furina/changes/task-2-minimal-engine/design.md",
       "furina/changes/task-2-minimal-engine/api.yaml"
     ],
-    "status": "in_progress"
+    "status": "done"
   },
   {
     "id": "crud-02",
@@ -82,7 +82,7 @@
       "furina/changes/task-2-minimal-engine/design.md",
       "furina/changes/task-2-minimal-engine/api.yaml"
     ],
-    "status": "pending"
+    "status": "done"
   },
   {
     "id": "execution-03",
@@ -135,6 +135,6 @@
       "furina/changes/task-2-minimal-engine/design.md",
       "furina/changes/task-2-minimal-engine/api.yaml"
     ],
-    "status": "pending"
+    "status": "done"
   }
 ]

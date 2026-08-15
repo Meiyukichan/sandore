@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-sandore-microflow",
   "version": "0.1.0-rc.6",
-  "description": "sandore workflow engine stage/step executor (placeholder)",
+  "description": "sandore workflow engine stage/step executor",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -13,5 +13,21 @@
     },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6"
   }
 }
