@@ -32,7 +32,7 @@ function makeState(overrides: Partial<WorkflowTaskState> & { taskId: string }): 
     activeLoopIterationStack: [],
     activeLoopNodeId: null,
     activeLoopStack: [],
-    pausedStepIds: [],
+    pausedChildIds: [],
     stageContracts: {},
     createdAt: now,
     updatedAt: now,

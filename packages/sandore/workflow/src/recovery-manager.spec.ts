@@ -1,0 +1,391 @@
+/**
+ * recovery-manager.ts（RecoveryManager）的单元测试：重试三模式（continue/revert/fork）、
+ * 前置校验、状态清理与历史记录、step-retried 事件、崩溃恢复 Step 分类。
+ * @module @deepseek-ai/dsh-sandore-workflow/src/recovery-manager.spec
+ */
+import type { ContentBlock } from '@deepseek-ai/dsh-llm';
+import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
+import { describe, expect, it } from 'vitest';
+
+import type { Agent, CreateAgentOptions } from '../../microflow/src/subagents.ts';
+import { SandoreError } from './errors.ts';
+import { computeSafeRevertBoundary, RecoveryManager, synthesizeChildId } from './recovery-manager.ts';
+import type { ForkSourceSession, RetryMode } from './recovery-manager.ts';
+import type { WorkflowTaskState } from './schema.ts';
+
+type ExecutedStep = WorkflowTaskState['executedSteps'][number];
+
+/** 构造一条 `turn/start` 事件（安全边界计算的 turn 边界标记）。 */
+function turnStartEvent(seq: number): DshSessionEvent {
+  return { type: 'turn/start', seq, time: 0, data: { turn: 0 } };
+}
+
+/** 构造一条 `turn/end` 事件（闭合 turn 结束标记）。 */
+function turnEndEvent(seq: number): DshSessionEvent {
+  return { type: 'turn/end', seq, time: 0, data: { turn: 0, reason: { kind: 'completed' } } };
+}
+
+/** 构造一个 failed 的 agent 子代理 Step。 */
+function makeFailedStep(overrides: Partial<ExecutedStep> = {}): ExecutedStep {
+  return {
+    type: 'default',
+    id: 'exec-1',
+    stepId: 'step-1',
+    stageId: 'stg-1',
+    name: 'step-1',
+    status: 'failed',
+    command: { type: 'agent', value: { promptText: 'do work' } },
+    sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' },
+    visitCount: 1,
+    error: 'boom',
+    ...overrides,
+  };
+}
+
+/** 构造一个含指定 Step 的实例状态快照。 */
+function makeState(step: ExecutedStep, status: WorkflowTaskState['status'] = 'failed'): WorkflowTaskState {
+  const createdAt = '2026-08-16T00:00:00.000Z';
+  return {
+    taskId: 'task-1',
+    jobId: 'job-1',
+    workflowId: 'wfl-1',
+    cwd: '/tmp',
+    status,
+    originalInput: 'input',
+    currentStageId: 'stg-1',
+    executedSteps: [step],
+    stageInfos: [{ id: 'stg-1', name: 'stage', status: status === 'failed' ? 'failed' : 'running' }],
+    pendingInteractions: [],
+    pendingQueue: [],
+    visitCounts: {},
+    passThroughVars: {},
+    activeLoopIterationStack: [],
+    activeLoopNodeId: null,
+    activeLoopStack: [],
+    pausedChildIds: [],
+    stageContracts: {},
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** 构造一个含多个 Step 的实例状态快照（首个 Step 用于继承 makeState 的默认形状）。 */
+function makeMultiState(steps: ExecutedStep[], status: WorkflowTaskState['status'] = 'running'): WorkflowTaskState {
+  return { ...makeState(steps[0]!, status), executedSteps: steps };
+}
+
+/** 构造最小 host/child Agent 桩。 */
+function makeAgent(id: string): Agent {
+  return {
+    id,
+    options: {},
+    session: { events: [] },
+    inbox: { hasPending: false },
+    status: 'idle',
+    ctx: undefined,
+    whenIdle: async () => {},
+  };
+}
+
+/** 测试 harness：注入 fakes 并暴露可断言的回调记录。 */
+function makeHarness(options?: {
+  step?: ExecutedStep;
+  status?: WorkflowTaskState['status'];
+  sessions?: Map<string, ForkSourceSession>;
+  forked?: ForkSourceSession;
+  onResume?: (state: WorkflowTaskState) => void;
+}) {
+  let state = makeState(options?.step ?? makeFailedStep(), options?.status ?? 'failed');
+  const followups: Array<{ childId: string; content: ContentBlock[] }> = [];
+  const creates: CreateAgentOptions[] = [];
+  const forks: Array<{ source: string; boundary: number | undefined }> = [];
+  const retried: Array<{ stepId: string; mode: RetryMode }> = [];
+  let resumeCount = 0;
+  const sessions = options?.sessions ?? new Map<string, ForkSourceSession>();
+  let forked = options?.forked ?? { events: [] as readonly DshSessionEvent[] };
+  const signal = new AbortController().signal;
+
+  const manager = new RecoveryManager({
+    signal,
+    readState: () => state,
+    commitState: (next) => {
+      state = next;
+    },
+    followup: async (childId, content) => {
+      followups.push({ childId, content });
+    },
+    createAgent: async (createOptions) => {
+      creates.push(createOptions);
+      return { agent: makeAgent(createOptions.sessionId), dispose: async () => {} };
+    },
+    getSession: (id) => sessions.get(id),
+    forkSession: (source, boundary) => {
+      forks.push({ source, boundary });
+      return forked;
+    },
+    emitStepRetried: (stepId, mode) => {
+      retried.push({ stepId, mode });
+    },
+    resumeExecution: async () => {
+      resumeCount += 1;
+      options?.onResume?.(state);
+    },
+  });
+
+  return {
+    manager,
+    getState: () => state,
+    setState: (next: WorkflowTaskState) => {
+      state = next;
+    },
+    followups,
+    creates,
+    forks,
+    retried,
+    getResumeCount: () => resumeCount,
+    sessions,
+    setForked: (events: readonly DshSessionEvent[]) => {
+      forked = { events };
+    },
+  };
+}
+
+describe('computeSafeRevertBoundary', () => {
+  it('returns the seq of the last closed turn', () => {
+    const events = [turnStartEvent(0), turnEndEvent(3), turnStartEvent(4), turnEndEvent(7)];
+    expect(computeSafeRevertBoundary(events)).toBe(7);
+  });
+
+  it('returns undefined when there is no closed turn (open turn)', () => {
+    expect(computeSafeRevertBoundary([turnStartEvent(0)])).toBeUndefined();
+    expect(computeSafeRevertBoundary([])).toBeUndefined();
+  });
+});
+
+describe('RecoveryManager.retryStep validation', () => {
+  it('throws INVALID_OPERATION for a running step with no side effects', async () => {
+    const harness = makeHarness({ step: makeFailedStep({ status: 'running' }), status: 'running' });
+    await expect(harness.manager.retryStep('step-1', 'continue', 'msg')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    expect(harness.followups).toHaveLength(0);
+    expect(harness.retried).toHaveLength(0);
+  });
+
+  it('throws INVALID_OPERATION for an interacting and paused step', async () => {
+    for (const status of ['interacting', 'paused'] as const) {
+      const harness = makeHarness({ step: makeFailedStep({ status }), status: status === 'paused' ? 'paused' : 'interacting' });
+      await expect(harness.manager.retryStep('step-1', 'continue', 'msg')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    }
+  });
+
+  it('throws INVALID_OPERATION for a failed non-subagent (shell/prompt) step with no side effects', async () => {
+    for (const type of ['shell', 'prompt'] as const) {
+      const step = makeFailedStep({
+        command: { type, value: type === 'shell' ? { command: 'echo hi' } : { promptText: 'do it' } } as ExecutedStep['command'],
+        sessionMeta: { childId: `step-1-${type}`, synthetic: true, command: type },
+      });
+      const harness = makeHarness({ step, status: 'failed' });
+      await expect(harness.manager.retryStep('step-1', 'continue', 'msg')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+      // 无虚假副作用：不 followup、不发 step-retried、不追加 retryHistory、实例保持 failed。
+      expect(harness.followups).toHaveLength(0);
+      expect(harness.retried).toHaveLength(0);
+      expect(harness.getState().executedSteps[0]?.retryHistory).toBeUndefined();
+      expect(harness.getState().status).toBe('failed');
+    }
+  });
+
+  it('returns a structured no-op for a completed instance', async () => {
+    const harness = makeHarness({ status: 'completed' });
+    await harness.manager.retryStep('step-1', 'continue', 'msg');
+    expect(harness.followups).toHaveLength(0);
+    expect(harness.retried).toHaveLength(0);
+    expect(harness.getState().status).toBe('completed');
+  });
+
+  it('returns a structured no-op for a completed step (instance not terminal)', async () => {
+    const harness = makeHarness({ step: makeFailedStep({ status: 'completed' }), status: 'running' });
+    await harness.manager.retryStep('step-1', 'continue', 'msg');
+    expect(harness.followups).toHaveLength(0);
+    expect(harness.retried).toHaveLength(0);
+  });
+
+  it('throws INVALID_OPERATION for an unknown step', async () => {
+    const harness = makeHarness();
+    await expect(harness.manager.retryStep('step-missing', 'continue', 'msg')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+});
+
+describe('RecoveryManager.retryStep continue mode', () => {
+  it('follows up the original childId and records { mode: continue } with unchanged sessionMeta', async () => {
+    const harness = makeHarness();
+    await harness.manager.retryStep('step-1', 'continue', 'please retry');
+
+    expect(harness.followups).toHaveLength(1);
+    expect(harness.followups[0]?.childId).toBe('child-1');
+    expect(harness.followups[0]?.content).toEqual([{ type: 'text', text: 'please retry' }]);
+    expect(harness.retried).toEqual([{ stepId: 'step-1', mode: 'continue' }]);
+
+    const step = harness.getState().executedSteps[0];
+    expect(step?.sessionMeta?.childId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('continue');
+    expect(step?.retryHistory?.[0]?.userMessage).toBe('please retry');
+    expect(step?.parentSessionId).toBeUndefined();
+    expect(harness.getResumeCount()).toBe(1);
+  });
+});
+
+describe('RecoveryManager.retryStep revert mode', () => {
+  it('forks at the safe boundary, creates a new seeded agent, and records parentSessionId', async () => {
+    const sessions = new Map<string, ForkSourceSession>();
+    sessions.set('child-1', { events: [turnStartEvent(0), turnEndEvent(3)] });
+    const forked = { events: [turnStartEvent(0), turnEndEvent(3)] };
+    const harness = makeHarness({ sessions, forked });
+
+    await harness.manager.retryStep('step-1', 'revert', 'rollback');
+
+    expect(harness.forks).toEqual([{ source: 'child-1', boundary: 3 }]);
+    expect(harness.creates).toHaveLength(1);
+    expect(harness.creates[0]?.seed).toEqual(forked.events);
+    expect(harness.creates[0]?.meta?.parentSession).toBe('child-1');
+    expect(harness.creates[0]?.meta?.seedLength).toBe(2);
+
+    const newChildId = harness.creates[0]?.sessionId;
+    expect(newChildId).toMatch(/^step-step-1-[0-9a-f]{8}$/);
+    const step = harness.getState().executedSteps[0];
+    expect(step?.sessionMeta?.childId).toBe(newChildId);
+    expect(step?.sessionMeta?.synthetic).toBe(false);
+    expect(step?.parentSessionId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('revert');
+    expect(harness.followups[0]?.childId).toBe(newChildId);
+  });
+
+  it('ends with an error and keeps the instance failed when no closed turn boundary exists', async () => {
+    const sessions = new Map<string, ForkSourceSession>();
+    sessions.set('child-1', { events: [turnStartEvent(0)] });
+    const harness = makeHarness({ sessions });
+
+    await expect(harness.manager.retryStep('step-1', 'revert', 'rollback')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+
+    const state = harness.getState();
+    expect(state.status).toBe('failed');
+    const step = state.executedSteps[0];
+    expect(step?.status).toBe('failed');
+    expect(step?.retryHistory?.[0]?.mode).toBe('revert');
+    expect(step?.retryHistory?.[0]?.result).toBe('failed');
+    expect(harness.creates).toHaveLength(0);
+  });
+});
+
+describe('RecoveryManager.retryStep fork mode', () => {
+  it('forks with no boundary (full history), creates a new agent, and records { mode: fork }', async () => {
+    const sessions = new Map<string, ForkSourceSession>();
+    sessions.set('child-1', { events: [turnStartEvent(0), turnEndEvent(3)] });
+    const forked = { events: [turnStartEvent(0), turnEndEvent(3)] };
+    const harness = makeHarness({ sessions, forked });
+
+    await harness.manager.retryStep('step-1', 'fork', 'fork it');
+
+    expect(harness.forks).toEqual([{ source: 'child-1', boundary: undefined }]);
+    expect(harness.creates[0]?.seed).toEqual(forked.events);
+    const newChildId = harness.creates[0]?.sessionId;
+    const step = harness.getState().executedSteps[0];
+    expect(step?.sessionMeta?.childId).toBe(newChildId);
+    expect(step?.parentSessionId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('fork');
+  });
+});
+
+describe('RecoveryManager.retryStep history result', () => {
+  it('updates the last retryHistory record to completed when the resumed step completes', async () => {
+    const harness = makeHarness({
+      onResume: (state) => {
+        const step = state.executedSteps.find(item => item.id === 'exec-1');
+        if (step !== undefined) {
+          step.status = 'completed';
+        }
+      },
+    });
+    await harness.manager.retryStep('step-1', 'continue', 'msg');
+    expect(harness.getState().executedSteps[0]?.retryHistory?.[0]?.result).toBe('completed');
+  });
+
+  it('updates the last retryHistory record to failed when the resumed step fails', async () => {
+    const harness = makeHarness();
+    await harness.manager.retryStep('step-1', 'continue', 'msg');
+    // resumeExecution 未将 Step 置 completed，故 result 判为 failed。
+    expect(harness.getState().executedSteps[0]?.retryHistory?.[0]?.result).toBe('failed');
+  });
+});
+
+describe('RecoveryManager.recover', () => {
+  it('follows up running/interacting subagent steps and returns hasResume', async () => {
+    const harness = makeHarness({ step: makeFailedStep({ status: 'running' }), status: 'running' });
+    const result = await harness.manager.recover();
+    expect(result).toEqual({ hasResume: true, hasFailure: false });
+    expect(harness.followups).toHaveLength(1);
+    expect(harness.followups[0]?.childId).toBe('child-1');
+  });
+
+  it('marks a synthetic (shell) running step as failed and returns hasFailure', async () => {
+    const step = makeFailedStep({
+      status: 'running',
+      command: { type: 'shell', value: { command: 'echo hi' } },
+      sessionMeta: { childId: 'step-1-synthetic', synthetic: true, command: 'shell' },
+    });
+    const harness = makeHarness({ step, status: 'running' });
+    const result = await harness.manager.recover();
+    expect(result).toEqual({ hasResume: false, hasFailure: true });
+    expect(harness.followups).toHaveLength(0);
+    expect(harness.getState().executedSteps[0]?.status).toBe('failed');
+    expect(harness.getState().executedSteps[0]?.error).toContain('not recoverable');
+  });
+
+  it('leaves paused steps untouched (no followup)', async () => {
+    const harness = makeHarness({ step: makeFailedStep({ status: 'paused' }), status: 'paused' });
+    const result = await harness.manager.recover();
+    expect(result).toEqual({ hasResume: false, hasFailure: false });
+    expect(harness.followups).toHaveLength(0);
+    expect(harness.getState().executedSteps[0]?.status).toBe('paused');
+  });
+
+  it('follows up only the first running subagent step when multiple are running', async () => {
+    const first = makeFailedStep({ status: 'running', id: 'exec-1', sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' } });
+    const second = makeFailedStep({ status: 'running', id: 'exec-2', stepId: 'step-2', sessionMeta: { childId: 'child-2', synthetic: false, command: 'agent' } });
+    const harness = makeHarness({ step: first, status: 'running' });
+    harness.setState(makeMultiState([first, second], 'running'));
+
+    const result = await harness.manager.recover();
+
+    // 与引擎 resumeStageId/resumeInfo 的 .find() 收口一致：只 followup 第一个。
+    expect(result).toEqual({ hasResume: true, hasFailure: false });
+    expect(harness.followups).toHaveLength(1);
+    expect(harness.followups[0]?.childId).toBe('child-1');
+  });
+
+  it('does not followup subagent steps when a synthetic step is unrecoverable', async () => {
+    const synthetic = makeFailedStep({
+      status: 'running',
+      id: 'exec-shell',
+      stepId: 'step-shell',
+      command: { type: 'shell', value: { command: 'echo hi' } },
+      sessionMeta: { childId: 'step-shell-synthetic', synthetic: true, command: 'shell' },
+    });
+    const agent = makeFailedStep({ status: 'running', id: 'exec-agent', stepId: 'step-agent', sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' } });
+    const harness = makeHarness({ step: synthetic, status: 'running' });
+    harness.setState(makeMultiState([synthetic, agent], 'running'));
+
+    const result = await harness.manager.recover();
+
+    expect(result).toEqual({ hasResume: false, hasFailure: true });
+    expect(harness.followups).toHaveLength(0);
+    const state = harness.getState();
+    expect(state.executedSteps.find(item => item.id === 'exec-shell')?.status).toBe('failed');
+    // 合成 session 失败时整体失败，子代理 Step 保持 running（不 followup、不半恢复）。
+    expect(state.executedSteps.find(item => item.id === 'exec-agent')?.status).toBe('running');
+  });
+});
+
+describe('synthesizeChildId', () => {
+  it('produces the step-prefixed 8-hex childId shape', () => {
+    expect(synthesizeChildId('step-1')).toMatch(/^step-step-1-[0-9a-f]{8}$/);
+  });
+});

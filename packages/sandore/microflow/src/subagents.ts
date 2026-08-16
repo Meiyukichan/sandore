@@ -11,6 +11,7 @@
  * @module @deepseek-ai/dsh-sandore-microflow/src/subagents
  */
 import type { AssistantMessage, ContentBlock, MessageSource, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm';
+import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
 
 /** 会话 ID（与 DSH `SessionId` 品牌字符串结构兼容）。 */
 export type SessionId = string;
@@ -38,7 +39,9 @@ export interface Agent {
   readonly id: SessionId;
   readonly options: AgentOptions;
   readonly session: Session;
+  readonly inbox: { readonly hasPending: boolean };
   readonly status: AgentStatus;
+  readonly ctx: unknown;
   /** 当前整代理活动达到静止后 resolve。 */
   whenIdle(): Promise<void>;
 }
@@ -49,18 +52,52 @@ export interface AgentHandle {
   dispose(): Promise<void>;
 }
 
-/** `ctx.agents.create` 的选项（最小面：sessionId + 可选配置/取消）。 */
-export interface CreateAgentOptions {
-  readonly sessionId: SessionId;
-  readonly agentOptions?: AgentOptions;
-  readonly signal?: AbortSignal;
+/** `AgentSetup` 的提交对象：在发布前同步校验并提交。 */
+export interface AgentSetupCommit {
+  commit(): void;
 }
 
-/** `ctx.agents.resume` 的选项（最小面：resumeSessionId + 可选配置/取消）。 */
+/** `systemPrompt.section` 的入参（DSH `PromptSection` 最小面）。 */
+export interface PromptSection {
+  readonly name: string;
+  readonly order: number;
+  readonly text: string;
+}
+
+/** `AgentSetup` 回调的 agentCtx 最小面（`tools.register`/`systemPrompt.section`）。 */
+export interface AgentSetupContext {
+  readonly tools: { register(tool: unknown): void };
+  readonly systemPrompt: { section(section: PromptSection): void };
+}
+
+/** 代理 setup 回调：在 mint agentCtx 后、发布前执行，可返回同步提交对象。 */
+export type AgentSetup = (
+  agentCtx: AgentSetupContext,
+) => AgentSetupCommit | Promise<AgentSetupCommit | void> | void;
+
+/** `ctx.agents.create` 的选项（sessionId + meta/seed/可选配置/取消/setup）。 */
+export interface CreateAgentOptions {
+  readonly sessionId: SessionId;
+  readonly meta?: {
+    readonly cwd?: string;
+    readonly parentSession?: SessionId;
+    readonly seedLength?: number;
+    readonly origin?: 'subagent';
+    readonly delegationDepth?: number;
+    readonly agentPreset?: string;
+  };
+  readonly seed?: readonly DshSessionEvent[];
+  readonly agentOptions?: AgentOptions;
+  readonly signal?: AbortSignal;
+  readonly setup?: AgentSetup;
+}
+
+/** `ctx.agents.resume` 的选项（resumeSessionId + 可选配置/取消/setup）。 */
 export interface ResumeAgentOptions {
   readonly resumeSessionId: SessionId;
   readonly agentOptions?: AgentOptions;
   readonly signal?: AbortSignal;
+  readonly setup?: AgentSetup;
 }
 
 /** `ctx.agents` 能力接缝：查询/创建/恢复活代理。 */
@@ -141,11 +178,18 @@ export interface SubagentResult {
 /** 子代理停止原因。 */
 export type SubagentStopReason = 'completed' | 'aborted' | 'error' | 'max-tokens' | 'refusal';
 
+/** `listChildren` 返回的子代理条目（child/diagnostic 判别联合）。 */
+export type SubagentListEntry =
+  | { readonly kind: 'child'; readonly id: SessionId; readonly activity: 'running' | 'inactive'; readonly hasChildren: boolean }
+    & ({ readonly mode: 'one-shot'; readonly label?: string } | { readonly mode: 'continuable'; readonly label: string })
+  | { readonly kind: 'diagnostic'; readonly id: SessionId; readonly reason: 'corrupt' | 'unsupported' | 'unavailable' };
+
 /** `ctx.subagents` 能力接缝：可续接子代理 + 一次性子代理。 */
 export interface SubagentRuntime {
   startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;
   followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId>;
   interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;
+  listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;
   start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;
 }
 

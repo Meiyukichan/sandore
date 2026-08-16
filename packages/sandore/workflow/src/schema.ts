@@ -186,6 +186,7 @@ export const StepSessionMetaSchema = z.object({
   childId: z.string(),
   synthetic: z.boolean(),
   command: z.enum(['shell', 'prompt', 'agent', 'skill', 'mcp']),
+  hostSessionId: z.string().optional(),
 })
 
 /** 向用户提问的载荷（对齐 DSH `ask_user_question`）。 */
@@ -200,6 +201,45 @@ export const AskUserQuestionPayloadSchema = z.object({
     })).optional(),
     multi_select: z.boolean().optional(),
   })),
+})
+
+/** pending 交互条目状态：`pending` 待回复、`replied` 已回复、`rejected` 已拒绝。 */
+const PendingInteractionStatusSchema = z.enum(['pending', 'replied', 'rejected'])
+
+/** 待回复问答条目（`pendingInteractions` 的 question 变体）。 */
+export const PendingQuestionEntrySchema = z.object({
+  id: z.string(),
+  stageId: z.string(),
+  stepId: z.string(),
+  sessionId: z.string(),
+  requestId: z.string(),
+  kind: z.literal('question'),
+  status: PendingInteractionStatusSchema,
+  payload: AskUserQuestionPayloadSchema,
+  answer: z.array(z.array(z.string())).optional(),
+  createdAt: z.string(),
+})
+
+/** 待回复权限条目载荷（permission/patterns/metadata/tool）。 */
+const PendingPermissionPayloadSchema = z.object({
+  permission: z.string(),
+  patterns: z.array(z.string()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  tool: z.string().optional(),
+})
+
+/** 待回复权限条目（`pendingInteractions` 的 permission 变体）。 */
+export const PendingPermissionEntrySchema = z.object({
+  id: z.string(),
+  stageId: z.string(),
+  stepId: z.string(),
+  sessionId: z.string(),
+  requestId: z.string(),
+  kind: z.literal('permission'),
+  status: PendingInteractionStatusSchema,
+  payload: PendingPermissionPayloadSchema,
+  answer: z.enum(['once', 'always', 'reject']).optional(),
+  createdAt: z.string(),
 })
 
 /** 收尾第 1 部分（Assessor）结果。 */
@@ -330,14 +370,14 @@ export const WorkflowTaskStateSchema = z.object({
   currentStageId: z.string(),
   executedSteps: z.array(ExecutedStepDefaultSchema),
   stageInfos: z.array(StageInfoSchema),
-  pendingInteractions: z.array(z.unknown()),
+  pendingInteractions: z.array(z.union([PendingQuestionEntrySchema, PendingPermissionEntrySchema])),
   pendingQueue: z.array(z.string()),
   visitCounts: z.record(z.string(), z.number()),
   passThroughVars: z.record(z.string(), PassThroughVarValueSchema),
   activeLoopIterationStack: z.array(z.number()),
   activeLoopNodeId: z.string().nullable(),
   activeLoopStack: z.array(z.string()),
-  pausedStepIds: z.array(z.string()),
+  pausedChildIds: z.array(z.string()),
   stageContracts: z.record(z.string(), StageContractSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -393,6 +433,8 @@ export type FinalizeMeta = z.infer<typeof FinalizeMetaSchema>
 export type FinalizeAssessResult = z.infer<typeof FinalizeAssessResultSchema>
 export type GateEvalResult = z.infer<typeof GateEvalResultSchema>
 export type AskUserQuestionPayload = z.infer<typeof AskUserQuestionPayloadSchema>
+export type PendingQuestionEntry = z.infer<typeof PendingQuestionEntrySchema>
+export type PendingPermissionEntry = z.infer<typeof PendingPermissionEntrySchema>
 export type BranchMeta = z.infer<typeof BranchMetaSchema>
 export type SessionMessage = z.infer<typeof SessionMessageSchema>
 export type RetryRecord = z.infer<typeof RetryRecordSchema>

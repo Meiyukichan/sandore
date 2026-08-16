@@ -16,6 +16,7 @@ import { FakeShell, successResult } from '../tests/mocks/shell.ts';
 import { MemoryStorageDomain } from '../tests/mocks/storage-domain.ts';
 import { FakeSubagents } from '../tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
+import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
 import { SandoreError } from './errors.ts';
 import SandoreEngineRuntime, { SandoreEngineStub } from './index.ts';
 import type { SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
@@ -91,6 +92,21 @@ stages:
           type: shell
           value:
             command: "false"
+`;
+
+/** 单 Stage 单 shell Step（用于崩溃恢复重跑：无需 llm 目录即可跑通）。 */
+const shellOnlyYaml = `id: wfl-shell-only
+name: shell-only
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 单shell
+    steps:
+      - id: step-shell
+        command:
+          type: shell
+          value:
+            command: "echo hi"
 `;
 
 /** 完整 DAG（分支 + 并行 + 汇合 + 循环 + 门禁 + 透传变量 + agent 子代理）。 */
@@ -294,11 +310,105 @@ function completedSnapshot(instanceId: string): WorkflowTaskState {
     activeLoopIterationStack: [],
     activeLoopNodeId: null,
     activeLoopStack: [],
-    pausedStepIds: [],
+    pausedChildIds: [],
     stageContracts: {},
     createdAt,
     updatedAt: createdAt,
   };
+}
+
+/** 组装一条非终态（running）实例状态快照（供恢复扫描测试）。 */
+function runningSnapshot(instanceId: string, workflowId = 'wfl-linear'): WorkflowTaskState {
+  const createdAt = new Date().toISOString();
+  return {
+    taskId: instanceId,
+    jobId: 'job-1',
+    workflowId,
+    cwd: '/tmp',
+    status: 'running',
+    originalInput: 'hello world',
+    currentStageId: 'stg-1',
+    executedSteps: [],
+    stageInfos: [{ id: 'stg-1', name: '分析', status: 'running' }],
+    pendingInteractions: [],
+    pendingQueue: [],
+    visitCounts: {},
+    passThroughVars: {},
+    activeLoopIterationStack: [],
+    activeLoopNodeId: null,
+    activeLoopStack: [],
+    pausedChildIds: [],
+    stageContracts: {},
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** 单个已执行 Step 的快照类型。 */
+type SnapshotStep = WorkflowTaskState['executedSteps'][number];
+
+/** 构造一条 agent 子代理 Step 快照（running/paused 两态，供恢复分类测试）。 */
+function agentStepSnapshot(status: 'running' | 'paused', childId = 'child-1'): SnapshotStep {
+  const createdAt = new Date().toISOString();
+  return {
+    type: 'default',
+    id: 'exec-1',
+    stepId: 'step-agent',
+    stageId: 'stg-1',
+    name: 'step-agent',
+    status,
+    command: { type: 'agent', value: { promptText: 'do work' } },
+    sessionMeta: { childId, synthetic: false, command: 'agent' },
+    visitCount: 1,
+    ...(status === 'paused' ? { pausedAt: createdAt } : {}),
+  };
+}
+
+/** 构造一条 shell 合成 Step 快照（synthetic，供「合成 session 标 failed」测试）。 */
+function shellStepSnapshot(status: 'running' = 'running'): SnapshotStep {
+  return {
+    type: 'default',
+    id: 'exec-1',
+    stepId: 'step-shell',
+    stageId: 'stg-1',
+    name: 'step-shell',
+    status,
+    command: { type: 'shell', value: { command: 'echo hi' } },
+    sessionMeta: { childId: 'step-shell-synthetic', synthetic: true, command: 'shell' },
+    visitCount: 1,
+  };
+}
+
+/** 组装一条含单个指定 Step 的实例状态快照（status 决定 pausedChildIds 是否重建）。 */
+function stepSnapshot(instanceId: string, workflowId: string, step: SnapshotStep, status: WorkflowTaskState['status']): WorkflowTaskState {
+  const createdAt = new Date().toISOString();
+  return {
+    taskId: instanceId,
+    jobId: 'job-1',
+    workflowId,
+    cwd: '/tmp',
+    status,
+    originalInput: 'do work',
+    currentStageId: step.stageId,
+    executedSteps: [step],
+    stageInfos: [{ id: step.stageId, name: 'stage', status: status === 'completed' ? 'completed' : 'running' }],
+    pendingInteractions: [],
+    pendingQueue: [],
+    visitCounts: {},
+    passThroughVars: {},
+    activeLoopIterationStack: [],
+    activeLoopNodeId: null,
+    activeLoopStack: [],
+    pausedChildIds: status === 'paused' ? [step.sessionMeta?.childId ?? step.id] : [],
+    stageContracts: {},
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** 组装一条非终态（paused）实例状态快照（含 paused Step + pausedChildIds，供登记表重建测试）。 */
+function pausedSnapshot(instanceId: string, workflowId = 'wfl-agent-fail'): WorkflowTaskState {
+  return stepSnapshot(instanceId, workflowId, agentStepSnapshot('paused'), 'paused');
 }
 
 /** 组装集成测试 harness：注入内存 DSH 服务并加载引擎运行时。 */
@@ -311,6 +421,7 @@ async function harness(config: SandoreConfig = {}): Promise<{
   sessions: FakeSessionStore;
   subagents: FakeSubagents;
   agents: FakeAgentRegistry;
+  userQuestions: FakeUserQuestions;
 }> {
   const ctx = new Context();
   const storageDomain = new MemoryStorageDomain();
@@ -322,8 +433,9 @@ async function harness(config: SandoreConfig = {}): Promise<{
   const shell = new FakeShell();
   const sessions = new FakeSessionStore();
   const subagents = new FakeSubagents();
-  const agents = new FakeAgentRegistry();
+  const agents = new FakeAgentRegistry(sessions);
   const subprocess = new FakeSubprocess();
+  const userQuestions = new FakeUserQuestions();
   ctx.provide('llm', llm as unknown as LlmRuntime);
   ctx.provide('shell', shell as unknown as ShellExecutor);
   ctx.provide('sessions', sessions as unknown as SessionStore);
@@ -331,11 +443,12 @@ async function harness(config: SandoreConfig = {}): Promise<{
   ctx.provide('subagents', subagents);
   ctx.provide('agents', agents);
   ctx.provide('subprocess', subprocess);
+  ctx.provide('userQuestions', userQuestions);
   ctx.provide('fs', {});
 
   await ctx.plugin(SandoreEngineRuntime, config);
   const engine = ctx.sandoreEngine;
-  return { ctx, engine, persistence, llm, shell, sessions, subagents, agents };
+  return { ctx, engine, persistence, llm, shell, sessions, subagents, agents, userQuestions };
 }
 
 /** 注册全部 sandore/* 监听器并记录事件（名称 + 参数）。 */
@@ -380,30 +493,40 @@ describe('SandoreEngineRuntime interface', () => {
     expect(SandoreEngineStub).toBeTypeOf('function');
   });
 
-  it('throws INVALID_OPERATION with not implemented for the 8 unimplemented methods', async () => {
+  it('declares agents and userQuestions in the seam inject list', () => {
+    expect(SandoreEngineStub.inject).toContain('agents');
+    expect(SandoreEngineStub.inject).toContain('userQuestions');
+    expect(SandoreEngineRuntime.inject).toContain('agents');
+    expect(SandoreEngineRuntime.inject).toContain('userQuestions');
+  });
+
+  it('routes recoverInstance and retryStep on unknown instances to NODE_NOT_FOUND (no longer not-implemented)', async () => {
     const { engine } = await harness();
-    await expect(engine.recoverInstance('x')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    await expect(engine.recoverInstance('x')).rejects.toThrow(/not implemented/);
-    await expect(engine.replyQuestion('x', 'q', {})).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    await expect(engine.replyPermission('x', 'q', 'once')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    await expect(engine.pauseStep('x', 's')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    await expect(engine.resumeStep('x', 's')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    await expect(engine.pauseAllSteps('x')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    await expect(engine.resumeAllSteps('x')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    await expect(engine.retryStep('x', 's', 'continue', 'm')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    await expect(engine.recoverInstance('x')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+    await expect(engine.retryStep('x', 's', 'continue', 'm')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+  });
+
+  it('throws NODE_NOT_FOUND for pause/resume on unknown instances', async () => {
+    const { engine } = await harness();
+    await expect(engine.pauseStep('x', 's')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+    await expect(engine.resumeStep('x', 's')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+    await expect(engine.pauseAllSteps('x')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+    await expect(engine.resumeAllSteps('x')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+  });
+
+  it('replyQuestion for an unknown instance throws NODE_NOT_FOUND', async () => {
+    const { engine } = await harness();
+    await expect(engine.replyQuestion('x', 'q', { answers: [] })).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+    await expect(engine.replyPermission('x', 'q', 'once')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
   });
 });
 
 describe('SandoreEngineRuntime startInstance', () => {
   it('throws when the workflowId does not exist and leaves the state table empty', async () => {
     const { engine, persistence } = await harness();
-    let caught: unknown;
-    try {
-      engine.startInstance({ workflowId: 'wfl-none', jobId: 'job-1', originalInput: 'x' });
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(SandoreError);
+    await expect(
+      engine.startInstance({ workflowId: 'wfl-none', jobId: 'job-1', originalInput: 'x' }),
+    ).rejects.toBeInstanceOf(SandoreError);
     expect(persistence.state.size).toBe(0);
   });
 
@@ -411,12 +534,37 @@ describe('SandoreEngineRuntime startInstance', () => {
     const { engine, persistence } = await harness();
     await putDefinition(persistence, 'wfl-linear', linearYaml);
 
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'hello world' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'hello world' });
     expect(run.status).toBe('running');
 
     const state = engine.getState(run.instanceId);
     expect(state.originalInput).toBe('hello world');
     expect(['pending', 'running']).toContain(state.status);
+  });
+
+  it('creates a host agent via agents.create with meta.cwd and holds it idle (no auto prompt)', async () => {
+    const { engine, persistence, agents } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it', cwd: '/srv/app' });
+
+    expect(agents.createCwds).toEqual(['/srv/app']);
+    expect(agents.setupCount).toBe(1);
+    const hostAgent = agents.get(run.instanceId);
+    expect(hostAgent).toBeDefined();
+    expect(hostAgent?.status).toBe('idle');
+    expect(hostAgent?.inbox.hasPending).toBe(false);
+  });
+
+  it('rejects startInstance when agents.create setup throws and leaves no state', async () => {
+    const { engine, persistence, agents } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+    agents.setupError = new Error('setup boom');
+
+    await expect(
+      engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' }),
+    ).rejects.toThrow('setup boom');
+    expect(persistence.state.size).toBe(0);
   });
 
   it('falls back to the state table when the instance is not in memory', async () => {
@@ -457,7 +605,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
 
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     expect(records.map(record => record.name)).toEqual([
@@ -514,7 +662,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     llm.streamHandler = () => textChunks('summary');
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-multi', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-multi', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -542,7 +690,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     });
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     expect(persistence.state.get(run.instanceId)?.status).toBe('completed');
@@ -557,7 +705,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     llm.streamHandler = () => textChunks('summary');
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -585,7 +733,7 @@ describe('SandoreEngineRuntime failure', () => {
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -610,7 +758,7 @@ describe('SandoreEngineRuntime failure', () => {
       });
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-two-shell', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-two-shell', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -630,7 +778,7 @@ describe('SandoreEngineRuntime failure', () => {
     llm.streamHandler = () => textChunks('', { kind: 'error', failure: { message: 'model exploded', code: 'X' } });
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -666,12 +814,13 @@ describe('SandoreEngineRuntime abort', () => {
     const aborted = waitForAborted(ctx);
     const stepStarted = waitForStepStart(ctx);
 
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
     await stepStarted;
     await engine.abortInstance(run.instanceId);
     await aborted;
 
-    expect(records.some(record => record.name === 'sandore/aborted')).toBe(true);
+    // 收敛到单一出口：abortInstance 显式发射一次，runInstance failed 分支不再重复发射。
+    expect(records.filter(record => record.name === 'sandore/aborted')).toHaveLength(1);
     expect(persistence.state.get(run.instanceId)?.status).toBe('aborted');
   });
 
@@ -684,7 +833,7 @@ describe('SandoreEngineRuntime abort', () => {
     llm.streamHandler = () => textChunks('summary');
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     await expect(engine.abortInstance(run.instanceId)).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
@@ -693,7 +842,7 @@ describe('SandoreEngineRuntime abort', () => {
 
 describe('SandoreEngineRuntime DAG execution', () => {
   it('routes branches, runs the loop, extracts pass-through vars and passes the gate to completed', async () => {
-    const { ctx, engine, persistence, llm, shell, agents } = await harness();
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
     await putDefinition(persistence, 'wfl-dag', dagYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
@@ -716,7 +865,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-dag', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-dag', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -747,6 +896,9 @@ describe('SandoreEngineRuntime DAG execution', () => {
     const agentStep = state?.executedSteps.find(step => step.stepId === 'step-agent');
     expect(agentStep?.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'agent' });
     expect(agentStep?.output).toEqual([{ type: 'text', text: 'agent output' }]);
+
+    // hostAgent 注入：agent Step 的子代理 parent 即宿主主代理（id = instanceId）。
+    expect(subagents.continuableStarts[0]?.request.parent.id).toBe(run.instanceId);
 
     // 循环：3 次扁平迭代，loopIteration 嵌套路径 + 4 位 hex 后缀 id。
     const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
@@ -781,7 +933,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.streamHandler = () => textChunks('{"branchExpectation": "other"}');
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-branch-fallback', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -805,7 +957,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
     shell.runHandler = async spec => successResult(spec, 'iter');
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-nested-loop', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-nested-loop', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -826,7 +978,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.streamHandler = () => textChunks('{"shouldBreak": true}');
 
     const ended = waitForEnd(ctx);
-    const run = engine.startInstance({ workflowId: 'wfl-loop-break', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-loop-break', jobId: 'job-1', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -837,5 +989,629 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(loopMetaEntry).toBeDefined();
     expect(loopMetaEntry?.loopMeta?.status).toBe('completed');
     expect(loopMetaEntry?.loopMeta?.result).toBe('{"shouldBreak": true}');
+  });
+});
+
+/** 单 Stage prompt Step 带透传变量（触发 finalize assess → ask）。 */
+const askYaml = `id: wfl-ask
+name: ask
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 提问
+    steps:
+      - id: step-ask
+        command:
+          type: prompt
+          value:
+            promptText: "do it"
+        passThroughVars:
+          - name: projectName
+            value: "\${projectName}"
+            description: "项目名"
+`;
+
+/** 单 Stage 多 Step：step-ask（prompt + 门禁 + 透传变量）触发中途 ask，step-after 为剩余 Step。 */
+const askMidYaml = `id: wfl-ask-mid
+name: ask-mid
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 中途提问
+    steps:
+      - id: step-ask
+        command:
+          type: prompt
+          value:
+            promptText: "do it"
+        passThroughVars:
+          - name: projectName
+            value: "\${projectName}"
+            description: "项目名"
+        gates:
+          primary:
+            enabled: true
+      - id: step-after
+        command:
+          type: shell
+          value:
+            command: "echo done"
+`;
+
+/** 单 Stage agent Step（子代理 final result 含 [[SANDORE_ASK]] 标记块触发转接）。 */
+const delegatedAskYaml = `id: wfl-delegated
+name: delegated
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 委托
+    steps:
+      - id: step-agent
+        command:
+          type: agent
+          value:
+            promptText: "do-work"
+`;
+
+/** 等待一次 sandore/question 事件并返回载荷（用于读取 requestId）。 */
+function waitForQuestion(ctx: Context): Promise<{ info: unknown; question: unknown }> {
+  return new Promise(resolve => {
+    ctx.once('sandore/question', (info, question) => resolve({ info, question }));
+  });
+}
+
+describe('SandoreEngineRuntime interaction', () => {
+  it('registers a pending question, asks via userQuestions (hostAgent), and resumes after the card reply', async () => {
+    const { ctx, engine, persistence, llm, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    // prompt Step 输出 → finalize assess（completionType=ask + askQuestion）。
+    const responses = [
+      'work done',
+      '{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
+    ];
+    let callIndex = 0;
+    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+
+    const firedQuestions: unknown[] = [];
+    ctx.on('sandore/question', (info, question) => firedQuestions.push({ info, question }));
+
+    // 卡片回复：捕获 ask 请求并回填答案。
+    userQuestions.resolveNext = async (request) => {
+      expect(request.questions).toEqual([{ id: 'q1', question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }]);
+      return { answers: [{ id: 'q1', selected: ['A'] }] };
+    };
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+
+    // ask 以 hostAgent（id = instanceId）身份发起。
+    expect(userQuestions.calls).toHaveLength(1);
+    expect(userQuestions.calls[0]?.agent?.id).toBe(run.instanceId);
+
+    // sandore/question 事件：pending 条目（kind/status/payload）。
+    expect(firedQuestions).toHaveLength(1);
+    const fired = firedQuestions[0] as { question: { kind: string; status: string; payload: { questions: Array<{ id: string }> } } };
+    expect(fired.question.kind).toBe('question');
+    expect(fired.question.status).toBe('pending');
+    expect(fired.question.payload.questions[0]?.id).toBe('q1');
+
+    // 回复后恢复：Step completed + 实例 completed + 条目终态化 replied。
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    expect(state?.executedSteps.find(step => step.stepId === 'step-ask')?.status).toBe('completed');
+    expect(state?.pendingInteractions).toHaveLength(1);
+    const entry = state?.pendingInteractions[0];
+    expect(entry?.kind).toBe('question');
+    expect(entry?.status).toBe('replied');
+    expect(entry?.answer).toEqual([['A']]);
+  });
+
+  it('supports the replyQuestion compat path when the card channel is unavailable', async () => {
+    const { ctx, engine, persistence, llm } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const responses = [
+      'work done',
+      '{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
+    ];
+    let callIndex = 0;
+    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+
+    const question = waitForQuestion(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', jobId: 'job-1', originalInput: 'do it' });
+    const fired = await question;
+    const requestId = (fired.question as { requestId: string }).requestId;
+
+    // 兼容路径回复：resolve ask 的 await 并恢复执行。
+    await engine.replyQuestion(run.instanceId, requestId, { answers: [{ id: 'q1', selected: ['B'] }] });
+    await waitForEnd(ctx);
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    const entry = state?.pendingInteractions[0];
+    expect(entry?.status).toBe('replied');
+    expect(entry?.answer).toEqual([['B']]);
+  });
+
+  it('resumes the remaining steps and re-runs the gate after a mid-stage ask', async () => {
+    const { ctx, engine, persistence, llm, shell, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-ask-mid', askMidYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    shell.runHandler = async spec => successResult(spec, 'done');
+
+    const responses = [
+      'work done',
+      '{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
+      '{"taskStatus":"done"}',
+    ];
+    let callIndex = 0;
+    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+
+    userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask-mid', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    // 剩余 Step 不丢失：step-ask 与 step-after 均执行。
+    expect(state?.executedSteps.map(step => step.stepId)).toEqual(['step-ask', 'step-after']);
+    // ask 回复后重跑门禁：step-ask 的 finalizeMeta 记录 gateResult。
+    const askStep = state?.executedSteps.find(step => step.stepId === 'step-ask');
+    expect(askStep?.status).toBe('completed');
+    expect(askStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
+  });
+});
+
+describe('SandoreEngineRuntime delegated subagent ask', () => {
+  it('delegates a valid [[SANDORE_ASK]] marker block to an engine-level ask and re-reads the child output after followup', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-delegated', delegatedAskYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([
+      { type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Which?"}]}[[/SANDORE_ASK]]' },
+    ]));
+    let idleCalls = 0;
+    child.whenIdle = async () => {
+      idleCalls += 1;
+      if (idleCalls === 2) {
+        child.session.append(assistantMessageEvent([{ type: 'text', text: 'final answer' }]));
+      }
+    };
+    agents.register(child);
+
+    userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-delegated', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+
+    // 引擎级 ask 以 hostAgent（id = instanceId）身份触发。
+    expect(userQuestions.calls).toHaveLength(1);
+    expect(userQuestions.calls[0]?.agent?.id).toBe(run.instanceId);
+    // 答案经 followup 注回子代理。
+    expect(subagents.followups).toHaveLength(1);
+    expect(subagents.followups[0]?.childId).toBe('child-1');
+    // 子代理续跑后 Step 输出为重新取回的 final output（非标记块）。
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    expect(state?.executedSteps.find(step => step.stepId === 'step-agent')?.output).toEqual([
+      { type: 'text', text: 'final answer' },
+    ]);
+  });
+
+  it('does not delegate an invalid marker block (treated as ordinary output)', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-delegated', delegatedAskYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([
+      { type: 'text', text: '[[SANDORE_ASK]]not json[[/SANDORE_ASK]]' },
+    ]));
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-delegated', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+
+    // 非法标记块：不转接、不 ask、不 followup，按普通输出处理。
+    expect(userQuestions.calls).toHaveLength(0);
+    expect(subagents.followups).toHaveLength(0);
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    expect(state?.executedSteps.find(step => step.stepId === 'step-agent')?.output).toEqual([
+      { type: 'text', text: '[[SANDORE_ASK]]not json[[/SANDORE_ASK]]' },
+    ]);
+  });
+});
+
+/** 单 Stage 单 agent Step（用于重试续跑集成测试：首跑无输出 failed，续跑回填输出 completed）。 */
+const agentFailYaml = `id: wfl-agent-fail
+name: agent-fail
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 单agent
+    steps:
+      - id: step-agent
+        command:
+          type: agent
+          value:
+            promptText: "do work"
+`;
+
+/** 单 Stage 三 Step：shell（outputTo）→ agent（中间失败可重试）→ shell（剩余 Step）。 */
+const multiStepRetryYaml = `id: wfl-multi-retry
+name: multi-retry
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 重试续跑
+    steps:
+      - id: step-a
+        command:
+          type: shell
+          value:
+            command: "echo hello"
+        outputTo:
+          - id: opt-a
+            path: "out-a.txt"
+      - id: step-b
+        command:
+          type: agent
+          value:
+            promptText: "do work"
+        outputTo:
+          - id: opt-b
+            path: "out-b.txt"
+      - id: step-c
+        command:
+          type: shell
+          value:
+            command: "echo done"
+`;
+
+describe('SandoreEngineRuntime recovery', () => {
+  it('throws INVALID_OPERATION when recovering a terminal instance', async () => {
+    const { engine, persistence } = await harness();
+    await persistence.state.put('inst-done', completedSnapshot('inst-done'));
+
+    await expect(engine.recoverInstance('inst-done')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+
+  it('retries a failed agent step with continue mode and resumes to completed', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    // 子代理首次无输出 → Step failed（真实 childId 已记录）。
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
+
+    // 续跑前给子代理回填最终输出。
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'retry output' }]));
+
+    const retried: Array<{ stepId: string; mode: string }> = [];
+    ctx.on('sandore/step-retried', (_info, stepId, mode) => retried.push({ stepId, mode }));
+
+    await engine.retryStep(run.instanceId, 'step-agent', 'continue', 'please retry');
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    const step = state?.executedSteps.find(item => item.stepId === 'step-agent');
+    expect(step?.output).toEqual([{ type: 'text', text: 'retry output' }]);
+    expect(step?.sessionMeta?.childId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('continue');
+    expect(step?.retryHistory?.[0]?.result).toBe('completed');
+    expect(subagents.followups.some(item => item.childId === 'child-1')).toBe(true);
+
+    // sandore/step-retried 双发：Cordis emit + Session append 同发。
+    expect(retried).toEqual([{ stepId: 'step-agent', mode: 'continue' }]);
+    expect(sessions.get(run.instanceId)?.events.some(event => event.type === 'sandore/step-retried')).toBe(true);
+  });
+
+  it('retries a failed middle agent step and runs all remaining steps to completed', async () => {
+    const { ctx, engine, persistence, llm, shell, agents } = await harness();
+    await putDefinition(persistence, 'wfl-multi-retry', multiStepRetryYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-multi-retry', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+
+    // 首跑：step-a 完成、step-b（agent 无输出）失败、step-c 未执行。
+    let state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('failed');
+    expect(state?.executedSteps.map(step => step.stepId)).toEqual(['step-a', 'step-b']);
+    expect(state?.executedSteps[1]?.status).toBe('failed');
+
+    // 续跑前给子代理回填最终输出。
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'retry output' }]));
+    await engine.retryStep(run.instanceId, 'step-b', 'continue', 'please retry');
+
+    state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    // 剩余 Step 不丢失：step-a / step-b / step-c 全部执行完毕。
+    expect(state?.executedSteps.map(step => step.stepId)).toEqual(['step-a', 'step-b', 'step-c']);
+    expect(state?.executedSteps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
+    expect(state?.executedSteps[1]?.output).toEqual([{ type: 'text', text: 'retry output' }]);
+    expect(state?.executedSteps[1]?.retryHistory?.[0]?.mode).toBe('continue');
+    expect(state?.executedSteps[1]?.retryHistory?.[0]?.result).toBe('completed');
+  });
+
+  it('preserves outputTo artifacts in the stage contract after retrying the producing step', async () => {
+    const { ctx, engine, persistence, llm, shell, agents } = await harness();
+    await putDefinition(persistence, 'wfl-multi-retry', multiStepRetryYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-multi-retry', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
+
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'retry output' }]));
+    await engine.retryStep(run.instanceId, 'step-b', 'continue', 'please retry');
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    // 重试 Step 的 outputTo 产物保留在 StageContract.artifacts（含已完成的 step-a）。
+    const contract = state?.stageContracts['stg-1'];
+    expect(contract?.status).toBe('completed');
+    const artifacts = contract?.artifacts ?? [];
+    expect(artifacts.map(item => item.outputToId)).toEqual(['opt-a', 'opt-b']);
+    expect(artifacts.find(item => item.outputToId === 'opt-b')?.stepId).toBe('step-b');
+  });
+
+  it('retries a failed agent step with fork mode to a new childId and completes', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
+
+    // fork 源：child-1 在 sessions 表登记，其 assistant 输出作为 fork 的 seed 回放。
+    const childSession = sessions.create('child-1');
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'fork output' }]).data);
+
+    await engine.retryStep(run.instanceId, 'step-agent', 'fork', 'fork it');
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    const step = state?.executedSteps.find(item => item.stepId === 'step-agent');
+    expect(step?.output).toEqual([{ type: 'text', text: 'fork output' }]);
+    // 新 childId（合成 session id）续跑，parentSessionId 记旧值。
+    expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
+    expect(step?.sessionMeta?.childId).not.toBe('child-1');
+    expect(step?.parentSessionId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('fork');
+    expect(step?.retryHistory?.[0]?.result).toBe('completed');
+    expect(subagents.followups.some(item => item.childId === step?.sessionMeta?.childId)).toBe(true);
+  });
+
+  it('retries a failed agent step with revert mode to a new childId and completes', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', jobId: 'job-1', originalInput: 'do it' });
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
+
+    // revert 源：child-1 含闭合 turn（turn/start → assistant → turn/end）供安全边界计算。
+    const childSession = sessions.create('child-1');
+    childSession.append('turn/start', { turn: 0 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'revert output' }]).data);
+    childSession.append('turn/end', { turn: 0, reason: { kind: 'completed' } });
+
+    await engine.retryStep(run.instanceId, 'step-agent', 'revert', 'rollback');
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    const step = state?.executedSteps.find(item => item.stepId === 'step-agent');
+    expect(step?.output).toEqual([{ type: 'text', text: 'revert output' }]);
+    expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
+    expect(step?.parentSessionId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('revert');
+    expect(step?.retryHistory?.[0]?.result).toBe('completed');
+    expect(subagents.followups.some(item => item.childId === step?.sessionMeta?.childId)).toBe(true);
+  });
+
+  it('truly re-runs an empty-executedSteps non-terminal snapshot to completed (no fake recovery)', async () => {
+    const { ctx, engine, persistence, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-shell-only', shellOnlyYaml);
+
+    await persistence.state.put('inst-running', runningSnapshot('inst-running', 'wfl-shell-only'));
+    sessions.create('inst-running');
+
+    const ended = waitForEnd(ctx);
+    const result = await engine.recoverInstance('inst-running');
+    expect(result).toEqual({ instanceId: 'inst-running', status: 'running' });
+    await ended;
+
+    const state = persistence.state.get('inst-running');
+    expect(state?.status).toBe('completed');
+    expect(state?.executedSteps).toHaveLength(1);
+    expect(state?.executedSteps[0]?.stepId).toBe('step-shell');
+    expect(state?.executedSteps[0]?.status).toBe('completed');
+  });
+
+  it('resumes the host agent before following up the child subagent during recovery', async () => {
+    const { ctx, engine, persistence, sessions, agents, subagents } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+
+    await persistence.state.put('inst-run', stepSnapshot('inst-run', 'wfl-agent-fail', agentStepSnapshot('running'), 'running'));
+    sessions.create('inst-run');
+    // 子代理 child-1 已注册并携带输出（followup 后 resumeSubagent 收集其输出）。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'recovered output' }]));
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const result = await engine.recoverInstance('inst-run');
+    expect(result.status).toBe('running');
+    await ended;
+
+    // 宿主主代理经 agents.resume 冷恢复，且作为 followup 的 parent（先宿主后子代理）。
+    expect(agents.setupCount).toBeGreaterThanOrEqual(1);
+    expect(subagents.followups).toHaveLength(1);
+    expect(subagents.followups[0]?.childId).toBe('child-1');
+    expect(subagents.followups[0]?.parent.id).toBe('inst-run');
+
+    const state = persistence.state.get('inst-run');
+    expect(state?.status).toBe('completed');
+    expect(state?.executedSteps[0]?.output).toEqual([{ type: 'text', text: 'recovered output' }]);
+  });
+
+  it('rebuilds the paused registry from pausedChildIds and stays paused without re-running', async () => {
+    const { engine, persistence, sessions, subagents } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+
+    await persistence.state.put('inst-paused', pausedSnapshot('inst-paused'));
+    sessions.create('inst-paused');
+
+    const result = await engine.recoverInstance('inst-paused');
+    expect(result.status).toBe('paused');
+    // 不自动 followup（等待手动 resume）。
+    expect(subagents.followups).toHaveLength(0);
+
+    // 登记表已从 pausedChildIds 重建：resumeStep 可反查并 followup 原 childId。
+    await engine.resumeStep('inst-paused', 'step-agent', 'continue now');
+    expect(subagents.followups).toHaveLength(1);
+    expect(subagents.followups[0]?.childId).toBe('child-1');
+  });
+
+  it('marks an unrecoverable synthetic (shell) running step as failed during recovery', async () => {
+    const { engine, persistence, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-shell-only', shellOnlyYaml);
+
+    await persistence.state.put('inst-shell', stepSnapshot('inst-shell', 'wfl-shell-only', shellStepSnapshot('running'), 'running'));
+    sessions.create('inst-shell');
+
+    const result = await engine.recoverInstance('inst-shell');
+    expect(result.status).toBe('failed');
+
+    const state = persistence.state.get('inst-shell');
+    expect(state?.status).toBe('failed');
+    expect(state?.executedSteps[0]?.status).toBe('failed');
+    expect(state?.executedSteps[0]?.error).toContain('not recoverable');
+  });
+
+  it('recoverOrphanedInstances scans the state table, skips terminal, and recovers non-terminal', async () => {
+    const { engine, persistence, sessions, agents } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+
+    // 终态实例（跳过）。
+    await persistence.state.put('inst-done', completedSnapshot('inst-done'));
+    await persistence.state.put('inst-failed', { ...completedSnapshot('inst-failed'), status: 'failed' });
+    await persistence.state.put('inst-aborted', { ...completedSnapshot('inst-aborted'), status: 'aborted' });
+
+    // 非终态实例（恢复）：预建宿主 Session 供 agents.resume 后读回。
+    await persistence.state.put('inst-paused', pausedSnapshot('inst-paused'));
+    sessions.create('inst-paused');
+
+    const result = await (engine as SandoreEngineRuntime).recoverOrphanedInstances();
+    expect(result.recovered).toEqual(['inst-paused']);
+    expect(result.errors).toHaveLength(0);
+    // 宿主主代理经 agents.resume 冷恢复（setup 重跑）。
+    expect(agents.setupCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('recoverOrphanedInstances aggregates a single failing instance without blocking others', async () => {
+    const { engine, persistence, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+
+    // 一个可恢复（定义存在 + 宿主 Session），一个定义缺失（失败进 errors）。
+    await persistence.state.put('inst-ok', pausedSnapshot('inst-ok'));
+    sessions.create('inst-ok');
+    await persistence.state.put('inst-bad', pausedSnapshot('inst-bad', 'wfl-missing'));
+
+    const result = await (engine as SandoreEngineRuntime).recoverOrphanedInstances();
+    expect(result.recovered).toEqual(['inst-ok']);
+    expect(result.errors.map(item => item.instanceId)).toEqual(['inst-bad']);
+    expect(result.errors[0]?.error).toContain('not found');
+  });
+
+  it('aggregates host resume failure into errors without blocking', async () => {
+    const { engine, persistence, sessions, agents } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+
+    await persistence.state.put('inst-run', pausedSnapshot('inst-run'));
+    sessions.create('inst-run');
+    agents.setupError = new Error('resume boom');
+
+    const result = await (engine as SandoreEngineRuntime).recoverOrphanedInstances();
+    expect(result.recovered).toEqual([]);
+    expect(result.errors.map(item => item.instanceId)).toEqual(['inst-run']);
+    expect(result.errors[0]?.error).toContain('resume boom');
+  });
+
+  it('recovers orphaned instances automatically at Service.init (startup scan)', async () => {
+    const ctx = new Context();
+    const storageDomain = new MemoryStorageDomain();
+    ctx.provide('storageDomain', storageDomain as unknown as DomainFacility);
+    await ctx.plugin(SandorePersistence);
+    const persistence = ctx.sandorePersistence;
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    await persistence.state.put('inst-init', pausedSnapshot('inst-init'));
+
+    const sessions = new FakeSessionStore();
+    sessions.create('inst-init');
+    const agents = new FakeAgentRegistry(sessions);
+    ctx.provide('sessions', sessions as unknown as SessionStore);
+    ctx.provide('sessionPersistence', {});
+    ctx.provide('agents', agents);
+    ctx.provide('subagents', new FakeSubagents());
+    ctx.provide('llm', new FakeLlm() as unknown as LlmRuntime);
+    ctx.provide('shell', new FakeShell() as unknown as ShellExecutor);
+    ctx.provide('subprocess', new FakeSubprocess());
+    ctx.provide('userQuestions', new FakeUserQuestions());
+    ctx.provide('fs', {});
+
+    await ctx.plugin(SandoreEngineRuntime, {});
+
+    // 启动扫描自动冷恢复宿主主代理（agents.resume setup 重跑）+ 实例进内存。
+    expect(agents.setupCount).toBeGreaterThanOrEqual(1);
+    expect(ctx.sandoreEngine.getState('inst-init').status).toBe('paused');
   });
 });

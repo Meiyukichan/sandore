@@ -3,9 +3,9 @@
  *
  * `super(ctx, 'sandore')` 定 wire namespace，`@Remote('name')` 定 method，
  * 构成端点 `sandore.<method>`。定义/Job CRUD 读写在 `ctx.sandorePersistence`
- * 的三表上，实例生命周期（start/abort）转发 `ctx.sandoreEngine`，
- * Provider/Model 转发 `ctx.llm`。RPC 层只做 zod 参数校验 + 转发/存储，
- * 无引擎业务逻辑。
+ * 的三表上，实例生命周期（start/abort/reply/pause/resume/retry）转发
+ * `ctx.sandoreEngine`，Provider/Model 转发 `ctx.llm`。RPC 层只做 zod 参数校验
+ * + 转发/存储，无引擎业务逻辑。
  * @module @deepseek-ai/dsh-sandore-workflow/src/remote
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -14,7 +14,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
 
 import { SandoreError } from './errors.ts'
-import type { DagRun, DagStartRequest } from './types.ts'
+import type { AskUserQuestionAnswer, DagRun, DagStartRequest } from './types.ts'
 import { parseWorkflowYaml } from './yaml-parser.ts'
 import type { JobRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
 
@@ -83,11 +83,76 @@ const StartInstanceInputSchema = z.object({
   cwd: z.string().optional(),
 })
 
+/** 单个问题回答的 zod 校验（对齐 DSH `AskUserQuestionAnswerItem`）。 */
+const AskUserQuestionAnswerItemSchema = z.object({
+  id: z.string(),
+  selected: z.array(z.string()),
+  custom: z.string().optional(),
+})
+
+/** 用户整批回答的 zod 校验（对齐 DSH `AskUserQuestionAnswer`）。 */
+const AskUserQuestionAnswerSchema = z.object({
+  answers: z.array(AskUserQuestionAnswerItemSchema),
+})
+
+/** `replyQuestion` 入参。 */
+const ReplyQuestionInputSchema = z.object({
+  instanceId: z.string(),
+  requestId: z.string(),
+  answers: AskUserQuestionAnswerSchema,
+})
+
+/** `replyPermission` 入参（`reply` 限定 once/always/reject）。 */
+const ReplyPermissionInputSchema = z.object({
+  instanceId: z.string(),
+  requestId: z.string(),
+  reply: z.enum(['once', 'always', 'reject']),
+})
+
+/** `pauseStep` 入参。 */
+const PauseStepInputSchema = z.object({
+  instanceId: z.string(),
+  stepId: z.string(),
+})
+
+/** `resumeStep` 入参（可选恢复提示词）。 */
+const ResumeStepInputSchema = z.object({
+  instanceId: z.string(),
+  stepId: z.string(),
+  resumePrompt: z.string().optional(),
+})
+
+/** `pauseAll` 入参。 */
+const PauseAllInputSchema = z.object({
+  instanceId: z.string(),
+})
+
+/** `resumeAll` 入参（可选统一恢复提示词）。 */
+const ResumeAllInputSchema = z.object({
+  instanceId: z.string(),
+  resumePrompt: z.string().optional(),
+})
+
+/** `retryStep` 入参（`mode` 限定 continue/revert/fork）。 */
+const RetryStepInputSchema = z.object({
+  instanceId: z.string(),
+  stepId: z.string(),
+  mode: z.enum(['continue', 'revert', 'fork']),
+  message: z.string(),
+})
+
 export type CreateDefinitionInput = z.infer<typeof CreateDefinitionInputSchema>
 export type UpdateDefinitionInput = z.infer<typeof UpdateDefinitionInputSchema>
 export type CreateJobInput = z.infer<typeof CreateJobInputSchema>
 export type UpdateJobInput = z.infer<typeof UpdateJobInputSchema>
 export type StartInstanceInput = z.infer<typeof StartInstanceInputSchema>
+export type ReplyQuestionInput = z.infer<typeof ReplyQuestionInputSchema>
+export type ReplyPermissionInput = z.infer<typeof ReplyPermissionInputSchema>
+export type PauseStepInput = z.infer<typeof PauseStepInputSchema>
+export type ResumeStepInput = z.infer<typeof ResumeStepInputSchema>
+export type PauseAllInput = z.infer<typeof PauseAllInputSchema>
+export type ResumeAllInput = z.infer<typeof ResumeAllInputSchema>
+export type RetryStepInput = z.infer<typeof RetryStepInputSchema>
 
 // ── ping ─────────────────────────────────────────────────────────────────────
 
@@ -107,7 +172,8 @@ const TERMINAL_STATUSES: ReadonlySet<WorkflowTaskState['status']> = new Set(['co
 /**
  * sandore 的 Host RPC 服务。
  *
- * 定义/Job/实例 CRUD + 产物查询 + Provider/Model 转发；`ping` 保留。
+ * 定义/Job/实例 CRUD + 7 个生命周期 RPC + 产物查询 + Provider/Model 转发；
+ * `ping` 保留。
  */
 export class SandoreRemote extends TypertRemoteService {
   static inject = ['sandorePersistence', 'sandoreEngine', 'llm']
@@ -290,7 +356,7 @@ export class SandoreRemote extends TypertRemoteService {
 
   /** 启动实例：解析 Job 的 workflowId 后转发 `ctx.sandoreEngine.startInstance`。 */
   @Remote('startInstance')
-  startInstance(input: StartInstanceInput): DagRun {
+  async startInstance(input: StartInstanceInput): Promise<DagRun> {
     const parsed = StartInstanceInputSchema.parse(input)
     const job = this.requireJob(parsed.jobId)
     const request: DagStartRequest = {
@@ -299,7 +365,7 @@ export class SandoreRemote extends TypertRemoteService {
       originalInput: parsed.originalInput,
       ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
     }
-    return this.ctx.sandoreEngine.startInstance(request)
+    return await this.ctx.sandoreEngine.startInstance(request)
   }
 
   /** 删除实例快照（`state` 表删除）；重复删除幂等。 */
@@ -322,6 +388,59 @@ export class SandoreRemote extends TypertRemoteService {
       throw new SandoreError(`instance '${instanceId}' is already in terminal state '${state.status}'`, 'INVALID_OPERATION')
     }
     await this.ctx.sandoreEngine.abortInstance(instanceId)
+  }
+
+  // ── 生命周期 RPC ────────────────────────────────────────────────────────
+
+  /** 回复待处理问答（转发 `ctx.sandoreEngine.replyQuestion`）。 */
+  @Remote('replyQuestion')
+  async replyQuestion(input: ReplyQuestionInput): Promise<void> {
+    const parsed = ReplyQuestionInputSchema.parse(input)
+    // zod 已对 answers 结构做显式运行时校验；此处桥接 `exactOptionalPropertyTypes`
+    // 下 `custom?: string` 与 zod `.optional()` 推断 `string | undefined` 的类型差异。
+    await this.ctx.sandoreEngine.replyQuestion(parsed.instanceId, parsed.requestId, parsed.answers as AskUserQuestionAnswer)
+  }
+
+  /** 回复待处理权限请求（转发 `ctx.sandoreEngine.replyPermission`）。 */
+  @Remote('replyPermission')
+  async replyPermission(input: ReplyPermissionInput): Promise<void> {
+    const parsed = ReplyPermissionInputSchema.parse(input)
+    await this.ctx.sandoreEngine.replyPermission(parsed.instanceId, parsed.requestId, parsed.reply)
+  }
+
+  /** 暂停单个 Step（转发 `ctx.sandoreEngine.pauseStep`）。 */
+  @Remote('pauseStep')
+  async pauseStep(input: PauseStepInput): Promise<void> {
+    const parsed = PauseStepInputSchema.parse(input)
+    await this.ctx.sandoreEngine.pauseStep(parsed.instanceId, parsed.stepId)
+  }
+
+  /** 恢复单个 Step（转发 `ctx.sandoreEngine.resumeStep`，可选恢复提示词）。 */
+  @Remote('resumeStep')
+  async resumeStep(input: ResumeStepInput): Promise<void> {
+    const parsed = ResumeStepInputSchema.parse(input)
+    await this.ctx.sandoreEngine.resumeStep(parsed.instanceId, parsed.stepId, parsed.resumePrompt)
+  }
+
+  /** 暂停实例内全部 Step（转发 `ctx.sandoreEngine.pauseAllSteps`）。 */
+  @Remote('pauseAll')
+  async pauseAll(input: PauseAllInput): Promise<void> {
+    const parsed = PauseAllInputSchema.parse(input)
+    await this.ctx.sandoreEngine.pauseAllSteps(parsed.instanceId)
+  }
+
+  /** 恢复实例内全部 Step（转发 `ctx.sandoreEngine.resumeAllSteps`，可选恢复提示词）。 */
+  @Remote('resumeAll')
+  async resumeAll(input: ResumeAllInput): Promise<void> {
+    const parsed = ResumeAllInputSchema.parse(input)
+    await this.ctx.sandoreEngine.resumeAllSteps(parsed.instanceId, parsed.resumePrompt)
+  }
+
+  /** 重试失败 Step（转发 `ctx.sandoreEngine.retryStep`）。 */
+  @Remote('retryStep')
+  async retryStep(input: RetryStepInput): Promise<void> {
+    const parsed = RetryStepInputSchema.parse(input)
+    await this.ctx.sandoreEngine.retryStep(parsed.instanceId, parsed.stepId, parsed.mode, parsed.message)
   }
 
   // ── 产物 / Provider 转发 ─────────────────────────────────────────────────

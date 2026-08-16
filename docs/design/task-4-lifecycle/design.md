@@ -242,12 +242,35 @@ V2.6 的 `askUserQuestion` 与 V2.5 的 SDK 原生 `question.asked` 事件统一
 
 | sandore 能力 | DSH 等价组件 | 说明 |
 |---|---|---|
-| `addPendingQuestion()` / `addPendingPermission()` | DSH 交互 seam 的 `PendingWait<'question'/'approval'>` 载体 | Step 子代理的问答/审批自动流转到前端，无需引擎自建 pending Map |
-| `replyQuestion()` / `replyPermission()` | `PendingQuestion.answer()`（已导出）/ 自建 approval wrapper 应答 | 前端复用 `PendingQuestion` 类，审批卡片自写 ~50 行 |
+| `addPendingQuestion()` / `addPendingPermission()` | **引擎级 ask 以宿主主代理身份 `ctx.userQuestions.ask({ agent: hostAgent })`**（DSH 原生问答卡片 + await 答案）；pending Map 降级为「镜像持久化」（崩溃恢复） | **Step 子代理不能直接问用户**（`ctx.userQuestions.ask` 对 owned child 抛 `DELEGATED_CALLER`）；问答统一由宿主主代理发起 |
+| `replyQuestion()` / `replyPermission()` | `ctx.userQuestions.ask` 的 await 返回值为主通道；`sandore.replyQuestion` RPC 保留为兼容回复路径 | 前端复用 DSH 原生问答卡片（`ui-user-questions`），审批卡片自写 ~50 行 |
 | `buildPermissionRules()` / `autoReplyPermission()` | **DSH permission presets（子代理继承父级）** | DSH 无 permissionMode；Step 子代理继承宿主 Session 的 preset，approval 固定 `never` |
 | 交互事件推送 | `question/requested` / `approval/requested` 帧（apiproxy SSE） | 前端无需区分工作流专属交互与普通交互 |
 
 > **前端交互 UI 复用**（探索确认）：DSH 的问答/审批组件**不可跨插件 import**，但载体与领域类可复用——`PendingQuestion`（`ui-user-questions` 已导出）驱动自写问答卡片（照抄 QuestionComposer ~100 行），`PendingWait<'approval'>` 驱动自写审批卡片（照抄 ApprovalPanel ~50 行）。
+
+> **DELEGATED_CALLER 关键修正（探索确认）**：DSH 的 `ctx.userQuestions.ask({ agent })` 对**非 root agent**（owned child，即可续接子代理）抛 `DELEGATED_CALLER`——「human interaction is unavailable while the calling agent is owned by another live agent; include the unresolved question or decision in the child agent's final result」。因此 v2.6 的「SDK 原生 question（子会话直接问用户）」在 DSH 里**不可行**，语义迁移为：
+> - **引擎级 ask（finalize `completionType='ask'`）**：以宿主主代理（root）身份 `ctx.userQuestions.ask({ agent: hostAgent, questions })`，DSH 原生卡片 + await 答案，直接闭环
+> - **子代理 ask_user_question**：子代理问会 `DELEGATED_CALLER` → 子代理把问题写进 final result → 引擎从 `finalAssistantOutput` 解析问题 → 转成引擎级 ask（hostAgent 问）→ 答案 `followup` 给子代理继续
+> - **pending Map 角色**：从「唯一权威」降级为「引擎级 ask 的镜像持久化」（requestId + 状态，崩溃恢复时重建交互），`replyQuestion` RPC 保留兼容
+
+### 1.7 Task 4 RPC 清单（`remote.ts`）
+
+Task 4 补 **7 个生命周期 RPC**（对齐 dsh-workflow §7.2，`@Remote` 装饰器挂 `SandoreRemote`，端点前缀 `sandore.*`）：
+
+| RPC 方法 | 说明 | 对应 Service 方法 |
+|---|---|---|
+| `replyQuestion` | 问答回复（兼容路径，主通道是 `ctx.userQuestions.ask` 的 await） | `replyQuestion` |
+| `replyPermission` | 权限回复 | `replyPermission` |
+| `pauseStep` | 暂停某 Step | `pauseStep` |
+| `resumeStep` | 定向恢复某 Step | `resumeStep` |
+| `pauseAll` | 全局暂停所有 running/interacting Step | `pauseAllSteps` |
+| `resumeAll` | 广播恢复所有暂停 Step | `resumeAllSteps` |
+| `retryStep` | 重试失败 Step（continue/revert/fork） | `retryStep` |
+
+**不做**：
+- `getDiscussion`/`addChatMessage`——D5/D8 下讨论数据从宿主 Session 日志直读（`session/event` 帧），用户消息走宿主会话天然通道（DSH 原生 composer → 主代理），无需冗余 RPC
+- `recoverInstance` RPC——崩溃恢复是「启动自动扫描」（`Service.init` 时 `recoverOrphanedInstances`），`recoverInstance` 作为内部 Service 方法，不单独暴露 RPC
 
 ---
 
@@ -637,6 +660,7 @@ H. 主执行循环 runExecutionLoop()（与 execute() 共享）
 > - **新增：宿主 Session（主代理）冷恢复**——崩溃恢复时引擎必须先 `ctx.agents.resume({ resumeSessionId: hostSessionId })` 重建宿主主代理。关键：`resume` 会**重新执行 `setup(agentCtx)` 回调**（见 dsh-workflow.md §5.1A），因此 `sandore_*` 工具 + instanceId 闭包 + system prompt 会自动重新注册；同时引擎重新持有 live `hostAgent` 引用（后续 interrupt 的 authority）。
 > - **新增：子代理冷恢复**——running/interacting 的 Step 子代理用 `ctx.subagents.followup(hostAgent, childId, ...)` 触发冷恢复（followup 对 absent child 自动从持久化 Session 恢复），无需显式 `ctx.agents.resume()`；或 `listChildren(hostSessionId)` 枚举 durable 子代理。
 > - **Step 完成等待**：`ctx.agents.get(childId).whenIdle()`（先 followup 再 await，再读 `finalAssistantOutput(child.session.events)`），详见 task-2 §5.3 / task-3 §2.1。
+> - **A 阶段 `pausedStepIds` → `pausedChildIds` 改名**（§2.9）：恢复时从 state 快照读 `pausedChildIds`（值=子代理 SessionId）重建引擎暂停登记表；`resumeStep(stepId)` 经 `executedSteps[].sessionMeta.childId` 反查 childId。
 
 ### 5.4 孤儿实例扫描
 
@@ -913,6 +937,8 @@ sandore-step Chat 节点（主对话消息流里，与普通消息节点混排�
 1. **不复制 DSH 的单 Session Chat 视图**，而是复用 `ui-workflow-run` 的「多 run 折叠为 Chat 节点」模式（`ConversationNodeDefinition` + `conversation.chat.node` keyed），每个 Step 折叠为一个 `sandore-step` 节点。
 2. **子代理 Session 导航**：点击某 Step 条目可打开对应子代理 Session 的完整对话（复用 `ctx.sessions.open(id)` / 普通 Session 视图），而非在工作流视图内内联重放整个子代理对话。
 3. **实时性**：骨架靠宿主 Session 的 `sandore/*` 事件（经 apiproxy SSE `session/event` 帧）实时更新；内容按需从子代理 Session 派生（打开时才加载）。
+
+> **Task 4 落点（仅引擎侧就绪，渲染器留 Task 5）**：Task 4 产出只有 `workflow` + `tool` 两包（无 `ui` 包）。「可渲染性」由**引擎侧事件载荷保证**——`step-paused`/`step-resumed`/`step-retried`/`question`/`permission` 事件正确 `session.append` 且 payload 完整（`childId`/`output` 内联），单测断言事件序列 + 载荷；`ConversationNodeDefinition` + `conversation.chat.node` keyed 渲染器（DagStepNodeView）留 Task 5（`ui` 包）。
 
 ---
 

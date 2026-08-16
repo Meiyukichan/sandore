@@ -10,20 +10,25 @@ import { Context, Service } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import z from '@deepseek-ai/schemastery';
 
+import type { Agent } from '../../microflow/src/subagents.ts';
 import type {
+  AskUserQuestionAnswer,
+  AskUserQuestionItem,
   DagResultInfo,
   DagRun,
   DagRunInfo,
   DagStartRequest,
   DagInstanceState,
-  PendingPermission,
-  PendingQuestion,
+  PendingPermissionEntry,
+  PendingQuestionEntry,
   StageContract,
 } from './types.ts';
+import type { SandoreEngineSurface } from './engine-surface.ts';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     sandoreEngine: SandoreEngine;
+    userQuestions: UserQuestions;
   }
 
   interface Events {
@@ -36,8 +41,8 @@ declare module '@deepseek-ai/cordis' {
     'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string): void;
     'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt?: string): void;
     'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string): void;
-    'sandore/question'(info: DagRunInfo, question: PendingQuestion): void;
-    'sandore/permission'(info: DagRunInfo, permission: PendingPermission): void;
+    'sandore/question'(info: DagRunInfo, question: PendingQuestionEntry): void;
+    'sandore/permission'(info: DagRunInfo, permission: PendingPermissionEntry): void;
     'sandore/end'(info: DagRunInfo, result: DagResultInfo): void;
     'sandore/aborted'(info: DagRunInfo): void;
   }
@@ -54,8 +59,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'sandore/step-paused': { stepId: string; childId: string };
     'sandore/step-resumed': { stepId: string; childId: string; resumePrompt?: string };
     'sandore/step-retried': { stepId: string; mode: string };
-    'sandore/question': { question: PendingQuestion };
-    'sandore/permission': { permission: PendingPermission };
+    'sandore/question': { question: PendingQuestionEntry };
+    'sandore/permission': { permission: PendingPermissionEntry };
     'sandore/end': { taskId: string; jobId: string; result: DagResultInfo };
     'sandore/aborted': { taskId: string };
   }
@@ -67,20 +72,20 @@ declare module '@deepseek-ai/dsh-session/types' {
  * Service 层只暴露实例级操作（start/recover/abort/reply/pause/resume/retry/getState），
  * 定义/Job 的 CRUD 与实例讨论/产物查询放在 Host RPC 层（见 `remote.ts`）。
  */
-export abstract class SandoreEngine extends Service {
+export abstract class SandoreEngine extends Service implements SandoreEngineSurface {
   constructor(ctx: Context) {
     super(ctx, 'sandoreEngine');
   }
 
   /** 启动一个新的工作流实例。 */
-  abstract startInstance(request: DagStartRequest): DagRun;
+  abstract startInstance(request: DagStartRequest): Promise<DagRun>;
   /** 恢复一个已存在的工作流实例。 */
   abstract recoverInstance(instanceId: string): Promise<DagRun>;
   /** 中止一个运行中的工作流实例。 */
   abstract abortInstance(instanceId: string): Promise<void>;
 
   /** 回复一个待处理问答请求。 */
-  abstract replyQuestion(instanceId: string, requestId: string, answers: unknown): Promise<void>;
+  abstract replyQuestion(instanceId: string, requestId: string, answers: AskUserQuestionAnswer): Promise<void>;
   /** 回复一个待处理权限请求。 */
   abstract replyPermission(instanceId: string, requestId: string, reply: 'once' | 'always' | 'reject'): Promise<void>;
 
@@ -97,6 +102,18 @@ export abstract class SandoreEngine extends Service {
 
   /** 查询实例的当前状态快照。 */
   abstract getState(instanceId: string): DagInstanceState;
+}
+
+/** `ctx.userQuestions.ask` 的入参（questions + 可选活代理/取消）。 */
+export interface UserQuestionsRequest {
+  readonly questions: AskUserQuestionItem[];
+  readonly agent?: Agent;
+  readonly signal?: AbortSignal;
+}
+
+/** `ctx.userQuestions` 能力接缝：以活代理身份发起原生问答卡片。 */
+export interface UserQuestions {
+  ask(request: UserQuestionsRequest): Promise<AskUserQuestionAnswer>;
 }
 
 /** Provider 桩的配置。 */
@@ -125,9 +142,9 @@ export class SandoreEngineStub extends SandoreEngine {
     defaultModel: z.string(),
   });
 
-  static inject = ['sessions', 'sessionPersistence', 'subagents', 'llm', 'shell', 'fs', 'storageDomain'];
+  static inject = ['sessions', 'sessionPersistence', 'subagents', 'llm', 'shell', 'fs', 'storageDomain', 'agents', 'userQuestions'];
 
-  startInstance(request: DagStartRequest): DagRun {
+  startInstance(request: DagStartRequest): Promise<DagRun> {
     throw new Error('SandoreEngineStub.startInstance is not implemented');
   }
 
@@ -139,7 +156,7 @@ export class SandoreEngineStub extends SandoreEngine {
     throw new Error('SandoreEngineStub.abortInstance is not implemented');
   }
 
-  replyQuestion(instanceId: string, requestId: string, answers: unknown): Promise<void> {
+  replyQuestion(instanceId: string, requestId: string, answers: AskUserQuestionAnswer): Promise<void> {
     throw new Error('SandoreEngineStub.replyQuestion is not implemented');
   }
 

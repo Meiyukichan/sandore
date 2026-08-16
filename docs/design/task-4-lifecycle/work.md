@@ -14,10 +14,11 @@
 
 ## 产出（`workflow` + `tool` 两包）
 1. `packages/sandore/workflow/`：
-   - `interaction-manager.ts`：`pendingQuestions`/`pendingPermissions` Map + `addPendingQuestion/Permission` → `sandore/question`/`sandore/permission` 事件 + `replyQuestion`/`replyPermission`
+   - `interaction-manager.ts`：**引擎级 ask 以宿主主代理身份 `ctx.userQuestions.ask({ agent: hostAgent })`**（DSH 原生卡片 + await 答案）；`pendingQuestions`/`pendingPermissions` Map 降级为「镜像持久化」（崩溃恢复）+ `sandore/question`/`sandore/permission` 事件 + `replyQuestion`/`replyPermission`（兼容回复路径）
    - `lifecycle-manager.ts`：`pauseStep`/`resumeStep`/`pauseAllSteps`/`resumeAllSteps` + **暂停登记表**（`pausedChildIds`，DSH 无 paused 状态，引擎自建并持久化）
    - `recovery-manager.ts`：`recoverOrphanedInstances`（启动扫描 storageDomain `state` 表）+ 崩溃恢复
    - `host-agent.ts`：宿主主代理——`ctx.agents.create({ sessionId, meta: { cwd }, setup(agentCtx) })` + `sandore_*` 工具注册（D9）
+   - `remote.ts`：补 **7 个生命周期 RPC**（`replyQuestion`/`replyPermission`/`pauseStep`/`resumeStep`/`pauseAll`/`resumeAll`/`retryStep`）——「全链路可用」的前端通路；`getDiscussion`/`addChatMessage` **不做**（D5/D8 宿主 Session 日志直读已够）；`recoverInstance` 作为 Service 方法由启动扫描调用，不单独暴露 RPC
 2. `packages/sandore/tool/`：**8 个 `sandore_*` 模型工具**（per-instance 闭包捕获 `instanceId`，通过 `agents.create({ setup })` 注册，非 preset standing mount）：
    `sandore_getState` / `sandore_startInstance` / `sandore_abortInstance` / `sandore_pauseStep` / `sandore_resumeStep` / `sandore_pauseAllSteps` / `sandore_resumeAllPaused` / `sandore_retryStep`
 
@@ -28,12 +29,13 @@
 - **暂停/恢复**：`pause` = `ctx.subagents.interrupt(childId, { kind: 'ancestor', agent: hostAgent })`；`resume` = `ctx.subagents.followup(hostAgent, childId, ...)`
 - **重试 revert/fork**：DSH 无 revert 原语——用 `ctx.sessions.fork(childId, boundary)` + `ctx.agents.create({ seed })`（产生新 session id）；continue 用 `followup`
 - **崩溃恢复**：`ctx.agents.resume({ resumeSessionId: hostSessionId })` 冷恢复宿主主代理（`setup` 重跑 → 工具/instanceId 闭包重注册）+ `followup` 冷恢复子代理
+- **交互问答（DELEGATED_CALLER 修正）**：Step 子代理**不能直接问用户**（`ctx.userQuestions.ask` 对 owned child 抛 `DELEGATED_CALLER`）；问答统一由宿主主代理发起——引擎级 ask（finalize `completionType='ask'`）用 `ctx.userQuestions.ask({ agent: hostAgent })`；子代理 ask_user_question → 问题写进 final result → 引擎解析 → hostAgent 问 → `followup` 子代理继续
 - **权限**：无 `permissionMode`——子代理继承宿主 Session 的 permission preset，approval 固定 `never`
 
 ## 验证标准（Task 4 完成门槛）
 - 暂停/恢复/重试（continue/revert/fork 三模式）/崩溃恢复全链路可用
-- 交互（问答/权限/askUserQuestion）全链路可用
+- 交互（问答/权限/askUserQuestion）全链路可用——引擎级 ask 经 `ctx.userQuestions.ask` 以宿主主代理身份闭环（DSH 原生卡片 + await 答案）
 - 宿主主代理：`completed` 后自然降级为自由对话；`sandore_*` 工具仅挂宿主 Session（per-instance），不影响普通会话
-- 讨论面板 `sandore-step` 节点正确渲染（复用 `ui-workflow-run`）
+- 讨论面板**引擎侧就绪**（D8 渲染前提，单测断言）：`step-paused`/`step-resumed`/`step-retried`/`question`/`permission` 事件正确 `session.append` + payload 完整（`childId`/`output` 内联）；`sandore-step` 节点渲染器（`ConversationNodeDefinition` + `conversation.chat.node` keyed）留 Task 5（`ui` 包）
 
 先读 `task-4-lifecycle/design.md` 全文，再开始实现。

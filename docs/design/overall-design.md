@@ -295,9 +295,8 @@ WorkflowTaskState
   ├── permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default'  ← 迁移到 DSH 后废弃：权限由宿主 Session 的 permission preset 决定，Step 子代理继承父级
   ├── activeLoopStack[]: string（嵌套循环栈）
   ├── activeLoopIterationStack[]: number（嵌套循环迭代路径）
-  ├── pausedStepIds[]: string
+  ├── pausedChildIds: string[]  ← 迁移后改名（原 pausedStepIds[]）：暂停登记表，值=子代理 SessionId（DSH 无 paused 状态，引擎自建权威记录，见 §6.9）
   ├── stageContracts: Record<string, StageContract>（V2.6）
-  ├── pausedChildIds: string[]  ← 迁移后改名：暂停登记表（DSH 无 paused 状态，引擎自建权威记录，见 §6.9）
   ├── defaultSessionMeta?: DefaultSessionMeta  ← 迁移后废弃：宿主 Session 自然延续（D9），无需挂载元数据
   ├── userChatMessages[]: { id, stageId, message }  ← 迁移后废弃：用户消息由宿主 Session log 承载
   └── createdAt, updatedAt

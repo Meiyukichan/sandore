@@ -47,6 +47,15 @@ type ModelRoutedValue =
   | SkillCommand['value']
   | McpCommand['value'];
 
+/** 子代理 ask 转接回调的入参（microflow 检测到标记块后上抛给 workflow 层解析）。 */
+export interface DelegatedAskContext {
+  readonly childId: string;
+  /** 子代理 final result（可能含 `[[SANDORE_ASK]]` 标记块）。 */
+  readonly output: ContentBlock[];
+  readonly stepId: string;
+  readonly stageId: string;
+}
+
 /** StepRunner 的引擎级配置（provider/model 三层回退的 L2 来源 + 名称校验数据源）。 */
 export interface StepRunnerConfig {
   readonly defaultTimeoutMs: number;
@@ -60,6 +69,24 @@ export interface StepRunnerConfig {
   readonly agents?: readonly string[];
   /** 宿主主代理（子代理 parent）；缺省时使用最小桩对象。 */
   readonly hostAgent?: Agent;
+  /**
+   * 子代理真实 childId 就绪回调（由 workflow 层注入）：`startContinuable` 返回后、
+   * `whenIdle` 挂起前调用，把真实子代理 SessionId 上抛给引擎（供暂停反查 childId）。
+   */
+  readonly onChildStarted?: (stepId: string, childId: string) => void;
+  /**
+   * 子代理 ask 转接回调（由 workflow 层注入，microflow 不 import workflow 运行时）。
+   * 子代理 final result 含 `[[SANDORE_ASK]]` 标记块时调用；返回 `true` 表示已转接
+   * （引擎级 ask 完成、答案已 followup 注回），microflow 续跑子代理并重新取 final
+   * output；返回 `false` 表示未转接（非法标记块按普通输出处理）。
+   */
+  readonly onDelegatedAsk?: (input: DelegatedAskContext) => Promise<boolean> | boolean;
+  /**
+   * 取消类错误下查询暂停登记表的回调（由 workflow 层注入，microflow 不 import
+   * workflow）：传入真实子代理 SessionId，返回 `true` 表示该 childId 已在暂停登记表
+   * （`interrupt` 打断应保持 paused 而非 failed）。
+   */
+  readonly isPausedChild?: (childId: string) => boolean;
 }
 
 /** 前置 Step 的输出摘要（prompt 结构化提示词的参考信息）。 */
@@ -76,6 +103,8 @@ export interface StepRunRequest {
   readonly workdir: string;
   readonly originalInput: string;
   readonly previousOutputs: readonly PreviousStepOutput[];
+  /** 所属 Stage id（子代理 ask 转接回调的定位字段）。 */
+  readonly stageId: string;
   readonly signal?: AbortSignal;
   /** 当前透传变量（键为变量名，值为已解析字符串）。 */
   readonly passThroughVars?: Readonly<Record<string, string>>;
@@ -113,13 +142,44 @@ const FILL_PARAMS_RED_LINES = [
   '不要过度思考，你的职责不是设计或者开发',
 ] as const;
 
+/** 子代理 ask 转接标记块起始定界（协议常量，与 workflow 层 interaction-manager 保持一致）。 */
+const DELEGATED_ASK_MARKER = '[[SANDORE_ASK]]';
+
+/** 子代理 ask 转接最大轮数（超过后按普通输出处理，防止无限重问）。 */
+const MAX_DELEGATED_ASK_ROUNDS = 3;
+
+/** 判定 final output 是否含子代理 ask 转接标记块（仅字符串检测，不做 JSON/schema 校验）。 */
+function hasDelegatedAskMarker(output: readonly ContentBlock[]): boolean {
+  for (const block of output) {
+    if (block.type === 'text' && block.text.includes(DELEGATED_ASK_MARKER)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 判定两轮 final output 内容是否相同（无进展检测：逐块序列化比较）。 */
+function sameOutput(a: readonly ContentBlock[], b: readonly ContentBlock[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (JSON.stringify(a[i]) !== JSON.stringify(b[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** 构造缺省 hostAgent 时的最小 parent 桩（每次返回新对象，避免跨 run 共享可变 `session.events`）。 */
 function createHostAgentStub(): Agent {
   return {
     id: 'sandore-host',
     options: {},
     session: { events: [] },
+    inbox: { hasPending: false },
     status: 'idle',
+    ctx: undefined,
     whenIdle: async () => {},
   };
 }
@@ -450,16 +510,69 @@ export class StepRunner {
       },
       signal: request.signal ?? new AbortController().signal,
     });
-    const child = this.ctx.agents.get(started.childId);
+    this.config.onChildStarted?.(request.step.id, started.childId);
+    return this.collectSubagentOutput(command.type, started.childId, request.step.id, request.stageId);
+  }
+
+  /**
+   * 暂停后恢复子代理 Step：重新 `whenIdle` + `finalAssistantOutput` + ask 转接循环。
+   *
+   * 暂停登记表命中的子代理 Step 被 `interrupt` 打断后，`resumeStep` 的 `followup` 重新
+   * 驱动子代理；本方法在 `followup` 之后被引擎续跑路径调用，重新等待子代理静止并取回
+   * 最终 assistant 输出（等价于首次执行时的输出收集尾段）。
+   */
+  async resumeSubagent(
+    commandType: 'agent' | 'skill' | 'mcp',
+    childId: string,
+    stepId: string,
+    stageId: string,
+  ): Promise<StepRunResult> {
+    return this.collectSubagentOutput(commandType, childId, stepId, stageId);
+  }
+
+  /** 收集已启动子代理的最终输出（首次执行与暂停续跑共用：whenIdle + final output + ask 转接）。 */
+  private async collectSubagentOutput(
+    commandType: 'agent' | 'skill' | 'mcp',
+    childId: string,
+    stepId: string,
+    stageId: string,
+  ): Promise<StepRunResult> {
+    const child = this.ctx.agents.get(childId);
     if (child === undefined) {
-      throw new SandoreError(`subagent '${started.childId}' not found in registry`, 'STEP_EXECUTION');
+      throw new SandoreError(`subagent '${childId}' not found in registry`, 'STEP_EXECUTION');
     }
     await child.whenIdle();
-    const output = finalAssistantOutput(child.session.events);
+    let output = finalAssistantOutput(child.session.events);
     if (output === undefined) {
       throw new SandoreError('subagent produced no assistant output', 'STEP_EXECUTION');
     }
-    return { output, sessionMeta: { childId: started.childId, synthetic: false, command: command.type } };
+    const onDelegatedAsk = this.config.onDelegatedAsk;
+    if (onDelegatedAsk !== undefined) {
+      // 子代理 ask 转接：final result 含标记块时回调 workflow 层解析/转接，答案 followup
+      // 注回后子代理续跑，重新取 final output（可多轮 ask，直至无标记块或转接方放弃）。
+      // 双保险守卫防无限重问：① 无进展（本轮 output 与上轮相同）即 break；② 超过最大
+      // 转接轮数即 break，均按普通输出处理。
+      let rounds = 0;
+      while (hasDelegatedAskMarker(output) && rounds < MAX_DELEGATED_ASK_ROUNDS) {
+        const delegated = await onDelegatedAsk({
+          childId,
+          output,
+          stepId,
+          stageId,
+        });
+        if (!delegated) {
+          break;
+        }
+        rounds += 1;
+        await child.whenIdle();
+        const next = finalAssistantOutput(child.session.events);
+        if (next === undefined || sameOutput(next, output)) {
+          break;
+        }
+        output = next;
+      }
+    }
+    return { output, sessionMeta: { childId, synthetic: false, command: commandType } };
   }
 
   /** 用临时会话按模板填充参数；失败（error/aborted/抛错）回退模板原文。 */

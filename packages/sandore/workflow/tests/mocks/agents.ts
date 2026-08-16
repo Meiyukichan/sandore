@@ -7,12 +7,15 @@
  * @module @deepseek-ai/dsh-sandore-workflow/tests/mocks/agents
  */
 import { createAssistantMessage, type ContentBlock } from '@deepseek-ai/dsh-llm';
+import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
 
 import type {
   Agent,
   AgentHandle,
   AgentOptions,
   AgentRegistry,
+  AgentSetup,
+  AgentSetupContext,
   AgentStatus,
   CreateAgentOptions,
   ResumeAgentOptions,
@@ -20,6 +23,7 @@ import type {
   SessionEvent,
   SessionId,
 } from '../../../microflow/src/subagents.ts';
+import { FakeSessionStore } from './sessions.ts';
 
 /** 记录事件的最小 Session 形状。 */
 export class FakeSession implements Session {
@@ -63,12 +67,16 @@ export class FakeAgent implements Agent {
   readonly id: SessionId;
   readonly options: AgentOptions;
   readonly session: FakeSession;
+  readonly inbox: { hasPending: boolean };
+  readonly ctx: unknown;
   status: AgentStatus = 'idle';
 
   constructor(id: SessionId, options: AgentOptions = {}, session?: FakeSession) {
     this.id = id;
     this.options = options;
     this.session = session ?? new FakeSession();
+    this.inbox = { hasPending: false };
+    this.ctx = undefined;
   }
 
   async whenIdle(): Promise<void> {
@@ -76,17 +84,49 @@ export class FakeAgent implements Agent {
   }
 }
 
+/** 构造 `AgentSetup` 回调的最小 agentCtx（记录 register/section 调用）。 */
+function makeSetupContext(): AgentSetupContext {
+  return {
+    tools: { register: () => {} },
+    systemPrompt: { section: () => {} },
+  };
+}
+
 /** 内存 mock AgentRegistry：`get`/`create`/`resume` + 显式注册。 */
 export class FakeAgentRegistry implements AgentRegistry {
   private readonly agents = new Map<SessionId, FakeAgent>();
+  /** 每次 `create` 记录的 `meta.cwd`（用于断言 setup/meta 回放）。 */
+  readonly createCwds: Array<string | undefined> = [];
+  /** 每次 `create` 记录的 `seed`（revert/fork 的 fork 前缀回放断言）。 */
+  readonly createSeeds: Array<readonly DshSessionEvent[] | undefined> = [];
+  /** 每次 `create`/`resume` 执行 `setup` 回调的次数。 */
+  setupCount = 0;
+  /** 若设置，`runSetup` 抛出该错误（模拟 setup 抛错回滚）。 */
+  setupError?: Error;
+
+  constructor(private readonly sessions?: FakeSessionStore) {}
 
   get(id: SessionId): FakeAgent | undefined {
     return this.agents.get(id);
   }
 
   async create(options: CreateAgentOptions): Promise<AgentHandle> {
+    this.createCwds.push(options.meta?.cwd);
+    this.createSeeds.push(options.seed);
+    await this.runSetup(options.setup);
     const agent = new FakeAgent(options.sessionId, options.agentOptions);
+    // 回放 fork 前缀 seed 进子代理会话（revert/fork 的续跑输入，供 finalAssistantOutput 读取）。
+    // DSH 全量 SessionEvent（含 turn 边界）与微流窄 SessionEvent 在 assistant/message、
+    // assistant/chunk 上结构一致，finalAssistantOutput 仅读取这两类事件，忽略其余。
+    for (const event of options.seed ?? []) {
+      agent.session.append(event as unknown as SessionEvent);
+    }
     this.agents.set(agent.id, agent);
+    // 与 DSH agents.create 一致：宿主 Session 在发布时进入 session store，
+    // 引擎随后经 `ctx.sessions.get(instanceId)` 读回用于事件双发。
+    if (this.sessions !== undefined) {
+      this.sessions.create(options.sessionId);
+    }
     return {
       agent,
       dispose: async () => {
@@ -96,6 +136,7 @@ export class FakeAgentRegistry implements AgentRegistry {
   }
 
   async resume(options: ResumeAgentOptions): Promise<AgentHandle> {
+    await this.runSetup(options.setup);
     const existing = this.agents.get(options.resumeSessionId);
     const agent = existing ?? new FakeAgent(options.resumeSessionId, options.agentOptions);
     this.agents.set(agent.id, agent);
@@ -109,5 +150,15 @@ export class FakeAgentRegistry implements AgentRegistry {
 
   register(agent: FakeAgent): void {
     this.agents.set(agent.id, agent);
+  }
+
+  private async runSetup(setup?: AgentSetup): Promise<void> {
+    if (this.setupError !== undefined) {
+      throw this.setupError;
+    }
+    if (setup === undefined) return;
+    this.setupCount += 1;
+    const commit = await setup(makeSetupContext());
+    commit?.commit();
   }
 }

@@ -15,8 +15,11 @@ import type { BranchEvalOptions, BranchEvaluatorConfig } from '../../microflow/s
 import { LoopManager } from '../../microflow/src/loop-manager.ts';
 import type { LoopState } from '../../microflow/src/loop-manager.ts';
 
-import type { BranchMeta, CommandConfig, DagBranch, DagLoop, WorkflowDefinition, WorkflowStage, WorkflowStep } from './schema.ts';
+import type { BranchMeta, CommandConfig, DagBranch, DagLoop, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from './schema.ts';
 import type { StageContract } from './types.ts';
+
+/** 已保存 Stage 契约的运行时形状（与快照 `stageContracts` 值严格一致）。 */
+type StageContractValue = WorkflowTaskState['stageContracts'][string];
 
 /** Stage 与 Step 在 DAG 调度层的统一节点视图。 */
 export interface DagNodeRef {
@@ -60,9 +63,17 @@ function dedupe(ids: readonly string[]): string[] {
  * 保存 `nodeIndex`（nodeId → 统一节点视图）、`stageContracts`（已完成 Stage 契约）、
  * 当前 Stage 指针，并内置 `BranchEvaluator`/`LoopManager` 承担 Step 级分支/循环路由。
  */
+/** 导航器初始化播种（崩溃恢复/重试续跑时从快照重建执行位置）。 */
+export interface DagNavigatorSeed {
+  /** 起始 Stage（从快照 `currentStageId` 播种，缺省为定义首个 Stage）。 */
+  readonly currentStageId?: string;
+  /** 已完成 Stage 契约（从快照 `stageContracts` 播种）。 */
+  readonly stageContracts?: Readonly<Record<string, StageContractValue>>;
+}
+
 export class WorkflowDagNavigator {
   private readonly nodeIndex = new Map<string, DagNodeRef>();
-  private readonly stageContracts = new Map<string, StageContract>();
+  private readonly stageContracts = new Map<string, StageContractValue>();
   private readonly stageOrder: readonly string[];
   private currentStageId: string;
   private readonly evaluator: BranchEvaluator;
@@ -73,12 +84,19 @@ export class WorkflowDagNavigator {
     ctx: Context,
     config: BranchEvaluatorConfig,
     loopState: LoopState,
+    seed?: DagNavigatorSeed,
   ) {
     this.buildNodeIndex(definition);
     this.stageOrder = definition.stages.map(stage => stage.id);
-    this.currentStageId = this.stageOrder[0] ?? '';
+    // 从快照播种当前 Stage（续跑入口）；缺省回退定义首个 Stage。
+    this.currentStageId = seed?.currentStageId ?? this.stageOrder[0] ?? '';
     this.evaluator = new BranchEvaluator(ctx, config);
     this.loopManager = new LoopManager(ctx, config, loopState);
+    if (seed?.stageContracts !== undefined) {
+      for (const [id, contract] of Object.entries(seed.stageContracts)) {
+        this.stageContracts.set(id, contract);
+      }
+    }
   }
 
   /** 当前 Stage ID（无 Stage 时为空字符串）。 */
@@ -92,12 +110,12 @@ export class WorkflowDagNavigator {
   }
 
   /** 已完成 Stage 的契约（stageId → StageContract）只读快照。 */
-  getStageContracts(): ReadonlyMap<string, StageContract> {
+  getStageContracts(): ReadonlyMap<string, StageContractValue> {
     return new Map(this.stageContracts);
   }
 
   /** 查询单个 Stage 的契约。 */
-  getStageContract(stageId: string): StageContract | undefined {
+  getStageContract(stageId: string): StageContractValue | undefined {
     return this.stageContracts.get(stageId);
   }
 

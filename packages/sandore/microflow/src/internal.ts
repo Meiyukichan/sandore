@@ -16,6 +16,21 @@ export function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * 判定错误是否为「取消类错误」（`interrupt` 打断 `whenIdle`/执行 Promise 时以取消
+ * 结束）。`SandoreError` 按稳定 `code === 'CANCELLED'` 路由；非 SandoreError 回退
+ * 识别 `AbortError` 名称或含 `cancel` 的消息（兼容 DSH 原生取消错误的形状）。
+ */
+export function isCancellationError(error: unknown): boolean {
+  if (error instanceof SandoreError) {
+    return error.code === 'CANCELLED';
+  }
+  if (error instanceof Error) {
+    return error.name === 'AbortError' || /cancel/i.test(error.message);
+  }
+  return false;
+}
+
 /** 提取 ContentBlock[] 的纯文本摘要（仅 text 块，按序拼接）。 */
 export function textSummary(output: readonly ContentBlock[] | undefined): string {
   if (output === undefined) {

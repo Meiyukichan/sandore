@@ -95,6 +95,7 @@ function request(step: WorkflowStep, overrides?: Partial<StepRunRequest>): StepR
     workdir: '/tmp',
     originalInput: 'do the thing',
     previousOutputs: [],
+    stageId: 'stg-1',
     ...overrides,
   };
 }
@@ -484,6 +485,136 @@ describe('StepRunner agent', () => {
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).toContain('### 当前Step参数');
     expect(promptText).toContain('TEMPLATE_RAW');
+  });
+});
+
+describe('StepRunner delegated ask hook', () => {
+  it('invokes onDelegatedAsk when subagent output contains an ask marker and uses the re-read output', async () => {
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([
+      { type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]' },
+    ]));
+    let idleCalls = 0;
+    child.whenIdle = async () => {
+      idleCalls += 1;
+      if (idleCalls === 2) {
+        child.session.append(assistantMessageEvent([{ type: 'text', text: 'final answer' }]));
+      }
+    };
+    const delegated: Array<{ childId: string; output: ContentBlock[] }> = [];
+    const { agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      onDelegatedAsk: async input => {
+        delegated.push({ childId: input.childId, output: input.output });
+        return true;
+      },
+    });
+    agents.register(child);
+
+    const result = await runner.run(request(agentStep()));
+
+    expect(delegated).toHaveLength(1);
+    expect(delegated[0]?.childId).toBe('child-1');
+    expect(result.output).toEqual([{ type: 'text', text: 'final answer' }]);
+    expect(result.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'agent' });
+  });
+
+  it('keeps the original output when onDelegatedAsk returns false (invalid marker)', async () => {
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([
+      { type: 'text', text: '[[SANDORE_ASK]]not json[[/SANDORE_ASK]]' },
+    ]));
+    const { agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      onDelegatedAsk: async () => false,
+    });
+    agents.register(child);
+
+    const result = await runner.run(request(agentStep()));
+
+    expect(result.output).toEqual([{ type: 'text', text: '[[SANDORE_ASK]]not json[[/SANDORE_ASK]]' }]);
+  });
+
+  it('terminates when the subagent keeps returning the same ask marker (no progress)', async () => {
+    const child = new FakeAgent('child-1');
+    const marker = '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]';
+    child.session.append(assistantMessageEvent([{ type: 'text', text: marker }]));
+    // 子代理在每轮 followup 后重新发出同一合法标记块（无进展）。
+    child.whenIdle = async () => {
+      child.session.append(assistantMessageEvent([{ type: 'text', text: marker }]));
+    };
+    let delegated = 0;
+    const { agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      onDelegatedAsk: async () => {
+        delegated += 1;
+        return true;
+      },
+    });
+    agents.register(child);
+
+    const result = await runner.run(request(agentStep()));
+
+    // 无进展守卫：仅转接一轮即 break，按普通输出返回标记块。
+    expect(delegated).toBe(1);
+    expect(result.output).toEqual([{ type: 'text', text: marker }]);
+  });
+
+  it('terminates after MAX_DELEGATED_ASK_ROUNDS when the subagent keeps asking new questions', async () => {
+    const child = new FakeAgent('child-1');
+    const markerFor = (n: number) => `[[SANDORE_ASK]]{"questions":[{"id":"q${n}","question":"Q${n}?"}]}[[/SANDORE_ASK]]`;
+    child.session.append(assistantMessageEvent([{ type: 'text', text: markerFor(1) }]));
+    // 每轮 followup 后子代理都发出「不同」的合法标记块（无进展守卫不触发，靠最大轮数兜底）。
+    let idleCalls = 0;
+    child.whenIdle = async () => {
+      idleCalls += 1;
+      if (idleCalls >= 2) {
+        child.session.append(assistantMessageEvent([{ type: 'text', text: markerFor(idleCalls) }]));
+      }
+    };
+    let delegated = 0;
+    const { agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      onDelegatedAsk: async () => {
+        delegated += 1;
+        return true;
+      },
+    });
+    agents.register(child);
+
+    const result = await runner.run(request(agentStep()));
+
+    // 最大轮数守卫：最多转接 MAX_DELEGATED_ASK_ROUNDS（3）轮即 break。
+    expect(delegated).toBe(3);
+    expect(result.output).toEqual([{ type: 'text', text: markerFor(4) }]);
+  });
+
+  it('does not call onDelegatedAsk when the output has no marker', async () => {
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ordinary output' }]));
+    let delegated = 0;
+    const { agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      onDelegatedAsk: async () => {
+        delegated += 1;
+        return true;
+      },
+    });
+    agents.register(child);
+
+    await runner.run(request(agentStep()));
+
+    expect(delegated).toBe(0);
   });
 });
 

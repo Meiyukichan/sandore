@@ -17,6 +17,8 @@ import type {
   InputFromItem,
   OutputToItem,
   PassThroughVar,
+  PendingPermissionEntry,
+  PendingQuestionEntry,
   RetryRecord,
   SessionMessage,
   StepSessionMeta,
@@ -32,9 +34,49 @@ export type {
   InputFromItem,
   OutputToItem,
   PassThroughVar,
+  PendingPermissionEntry,
+  PendingQuestionEntry,
   RetryRecord,
   SessionMessage,
   StepSessionMeta,
+}
+
+/** 用户问答选项（对齐 DSH `AskUserQuestionOption`）。 */
+export interface AskUserQuestionOption {
+  /** 选项对外展示标签。 */
+  label: string
+  /** 可选补充说明。 */
+  description?: string
+}
+
+/** 单个问题条目（对齐 DSH `AskUserQuestionItem`，`multiSelect` 为驼峰）。 */
+export interface AskUserQuestionItem {
+  /** 调用方提供的稳定问题 ID，回答中回显。 */
+  id: string
+  /** 展示给用户的问题。 */
+  question: string
+  /** 可选短标题/分组标签。 */
+  header?: string
+  /** 可选选项列表（UI 渲染为菜单）。 */
+  options?: AskUserQuestionOption[]
+  /** 是否允许多选；缺省单选。 */
+  multiSelect?: boolean
+}
+
+/** 单个问题的回答（对齐 DSH `AskUserQuestionAnswerItem`）。 */
+export interface AskUserQuestionAnswerItem {
+  /** 被回答的问题 ID。 */
+  id: string
+  /** 选中的选项标签。 */
+  selected: string[]
+  /** 可选自由文本「其他」回答。 */
+  custom?: string
+}
+
+/** 用户整批回答（对齐 DSH `AskUserQuestionAnswer`）。 */
+export interface AskUserQuestionAnswer {
+  /** 按问题 ID 组织的结构化回答。 */
+  answers: AskUserQuestionAnswerItem[]
 }
 
 /** 运行中的工作流实例的身份快照（`taskId` 即实例 ID）。 */
@@ -143,30 +185,14 @@ export interface StageContract {
   errorDetail?: string
 }
 
-/** 等待用户回复的问答请求。 */
-export interface PendingQuestion {
-  stepId: string
-  sessionId: string
-  requestId: string
-  questions: AskUserQuestionPayload
-}
+/** pending 交互条目状态。 */
+export type PendingInteractionStatus = 'pending' | 'replied' | 'rejected'
 
 /** 收尾最终结果（done/ask/error 三态联合）。 */
 export type FinalizeOutcome =
   | { type: 'done'; completionType: 'completed'; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
   | { type: 'ask'; assessResult: FinalizeAssessResult }
   | { type: 'error'; errorDetail: string; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
-
-/** 等待用户决定的权限请求。 */
-export interface PendingPermission {
-  stepId: string
-  sessionId: string
-  requestId: string
-  permission: string
-  patterns?: string[]
-  metadata?: Record<string, unknown>
-  tool?: string
-}
 
 /** 工作流实例结束时的最终结果信息。 */
 export interface DagResultInfo {

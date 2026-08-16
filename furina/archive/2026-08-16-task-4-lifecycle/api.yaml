@@ -1,0 +1,343 @@
+swagger: "2.0"
+
+info:
+  title: "Sandore Engine Lifecycle RPC API (Task 4 delta)"
+  version: "1.0.0"
+  description: |
+    Task 4「生命周期」在 `sandore.*` Host RPC 命名空间上补充 7 个生命周期方法
+    （交互回复 ×2 + 暂停/恢复 ×4 + 重试 ×1）。本文件描述 Task 4 的 **增量**，
+    完整 CRUD/产物/Provider 面见归档 `furina/archive/2026-08-15-task-2-minimal-engine/api.yaml`。
+
+    **调用方式说明（非 HTTP）**：本文件用 Swagger 2.0 结构描述 Host RPC 接口
+    （`TypertRemoteService` + `@Remote('method')`，namespace 为 `sandore`）。
+    客户端通过 `host.call('sandore.<method>', ...)` 调用，`basePath: /sandore` 对应
+    命名空间，各 path 段对应 RPC 方法名。所有方法均 `async`，参数经 zod 校验后
+    转发到 `ctx.sandoreEngine` 对应实例级方法，RPC 层不含业务逻辑。
+
+    **边界约定**：不新增 `recover` RPC（崩溃恢复是 `Service.init` 自动扫描）、
+    不新增 `getDiscussion`/`addChatMessage` 讨论 RPC（讨论数据走宿主 Session
+    日志直读，避免双轨数据源）。
+
+host: "host"
+basePath: "/sandore"
+schemes:
+  - internal
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+tags:
+  - name: Interactions
+    description: "问答/权限回复（转发 `interaction-manager`）。"
+  - name: Lifecycle
+    description: "暂停/恢复/重试（转发 `lifecycle-manager` / `recovery-manager`）。"
+
+definitions:
+
+  ErrorResponse:
+    type: object
+    required:
+      - code
+      - message
+    properties:
+      code:
+        type: string
+        description: |
+          `SandoreErrorCode` 联合类型（Task 4 用到的子集）：
+          INVALID_OPERATION / NODE_NOT_FOUND / STEP_EXECUTION / PERSISTENCE_FAILED，
+          以及 DSH fork 落未闭合 turn 时透传的 OPEN_TURN 类错误。
+      message:
+        type: string
+        description: "人类可读错误描述。"
+      fatal:
+        type: boolean
+        description: "`SandoreError` 的 fatal 标志，默认 true。"
+
+  PendingInteractionEntry:
+    type: object
+    required:
+      - id
+      - stageId
+      - stepId
+      - sessionId
+      - requestId
+      - kind
+      - status
+      - payload
+      - createdAt
+    properties:
+      id:
+        type: string
+        description: "pending 条目 id（requestId 同源）。"
+      stageId:
+        type: string
+      stepId:
+        type: string
+      sessionId:
+        type: string
+        description: "宿主主代理 SessionId（即 instanceId）。"
+      requestId:
+        type: string
+        description: "`userQuestions.ask` 的请求 id，回复路径的定位键。"
+      kind:
+        type: string
+        enum:
+          - question
+          - permission
+      status:
+        type: string
+        enum:
+          - pending
+          - replied
+          - rejected
+      payload:
+        type: object
+        description: "question 为 AskUserQuestionPayload（questions[]），permission 为权限请求载荷。"
+      answer:
+        type: object
+        description: "回复后写入的用户答案（question）/ 决定（permission），pending 时缺省。"
+      createdAt:
+        type: string
+        format: date-time
+
+  RetryMode:
+    type: string
+    enum:
+      - continue
+      - revert
+      - fork
+    description: |
+      重试三模式：`continue` = followup 同会话续跑；`revert` = fork 取安全 turn
+      边界前缀 + 新 agent 续跑（新 session id）；`fork` = fork 全量历史 + 新 agent。
+
+  NoopResult:
+    type: object
+    required:
+      - ok
+      - reason
+    properties:
+      ok:
+        type: boolean
+        description: "恒为 false（no-op 未执行任何动作）。"
+      reason:
+        type: string
+        description: "no-op 原因（如实例已 completed 终态）。"
+
+paths:
+
+  # ====== Interactions ======
+  /replyQuestion:
+    post:
+      tags:
+        - Interactions
+      summary: "回复待处理问答（兼容路径，resolve 内部 Promise 与 ask 的 await 汇合）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+              - requestId
+              - answers
+            properties:
+              instanceId:
+                type: string
+              requestId:
+                type: string
+              answers:
+                type: object
+                description: "用户答案（对齐 DSH 卡片回复结构）。"
+      responses:
+        200:
+          description: "回复成功，Step 恢复执行。"
+          schema:
+            type: object
+        400:
+          description: "requestId 不存在或已 replied（INVALID_OPERATION）。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /replyPermission:
+    post:
+      tags:
+        - Interactions
+      summary: "回复待处理权限请求（镜像兼容路径，无自动审批）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+              - requestId
+              - reply
+            properties:
+              instanceId:
+                type: string
+              requestId:
+                type: string
+              reply:
+                type: string
+                enum:
+                  - once
+                  - always
+                  - reject
+      responses:
+        200:
+          description: "回复成功。"
+          schema:
+            type: object
+        400:
+          description: "requestId 不存在或已 replied（INVALID_OPERATION）。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  # ====== Lifecycle ======
+  /pauseStep:
+    post:
+      tags:
+        - Lifecycle
+      summary: "暂停单个 Step（interrupt 子代理 + 登记表 pausedChildIds）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+              - stepId
+            properties:
+              instanceId:
+                type: string
+              stepId:
+                type: string
+      responses:
+        200:
+          description: "暂停生效；已空闲 Step 幂等 no-op。"
+          schema:
+            type: object
+        400:
+          description: "stepId 不存在或 Step 已终态（INVALID_OPERATION）。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /resumeStep:
+    post:
+      tags:
+        - Lifecycle
+      summary: "恢复单个 Step（followup 子代理 + 移出登记表）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+              - stepId
+            properties:
+              instanceId:
+                type: string
+              stepId:
+                type: string
+              resumePrompt:
+                type: string
+                description: "可选恢复提示词。"
+      responses:
+        200:
+          description: "恢复生效。"
+          schema:
+            type: object
+        400:
+          description: "stepId 不在登记表（INVALID_OPERATION）。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+
+  /pauseAll:
+    post:
+      tags:
+        - Lifecycle
+      summary: "暂停实例内全部活跃 Step"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+            properties:
+              instanceId:
+                type: string
+      responses:
+        200:
+          description: "全部活跃 Step 已暂停。"
+          schema:
+            type: object
+
+  /resumeAll:
+    post:
+      tags:
+        - Lifecycle
+      summary: "恢复实例内全部已暂停 Step"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+            properties:
+              instanceId:
+                type: string
+              resumePrompt:
+                type: string
+                description: "可选统一恢复提示词。"
+      responses:
+        200:
+          description: "登记表内全部子代理已 followup，登记表清空。"
+          schema:
+            type: object
+
+  /retryStep:
+    post:
+      tags:
+        - Lifecycle
+      summary: "按三模式重试失败 Step（continue/revert/fork）"
+      parameters:
+        - in: body
+          name: body
+          required: true
+          schema:
+            type: object
+            required:
+              - instanceId
+              - stepId
+              - mode
+              - message
+            properties:
+              instanceId:
+                type: string
+              stepId:
+                type: string
+              mode:
+                $ref: "#/definitions/RetryMode"
+              message:
+                type: string
+                description: "重试携带的用户消息/提示词。"
+      responses:
+        200:
+          description: "重试发起；completed 实例返回结构化 no-op。"
+          schema:
+            type: object
+        400:
+          description: "Step 非 failed（running/interacting/paused）时 INVALID_OPERATION，或 fork 落未闭合 turn（OPEN_TURN）。"
+          schema:
+            $ref: "#/definitions/ErrorResponse"

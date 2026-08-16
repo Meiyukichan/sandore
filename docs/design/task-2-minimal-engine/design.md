@@ -197,7 +197,7 @@ WorkflowTaskState
   ├── activeLoopIterationStack: number[] (V2.3新增, 嵌套循环迭代路径)
   ├── activeLoopNodeId: string | null (legacy, 兼容旧数据)
   ├── activeLoopStack[]: string (嵌套循环栈)
-  ├── pausedStepIds[]: string (当前暂停的 Step ID 列表)
+  ├── pausedChildIds[]: string (当前暂停的 Step 的子代理 SessionId 列表；Task 4 由原 pausedStepIds[] 改名，值=childId，见 task-4 §2.9)
   ├── userChatMessages[]: { id, stageId, message } (用户聊天消息, @stepId 路由)
   ├── stageContracts: Record<string, StageContract> (V2.6新增: 已完成Stage的产物契约)
   ├── defaultSessionMeta?: DefaultSessionMeta (V2.6新增: 默认挂载会话元数据)

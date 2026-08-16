@@ -126,7 +126,7 @@ describe('WorkflowTaskStateSchema', () => {
     activeLoopIterationStack: [],
     activeLoopNodeId: null,
     activeLoopStack: [],
-    pausedStepIds: [],
+    pausedChildIds: [],
     stageContracts: {},
     createdAt: '2025-07-20T14:30:00Z',
     updatedAt: '2025-07-20T14:31:00Z',
@@ -151,12 +151,71 @@ describe('WorkflowTaskStateSchema', () => {
     expect(parsed).not.toHaveProperty('defaultSessionMeta')
     expect(Object.keys(WorkflowTaskStateSchema.shape)).not.toContain('permissionMode')
   })
+
+  it('renames the pause registry to pausedChildIds and drops pausedStepIds', () => {
+    expect(Object.keys(WorkflowTaskStateSchema.shape)).toContain('pausedChildIds')
+    expect(Object.keys(WorkflowTaskStateSchema.shape)).not.toContain('pausedStepIds')
+    expect(WorkflowTaskStateSchema.parse(fullState).pausedChildIds).toEqual([])
+  })
+
+  it('rejects a legacy state that only carries pausedStepIds', () => {
+    const { pausedChildIds, ...withoutPausedChildIds } = fullState
+    void pausedChildIds
+    const legacy = { ...withoutPausedChildIds, pausedStepIds: [] }
+    expect(() => WorkflowTaskStateSchema.parse(legacy)).toThrow(z.ZodError)
+  })
+
+  it('parses structured pending interaction entries', () => {
+    const withEntries = {
+      ...fullState,
+      pendingInteractions: [
+        {
+          id: 'pq-1',
+          stageId: 'stg-1',
+          stepId: 'step-1',
+          sessionId: 'sess-1',
+          requestId: 'req-1',
+          kind: 'question',
+          status: 'pending',
+          payload: { questions: [{ id: 'q1', question: 'what?' }] },
+          createdAt: '2025-07-20T14:30:00Z',
+        },
+        {
+          id: 'pp-1',
+          stageId: 'stg-1',
+          stepId: 'step-1',
+          sessionId: 'sess-1',
+          requestId: 'req-2',
+          kind: 'permission',
+          status: 'replied',
+          payload: { permission: 'edit' },
+          answer: 'once',
+          createdAt: '2025-07-20T14:30:00Z',
+        },
+      ],
+    }
+    const parsed = WorkflowTaskStateSchema.parse(withEntries)
+    expect(parsed.pendingInteractions).toHaveLength(2)
+    expect(parsed.pendingInteractions[0]?.kind).toBe('question')
+    expect(parsed.pendingInteractions[0]?.status).toBe('pending')
+    expect(parsed.pendingInteractions[1]?.kind).toBe('permission')
+    expect(parsed.pendingInteractions[1]?.answer).toBe('once')
+  })
+
+  it('still parses an empty pendingInteractions array', () => {
+    expect(WorkflowTaskStateSchema.parse(fullState).pendingInteractions).toEqual([])
+  })
 })
 
 describe('StepSessionMetaSchema', () => {
   it('validates the synthetic placeholder shape', () => {
     const meta = StepSessionMetaSchema.parse({ childId: 'step-step-1-abc12345', synthetic: true, command: 'shell' })
     expect(meta).toEqual({ childId: 'step-step-1-abc12345', synthetic: true, command: 'shell' })
+  })
+
+  it('accepts an optional hostSessionId', () => {
+    const meta = StepSessionMetaSchema.parse({ childId: 'child-1', synthetic: true, command: 'agent', hostSessionId: 'host-1' })
+    expect(meta.hostSessionId).toBe('host-1')
   })
 })
 

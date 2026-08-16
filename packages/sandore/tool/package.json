@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-sandore-tool",
   "version": "0.1.0-rc.6",
-  "description": "sandore workflow engine model tools (placeholder)",
+  "description": "sandore workflow engine model tools (orchestrator sandore_* tools)",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -13,5 +13,21 @@
     },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandore-workflow": "workspace:*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandore-workflow": "workspace:*"
   }
 }

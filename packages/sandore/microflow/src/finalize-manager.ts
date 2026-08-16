@@ -621,22 +621,39 @@ export class FinalizeManager {
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
 
-    const persistFinalize = async (gateResult: GateEvalResult | undefined): Promise<void> => {
-      executedStep.finalizeMeta = buildFinalizeMeta(assessResult, gateResult);
-      writeBackPassThroughVars(assessResult.passThroughVars, step, request.passThroughVars);
-      await request.onPersist?.(executedStep);
-    };
-
     if (assessResult.completionType === 'ask') {
       executedStep.status = 'interacting';
-      await persistFinalize(undefined);
+      await this.persistFinalize(executedStep, assessResult, request, undefined);
       return { type: 'ask', assessResult };
     }
 
+    return this.finalizeAfterAssess(executedStep, assessResult, request);
+  }
+
+  /**
+   * ask 回复后重跑收尾（继续门禁审查）：
+   * 评估已在首次 finalizeStep 完成（completionType === 'ask'），此处仅重跑门禁并把
+   * executedStep 从 interacting 置回 completed/failed。
+   */
+  async finalizeStepAfterAsk(
+    request: FinalizeStepRequest,
+    assessResult: FinalizeAssessResult,
+  ): Promise<FinalizeOutcome> {
+    request.executedStep.status = 'completed';
+    return this.finalizeAfterAssess(request.executedStep, assessResult, request);
+  }
+
+  /** 评估完成后（completionType === 'completed' 或 ask 恢复后）的收尾：门禁审查 + 回写。 */
+  private async finalizeAfterAssess(
+    executedStep: ExecutedStepDefault,
+    assessResult: FinalizeAssessResult,
+    request: FinalizeStepRequest,
+  ): Promise<FinalizeOutcome> {
+    const hasGates = hasEnabledGates(request.gates);
     let gateResult: GateEvalResult | undefined;
     if (hasGates) {
       gateResult = await this.gateEvaluator.evaluate({
-        step,
+        step: request.step,
         context: request.context,
         gates: request.gates,
         workdir: request.workdir,
@@ -645,7 +662,7 @@ export class FinalizeManager {
     }
 
     if (gateResult !== undefined && !gateResult.gatesPassed) {
-      await persistFinalize(gateResult);
+      await this.persistFinalize(executedStep, assessResult, request, gateResult);
       return {
         type: 'error',
         errorDetail: gateResult.errorDetail ?? 'gate evaluation failed',
@@ -654,12 +671,24 @@ export class FinalizeManager {
       };
     }
 
-    await persistFinalize(gateResult);
+    await this.persistFinalize(executedStep, assessResult, request, gateResult);
     return {
       type: 'done',
       completionType: 'completed',
       assessResult,
       ...(gateResult === undefined ? {} : { gateResult }),
     };
+  }
+
+  /** 回写 finalizeMeta + 透传变量 + onPersist（评估结果与门禁结果的统一落点）。 */
+  private async persistFinalize(
+    executedStep: ExecutedStepDefault,
+    assessResult: FinalizeAssessResult,
+    request: FinalizeStepRequest,
+    gateResult: GateEvalResult | undefined,
+  ): Promise<void> {
+    executedStep.finalizeMeta = buildFinalizeMeta(assessResult, gateResult);
+    writeBackPassThroughVars(assessResult.passThroughVars, request.step, request.passThroughVars);
+    await request.onPersist?.(executedStep);
   }
 }

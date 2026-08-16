@@ -6,13 +6,22 @@
  * @module @deepseek-ai/dsh-sandore-workflow/tests/mocks/sessions
  */
 
+/** 记录 append 事件的最小 Session 形状（含 `seq`/`time` 包络，供 revert 安全边界计算）。 */
+export interface FakeSessionEvent {
+  type: string;
+  seq: number;
+  time: number;
+  data: unknown;
+}
+
 /** 记录 append 事件的最小 Session 形状。 */
 export class FakeSession {
-  readonly events: Array<{ type: string; data: unknown }> = [];
+  readonly events: FakeSessionEvent[] = [];
 
-  append(type: string, data: unknown): { type: string; seq: number; time: number; data: unknown } {
-    this.events.push({ type, data });
-    return { type, seq: this.events.length - 1, time: Date.now(), data };
+  append(type: string, data: unknown): FakeSessionEvent {
+    const event: FakeSessionEvent = { type, seq: this.events.length, time: Date.now(), data };
+    this.events.push(event);
+    return event;
   }
 }
 
@@ -34,5 +43,18 @@ export class FakeSessionStore {
 
   list(): FakeSession[] {
     return [...this.sessions.values()];
+  }
+
+  /** 从源会话复制到 boundary（含端点，省略=全量）前缀，登记为新的子会话。 */
+  fork(source: string, boundary?: number, childSessionId?: string): FakeSession {
+    const sourceSession = this.sessions.get(source);
+    const forked = new FakeSession();
+    if (sourceSession !== undefined) {
+      const end = boundary === undefined ? sourceSession.events.length - 1 : boundary;
+      forked.events.push(...sourceSession.events.slice(0, end + 1));
+    }
+    const key = childSessionId ?? `session-${++this.counter}`;
+    this.sessions.set(key, forked);
+    return forked;
   }
 }

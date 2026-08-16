@@ -73,19 +73,49 @@
       "artifacts": [
         {
           "id": "proposal",
-          "outputPath": "furina/changes/task-3-full-dag/proposal.md"
+          "outputPath": "furina/archive/2026-08-15-task-3-full-dag/proposal.md"
         },
         {
           "id": "design",
-          "outputPath": "furina/changes/task-3-full-dag/design.md"
+          "outputPath": "furina/archive/2026-08-15-task-3-full-dag/design.md"
         },
         {
           "id": "specs",
-          "outputPath": "furina/changes/task-3-full-dag/specs/**/*.md"
+          "outputPath": "furina/archive/2026-08-15-task-3-full-dag/specs/**/*.md"
         },
         {
           "id": "plan",
-          "outputPath": "furina/changes/task-3-full-dag/plan.json"
+          "outputPath": "furina/archive/2026-08-15-task-3-full-dag/plan.json"
+        }
+      ]
+    },
+    {
+      "name": "task-4-lifecycle",
+      "path": "furina/archive/2026-08-16-task-4-lifecycle",
+      "description": "补齐工作流引擎生命周期：交互问答权限、暂停恢复中止、重试continue/revert/fork、崩溃恢复断点续传、宿主主代理自然延续与消息聚合",
+      "createdAt": "2026-08-16T04:50:42.519Z",
+      "closedAt": "2026-08-16T12:17:38.921Z",
+      "features": 7,
+      "artifacts": [
+        {
+          "id": "proposal",
+          "outputPath": "furina/changes/task-4-lifecycle/proposal.md"
+        },
+        {
+          "id": "design",
+          "outputPath": "furina/changes/task-4-lifecycle/design.md"
+        },
+        {
+          "id": "specs",
+          "outputPath": "furina/changes/task-4-lifecycle/specs/**/*.md"
+        },
+        {
+          "id": "api",
+          "outputPath": "furina/changes/task-4-lifecycle/api.yaml"
+        },
+        {
+          "id": "plan",
+          "outputPath": "furina/changes/task-4-lifecycle/plan.json"
         }
       ]
     }

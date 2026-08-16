@@ -7,7 +7,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { ZodError } from 'zod'
 
 import { MemoryStorageDomain } from '../tests/mocks/storage-domain.ts'
 import { SandoreError } from './errors.ts'
@@ -15,7 +16,7 @@ import type { SandoreEngine } from './index.ts'
 import { SandorePersistence } from './persistence.ts'
 import { SandoreRemote } from './remote.ts'
 import type { WorkflowTaskState } from './schema.ts'
-import type { DagRun, DagStartRequest } from './types.ts'
+import type { AskUserQuestionAnswer, DagRun, DagStartRequest } from './types.ts'
 
 const validV2Yaml = `id: wfl-source
 name: demo
@@ -56,7 +57,7 @@ function makeState(overrides: Partial<WorkflowTaskState> & { taskId: string }): 
     activeLoopIterationStack: [],
     activeLoopNodeId: null,
     activeLoopStack: [],
-    pausedStepIds: [],
+    pausedChildIds: [],
     stageContracts: {},
     createdAt: now,
     updatedAt: now,
@@ -90,11 +91,26 @@ async function catchCodeAsync(fn: () => Promise<unknown>): Promise<string | unde
   }
 }
 
+/** mock 引擎的 7 个生命周期方法桩（`vi.fn` 记录调用，便于断言转调链路）。 */
+interface MockLifecycleEngine {
+  replyQuestion: ReturnType<typeof vi.fn>
+  replyPermission: ReturnType<typeof vi.fn>
+  pauseStep: ReturnType<typeof vi.fn>
+  resumeStep: ReturnType<typeof vi.fn>
+  pauseAllSteps: ReturnType<typeof vi.fn>
+  resumeAllSteps: ReturnType<typeof vi.fn>
+  retryStep: ReturnType<typeof vi.fn>
+}
+
 /** 组装测试 harness：注入内存 storageDomain、mock llm 与 mock 引擎。 */
 async function harness(): Promise<{
   ctx: Context
   persistence: SandorePersistence
   remote: SandoreRemote
+  engine: {
+    startInstance: (request: DagStartRequest) => DagRun
+    abortInstance: (instanceId: string) => Promise<void>
+  } & MockLifecycleEngine
 }> {
   const ctx = new Context()
   const storageDomain = new MemoryStorageDomain()
@@ -131,7 +147,7 @@ async function harness(): Promise<{
       activeLoopIterationStack: [],
       activeLoopNodeId: null,
       activeLoopStack: [],
-      pausedStepIds: [],
+      pausedChildIds: [],
       stageContracts: {},
       createdAt: now,
       updatedAt: now,
@@ -146,11 +162,18 @@ async function harness(): Promise<{
       if (current === undefined) return
       await persistence.saveWorkflowState({ ...current, status: 'aborted', updatedAt: new Date().toISOString() })
     },
+    replyQuestion: vi.fn(async (_instanceId: string, _requestId: string, _answers: AskUserQuestionAnswer) => {}),
+    replyPermission: vi.fn(async (_instanceId: string, _requestId: string, _reply: 'once' | 'always' | 'reject') => {}),
+    pauseStep: vi.fn(async (_instanceId: string, _stepId: string) => {}),
+    resumeStep: vi.fn(async (_instanceId: string, _stepId: string, _resumePrompt?: string) => {}),
+    pauseAllSteps: vi.fn(async (_instanceId: string) => {}),
+    resumeAllSteps: vi.fn(async (_instanceId: string, _resumePrompt?: string) => {}),
+    retryStep: vi.fn(async (_instanceId: string, _stepId: string, _mode: 'continue' | 'revert' | 'fork', _message: string) => {}),
   }
   ctx.provide('sandoreEngine', engine as unknown as SandoreEngine)
 
   const remote = new SandoreRemote(ctx)
-  return { ctx, persistence, remote }
+  return { ctx, persistence, remote, engine }
 }
 
 describe('SandoreRemote definition CRUD', () => {
@@ -286,7 +309,7 @@ describe('SandoreRemote instance lifecycle', () => {
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
     const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
 
-    const run = remote.startInstance({ jobId: job.id, originalInput: '测试需求' })
+    const run = await remote.startInstance({ jobId: job.id, originalInput: '测试需求' })
     expect(run.instanceId).toBeTruthy()
     expect(run.status).toBe('running')
 
@@ -301,8 +324,8 @@ describe('SandoreRemote instance lifecycle', () => {
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
     const jobA = await remote.createJob({ name: 'job-a', workflowId: definition.id })
     const jobB = await remote.createJob({ name: 'job-b', workflowId: definition.id })
-    remote.startInstance({ jobId: jobA.id, originalInput: 'a' })
-    remote.startInstance({ jobId: jobB.id, originalInput: 'b' })
+    await remote.startInstance({ jobId: jobA.id, originalInput: 'a' })
+    await remote.startInstance({ jobId: jobB.id, originalInput: 'b' })
 
     const instancesA = remote.listInstances(jobA.id)
     expect(instancesA).toHaveLength(1)
@@ -314,7 +337,7 @@ describe('SandoreRemote instance lifecycle', () => {
     const { remote } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
     const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
-    const run = remote.startInstance({ jobId: job.id, originalInput: 'x' })
+    const run = await remote.startInstance({ jobId: job.id, originalInput: 'x' })
 
     await remote.deleteInstance(run.instanceId)
     expect(catchCode(() => remote.getInstanceState(run.instanceId))).toBe('NODE_NOT_FOUND')
@@ -344,6 +367,98 @@ describe('SandoreRemote instance lifecycle', () => {
     const { remote } = await harness()
 
     expect(await catchCodeAsync(() => remote.abortInstance('inst-nonexistent'))).toBe('NODE_NOT_FOUND')
+  })
+})
+
+describe('SandoreRemote lifecycle RPCs', () => {
+  it('replyQuestion forwards instanceId/requestId/answers to the engine', async () => {
+    const { remote, engine } = await harness()
+    const answers: AskUserQuestionAnswer = { answers: [{ id: 'q1', selected: ['A'] }] }
+
+    await remote.replyQuestion({ instanceId: 'inst-1', requestId: 'req-1', answers })
+
+    expect(engine.replyQuestion).toHaveBeenCalledWith('inst-1', 'req-1', answers)
+  })
+
+  it('replyPermission forwards instanceId/requestId/reply to the engine', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.replyPermission({ instanceId: 'inst-1', requestId: 'req-1', reply: 'always' })
+
+    expect(engine.replyPermission).toHaveBeenCalledWith('inst-1', 'req-1', 'always')
+  })
+
+  it('rejects an invalid reply enum value (zod)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.replyPermission({ instanceId: 'inst-1', requestId: 'req-1', reply: 'bad' as 'once' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('pauseStep forwards instanceId/stepId to the engine', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.pauseStep({ instanceId: 'inst-1', stepId: 'step-1' })
+
+    expect(engine.pauseStep).toHaveBeenCalledWith('inst-1', 'step-1')
+  })
+
+  it('resumeStep forwards instanceId/stepId/resumePrompt to the engine', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.resumeStep({ instanceId: 'inst-1', stepId: 'step-1', resumePrompt: 'continue please' })
+
+    expect(engine.resumeStep).toHaveBeenCalledWith('inst-1', 'step-1', 'continue please')
+  })
+
+  it('resumeStep forwards without resumePrompt when absent', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.resumeStep({ instanceId: 'inst-1', stepId: 'step-1' })
+
+    expect(engine.resumeStep).toHaveBeenCalledWith('inst-1', 'step-1', undefined)
+  })
+
+  it('pauseAll forwards instanceId to engine.pauseAllSteps', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.pauseAll({ instanceId: 'inst-1' })
+
+    expect(engine.pauseAllSteps).toHaveBeenCalledWith('inst-1')
+  })
+
+  it('resumeAll forwards instanceId/resumePrompt to engine.resumeAllSteps', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.resumeAll({ instanceId: 'inst-1', resumePrompt: 'go' })
+
+    expect(engine.resumeAllSteps).toHaveBeenCalledWith('inst-1', 'go')
+  })
+
+  it('retryStep forwards instanceId/stepId/mode/message to the engine', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.retryStep({ instanceId: 'inst-1', stepId: 'step-1', mode: 'revert', message: 'retry now' })
+
+    expect(engine.retryStep).toHaveBeenCalledWith('inst-1', 'step-1', 'revert', 'retry now')
+  })
+
+  it('rejects an invalid retry mode enum value (zod)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.retryStep({ instanceId: 'inst-1', stepId: 'step-1', mode: 'bad' as 'fork', message: 'x' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('passes through SandoreError from the engine without swallowing it', async () => {
+    const { remote, engine } = await harness()
+    engine.pauseStep.mockRejectedValueOnce(new SandoreError('step busy', 'INVALID_OPERATION'))
+
+    await expect(remote.pauseStep({ instanceId: 'inst-1', stepId: 'step-1' })).rejects.toMatchObject({
+      code: 'INVALID_OPERATION',
+    })
   })
 })
 

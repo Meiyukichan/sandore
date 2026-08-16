@@ -3,4 +3,4 @@
 - 引擎和后端尽量复用DSH组件
 - 所有代码参考DSH的代码风格
 - 不要创建分支，直接在main分支上开发
-- `docs\design\task-3-full-dag\work.md`和`docs\design\task-3-full-dag\design.md`这个当前阶段总体任务，写代码前都需要参考
+- `docs\design\task-4-lifecycle\work.md`和`docs\design\task-4-lifecycle\design.md`这个当前阶段总体任务，写代码前都需要参考
