@@ -3,11 +3,29 @@ window.__ModuleLoader__.load({
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
+		var process = {
+			env: { NODE_ENV: "production" },
+			platform: "browser",
+			version: "",
+			versions: {},
+			browser: true,
+			argv: [],
+			emitWarning: function() {},
+			nextTick: function(fn) {
+				if (typeof queueMicrotask === "function") queueMicrotask(fn);
+				else Promise.resolve().then(fn);
+			},
+			cwd: function() {
+				return "/";
+			}
+		};
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		//#region \0rolldown/runtime.js
+		var __create = Object.create;
 		var __defProp = Object.defineProperty;
 		var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 		var __getOwnPropNames = Object.getOwnPropertyNames;
+		var __getProtoOf = Object.getPrototypeOf;
 		var __hasOwnProp = Object.prototype.hasOwnProperty;
 		var __esmMin = (fn, res, err) => () => {
 			if (err) throw err[0];
@@ -37,11 +55,17 @@ window.__ModuleLoader__.load({
 			}
 			return to;
 		};
+		var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", {
+			value: mod,
+			enumerable: true
+		}) : target, mod));
 		var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 		//#endregion
 		let react_jsx_runtime = require("react/jsx-runtime");
-		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		let react = require("react");
+		react = __toESM(react, 1);
+		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+		require("react-dom");
 		//#region ../../../node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/core/core.js
 		var _a$1;
 		function $constructor(name, initializer, params) {
@@ -281,7 +305,7 @@ window.__ModuleLoader__.load({
 				checks: []
 			}));
 		}
-		function extend(schema, shape) {
+		function extend$1(schema, shape) {
 			if (!isPlainObject(shape)) throw new Error("Invalid input to extend: expected a plain object");
 			const checks = schema._zod.def.checks;
 			if (checks && checks.length > 0) {
@@ -1047,7 +1071,7 @@ window.__ModuleLoader__.load({
 		};
 		//#endregion
 		//#region ../../../node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/core/versions.js
-		const version = {
+		const version$1 = {
 			major: 4,
 			minor: 4,
 			patch: 3
@@ -1059,7 +1083,7 @@ window.__ModuleLoader__.load({
 			inst ?? (inst = {});
 			inst._zod.def = def;
 			inst._zod.bag = inst._zod.bag || {};
-			inst._zod.version = version;
+			inst._zod.version = version$1;
 			const checks = [...inst._zod.def.checks ?? []];
 			if (inst._zod.traits.has("$ZodCheck")) checks.unshift(inst);
 			for (const ch of checks) for (const fn of ch._zod.onattach) fn(inst);
@@ -3648,7 +3672,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					return nonoptional(this, params);
 				},
 				array() {
-					return array(this);
+					return array$1(this);
 				},
 				or(arg) {
 					return union([this, arg]);
@@ -3657,7 +3681,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					return intersection(this, arg);
 				},
 				transform(tx) {
-					return pipe(this, transform(tx));
+					return pipe(this, transform$1(tx));
 				},
 				default(d) {
 					return _default(this, d);
@@ -4002,7 +4026,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				}
 			});
 		});
-		function array(element, params) {
+		function array$1(element, params) {
 			return /* @__PURE__ */ _array(ZodArray, element, params);
 		}
 		const ZodObject = /*@__PURE__*/ $constructor("ZodObject", (inst, def) => {
@@ -4047,7 +4071,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					});
 				},
 				extend(incoming) {
-					return extend(this, incoming);
+					return extend$1(this, incoming);
 				},
 				safeExtend(incoming) {
 					return safeExtend(this, incoming);
@@ -4226,7 +4250,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				return payload;
 			};
 		});
-		function transform(fn) {
+		function transform$1(fn) {
 			return new ZodTransform({
 				type: "transform",
 				transform: fn
@@ -4399,16 +4423,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			stepId: string(),
 			stageId: string(),
 			outputToId: string().optional(),
-			files: array(string()),
+			files: array$1(string()),
 			returnPrompt: string().optional()
 		});
 		const dagRun = object({
 			instanceId: string(),
 			status: string()
 		});
-		const askUserQuestionAnswer = object({ answers: array(object({
+		const askUserQuestionAnswer = object({ answers: array$1(object({
 			id: string(),
-			selected: array(string()),
+			selected: array$1(string()),
 			custom: string().optional()
 		})) });
 		const providerInfo = object({
@@ -4420,7 +4444,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			id: string(),
 			name: string(),
 			description: string().optional(),
-			inputModalities: array(_enum(["text", "image"])).optional()
+			inputModalities: array$1(_enum(["text", "image"])).optional()
 		});
 		const json = (schema, typeSymbol) => ({
 			mode: "strict",
@@ -4446,7 +4470,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					method: "listDefinitions",
 					invocation: { kind: "direct" },
 					parameters: [],
-					result: json(array(definitionEntry), "@deepseek-ai/dsh-sandore-workflow/types#WorkflowDefinitionEntry")
+					result: json(array$1(definitionEntry), "@deepseek-ai/dsh-sandore-workflow/types#WorkflowDefinitionEntry")
 				},
 				{
 					id: "@deepseek-ai/dsh-sandore-workflow#sandore/createDefinition",
@@ -4539,7 +4563,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					method: "listJobs",
 					invocation: { kind: "direct" },
 					parameters: [],
-					result: json(array(jobEntry), "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
+					result: json(array$1(jobEntry), "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
 				},
 				{
 					id: "@deepseek-ai/dsh-sandore-workflow#sandore/createJob",
@@ -4616,7 +4640,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					method: "listInstances",
 					invocation: { kind: "direct" },
 					parameters: [],
-					result: json(array(instanceSummary), "@deepseek-ai/dsh-sandore-workflow/types#InstanceSummary")
+					result: json(array$1(instanceSummary), "@deepseek-ai/dsh-sandore-workflow/types#InstanceSummary")
 				},
 				{
 					id: "@deepseek-ai/dsh-sandore-workflow#sandore/startInstance",
@@ -4819,7 +4843,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						source: "json",
 						codec: json(string(), "@deepseek-ai/dsh-sandore-workflow#sandore/getArtifacts:instanceId")
 					}],
-					result: json(array(artifactEntry), "@deepseek-ai/dsh-sandore-workflow/types#ArtifactEntry")
+					result: json(array$1(artifactEntry), "@deepseek-ai/dsh-sandore-workflow/types#ArtifactEntry")
 				},
 				{
 					id: "@deepseek-ai/dsh-sandore-workflow#sandore/listProviders",
@@ -4828,7 +4852,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					method: "listProviders",
 					invocation: { kind: "direct" },
 					parameters: [],
-					result: json(array(providerInfo), "@deepseek-ai/dsh-sandore-workflow#sandore/listProviders:result")
+					result: json(array$1(providerInfo), "@deepseek-ai/dsh-sandore-workflow#sandore/listProviders:result")
 				},
 				{
 					id: "@deepseek-ai/dsh-sandore-workflow#sandore/listModels",
@@ -4842,7 +4866,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						source: "json",
 						codec: json(string(), "@deepseek-ai/dsh-sandore-workflow#sandore/listModels:provider")
 					}],
-					result: json(array(modelInfo), "@deepseek-ai/dsh-sandore-workflow#sandore/listModels:result")
+					result: json(array$1(modelInfo), "@deepseek-ai/dsh-sandore-workflow#sandore/listModels:result")
 				}
 			]
 		};
@@ -4917,6 +4941,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.steps.empty": "暂无步骤",
 			"editor.step.add": "添加步骤",
 			"editor.stage.add": "添加阶段",
+			"editor.step.placeholder": "未命名步骤",
 			"editor.step.name": "名称",
 			"editor.step.command": "命令",
 			"editor.command.shell": "Shell",
@@ -4935,15 +4960,19 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.field.name": "名称",
 			"editor.field.value": "值",
 			"editor.field.description": "描述",
+			"editor.field.refresh": "强制刷新",
 			"editor.field.expectation": "期望",
 			"editor.field.next": "下一节点",
 			"editor.field.label": "标签",
 			"editor.field.maxIterations": "最大迭代",
 			"editor.field.exitTo": "跳出目标",
+			"flow.end": "END（完成本 Stage）",
 			"editor.field.breakExpectation": "跳出期望",
 			"editor.field.maxRetries": "最大重试",
 			"editor.field.maxTokens": "最大 tokens",
 			"editor.field.needConfirm": "需确认",
+			"editor.field.secondaryGate": "二级门禁（secondary）",
+			"editor.field.secondaryPrompt": "门禁审查提示词",
 			"editor.section.inputFrom": "输入映射",
 			"editor.section.outputTo": "输出映射",
 			"editor.section.passThroughVars": "透传变量",
@@ -5019,7 +5048,66 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"step.retry.failed": "重试失败：{message}",
 			"view.workflow": "工作流",
 			"view.placeholder": "从左侧选择一个工作流进行查看或编辑",
-			"view.editor.error": "加载定义失败：{message}"
+			"view.editor.error": "加载定义失败：{message}",
+			"overlay.close": "关闭",
+			"overlay.refresh": "刷新",
+			"list.mode.instance": "实例",
+			"list.mode.definition": "编排",
+			"editor.mode.dag": "编排",
+			"editor.mode.run": "执行",
+			"editor.testRun": "测试运行",
+			"editor.autoLayout": "自动布局",
+			"editor.zoomIn": "放大",
+			"editor.zoomOut": "缩小",
+			"editor.fit": "适应",
+			"editor.stageDag": "Stage DAG",
+			"editor.stepDag": "Step DAG",
+			"editor.newDefinition": "新建定义",
+			"editor.stage.placeholder": "未命名阶段",
+			"run.nav": "导航",
+			"run.preview": "文件预览",
+			"run.preview.close": "关闭",
+			"run.result": "返回结果",
+			"run.artifact": "产物",
+			"run.originalInput": "初始输入",
+			"input.placeholder.running": "点击暂停按钮以暂停执行…",
+			"input.placeholder.paused": "输入恢复指令，@step 定点恢复…",
+			"input.placeholder.failed": "输入消息，@step 重试失败步骤…",
+			"input.target": "@Step",
+			"input.target.broadcast": "广播（所有 Step）",
+			"input.resume.hint": "恢复 / 广播 / 重试",
+			"input.pause": "暂停",
+			"input.send": "发送",
+			"input.retry.label": "重试方式",
+			"flow.next": "串行连接",
+			"flow.connections": "连接节点",
+			"flow.branches": "分支",
+			"flow.parallel": "并行",
+			"flow.conditional": "条件",
+			"flow.parallelBranch": "并行分支",
+			"flow.conditionalBranch": "条件分支",
+			"flow.branchTarget": "目标节点",
+			"flow.parallelHint": "始终执行此分支",
+			"flow.conditionalHint": "满足条件才执行此分支",
+			"flow.condition": "判断条件",
+			"flow.loop": "循环",
+			"flow.addBranch": "添加分支",
+			"flow.addCondition": "添加判断条件",
+			"flow.addLoop": "添加循环",
+			"flow.editLoop": "编辑循环",
+			"flow.removeLoop": "移除循环",
+			"flow.none": "（无）",
+			"flow.breakCondition": "跳出条件",
+			"detail.title": "工作流详情",
+			"detail.name": "名称",
+			"detail.version": "版本",
+			"detail.description": "描述",
+			"detail.settings": "设置",
+			"detail.defaultTimeout": "默认超时（分钟）",
+			"detail.maxConcurrentAgents": "最大并发代理数",
+			"detail.primaryGate": "一级门禁（primary）",
+			"detail.primaryGate.enabled": "启用",
+			"detail.edit": "进入编排"
 		};
 		/** 英文文案（与 zh 逐键对齐，缺一即编译错）。 */
 		const en = {
@@ -5057,6 +5145,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.steps.empty": "No steps",
 			"editor.step.add": "Add step",
 			"editor.stage.add": "Add stage",
+			"editor.step.placeholder": "Unnamed step",
 			"editor.step.name": "Name",
 			"editor.step.command": "Command",
 			"editor.command.shell": "Shell",
@@ -5075,15 +5164,19 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.field.name": "Name",
 			"editor.field.value": "Value",
 			"editor.field.description": "Description",
+			"editor.field.refresh": "Force refresh",
 			"editor.field.expectation": "Expectation",
 			"editor.field.next": "Next",
 			"editor.field.label": "Label",
 			"editor.field.maxIterations": "Max iterations",
 			"editor.field.exitTo": "Exit to",
+			"flow.end": "END (finish stage)",
 			"editor.field.breakExpectation": "Break expectation",
 			"editor.field.maxRetries": "Max retries",
 			"editor.field.maxTokens": "Max tokens",
 			"editor.field.needConfirm": "Need confirm",
+			"editor.field.secondaryGate": "Secondary gate",
+			"editor.field.secondaryPrompt": "Gate review prompt",
 			"editor.section.inputFrom": "Inputs",
 			"editor.section.outputTo": "Outputs",
 			"editor.section.passThroughVars": "Pass-through",
@@ -5159,32 +5252,182 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"step.retry.failed": "Retry failed: {message}",
 			"view.workflow": "Workflow",
 			"view.placeholder": "Select a workflow on the left to view or edit",
-			"view.editor.error": "Failed to load definition: {message}"
+			"view.editor.error": "Failed to load definition: {message}",
+			"overlay.close": "Close",
+			"overlay.refresh": "Refresh",
+			"list.mode.instance": "Instances",
+			"list.mode.definition": "Orchestrate",
+			"editor.mode.dag": "Orchestrate",
+			"editor.mode.run": "Execute",
+			"editor.testRun": "Test run",
+			"editor.autoLayout": "Auto layout",
+			"editor.zoomIn": "Zoom in",
+			"editor.zoomOut": "Zoom out",
+			"editor.fit": "Fit view",
+			"editor.stageDag": "Stage DAG",
+			"editor.stepDag": "Step DAG",
+			"editor.newDefinition": "New definition",
+			"editor.stage.placeholder": "Untitled stage",
+			"run.nav": "Navigation",
+			"run.preview": "Preview",
+			"run.preview.close": "Close",
+			"run.result": "Result",
+			"run.artifact": "Artifact",
+			"run.originalInput": "Initial input",
+			"input.placeholder.running": "Click pause to pause the run…",
+			"input.placeholder.paused": "Type a resume message, @step to resume a specific step…",
+			"input.placeholder.failed": "Type a message, @step to retry the failed step…",
+			"input.target": "@Step",
+			"input.target.broadcast": "Broadcast (all steps)",
+			"input.resume.hint": "Resume / broadcast / retry",
+			"input.pause": "Pause",
+			"input.send": "Send",
+			"input.retry.label": "Retry mode",
+			"flow.next": "Serial connection",
+			"flow.connections": "Connections",
+			"flow.branches": "Branches",
+			"flow.parallel": "Parallel",
+			"flow.conditional": "Conditional",
+			"flow.parallelBranch": "Parallel branch",
+			"flow.conditionalBranch": "Conditional branch",
+			"flow.branchTarget": "Target node",
+			"flow.parallelHint": "Always executes this branch",
+			"flow.conditionalHint": "Executes only when condition is met",
+			"flow.condition": "Judgment condition",
+			"flow.loop": "Loop",
+			"flow.addBranch": "Add branch",
+			"flow.addCondition": "Add judgment condition",
+			"flow.addLoop": "Add loop",
+			"flow.editLoop": "Edit loop",
+			"flow.removeLoop": "Remove loop",
+			"flow.none": "(none)",
+			"flow.breakCondition": "Break condition",
+			"detail.title": "Workflow details",
+			"detail.name": "Name",
+			"detail.version": "Version",
+			"detail.description": "Description",
+			"detail.settings": "Settings",
+			"detail.defaultTimeout": "Default timeout (min)",
+			"detail.maxConcurrentAgents": "Max concurrent agents",
+			"detail.primaryGate": "Primary gate",
+			"detail.primaryGate.enabled": "Enabled",
+			"detail.edit": "Edit DAG"
 		};
 		//#endregion
+		//#region lib/types/client/workflow-store.js
+		let state = {
+			open: false,
+			mode: "dag",
+			definitionView: "detail",
+			listMode: "instance",
+			selectedInstanceId: void 0,
+			selectedDefinition: void 0,
+			preview: null,
+			listWidth: 300,
+			treeWidth: 240,
+			previewWidth: 380
+		};
+		const listeners = /* @__PURE__ */ new Set();
+		/** 当前状态快照（稳定引用，仅 set 时更换）。 */
+		function getWorkflowState() {
+			return state;
+		}
+		/** 订阅状态变更。 */
+		function subscribeWorkflowState(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		}
+		/** 合并补丁更新状态并通知订阅者。 */
+		function setWorkflowState(patch) {
+			state = {
+				...state,
+				...patch
+			};
+			for (const listener of listeners) listener();
+		}
+		/** 打开 overlay。 */
+		function openWorkflowOverlay() {
+			setWorkflowState({ open: true });
+		}
+		/** 关闭 overlay（保留选中态，便于再次打开）。 */
+		function closeWorkflowOverlay() {
+			setWorkflowState({ open: false });
+		}
+		/** 选中实例：切执行态 + 清定义选中 + 关预览。 */
+		function selectInstance(instanceId) {
+			setWorkflowState({
+				mode: "run",
+				selectedInstanceId: instanceId,
+				selectedDefinition: void 0,
+				preview: null
+			});
+		}
+		/** 选中定义：切编排态（默认显示详情）+ 清实例选中 + 关预览。 */
+		function selectDefinition(id, initialYaml) {
+			setWorkflowState({
+				mode: "dag",
+				definitionView: "detail",
+				selectedDefinition: {
+					id,
+					initialYaml
+				},
+				selectedInstanceId: void 0,
+				preview: null
+			});
+		}
+		/** 新建定义：切编排态，直接进入空白 DagEditor。 */
+		function newDefinition() {
+			setWorkflowState({
+				mode: "dag",
+				definitionView: "edit",
+				selectedDefinition: void 0,
+				selectedInstanceId: void 0,
+				preview: null
+			});
+		}
+		/** 更新列表列宽（拖拽分隔条，带边界钳制）。 */
+		function resizeListWidth(delta) {
+			setWorkflowState({ listWidth: clamp$1(state.listWidth + delta, 200, 520) });
+		}
+		/** 更新树形导航列宽（拖拽分隔条，带边界钳制）。 */
+		function resizeTreeWidth(delta) {
+			setWorkflowState({ treeWidth: clamp$1(state.treeWidth + delta, 180, 420) });
+		}
+		/** 更新预览列宽（拖拽分隔条，带边界钳制）。 */
+		function resizePreviewWidth(delta) {
+			setWorkflowState({ previewWidth: clamp$1(state.previewWidth + delta, 280, 640) });
+		}
+		function clamp$1(value, min, max) {
+			return Math.max(min, Math.min(max, value));
+		}
+		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowButton.module.css.mjs
-		const css$5 = "/* sidebar 底部工作流按钮（宽态行 / 窄 rail 仅图标）。 */\n\n.layer {\n  position: relative;\n  flex: none;\n  display: flex;\n  align-items: center;\n  width: 100%;\n  height: 49px;\n  margin: 8px 0 0;\n}\n\n.footerButtons {\n  display: flex;\n  align-items: center;\n  width: 100%;\n}\n\n.badge {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  width: 100%;\n  height: 49px;\n  padding: 0 8px 0 6px;\n  border: none;\n  border-radius: 12px;\n  background: transparent;\n  color: var(--dsw-alias-label-primary);\n  font-family: inherit;\n  font-size: 14px;\n  cursor: pointer;\n  overflow: hidden;\n}\n\n.badge:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n.badgeLabel {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.layer.rail {\n  width: 36px;\n  height: 36px;\n  margin: 0;\n}\n\n.rail .badge {\n  justify-content: center;\n  gap: 0;\n  width: 36px;\n  height: 36px;\n  padding: 0;\n  border-radius: 50%;\n}\n\n.rail .footerButtons {\n  flex-direction: column;\n  gap: 2px;\n}\n";
-		const tagId$5 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowButton.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$5) + "]") === null) {
+		const css$12 = "/* sidebar 底部工作流按钮（宽态行 / 窄 rail 仅图标）。 */\n\n.s1wzuf_layer {\n  position: relative;\n  flex: none;\n  display: flex;\n  align-items: center;\n  width: 100%;\n  height: 49px;\n  margin: 8px 0 0;\n}\n\n.s1wzuf_footerButtons {\n  display: flex;\n  align-items: center;\n  width: 100%;\n}\n\n.s1wzuf_badge {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  width: 100%;\n  height: 49px;\n  padding: 0 8px 0 6px;\n  border: none;\n  border-radius: 12px;\n  background: transparent;\n  color: var(--dsw-alias-label-primary);\n  font-family: inherit;\n  font-size: 14px;\n  cursor: pointer;\n  overflow: hidden;\n}\n\n.s1wzuf_badge:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n/* overlay 打开时按钮高亮（accent 底）。 */\n.s1wzuf_badgeActive,\n.s1wzuf_badgeActive:hover {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1wzuf_badgeLabel {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1wzuf_layer.s1wzuf_rail {\n  width: 36px;\n  height: 36px;\n  margin: 0;\n}\n\n.s1wzuf_rail .s1wzuf_badge {\n  justify-content: center;\n  gap: 0;\n  width: 36px;\n  height: 36px;\n  padding: 0;\n  border-radius: 50%;\n}\n\n.s1wzuf_rail .s1wzuf_footerButtons {\n  flex-direction: column;\n  gap: 2px;\n}\n";
+		const tagId$12 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowButton.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$12) + "]") === null) {
 			const tag = document.createElement("style");
 			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
-			tag.dataset.pluginCss = tagId$5;
-			tag.textContent = css$5;
+			tag.dataset.pluginCss = tagId$12;
+			tag.textContent = css$12;
 			document.head.appendChild(tag);
 		}
-		var WorkflowButton_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? prop : void 0 });
+		var WorkflowButton_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1wzuf_" + prop : void 0 });
 		//#endregion
 		//#region lib/types/client/WorkflowButton.js
-		/** sidebar.footer.action 工作流入口：点击后把主区切换到「工作流」双栏视图（不再展开面板）。 */
-		/** 渲染工作流入口按钮，点击打开右侧编辑区（conversation.view「工作流」tab）。 */
+		/** sidebar.footer.action 工作流入口：点击打开 shell.overlay 全局工作流 UI（设置上方）。 */
+		/** 渲染工作流入口按钮，点击打开全局工作流 overlay；overlay 打开时按钮高亮。 */
 		function WorkflowButton({ wide, t, onOpenWorkflow }) {
+			const open = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().open);
 			return (0, react_jsx_runtime.jsx)("div", {
 				className: wide ? WorkflowButton_module_css_default.layer : `${WorkflowButton_module_css_default.layer} ${WorkflowButton_module_css_default.rail}`,
 				children: (0, react_jsx_runtime.jsxs)("button", {
 					type: "button",
-					className: WorkflowButton_module_css_default.badge,
+					className: `${WorkflowButton_module_css_default.badge} ${open ? WorkflowButton_module_css_default.badgeActive : ""}`,
 					"data-sandore-btn": true,
 					"aria-label": t("button.aria"),
+					"aria-expanded": open,
 					onClick: () => {
 						onOpenWorkflow();
 					},
@@ -5266,24 +5509,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"fork"
 		];
 		/**
-		* StepStatus 7 态 → StateDotState 4 态穷尽映射：
-		* `completed→done`、`failed→error`、`running→ongoing`，其余（等待用户注意的
-		* blocked/ready/interacting/paused）折入 `warning`。
-		* @param status - Step 执行状态。
-		* @returns 四态语义点。
-		*/
-		function stepDotState(status) {
-			switch (status) {
-				case "completed": return "done";
-				case "failed": return "error";
-				case "running": return "ongoing";
-				case "blocked":
-				case "ready":
-				case "interacting":
-				case "paused": return "warning";
-			}
-		}
-		/**
 		* DagRunStatus 7 态 → StateDotState 4 态穷尽映射：
 		* `completed→done`、`failed→error`、`running→ongoing`，其余（pending/interacting/
 		* aborted/paused）折入 `warning`。
@@ -5351,31 +5576,119 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			return step.stepId ?? step.id;
 		}
 		/**
-		* 判定 Step 是否为可续接的子代理 Step（agent/skill/mcp），非 shell/prompt 合成 session。
-		*
-		* 对齐引擎侧 `recovery-manager.ts` 的 `isSubagentStep`：优先 `sessionMeta.command`
-		* （运行时 session 元数据），缺省回退 `command.type`（定义态命令类型）。shell/prompt
-		* 合成 session 无真实子代理，引擎对暂停/重试明确抛 `INVALID_OPERATION`，故 UI 不应
-		* 对其渲染 pause/resume/retry 控件。
-		* @param step - 已执行 Step 快照。
-		* @returns 子代理 Step（可暂停/恢复/重试）为 true。
+		* 把 `output: ContentBlock[]` 的 text 块拼接为纯文本（无 text 块返回 undefined）。
+		* @param output - Step 执行输出块（引擎在 step-completed 事件/快照中内联）。
+		* @returns 拼接文本或 undefined。
 		*/
-		function isSubagentStep(step) {
-			const command = step.sessionMeta?.command ?? step.command?.type;
-			return command === "agent" || command === "skill" || command === "mcp";
+		function outputTextOf(output) {
+			if (output === void 0 || output.length === 0) return void 0;
+			const parts = [];
+			for (const block of output) if (block.type === "text" && block.text !== void 0) parts.push(block.text);
+			return parts.length === 0 ? void 0 : parts.join("\n");
+		}
+		/** 循环迭代路径 → 展示标签（`#1.2`），非循环返回 undefined。 */
+		function loopLabelOf$1(loopIteration) {
+			return loopIteration === void 0 || loopIteration.length === 0 ? void 0 : `#${loopIteration.join(".")}`;
+		}
+		/**
+		* 从 `WorkflowTaskState` 构建树形导航数据：workflow → stage → step → result/artifact 叶子。
+		* result 叶子来自 step 输出文本；artifact 叶子来自 `stageContracts` 产物契约的 files。
+		* @param state - 实例状态快照。
+		* @returns 树形导航根节点列表（单个 workflow 根）。
+		*/
+		function buildRunTree(state) {
+			const leavesByStepId = /* @__PURE__ */ new Map();
+			for (const step of state.executedSteps) {
+				const output = outputTextOf(step.output);
+				if (output === void 0) continue;
+				const key = stepIdOf(step);
+				const current = leavesByStepId.get(key) ?? [];
+				leavesByStepId.set(key, [...current, {
+					id: `${step.id}:result`,
+					name: "",
+					type: "result",
+					stepId: key,
+					text: output
+				}]);
+			}
+			for (const contract of Object.values(state.stageContracts)) for (const artifact of contract.artifacts) for (const file of artifact.files) {
+				const current = leavesByStepId.get(artifact.stepId) ?? [];
+				leavesByStepId.set(artifact.stepId, [...current, {
+					id: `${artifact.stepId}:file:${file}`,
+					name: file,
+					type: "artifact",
+					stepId: artifact.stepId,
+					meta: artifact.outputToId,
+					text: file
+				}]);
+			}
+			const stageNodes = state.stageInfos.map((stage) => {
+				const steps = state.executedSteps.filter((step) => step.stageId === stage.id);
+				return {
+					id: stage.id,
+					name: stage.name,
+					type: "stage",
+					status: stage.status,
+					children: steps.map((step) => {
+						const key = stepIdOf(step);
+						return {
+							id: step.id,
+							name: step.name,
+							type: "step",
+							status: step.status,
+							stepId: key,
+							childId: step.sessionMeta?.childId,
+							children: leavesByStepId.get(key)
+						};
+					})
+				};
+			});
+			return [{
+				id: state.workflowId,
+				name: state.workflowId,
+				type: "workflow",
+				status: state.status,
+				children: stageNodes
+			}];
+		}
+		/**
+		* 从 `WorkflowTaskState` 构建统一时间线：初始输入 user 气泡 + 各 executedStep 卡片
+		* （按执行顺序）。running 卡无实时消息流（引擎不写 sessionMessages、无 step-message
+		* 事件），body 按状态展示输出文本 / 错误 / 运行中占位。
+		* @param state - 实例状态快照。
+		* @returns 时间线条目列表。
+		*/
+		function buildTimeline(state) {
+			const items = [];
+			if (state.originalInput !== "") items.push({
+				kind: "user",
+				content: state.originalInput
+			});
+			for (const step of state.executedSteps) items.push({
+				kind: "step",
+				stepId: stepIdOf(step),
+				name: step.name,
+				status: step.status,
+				loopLabel: loopLabelOf$1(step.loopIteration),
+				outputText: outputTextOf(step.output),
+				error: step.error,
+				childId: step.sessionMeta?.childId,
+				visitCount: step.visitCount
+			});
+			return items;
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowPanel.module.css.mjs
-		const css$4 = "/* 从 sidebar 底部按钮上方展开的工作流列表（sidebar 内，占侧栏宽度，不覆盖主区）。 */\n\n.panel {\n  position: absolute;\n  left: 0;\n  right: 0;\n  bottom: 100%;\n  z-index: 30;\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  max-height: 60vh;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: var(--dsw-shadow-lv2);\n}\n\n/* 下钻态：给出确定高度，使 DagEditor/RunView 的 height:100% 可解析并在内部滚动。 */\n.panel.drill {\n  height: 60vh;\n}\n\n.header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.title {\n  flex: none;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.search {\n  flex: 1;\n  min-width: 0;\n}\n\n.search input {\n  width: 100%;\n}\n\n.body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 4px 12px 12px;\n}\n\n.drillBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n.listGroups {\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n}\n\n.groupSection {\n  display: flex;\n  flex-direction: column;\n}\n\n.group {\n  margin: 8px 0 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.rows {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\n\n.row {\n  display: flex;\n  align-items: stretch;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.rowAction {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 10px 12px;\n  border: none;\n  background: transparent;\n  color: inherit;\n  font-family: inherit;\n  font-size: inherit;\n  text-align: left;\n  cursor: pointer;\n}\n\n.rowAction:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n.rowBody {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.rowName {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.rowCaption {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.rowStatus {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  height: 20px;\n  padding: 0 6px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill);\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  white-space: nowrap;\n}\n\n.deleteButton {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  border: none;\n  background: transparent;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.deleteButton:hover {\n  color: var(--dsw-alias-state-error-primary);\n}\n\n.empty {\n  margin: 0;\n  padding: 12px 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.emptyBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 4px;\n  padding: 12px 0;\n}\n\n.emptyHint {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.error {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n.errorBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 8px;\n  padding: 12px 0;\n}\n\n.deleteConfirm {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.deleteConfirmText {\n  margin: 0;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  overflow-wrap: anywhere;\n}\n";
-		const tagId$4 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowPanel.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$4) + "]") === null) {
+		const css$11 = "/* 从 sidebar 底部按钮上方展开的工作流列表（sidebar 内，占侧栏宽度，不覆盖主区）。 */\n\n.si0f3j_panel {\n  position: absolute;\n  left: 0;\n  right: 0;\n  bottom: 100%;\n  z-index: 30;\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  max-height: 60vh;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: var(--dsw-shadow-lv2);\n}\n\n/* 下钻态：给出确定高度，使 DagEditor/RunView 的 height:100% 可解析并在内部滚动。 */\n.si0f3j_panel.si0f3j_drill {\n  height: 60vh;\n}\n\n.si0f3j_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.si0f3j_title {\n  flex: none;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.si0f3j_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.si0f3j_search input {\n  width: 100%;\n}\n\n.si0f3j_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 4px 12px 12px;\n}\n\n.si0f3j_drillBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n.si0f3j_listGroups {\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n}\n\n.si0f3j_groupSection {\n  display: flex;\n  flex-direction: column;\n}\n\n.si0f3j_group {\n  margin: 8px 0 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.si0f3j_rows {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\n\n.si0f3j_row {\n  display: flex;\n  align-items: stretch;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n/* 选中行高亮（accent 底 + 主色描边）。 */\n.si0f3j_rowActive {\n  border-color: var(--dsw-alias-accent-primary);\n  background: var(--dsw-alias-accent-bg);\n}\n\n.si0f3j_rowActive .si0f3j_rowAction:hover {\n  background: var(--dsw-alias-accent-bg);\n}\n\n.si0f3j_rowAction {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 10px 12px;\n  border: none;\n  background: transparent;\n  color: inherit;\n  font-family: inherit;\n  font-size: inherit;\n  text-align: left;\n  cursor: pointer;\n}\n\n.si0f3j_rowAction:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n.si0f3j_rowBody {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.si0f3j_rowName {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.si0f3j_rowCaption {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.si0f3j_rowStatus {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  height: 20px;\n  padding: 0 6px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill);\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  white-space: nowrap;\n}\n\n.si0f3j_deleteButton {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  border: none;\n  background: transparent;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.si0f3j_deleteButton:hover {\n  color: var(--dsw-alias-state-error-primary);\n}\n\n.si0f3j_empty {\n  margin: 0;\n  padding: 12px 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.si0f3j_emptyBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 4px;\n  padding: 12px 0;\n}\n\n.si0f3j_emptyHint {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.si0f3j_error {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n.si0f3j_errorBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 8px;\n  padding: 12px 0;\n}\n\n.si0f3j_deleteConfirm {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.si0f3j_deleteConfirmText {\n  margin: 0;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  overflow-wrap: anywhere;\n}\n";
+		const tagId$11 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowPanel.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$11) + "]") === null) {
 			const tag = document.createElement("style");
 			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
-			tag.dataset.pluginCss = tagId$4;
-			tag.textContent = css$4;
+			tag.dataset.pluginCss = tagId$11;
+			tag.textContent = css$11;
 			document.head.appendChild(tag);
 		}
-		var WorkflowPanel_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? prop : void 0 });
+		var WorkflowPanel_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "si0f3j_" + prop : void 0 });
 		//#endregion
 		//#region lib/types/client/InstanceList.js
 		/**
@@ -5419,7 +5732,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			return isDagRunStatus(status) ? runDotState(status) : "warning";
 		}
 		/** 渲染 InstanceList。 */
-		function InstanceList({ t, workspaces, query, listInstances, onOpen }) {
+		function InstanceList({ t, workspaces, query, activeId, listInstances, onOpen }) {
 			const [state, setState] = (0, react.useState)({ kind: "loading" });
 			const timerRef = (0, react.useRef)(void 0);
 			const disposedRef = (0, react.useRef)(false);
@@ -5503,7 +5816,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							className: WorkflowPanel_module_css_default.row,
 							children: (0, react_jsx_runtime.jsxs)("button", {
 								type: "button",
-								className: WorkflowPanel_module_css_default.rowAction,
+								className: `${WorkflowPanel_module_css_default.rowAction} ${activeId === instance.instanceId ? WorkflowPanel_module_css_default.rowActive : ""}`,
 								onClick: () => {
 									onOpen(instance.instanceId);
 								},
@@ -5577,7 +5890,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			});
 		}
 		/** 渲染 DefinitionList。 */
-		function DefinitionList({ t, query, listDefinitions, deleteDefinition, onOpen }) {
+		function DefinitionList({ t, query, activeId, listDefinitions, deleteDefinition, onOpen }) {
 			const [state, setState] = (0, react.useState)({ kind: "loading" });
 			const [confirmTarget, setConfirmTarget] = (0, react.useState)(void 0);
 			const [deleting, setDeleting] = (0, react.useState)(false);
@@ -5656,7 +5969,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			}) : (0, react_jsx_runtime.jsx)("ul", {
 				className: WorkflowPanel_module_css_default.rows,
 				children: filtered.map((definition) => (0, react_jsx_runtime.jsxs)("li", {
-					className: WorkflowPanel_module_css_default.row,
+					className: `${WorkflowPanel_module_css_default.row} ${activeId === definition.id ? WorkflowPanel_module_css_default.rowActive : ""}`,
 					children: [(0, react_jsx_runtime.jsx)("button", {
 						type: "button",
 						className: WorkflowPanel_module_css_default.rowAction,
@@ -5698,11 +6011,11084 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			})] });
 		}
 		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowOverlay.module.css.mjs
+		const css$10 = "/* WorkflowOverlay：shell.s1mmu1_overlay 全局工作流 UI（覆盖 conversation/details 列，sidebar 可见）。 */\n\n.s1mmu1_layer {\n  position: absolute;\n  inset: 0;\n  z-index: 30;\n  pointer-events: none;\n}\n\n.s1mmu1_overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  left: var(--wf-left, 248px);\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.08);\n  pointer-events: auto;\n  animation: overlay-in 0.18s ease;\n}\n\n@keyframes overlay-in {\n  from {\n    transform: translateX(16px);\n    opacity: 0;\n  }\n  to {\n    transform: translateX(0);\n    opacity: 1;\n  }\n}\n\n.s1mmu1_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_headerTitle {\n  font-size: 14px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_spacer {\n  flex: 1;\n}\n\n.s1mmu1_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 8px;\n  background: transparent;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 双栏工作台 ─────────────────────────────────────────────────────────── */\n\n.s1mmu1_body {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1mmu1_drag-handle 观感）。 */\n.s1mmu1_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1mmu1_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1mmu1_dragHandle:hover::after,\n.s1mmu1_dragHandle.s1mmu1_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n/* ── 左栏列表 ────────────────────────────────────────────────────────────── */\n\n.s1mmu1_list {\n  flex: none;\n  min-width: 200px;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1mmu1_listHeader {\n  flex: none;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1mmu1_listTitleRow {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.s1mmu1_listTitle {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_toggle {\n  display: inline-flex;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  padding: 2px;\n  gap: 1px;\n}\n\n.s1mmu1_toggle button {\n  padding: 3px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_toggle button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1mmu1_toggle button.s1mmu1_toggleActive {\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  box-shadow: var(--dsw-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));\n  font-weight: 500;\n}\n\n.s1mmu1_listToolbar {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1mmu1_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1mmu1_search input {\n  width: 100%;\n}\n\n.s1mmu1_listBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 6px 10px 12px;\n  box-sizing: border-box;\n}\n\n/* ── 右栏编辑区 ──────────────────────────────────────────────────────────── */\n\n.s1mmu1_editorCol {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1mmu1_modeBar {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_editorTitle {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_modeSwitch {\n  display: inline-flex;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  padding: 2px;\n  gap: 1px;\n}\n\n.s1mmu1_modeSwitch button {\n  padding: 4px 12px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_modeSwitch button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1mmu1_modeSwitch button.s1mmu1_modeActive {\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  box-shadow: var(--dsw-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));\n  font-weight: 500;\n}\n\n.s1mmu1_runError {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n.s1mmu1_editorBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n.s1mmu1_editorPlaceholder {\n  flex: 1;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 24px;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n";
+		const tagId$10 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowOverlay.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$10) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$10;
+			tag.textContent = css$10;
+			document.head.appendChild(tag);
+		}
+		var WorkflowOverlay_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1mmu1_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/WorkflowList.js
+		/**
+		* WorkflowList：工作流 overlay 左栏列表（实例/定义 toggle + 搜索 + 新增）。
+		*
+		* 模式切换与选中态走模块级 `workflow-store`（跨 overlay 开合保留）；内容区复用
+		* `InstanceList`（默认态实例，3s 轮询）与 `DefinitionList`（编排态定义）。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowList
+		*/
+		/** 渲染工作流 overlay 左栏列表。 */
+		function WorkflowList({ t, workspaces, face, refreshKey, width }) {
+			const listMode = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().listMode);
+			const selectedInstanceId = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId);
+			const selectedDefinitionId = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedDefinition?.id);
+			const [query, setQuery] = (0, react.useState)("");
+			return (0, react_jsx_runtime.jsxs)("section", {
+				className: WorkflowOverlay_module_css_default.list,
+				style: { width },
+				"data-sandore-wf-list": true,
+				children: [(0, react_jsx_runtime.jsxs)("header", {
+					className: WorkflowOverlay_module_css_default.listHeader,
+					children: [(0, react_jsx_runtime.jsxs)("div", {
+						className: WorkflowOverlay_module_css_default.listTitleRow,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: WorkflowOverlay_module_css_default.listTitle,
+							children: t("panel.title")
+						}), (0, react_jsx_runtime.jsxs)("div", {
+							className: WorkflowOverlay_module_css_default.toggle,
+							role: "tablist",
+							"aria-label": t("panel.title"),
+							children: [(0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								role: "tab",
+								"aria-selected": listMode === "instance",
+								className: listMode === "instance" ? WorkflowOverlay_module_css_default.toggleActive : "",
+								onClick: () => {
+									setWorkflowState({ listMode: "instance" });
+								},
+								children: t("list.mode.instance")
+							}), (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								role: "tab",
+								"aria-selected": listMode === "definition",
+								className: listMode === "definition" ? WorkflowOverlay_module_css_default.toggleActive : "",
+								onClick: () => {
+									setWorkflowState({ listMode: "definition" });
+								},
+								children: t("list.mode.definition")
+							})]
+						})]
+					}), (0, react_jsx_runtime.jsxs)("div", {
+						className: WorkflowOverlay_module_css_default.listToolbar,
+						children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							className: WorkflowOverlay_module_css_default.search ?? "",
+							icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, {}),
+							value: query,
+							onChange: (event) => {
+								setQuery(event.target.value);
+							},
+							placeholder: t("panel.search"),
+							"aria-label": t("panel.search")
+						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							size: "sm",
+							variant: "primary",
+							icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
+							disabled: listMode === "instance",
+							title: listMode === "instance" ? t("panel.add.instance.hint") : void 0,
+							onClick: newDefinition,
+							children: listMode === "definition" ? t("panel.add.definition") : t("panel.add.instance")
+						})]
+					})]
+				}), (0, react_jsx_runtime.jsx)("div", {
+					className: WorkflowOverlay_module_css_default.listBody,
+					children: listMode === "definition" ? (0, react_jsx_runtime.jsx)(DefinitionList, {
+						t,
+						query,
+						activeId: selectedDefinitionId,
+						listDefinitions: face.listDefinitions,
+						deleteDefinition: face.deleteDefinition,
+						onOpen: selectDefinition
+					}, `def-${refreshKey}`) : (0, react_jsx_runtime.jsx)(InstanceList, {
+						t,
+						workspaces,
+						query,
+						activeId: selectedInstanceId,
+						listInstances: face.listInstances,
+						onOpen: selectInstance
+					}, `inst-${refreshKey}`)
+				})]
+			});
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/classcat@5.0.5/node_modules/classcat/index.js
+		function cc(names) {
+			if (typeof names === "string" || typeof names === "number") return "" + names;
+			let out = "";
+			if (Array.isArray(names)) {
+				for (let i = 0, tmp; i < names.length; i++) if ((tmp = cc(names[i])) !== "") out += (out && " ") + tmp;
+			} else for (let k in names) if (names[k]) out += (out && " ") + k;
+			return out;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-dispatch@3.0.1/node_modules/d3-dispatch/src/dispatch.js
+		var noop = { value: () => {} };
+		function dispatch() {
+			for (var i = 0, n = arguments.length, _ = {}, t; i < n; ++i) {
+				if (!(t = arguments[i] + "") || t in _ || /[\s.]/.test(t)) throw new Error("illegal type: " + t);
+				_[t] = [];
+			}
+			return new Dispatch(_);
+		}
+		function Dispatch(_) {
+			this._ = _;
+		}
+		function parseTypenames$1(typenames, types) {
+			return typenames.trim().split(/^|\s+/).map(function(t) {
+				var name = "", i = t.indexOf(".");
+				if (i >= 0) name = t.slice(i + 1), t = t.slice(0, i);
+				if (t && !types.hasOwnProperty(t)) throw new Error("unknown type: " + t);
+				return {
+					type: t,
+					name
+				};
+			});
+		}
+		Dispatch.prototype = dispatch.prototype = {
+			constructor: Dispatch,
+			on: function(typename, callback) {
+				var _ = this._, T = parseTypenames$1(typename + "", _), t, i = -1, n = T.length;
+				if (arguments.length < 2) {
+					while (++i < n) if ((t = (typename = T[i]).type) && (t = get$1(_[t], typename.name))) return t;
+					return;
+				}
+				if (callback != null && typeof callback !== "function") throw new Error("invalid callback: " + callback);
+				while (++i < n) if (t = (typename = T[i]).type) _[t] = set$1(_[t], typename.name, callback);
+				else if (callback == null) for (t in _) _[t] = set$1(_[t], typename.name, null);
+				return this;
+			},
+			copy: function() {
+				var copy = {}, _ = this._;
+				for (var t in _) copy[t] = _[t].slice();
+				return new Dispatch(copy);
+			},
+			call: function(type, that) {
+				if ((n = arguments.length - 2) > 0) for (var args = new Array(n), i = 0, n, t; i < n; ++i) args[i] = arguments[i + 2];
+				if (!this._.hasOwnProperty(type)) throw new Error("unknown type: " + type);
+				for (t = this._[type], i = 0, n = t.length; i < n; ++i) t[i].value.apply(that, args);
+			},
+			apply: function(type, that, args) {
+				if (!this._.hasOwnProperty(type)) throw new Error("unknown type: " + type);
+				for (var t = this._[type], i = 0, n = t.length; i < n; ++i) t[i].value.apply(that, args);
+			}
+		};
+		function get$1(type, name) {
+			for (var i = 0, n = type.length, c; i < n; ++i) if ((c = type[i]).name === name) return c.value;
+		}
+		function set$1(type, name, callback) {
+			for (var i = 0, n = type.length; i < n; ++i) if (type[i].name === name) {
+				type[i] = noop, type = type.slice(0, i).concat(type.slice(i + 1));
+				break;
+			}
+			if (callback != null) type.push({
+				name,
+				value: callback
+			});
+			return type;
+		}
+		var namespaces_default = {
+			svg: "http://www.w3.org/2000/svg",
+			xhtml: "http://www.w3.org/1999/xhtml",
+			xlink: "http://www.w3.org/1999/xlink",
+			xml: "http://www.w3.org/XML/1998/namespace",
+			xmlns: "http://www.w3.org/2000/xmlns/"
+		};
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/namespace.js
+		function namespace_default(name) {
+			var prefix = name += "", i = prefix.indexOf(":");
+			if (i >= 0 && (prefix = name.slice(0, i)) !== "xmlns") name = name.slice(i + 1);
+			return namespaces_default.hasOwnProperty(prefix) ? {
+				space: namespaces_default[prefix],
+				local: name
+			} : name;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/creator.js
+		function creatorInherit(name) {
+			return function() {
+				var document = this.ownerDocument, uri = this.namespaceURI;
+				return uri === "http://www.w3.org/1999/xhtml" && document.documentElement.namespaceURI === "http://www.w3.org/1999/xhtml" ? document.createElement(name) : document.createElementNS(uri, name);
+			};
+		}
+		function creatorFixed(fullname) {
+			return function() {
+				return this.ownerDocument.createElementNS(fullname.space, fullname.local);
+			};
+		}
+		function creator_default(name) {
+			var fullname = namespace_default(name);
+			return (fullname.local ? creatorFixed : creatorInherit)(fullname);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selector.js
+		function none() {}
+		function selector_default(selector) {
+			return selector == null ? none : function() {
+				return this.querySelector(selector);
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/select.js
+		function select_default$2(select) {
+			if (typeof select !== "function") select = selector_default(select);
+			for (var groups = this._groups, m = groups.length, subgroups = new Array(m), j = 0; j < m; ++j) for (var group = groups[j], n = group.length, subgroup = subgroups[j] = new Array(n), node, subnode, i = 0; i < n; ++i) if ((node = group[i]) && (subnode = select.call(node, node.__data__, i, group))) {
+				if ("__data__" in node) subnode.__data__ = node.__data__;
+				subgroup[i] = subnode;
+			}
+			return new Selection$1(subgroups, this._parents);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/array.js
+		function array(x) {
+			return x == null ? [] : Array.isArray(x) ? x : Array.from(x);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selectorAll.js
+		function empty() {
+			return [];
+		}
+		function selectorAll_default(selector) {
+			return selector == null ? empty : function() {
+				return this.querySelectorAll(selector);
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/selectAll.js
+		function arrayAll(select) {
+			return function() {
+				return array(select.apply(this, arguments));
+			};
+		}
+		function selectAll_default$1(select) {
+			if (typeof select === "function") select = arrayAll(select);
+			else select = selectorAll_default(select);
+			for (var groups = this._groups, m = groups.length, subgroups = [], parents = [], j = 0; j < m; ++j) for (var group = groups[j], n = group.length, node, i = 0; i < n; ++i) if (node = group[i]) {
+				subgroups.push(select.call(node, node.__data__, i, group));
+				parents.push(node);
+			}
+			return new Selection$1(subgroups, parents);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/matcher.js
+		function matcher_default(selector) {
+			return function() {
+				return this.matches(selector);
+			};
+		}
+		function childMatcher(selector) {
+			return function(node) {
+				return node.matches(selector);
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/selectChild.js
+		var find = Array.prototype.find;
+		function childFind(match) {
+			return function() {
+				return find.call(this.children, match);
+			};
+		}
+		function childFirst() {
+			return this.firstElementChild;
+		}
+		function selectChild_default(match) {
+			return this.select(match == null ? childFirst : childFind(typeof match === "function" ? match : childMatcher(match)));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/selectChildren.js
+		var filter = Array.prototype.filter;
+		function children() {
+			return Array.from(this.children);
+		}
+		function childrenFilter(match) {
+			return function() {
+				return filter.call(this.children, match);
+			};
+		}
+		function selectChildren_default(match) {
+			return this.selectAll(match == null ? children : childrenFilter(typeof match === "function" ? match : childMatcher(match)));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/filter.js
+		function filter_default$1(match) {
+			if (typeof match !== "function") match = matcher_default(match);
+			for (var groups = this._groups, m = groups.length, subgroups = new Array(m), j = 0; j < m; ++j) for (var group = groups[j], n = group.length, subgroup = subgroups[j] = [], node, i = 0; i < n; ++i) if ((node = group[i]) && match.call(node, node.__data__, i, group)) subgroup.push(node);
+			return new Selection$1(subgroups, this._parents);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/sparse.js
+		function sparse_default(update) {
+			return new Array(update.length);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/enter.js
+		function enter_default() {
+			return new Selection$1(this._enter || this._groups.map(sparse_default), this._parents);
+		}
+		function EnterNode(parent, datum) {
+			this.ownerDocument = parent.ownerDocument;
+			this.namespaceURI = parent.namespaceURI;
+			this._next = null;
+			this._parent = parent;
+			this.__data__ = datum;
+		}
+		EnterNode.prototype = {
+			constructor: EnterNode,
+			appendChild: function(child) {
+				return this._parent.insertBefore(child, this._next);
+			},
+			insertBefore: function(child, next) {
+				return this._parent.insertBefore(child, next);
+			},
+			querySelector: function(selector) {
+				return this._parent.querySelector(selector);
+			},
+			querySelectorAll: function(selector) {
+				return this._parent.querySelectorAll(selector);
+			}
+		};
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/constant.js
+		function constant_default$3(x) {
+			return function() {
+				return x;
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/data.js
+		function bindIndex(parent, group, enter, update, exit, data) {
+			var i = 0, node, groupLength = group.length, dataLength = data.length;
+			for (; i < dataLength; ++i) if (node = group[i]) {
+				node.__data__ = data[i];
+				update[i] = node;
+			} else enter[i] = new EnterNode(parent, data[i]);
+			for (; i < groupLength; ++i) if (node = group[i]) exit[i] = node;
+		}
+		function bindKey(parent, group, enter, update, exit, data, key) {
+			var i, node, nodeByKeyValue = /* @__PURE__ */ new Map(), groupLength = group.length, dataLength = data.length, keyValues = new Array(groupLength), keyValue;
+			for (i = 0; i < groupLength; ++i) if (node = group[i]) {
+				keyValues[i] = keyValue = key.call(node, node.__data__, i, group) + "";
+				if (nodeByKeyValue.has(keyValue)) exit[i] = node;
+				else nodeByKeyValue.set(keyValue, node);
+			}
+			for (i = 0; i < dataLength; ++i) {
+				keyValue = key.call(parent, data[i], i, data) + "";
+				if (node = nodeByKeyValue.get(keyValue)) {
+					update[i] = node;
+					node.__data__ = data[i];
+					nodeByKeyValue.delete(keyValue);
+				} else enter[i] = new EnterNode(parent, data[i]);
+			}
+			for (i = 0; i < groupLength; ++i) if ((node = group[i]) && nodeByKeyValue.get(keyValues[i]) === node) exit[i] = node;
+		}
+		function datum(node) {
+			return node.__data__;
+		}
+		function data_default(value, key) {
+			if (!arguments.length) return Array.from(this, datum);
+			var bind = key ? bindKey : bindIndex, parents = this._parents, groups = this._groups;
+			if (typeof value !== "function") value = constant_default$3(value);
+			for (var m = groups.length, update = new Array(m), enter = new Array(m), exit = new Array(m), j = 0; j < m; ++j) {
+				var parent = parents[j], group = groups[j], groupLength = group.length, data = arraylike(value.call(parent, parent && parent.__data__, j, parents)), dataLength = data.length, enterGroup = enter[j] = new Array(dataLength), updateGroup = update[j] = new Array(dataLength);
+				bind(parent, group, enterGroup, updateGroup, exit[j] = new Array(groupLength), data, key);
+				for (var i0 = 0, i1 = 0, previous, next; i0 < dataLength; ++i0) if (previous = enterGroup[i0]) {
+					if (i0 >= i1) i1 = i0 + 1;
+					while (!(next = updateGroup[i1]) && ++i1 < dataLength);
+					previous._next = next || null;
+				}
+			}
+			update = new Selection$1(update, parents);
+			update._enter = enter;
+			update._exit = exit;
+			return update;
+		}
+		function arraylike(data) {
+			return typeof data === "object" && "length" in data ? data : Array.from(data);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/exit.js
+		function exit_default() {
+			return new Selection$1(this._exit || this._groups.map(sparse_default), this._parents);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/join.js
+		function join_default(onenter, onupdate, onexit) {
+			var enter = this.enter(), update = this, exit = this.exit();
+			if (typeof onenter === "function") {
+				enter = onenter(enter);
+				if (enter) enter = enter.selection();
+			} else enter = enter.append(onenter + "");
+			if (onupdate != null) {
+				update = onupdate(update);
+				if (update) update = update.selection();
+			}
+			if (onexit == null) exit.remove();
+			else onexit(exit);
+			return enter && update ? enter.merge(update).order() : update;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/merge.js
+		function merge_default$1(context) {
+			var selection = context.selection ? context.selection() : context;
+			for (var groups0 = this._groups, groups1 = selection._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge = merges[j] = new Array(n), node, i = 0; i < n; ++i) if (node = group0[i] || group1[i]) merge[i] = node;
+			for (; j < m0; ++j) merges[j] = groups0[j];
+			return new Selection$1(merges, this._parents);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/order.js
+		function order_default() {
+			for (var groups = this._groups, j = -1, m = groups.length; ++j < m;) for (var group = groups[j], i = group.length - 1, next = group[i], node; --i >= 0;) if (node = group[i]) {
+				if (next && node.compareDocumentPosition(next) ^ 4) next.parentNode.insertBefore(node, next);
+				next = node;
+			}
+			return this;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/sort.js
+		function sort_default(compare) {
+			if (!compare) compare = ascending;
+			function compareNode(a, b) {
+				return a && b ? compare(a.__data__, b.__data__) : !a - !b;
+			}
+			for (var groups = this._groups, m = groups.length, sortgroups = new Array(m), j = 0; j < m; ++j) {
+				for (var group = groups[j], n = group.length, sortgroup = sortgroups[j] = new Array(n), node, i = 0; i < n; ++i) if (node = group[i]) sortgroup[i] = node;
+				sortgroup.sort(compareNode);
+			}
+			return new Selection$1(sortgroups, this._parents).order();
+		}
+		function ascending(a, b) {
+			return a < b ? -1 : a > b ? 1 : a >= b ? 0 : NaN;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/call.js
+		function call_default() {
+			var callback = arguments[0];
+			arguments[0] = this;
+			callback.apply(null, arguments);
+			return this;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/nodes.js
+		function nodes_default() {
+			return Array.from(this);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/node.js
+		function node_default() {
+			for (var groups = this._groups, j = 0, m = groups.length; j < m; ++j) for (var group = groups[j], i = 0, n = group.length; i < n; ++i) {
+				var node = group[i];
+				if (node) return node;
+			}
+			return null;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/size.js
+		function size_default() {
+			let size = 0;
+			for (const node of this) ++size;
+			return size;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/empty.js
+		function empty_default() {
+			return !this.node();
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/each.js
+		function each_default(callback) {
+			for (var groups = this._groups, j = 0, m = groups.length; j < m; ++j) for (var group = groups[j], i = 0, n = group.length, node; i < n; ++i) if (node = group[i]) callback.call(node, node.__data__, i, group);
+			return this;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/attr.js
+		function attrRemove$1(name) {
+			return function() {
+				this.removeAttribute(name);
+			};
+		}
+		function attrRemoveNS$1(fullname) {
+			return function() {
+				this.removeAttributeNS(fullname.space, fullname.local);
+			};
+		}
+		function attrConstant$1(name, value) {
+			return function() {
+				this.setAttribute(name, value);
+			};
+		}
+		function attrConstantNS$1(fullname, value) {
+			return function() {
+				this.setAttributeNS(fullname.space, fullname.local, value);
+			};
+		}
+		function attrFunction$1(name, value) {
+			return function() {
+				var v = value.apply(this, arguments);
+				if (v == null) this.removeAttribute(name);
+				else this.setAttribute(name, v);
+			};
+		}
+		function attrFunctionNS$1(fullname, value) {
+			return function() {
+				var v = value.apply(this, arguments);
+				if (v == null) this.removeAttributeNS(fullname.space, fullname.local);
+				else this.setAttributeNS(fullname.space, fullname.local, v);
+			};
+		}
+		function attr_default$1(name, value) {
+			var fullname = namespace_default(name);
+			if (arguments.length < 2) {
+				var node = this.node();
+				return fullname.local ? node.getAttributeNS(fullname.space, fullname.local) : node.getAttribute(fullname);
+			}
+			return this.each((value == null ? fullname.local ? attrRemoveNS$1 : attrRemove$1 : typeof value === "function" ? fullname.local ? attrFunctionNS$1 : attrFunction$1 : fullname.local ? attrConstantNS$1 : attrConstant$1)(fullname, value));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/window.js
+		function window_default(node) {
+			return node.ownerDocument && node.ownerDocument.defaultView || node.document && node || node.defaultView;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/style.js
+		function styleRemove$1(name) {
+			return function() {
+				this.style.removeProperty(name);
+			};
+		}
+		function styleConstant$1(name, value, priority) {
+			return function() {
+				this.style.setProperty(name, value, priority);
+			};
+		}
+		function styleFunction$1(name, value, priority) {
+			return function() {
+				var v = value.apply(this, arguments);
+				if (v == null) this.style.removeProperty(name);
+				else this.style.setProperty(name, v, priority);
+			};
+		}
+		function style_default$1(name, value, priority) {
+			return arguments.length > 1 ? this.each((value == null ? styleRemove$1 : typeof value === "function" ? styleFunction$1 : styleConstant$1)(name, value, priority == null ? "" : priority)) : styleValue(this.node(), name);
+		}
+		function styleValue(node, name) {
+			return node.style.getPropertyValue(name) || window_default(node).getComputedStyle(node, null).getPropertyValue(name);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/property.js
+		function propertyRemove(name) {
+			return function() {
+				delete this[name];
+			};
+		}
+		function propertyConstant(name, value) {
+			return function() {
+				this[name] = value;
+			};
+		}
+		function propertyFunction(name, value) {
+			return function() {
+				var v = value.apply(this, arguments);
+				if (v == null) delete this[name];
+				else this[name] = v;
+			};
+		}
+		function property_default(name, value) {
+			return arguments.length > 1 ? this.each((value == null ? propertyRemove : typeof value === "function" ? propertyFunction : propertyConstant)(name, value)) : this.node()[name];
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/classed.js
+		function classArray(string) {
+			return string.trim().split(/^|\s+/);
+		}
+		function classList(node) {
+			return node.classList || new ClassList(node);
+		}
+		function ClassList(node) {
+			this._node = node;
+			this._names = classArray(node.getAttribute("class") || "");
+		}
+		ClassList.prototype = {
+			add: function(name) {
+				if (this._names.indexOf(name) < 0) {
+					this._names.push(name);
+					this._node.setAttribute("class", this._names.join(" "));
+				}
+			},
+			remove: function(name) {
+				var i = this._names.indexOf(name);
+				if (i >= 0) {
+					this._names.splice(i, 1);
+					this._node.setAttribute("class", this._names.join(" "));
+				}
+			},
+			contains: function(name) {
+				return this._names.indexOf(name) >= 0;
+			}
+		};
+		function classedAdd(node, names) {
+			var list = classList(node), i = -1, n = names.length;
+			while (++i < n) list.add(names[i]);
+		}
+		function classedRemove(node, names) {
+			var list = classList(node), i = -1, n = names.length;
+			while (++i < n) list.remove(names[i]);
+		}
+		function classedTrue(names) {
+			return function() {
+				classedAdd(this, names);
+			};
+		}
+		function classedFalse(names) {
+			return function() {
+				classedRemove(this, names);
+			};
+		}
+		function classedFunction(names, value) {
+			return function() {
+				(value.apply(this, arguments) ? classedAdd : classedRemove)(this, names);
+			};
+		}
+		function classed_default(name, value) {
+			var names = classArray(name + "");
+			if (arguments.length < 2) {
+				var list = classList(this.node()), i = -1, n = names.length;
+				while (++i < n) if (!list.contains(names[i])) return false;
+				return true;
+			}
+			return this.each((typeof value === "function" ? classedFunction : value ? classedTrue : classedFalse)(names, value));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/text.js
+		function textRemove() {
+			this.textContent = "";
+		}
+		function textConstant$1(value) {
+			return function() {
+				this.textContent = value;
+			};
+		}
+		function textFunction$1(value) {
+			return function() {
+				var v = value.apply(this, arguments);
+				this.textContent = v == null ? "" : v;
+			};
+		}
+		function text_default$1(value) {
+			return arguments.length ? this.each(value == null ? textRemove : (typeof value === "function" ? textFunction$1 : textConstant$1)(value)) : this.node().textContent;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/html.js
+		function htmlRemove() {
+			this.innerHTML = "";
+		}
+		function htmlConstant(value) {
+			return function() {
+				this.innerHTML = value;
+			};
+		}
+		function htmlFunction(value) {
+			return function() {
+				var v = value.apply(this, arguments);
+				this.innerHTML = v == null ? "" : v;
+			};
+		}
+		function html_default(value) {
+			return arguments.length ? this.each(value == null ? htmlRemove : (typeof value === "function" ? htmlFunction : htmlConstant)(value)) : this.node().innerHTML;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/raise.js
+		function raise() {
+			if (this.nextSibling) this.parentNode.appendChild(this);
+		}
+		function raise_default() {
+			return this.each(raise);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/lower.js
+		function lower() {
+			if (this.previousSibling) this.parentNode.insertBefore(this, this.parentNode.firstChild);
+		}
+		function lower_default() {
+			return this.each(lower);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/append.js
+		function append_default(name) {
+			var create = typeof name === "function" ? name : creator_default(name);
+			return this.select(function() {
+				return this.appendChild(create.apply(this, arguments));
+			});
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/insert.js
+		function constantNull() {
+			return null;
+		}
+		function insert_default(name, before) {
+			var create = typeof name === "function" ? name : creator_default(name), select = before == null ? constantNull : typeof before === "function" ? before : selector_default(before);
+			return this.select(function() {
+				return this.insertBefore(create.apply(this, arguments), select.apply(this, arguments) || null);
+			});
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/remove.js
+		function remove() {
+			var parent = this.parentNode;
+			if (parent) parent.removeChild(this);
+		}
+		function remove_default$1() {
+			return this.each(remove);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/clone.js
+		function selection_cloneShallow() {
+			var clone = this.cloneNode(false), parent = this.parentNode;
+			return parent ? parent.insertBefore(clone, this.nextSibling) : clone;
+		}
+		function selection_cloneDeep() {
+			var clone = this.cloneNode(true), parent = this.parentNode;
+			return parent ? parent.insertBefore(clone, this.nextSibling) : clone;
+		}
+		function clone_default(deep) {
+			return this.select(deep ? selection_cloneDeep : selection_cloneShallow);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/datum.js
+		function datum_default(value) {
+			return arguments.length ? this.property("__data__", value) : this.node().__data__;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/on.js
+		function contextListener(listener) {
+			return function(event) {
+				listener.call(this, event, this.__data__);
+			};
+		}
+		function parseTypenames(typenames) {
+			return typenames.trim().split(/^|\s+/).map(function(t) {
+				var name = "", i = t.indexOf(".");
+				if (i >= 0) name = t.slice(i + 1), t = t.slice(0, i);
+				return {
+					type: t,
+					name
+				};
+			});
+		}
+		function onRemove(typename) {
+			return function() {
+				var on = this.__on;
+				if (!on) return;
+				for (var j = 0, i = -1, m = on.length, o; j < m; ++j) if (o = on[j], (!typename.type || o.type === typename.type) && o.name === typename.name) this.removeEventListener(o.type, o.listener, o.options);
+				else on[++i] = o;
+				if (++i) on.length = i;
+				else delete this.__on;
+			};
+		}
+		function onAdd(typename, value, options) {
+			return function() {
+				var on = this.__on, o, listener = contextListener(value);
+				if (on) {
+					for (var j = 0, m = on.length; j < m; ++j) if ((o = on[j]).type === typename.type && o.name === typename.name) {
+						this.removeEventListener(o.type, o.listener, o.options);
+						this.addEventListener(o.type, o.listener = listener, o.options = options);
+						o.value = value;
+						return;
+					}
+				}
+				this.addEventListener(typename.type, listener, options);
+				o = {
+					type: typename.type,
+					name: typename.name,
+					value,
+					listener,
+					options
+				};
+				if (!on) this.__on = [o];
+				else on.push(o);
+			};
+		}
+		function on_default$1(typename, value, options) {
+			var typenames = parseTypenames(typename + ""), i, n = typenames.length, t;
+			if (arguments.length < 2) {
+				var on = this.node().__on;
+				if (on) {
+					for (var j = 0, m = on.length, o; j < m; ++j) for (i = 0, o = on[j]; i < n; ++i) if ((t = typenames[i]).type === o.type && t.name === o.name) return o.value;
+				}
+				return;
+			}
+			on = value ? onAdd : onRemove;
+			for (i = 0; i < n; ++i) this.each(on(typenames[i], value, options));
+			return this;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/dispatch.js
+		function dispatchEvent(node, type, params) {
+			var window = window_default(node), event = window.CustomEvent;
+			if (typeof event === "function") event = new event(type, params);
+			else {
+				event = window.document.createEvent("Event");
+				if (params) event.initEvent(type, params.bubbles, params.cancelable), event.detail = params.detail;
+				else event.initEvent(type, false, false);
+			}
+			node.dispatchEvent(event);
+		}
+		function dispatchConstant(type, params) {
+			return function() {
+				return dispatchEvent(this, type, params);
+			};
+		}
+		function dispatchFunction(type, params) {
+			return function() {
+				return dispatchEvent(this, type, params.apply(this, arguments));
+			};
+		}
+		function dispatch_default(type, params) {
+			return this.each((typeof params === "function" ? dispatchFunction : dispatchConstant)(type, params));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/iterator.js
+		function* iterator_default() {
+			for (var groups = this._groups, j = 0, m = groups.length; j < m; ++j) for (var group = groups[j], i = 0, n = group.length, node; i < n; ++i) if (node = group[i]) yield node;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/selection/index.js
+		var root = [null];
+		function Selection$1(groups, parents) {
+			this._groups = groups;
+			this._parents = parents;
+		}
+		function selection() {
+			return new Selection$1([[document.documentElement]], root);
+		}
+		function selection_selection() {
+			return this;
+		}
+		Selection$1.prototype = selection.prototype = {
+			constructor: Selection$1,
+			select: select_default$2,
+			selectAll: selectAll_default$1,
+			selectChild: selectChild_default,
+			selectChildren: selectChildren_default,
+			filter: filter_default$1,
+			data: data_default,
+			enter: enter_default,
+			exit: exit_default,
+			join: join_default,
+			merge: merge_default$1,
+			selection: selection_selection,
+			order: order_default,
+			sort: sort_default,
+			call: call_default,
+			nodes: nodes_default,
+			node: node_default,
+			size: size_default,
+			empty: empty_default,
+			each: each_default,
+			attr: attr_default$1,
+			style: style_default$1,
+			property: property_default,
+			classed: classed_default,
+			text: text_default$1,
+			html: html_default,
+			raise: raise_default,
+			lower: lower_default,
+			append: append_default,
+			insert: insert_default,
+			remove: remove_default$1,
+			clone: clone_default,
+			datum: datum_default,
+			on: on_default$1,
+			dispatch: dispatch_default,
+			[Symbol.iterator]: iterator_default
+		};
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/select.js
+		function select_default$1(selector) {
+			return typeof selector === "string" ? new Selection$1([[document.querySelector(selector)]], [document.documentElement]) : new Selection$1([[selector]], root);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/sourceEvent.js
+		function sourceEvent_default(event) {
+			let sourceEvent;
+			while (sourceEvent = event.sourceEvent) event = sourceEvent;
+			return event;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-selection@3.0.0/node_modules/d3-selection/src/pointer.js
+		function pointer_default(event, node) {
+			event = sourceEvent_default(event);
+			if (node === void 0) node = event.currentTarget;
+			if (node) {
+				var svg = node.ownerSVGElement || node;
+				if (svg.createSVGPoint) {
+					var point = svg.createSVGPoint();
+					point.x = event.clientX, point.y = event.clientY;
+					point = point.matrixTransform(node.getScreenCTM().inverse());
+					return [point.x, point.y];
+				}
+				if (node.getBoundingClientRect) {
+					var rect = node.getBoundingClientRect();
+					return [event.clientX - rect.left - node.clientLeft, event.clientY - rect.top - node.clientTop];
+				}
+			}
+			return [event.pageX, event.pageY];
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-drag@3.0.0/node_modules/d3-drag/src/noevent.js
+		const nonpassive = { passive: false };
+		const nonpassivecapture = {
+			capture: true,
+			passive: false
+		};
+		function nopropagation$1(event) {
+			event.stopImmediatePropagation();
+		}
+		function noevent_default$1(event) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-drag@3.0.0/node_modules/d3-drag/src/nodrag.js
+		function nodrag_default(view) {
+			var root = view.document.documentElement, selection = select_default$1(view).on("dragstart.drag", noevent_default$1, nonpassivecapture);
+			if ("onselectstart" in root) selection.on("selectstart.drag", noevent_default$1, nonpassivecapture);
+			else {
+				root.__noselect = root.style.MozUserSelect;
+				root.style.MozUserSelect = "none";
+			}
+		}
+		function yesdrag(view, noclick) {
+			var root = view.document.documentElement, selection = select_default$1(view).on("dragstart.drag", null);
+			if (noclick) {
+				selection.on("click.drag", noevent_default$1, nonpassivecapture);
+				setTimeout(function() {
+					selection.on("click.drag", null);
+				}, 0);
+			}
+			if ("onselectstart" in root) selection.on("selectstart.drag", null);
+			else {
+				root.style.MozUserSelect = root.__noselect;
+				delete root.__noselect;
+			}
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-drag@3.0.0/node_modules/d3-drag/src/constant.js
+		var constant_default$2 = (x) => () => x;
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-drag@3.0.0/node_modules/d3-drag/src/event.js
+		function DragEvent(type, { sourceEvent, subject, target, identifier, active, x, y, dx, dy, dispatch }) {
+			Object.defineProperties(this, {
+				type: {
+					value: type,
+					enumerable: true,
+					configurable: true
+				},
+				sourceEvent: {
+					value: sourceEvent,
+					enumerable: true,
+					configurable: true
+				},
+				subject: {
+					value: subject,
+					enumerable: true,
+					configurable: true
+				},
+				target: {
+					value: target,
+					enumerable: true,
+					configurable: true
+				},
+				identifier: {
+					value: identifier,
+					enumerable: true,
+					configurable: true
+				},
+				active: {
+					value: active,
+					enumerable: true,
+					configurable: true
+				},
+				x: {
+					value: x,
+					enumerable: true,
+					configurable: true
+				},
+				y: {
+					value: y,
+					enumerable: true,
+					configurable: true
+				},
+				dx: {
+					value: dx,
+					enumerable: true,
+					configurable: true
+				},
+				dy: {
+					value: dy,
+					enumerable: true,
+					configurable: true
+				},
+				_: { value: dispatch }
+			});
+		}
+		DragEvent.prototype.on = function() {
+			var value = this._.on.apply(this._, arguments);
+			return value === this._ ? this : value;
+		};
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-drag@3.0.0/node_modules/d3-drag/src/drag.js
+		function defaultFilter$1(event) {
+			return !event.ctrlKey && !event.button;
+		}
+		function defaultContainer() {
+			return this.parentNode;
+		}
+		function defaultSubject(event, d) {
+			return d == null ? {
+				x: event.x,
+				y: event.y
+			} : d;
+		}
+		function defaultTouchable$1() {
+			return navigator.maxTouchPoints || "ontouchstart" in this;
+		}
+		function drag_default() {
+			var filter = defaultFilter$1, container = defaultContainer, subject = defaultSubject, touchable = defaultTouchable$1, gestures = {}, listeners = dispatch("start", "drag", "end"), active = 0, mousedownx, mousedowny, mousemoving, touchending, clickDistance2 = 0;
+			function drag(selection) {
+				selection.on("mousedown.drag", mousedowned).filter(touchable).on("touchstart.drag", touchstarted).on("touchmove.drag", touchmoved, nonpassive).on("touchend.drag touchcancel.drag", touchended).style("touch-action", "none").style("-webkit-tap-highlight-color", "rgba(0,0,0,0)");
+			}
+			function mousedowned(event, d) {
+				if (touchending || !filter.call(this, event, d)) return;
+				var gesture = beforestart(this, container.call(this, event, d), event, d, "mouse");
+				if (!gesture) return;
+				select_default$1(event.view).on("mousemove.drag", mousemoved, nonpassivecapture).on("mouseup.drag", mouseupped, nonpassivecapture);
+				nodrag_default(event.view);
+				nopropagation$1(event);
+				mousemoving = false;
+				mousedownx = event.clientX;
+				mousedowny = event.clientY;
+				gesture("start", event);
+			}
+			function mousemoved(event) {
+				noevent_default$1(event);
+				if (!mousemoving) {
+					var dx = event.clientX - mousedownx, dy = event.clientY - mousedowny;
+					mousemoving = dx * dx + dy * dy > clickDistance2;
+				}
+				gestures.mouse("drag", event);
+			}
+			function mouseupped(event) {
+				select_default$1(event.view).on("mousemove.drag mouseup.drag", null);
+				yesdrag(event.view, mousemoving);
+				noevent_default$1(event);
+				gestures.mouse("end", event);
+			}
+			function touchstarted(event, d) {
+				if (!filter.call(this, event, d)) return;
+				var touches = event.changedTouches, c = container.call(this, event, d), n = touches.length, i, gesture;
+				for (i = 0; i < n; ++i) if (gesture = beforestart(this, c, event, d, touches[i].identifier, touches[i])) {
+					nopropagation$1(event);
+					gesture("start", event, touches[i]);
+				}
+			}
+			function touchmoved(event) {
+				var touches = event.changedTouches, n = touches.length, i, gesture;
+				for (i = 0; i < n; ++i) if (gesture = gestures[touches[i].identifier]) {
+					noevent_default$1(event);
+					gesture("drag", event, touches[i]);
+				}
+			}
+			function touchended(event) {
+				var touches = event.changedTouches, n = touches.length, i, gesture;
+				if (touchending) clearTimeout(touchending);
+				touchending = setTimeout(function() {
+					touchending = null;
+				}, 500);
+				for (i = 0; i < n; ++i) if (gesture = gestures[touches[i].identifier]) {
+					nopropagation$1(event);
+					gesture("end", event, touches[i]);
+				}
+			}
+			function beforestart(that, container, event, d, identifier, touch) {
+				var dispatch = listeners.copy(), p = pointer_default(touch || event, container), dx, dy, s;
+				if ((s = subject.call(that, new DragEvent("beforestart", {
+					sourceEvent: event,
+					target: drag,
+					identifier,
+					active,
+					x: p[0],
+					y: p[1],
+					dx: 0,
+					dy: 0,
+					dispatch
+				}), d)) == null) return;
+				dx = s.x - p[0] || 0;
+				dy = s.y - p[1] || 0;
+				return function gesture(type, event, touch) {
+					var p0 = p, n;
+					switch (type) {
+						case "start":
+							gestures[identifier] = gesture, n = active++;
+							break;
+						case "end": delete gestures[identifier], --active;
+						case "drag": p = pointer_default(touch || event, container), n = active;
+					}
+					dispatch.call(type, that, new DragEvent(type, {
+						sourceEvent: event,
+						subject: s,
+						target: drag,
+						identifier,
+						active: n,
+						x: p[0] + dx,
+						y: p[1] + dy,
+						dx: p[0] - p0[0],
+						dy: p[1] - p0[1],
+						dispatch
+					}), d);
+				};
+			}
+			drag.filter = function(_) {
+				return arguments.length ? (filter = typeof _ === "function" ? _ : constant_default$2(!!_), drag) : filter;
+			};
+			drag.container = function(_) {
+				return arguments.length ? (container = typeof _ === "function" ? _ : constant_default$2(_), drag) : container;
+			};
+			drag.subject = function(_) {
+				return arguments.length ? (subject = typeof _ === "function" ? _ : constant_default$2(_), drag) : subject;
+			};
+			drag.touchable = function(_) {
+				return arguments.length ? (touchable = typeof _ === "function" ? _ : constant_default$2(!!_), drag) : touchable;
+			};
+			drag.on = function() {
+				var value = listeners.on.apply(listeners, arguments);
+				return value === listeners ? drag : value;
+			};
+			drag.clickDistance = function(_) {
+				return arguments.length ? (clickDistance2 = (_ = +_) * _, drag) : Math.sqrt(clickDistance2);
+			};
+			return drag;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-color@3.1.0/node_modules/d3-color/src/define.js
+		function define_default(constructor, factory, prototype) {
+			constructor.prototype = factory.prototype = prototype;
+			prototype.constructor = constructor;
+		}
+		function extend(parent, definition) {
+			var prototype = Object.create(parent.prototype);
+			for (var key in definition) prototype[key] = definition[key];
+			return prototype;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-color@3.1.0/node_modules/d3-color/src/color.js
+		function Color() {}
+		var darker = .7;
+		var brighter = 1 / darker;
+		var reI = "\\s*([+-]?\\d+)\\s*";
+		var reN = "\\s*([+-]?(?:\\d*\\.)?\\d+(?:[eE][+-]?\\d+)?)\\s*";
+		var reP = "\\s*([+-]?(?:\\d*\\.)?\\d+(?:[eE][+-]?\\d+)?)%\\s*";
+		var reHex = /^#([0-9a-f]{3,8})$/;
+		var reRgbInteger = new RegExp(`^rgb\\(${reI},${reI},${reI}\\)$`);
+		var reRgbPercent = new RegExp(`^rgb\\(${reP},${reP},${reP}\\)$`);
+		var reRgbaInteger = new RegExp(`^rgba\\(${reI},${reI},${reI},${reN}\\)$`);
+		var reRgbaPercent = new RegExp(`^rgba\\(${reP},${reP},${reP},${reN}\\)$`);
+		var reHslPercent = new RegExp(`^hsl\\(${reN},${reP},${reP}\\)$`);
+		var reHslaPercent = new RegExp(`^hsla\\(${reN},${reP},${reP},${reN}\\)$`);
+		var named = {
+			aliceblue: 15792383,
+			antiquewhite: 16444375,
+			aqua: 65535,
+			aquamarine: 8388564,
+			azure: 15794175,
+			beige: 16119260,
+			bisque: 16770244,
+			black: 0,
+			blanchedalmond: 16772045,
+			blue: 255,
+			blueviolet: 9055202,
+			brown: 10824234,
+			burlywood: 14596231,
+			cadetblue: 6266528,
+			chartreuse: 8388352,
+			chocolate: 13789470,
+			coral: 16744272,
+			cornflowerblue: 6591981,
+			cornsilk: 16775388,
+			crimson: 14423100,
+			cyan: 65535,
+			darkblue: 139,
+			darkcyan: 35723,
+			darkgoldenrod: 12092939,
+			darkgray: 11119017,
+			darkgreen: 25600,
+			darkgrey: 11119017,
+			darkkhaki: 12433259,
+			darkmagenta: 9109643,
+			darkolivegreen: 5597999,
+			darkorange: 16747520,
+			darkorchid: 10040012,
+			darkred: 9109504,
+			darksalmon: 15308410,
+			darkseagreen: 9419919,
+			darkslateblue: 4734347,
+			darkslategray: 3100495,
+			darkslategrey: 3100495,
+			darkturquoise: 52945,
+			darkviolet: 9699539,
+			deeppink: 16716947,
+			deepskyblue: 49151,
+			dimgray: 6908265,
+			dimgrey: 6908265,
+			dodgerblue: 2003199,
+			firebrick: 11674146,
+			floralwhite: 16775920,
+			forestgreen: 2263842,
+			fuchsia: 16711935,
+			gainsboro: 14474460,
+			ghostwhite: 16316671,
+			gold: 16766720,
+			goldenrod: 14329120,
+			gray: 8421504,
+			green: 32768,
+			greenyellow: 11403055,
+			grey: 8421504,
+			honeydew: 15794160,
+			hotpink: 16738740,
+			indianred: 13458524,
+			indigo: 4915330,
+			ivory: 16777200,
+			khaki: 15787660,
+			lavender: 15132410,
+			lavenderblush: 16773365,
+			lawngreen: 8190976,
+			lemonchiffon: 16775885,
+			lightblue: 11393254,
+			lightcoral: 15761536,
+			lightcyan: 14745599,
+			lightgoldenrodyellow: 16448210,
+			lightgray: 13882323,
+			lightgreen: 9498256,
+			lightgrey: 13882323,
+			lightpink: 16758465,
+			lightsalmon: 16752762,
+			lightseagreen: 2142890,
+			lightskyblue: 8900346,
+			lightslategray: 7833753,
+			lightslategrey: 7833753,
+			lightsteelblue: 11584734,
+			lightyellow: 16777184,
+			lime: 65280,
+			limegreen: 3329330,
+			linen: 16445670,
+			magenta: 16711935,
+			maroon: 8388608,
+			mediumaquamarine: 6737322,
+			mediumblue: 205,
+			mediumorchid: 12211667,
+			mediumpurple: 9662683,
+			mediumseagreen: 3978097,
+			mediumslateblue: 8087790,
+			mediumspringgreen: 64154,
+			mediumturquoise: 4772300,
+			mediumvioletred: 13047173,
+			midnightblue: 1644912,
+			mintcream: 16121850,
+			mistyrose: 16770273,
+			moccasin: 16770229,
+			navajowhite: 16768685,
+			navy: 128,
+			oldlace: 16643558,
+			olive: 8421376,
+			olivedrab: 7048739,
+			orange: 16753920,
+			orangered: 16729344,
+			orchid: 14315734,
+			palegoldenrod: 15657130,
+			palegreen: 10025880,
+			paleturquoise: 11529966,
+			palevioletred: 14381203,
+			papayawhip: 16773077,
+			peachpuff: 16767673,
+			peru: 13468991,
+			pink: 16761035,
+			plum: 14524637,
+			powderblue: 11591910,
+			purple: 8388736,
+			rebeccapurple: 6697881,
+			red: 16711680,
+			rosybrown: 12357519,
+			royalblue: 4286945,
+			saddlebrown: 9127187,
+			salmon: 16416882,
+			sandybrown: 16032864,
+			seagreen: 3050327,
+			seashell: 16774638,
+			sienna: 10506797,
+			silver: 12632256,
+			skyblue: 8900331,
+			slateblue: 6970061,
+			slategray: 7372944,
+			slategrey: 7372944,
+			snow: 16775930,
+			springgreen: 65407,
+			steelblue: 4620980,
+			tan: 13808780,
+			teal: 32896,
+			thistle: 14204888,
+			tomato: 16737095,
+			turquoise: 4251856,
+			violet: 15631086,
+			wheat: 16113331,
+			white: 16777215,
+			whitesmoke: 16119285,
+			yellow: 16776960,
+			yellowgreen: 10145074
+		};
+		define_default(Color, color, {
+			copy(channels) {
+				return Object.assign(new this.constructor(), this, channels);
+			},
+			displayable() {
+				return this.rgb().displayable();
+			},
+			hex: color_formatHex,
+			formatHex: color_formatHex,
+			formatHex8: color_formatHex8,
+			formatHsl: color_formatHsl,
+			formatRgb: color_formatRgb,
+			toString: color_formatRgb
+		});
+		function color_formatHex() {
+			return this.rgb().formatHex();
+		}
+		function color_formatHex8() {
+			return this.rgb().formatHex8();
+		}
+		function color_formatHsl() {
+			return hslConvert(this).formatHsl();
+		}
+		function color_formatRgb() {
+			return this.rgb().formatRgb();
+		}
+		function color(format) {
+			var m, l;
+			format = (format + "").trim().toLowerCase();
+			return (m = reHex.exec(format)) ? (l = m[1].length, m = parseInt(m[1], 16), l === 6 ? rgbn(m) : l === 3 ? new Rgb(m >> 8 & 15 | m >> 4 & 240, m >> 4 & 15 | m & 240, (m & 15) << 4 | m & 15, 1) : l === 8 ? rgba(m >> 24 & 255, m >> 16 & 255, m >> 8 & 255, (m & 255) / 255) : l === 4 ? rgba(m >> 12 & 15 | m >> 8 & 240, m >> 8 & 15 | m >> 4 & 240, m >> 4 & 15 | m & 240, ((m & 15) << 4 | m & 15) / 255) : null) : (m = reRgbInteger.exec(format)) ? new Rgb(m[1], m[2], m[3], 1) : (m = reRgbPercent.exec(format)) ? new Rgb(m[1] * 255 / 100, m[2] * 255 / 100, m[3] * 255 / 100, 1) : (m = reRgbaInteger.exec(format)) ? rgba(m[1], m[2], m[3], m[4]) : (m = reRgbaPercent.exec(format)) ? rgba(m[1] * 255 / 100, m[2] * 255 / 100, m[3] * 255 / 100, m[4]) : (m = reHslPercent.exec(format)) ? hsla(m[1], m[2] / 100, m[3] / 100, 1) : (m = reHslaPercent.exec(format)) ? hsla(m[1], m[2] / 100, m[3] / 100, m[4]) : named.hasOwnProperty(format) ? rgbn(named[format]) : format === "transparent" ? new Rgb(NaN, NaN, NaN, 0) : null;
+		}
+		function rgbn(n) {
+			return new Rgb(n >> 16 & 255, n >> 8 & 255, n & 255, 1);
+		}
+		function rgba(r, g, b, a) {
+			if (a <= 0) r = g = b = NaN;
+			return new Rgb(r, g, b, a);
+		}
+		function rgbConvert(o) {
+			if (!(o instanceof Color)) o = color(o);
+			if (!o) return new Rgb();
+			o = o.rgb();
+			return new Rgb(o.r, o.g, o.b, o.opacity);
+		}
+		function rgb(r, g, b, opacity) {
+			return arguments.length === 1 ? rgbConvert(r) : new Rgb(r, g, b, opacity == null ? 1 : opacity);
+		}
+		function Rgb(r, g, b, opacity) {
+			this.r = +r;
+			this.g = +g;
+			this.b = +b;
+			this.opacity = +opacity;
+		}
+		define_default(Rgb, rgb, extend(Color, {
+			brighter(k) {
+				k = k == null ? brighter : Math.pow(brighter, k);
+				return new Rgb(this.r * k, this.g * k, this.b * k, this.opacity);
+			},
+			darker(k) {
+				k = k == null ? darker : Math.pow(darker, k);
+				return new Rgb(this.r * k, this.g * k, this.b * k, this.opacity);
+			},
+			rgb() {
+				return this;
+			},
+			clamp() {
+				return new Rgb(clampi(this.r), clampi(this.g), clampi(this.b), clampa(this.opacity));
+			},
+			displayable() {
+				return -.5 <= this.r && this.r < 255.5 && -.5 <= this.g && this.g < 255.5 && -.5 <= this.b && this.b < 255.5 && 0 <= this.opacity && this.opacity <= 1;
+			},
+			hex: rgb_formatHex,
+			formatHex: rgb_formatHex,
+			formatHex8: rgb_formatHex8,
+			formatRgb: rgb_formatRgb,
+			toString: rgb_formatRgb
+		}));
+		function rgb_formatHex() {
+			return `#${hex(this.r)}${hex(this.g)}${hex(this.b)}`;
+		}
+		function rgb_formatHex8() {
+			return `#${hex(this.r)}${hex(this.g)}${hex(this.b)}${hex((isNaN(this.opacity) ? 1 : this.opacity) * 255)}`;
+		}
+		function rgb_formatRgb() {
+			const a = clampa(this.opacity);
+			return `${a === 1 ? "rgb(" : "rgba("}${clampi(this.r)}, ${clampi(this.g)}, ${clampi(this.b)}${a === 1 ? ")" : `, ${a})`}`;
+		}
+		function clampa(opacity) {
+			return isNaN(opacity) ? 1 : Math.max(0, Math.min(1, opacity));
+		}
+		function clampi(value) {
+			return Math.max(0, Math.min(255, Math.round(value) || 0));
+		}
+		function hex(value) {
+			value = clampi(value);
+			return (value < 16 ? "0" : "") + value.toString(16);
+		}
+		function hsla(h, s, l, a) {
+			if (a <= 0) h = s = l = NaN;
+			else if (l <= 0 || l >= 1) h = s = NaN;
+			else if (s <= 0) h = NaN;
+			return new Hsl(h, s, l, a);
+		}
+		function hslConvert(o) {
+			if (o instanceof Hsl) return new Hsl(o.h, o.s, o.l, o.opacity);
+			if (!(o instanceof Color)) o = color(o);
+			if (!o) return new Hsl();
+			if (o instanceof Hsl) return o;
+			o = o.rgb();
+			var r = o.r / 255, g = o.g / 255, b = o.b / 255, min = Math.min(r, g, b), max = Math.max(r, g, b), h = NaN, s = max - min, l = (max + min) / 2;
+			if (s) {
+				if (r === max) h = (g - b) / s + (g < b) * 6;
+				else if (g === max) h = (b - r) / s + 2;
+				else h = (r - g) / s + 4;
+				s /= l < .5 ? max + min : 2 - max - min;
+				h *= 60;
+			} else s = l > 0 && l < 1 ? 0 : h;
+			return new Hsl(h, s, l, o.opacity);
+		}
+		function hsl(h, s, l, opacity) {
+			return arguments.length === 1 ? hslConvert(h) : new Hsl(h, s, l, opacity == null ? 1 : opacity);
+		}
+		function Hsl(h, s, l, opacity) {
+			this.h = +h;
+			this.s = +s;
+			this.l = +l;
+			this.opacity = +opacity;
+		}
+		define_default(Hsl, hsl, extend(Color, {
+			brighter(k) {
+				k = k == null ? brighter : Math.pow(brighter, k);
+				return new Hsl(this.h, this.s, this.l * k, this.opacity);
+			},
+			darker(k) {
+				k = k == null ? darker : Math.pow(darker, k);
+				return new Hsl(this.h, this.s, this.l * k, this.opacity);
+			},
+			rgb() {
+				var h = this.h % 360 + (this.h < 0) * 360, s = isNaN(h) || isNaN(this.s) ? 0 : this.s, l = this.l, m2 = l + (l < .5 ? l : 1 - l) * s, m1 = 2 * l - m2;
+				return new Rgb(hsl2rgb(h >= 240 ? h - 240 : h + 120, m1, m2), hsl2rgb(h, m1, m2), hsl2rgb(h < 120 ? h + 240 : h - 120, m1, m2), this.opacity);
+			},
+			clamp() {
+				return new Hsl(clamph(this.h), clampt(this.s), clampt(this.l), clampa(this.opacity));
+			},
+			displayable() {
+				return (0 <= this.s && this.s <= 1 || isNaN(this.s)) && 0 <= this.l && this.l <= 1 && 0 <= this.opacity && this.opacity <= 1;
+			},
+			formatHsl() {
+				const a = clampa(this.opacity);
+				return `${a === 1 ? "hsl(" : "hsla("}${clamph(this.h)}, ${clampt(this.s) * 100}%, ${clampt(this.l) * 100}%${a === 1 ? ")" : `, ${a})`}`;
+			}
+		}));
+		function clamph(value) {
+			value = (value || 0) % 360;
+			return value < 0 ? value + 360 : value;
+		}
+		function clampt(value) {
+			return Math.max(0, Math.min(1, value || 0));
+		}
+		function hsl2rgb(h, m1, m2) {
+			return (h < 60 ? m1 + (m2 - m1) * h / 60 : h < 180 ? m2 : h < 240 ? m1 + (m2 - m1) * (240 - h) / 60 : m1) * 255;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/constant.js
+		var constant_default$1 = (x) => () => x;
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/color.js
+		function linear(a, d) {
+			return function(t) {
+				return a + t * d;
+			};
+		}
+		function exponential(a, b, y) {
+			return a = Math.pow(a, y), b = Math.pow(b, y) - a, y = 1 / y, function(t) {
+				return Math.pow(a + t * b, y);
+			};
+		}
+		function gamma(y) {
+			return (y = +y) === 1 ? nogamma : function(a, b) {
+				return b - a ? exponential(a, b, y) : constant_default$1(isNaN(a) ? b : a);
+			};
+		}
+		function nogamma(a, b) {
+			var d = b - a;
+			return d ? linear(a, d) : constant_default$1(isNaN(a) ? b : a);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/rgb.js
+		var rgb_default = (function rgbGamma(y) {
+			var color = gamma(y);
+			function rgb$1(start, end) {
+				var r = color((start = rgb(start)).r, (end = rgb(end)).r), g = color(start.g, end.g), b = color(start.b, end.b), opacity = nogamma(start.opacity, end.opacity);
+				return function(t) {
+					start.r = r(t);
+					start.g = g(t);
+					start.b = b(t);
+					start.opacity = opacity(t);
+					return start + "";
+				};
+			}
+			rgb$1.gamma = rgbGamma;
+			return rgb$1;
+		})(1);
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/numberArray.js
+		function numberArray_default(a, b) {
+			if (!b) b = [];
+			var n = a ? Math.min(b.length, a.length) : 0, c = b.slice(), i;
+			return function(t) {
+				for (i = 0; i < n; ++i) c[i] = a[i] * (1 - t) + b[i] * t;
+				return c;
+			};
+		}
+		function isNumberArray(x) {
+			return ArrayBuffer.isView(x) && !(x instanceof DataView);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/array.js
+		function genericArray(a, b) {
+			var nb = b ? b.length : 0, na = a ? Math.min(nb, a.length) : 0, x = new Array(na), c = new Array(nb), i;
+			for (i = 0; i < na; ++i) x[i] = value_default(a[i], b[i]);
+			for (; i < nb; ++i) c[i] = b[i];
+			return function(t) {
+				for (i = 0; i < na; ++i) c[i] = x[i](t);
+				return c;
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/date.js
+		function date_default(a, b) {
+			var d = /* @__PURE__ */ new Date();
+			return a = +a, b = +b, function(t) {
+				return d.setTime(a * (1 - t) + b * t), d;
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/number.js
+		function number_default(a, b) {
+			return a = +a, b = +b, function(t) {
+				return a * (1 - t) + b * t;
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/object.js
+		function object_default(a, b) {
+			var i = {}, c = {}, k;
+			if (a === null || typeof a !== "object") a = {};
+			if (b === null || typeof b !== "object") b = {};
+			for (k in b) if (k in a) i[k] = value_default(a[k], b[k]);
+			else c[k] = b[k];
+			return function(t) {
+				for (k in i) c[k] = i[k](t);
+				return c;
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/string.js
+		var reA = /[-+]?(?:\d+\.?\d*|\.?\d+)(?:[eE][-+]?\d+)?/g;
+		var reB = new RegExp(reA.source, "g");
+		function zero(b) {
+			return function() {
+				return b;
+			};
+		}
+		function one(b) {
+			return function(t) {
+				return b(t) + "";
+			};
+		}
+		function string_default(a, b) {
+			var bi = reA.lastIndex = reB.lastIndex = 0, am, bm, bs, i = -1, s = [], q = [];
+			a = a + "", b = b + "";
+			while ((am = reA.exec(a)) && (bm = reB.exec(b))) {
+				if ((bs = bm.index) > bi) {
+					bs = b.slice(bi, bs);
+					if (s[i]) s[i] += bs;
+					else s[++i] = bs;
+				}
+				if ((am = am[0]) === (bm = bm[0])) {
+					if (s[i]) s[i] += bm;
+					else s[++i] = bm;
+				} else {
+					s[++i] = null;
+					q.push({
+						i,
+						x: number_default(am, bm)
+					});
+				}
+				bi = reB.lastIndex;
+			}
+			if (bi < b.length) {
+				bs = b.slice(bi);
+				if (s[i]) s[i] += bs;
+				else s[++i] = bs;
+			}
+			return s.length < 2 ? q[0] ? one(q[0].x) : zero(b) : (b = q.length, function(t) {
+				for (var i = 0, o; i < b; ++i) s[(o = q[i]).i] = o.x(t);
+				return s.join("");
+			});
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/value.js
+		function value_default(a, b) {
+			var t = typeof b, c;
+			return b == null || t === "boolean" ? constant_default$1(b) : (t === "number" ? number_default : t === "string" ? (c = color(b)) ? (b = c, rgb_default) : string_default : b instanceof color ? rgb_default : b instanceof Date ? date_default : isNumberArray(b) ? numberArray_default : Array.isArray(b) ? genericArray : typeof b.valueOf !== "function" && typeof b.toString !== "function" || isNaN(b) ? object_default : number_default)(a, b);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/transform/decompose.js
+		var degrees = 180 / Math.PI;
+		var identity$1 = {
+			translateX: 0,
+			translateY: 0,
+			rotate: 0,
+			skewX: 0,
+			scaleX: 1,
+			scaleY: 1
+		};
+		function decompose_default(a, b, c, d, e, f) {
+			var scaleX, scaleY, skewX;
+			if (scaleX = Math.sqrt(a * a + b * b)) a /= scaleX, b /= scaleX;
+			if (skewX = a * c + b * d) c -= a * skewX, d -= b * skewX;
+			if (scaleY = Math.sqrt(c * c + d * d)) c /= scaleY, d /= scaleY, skewX /= scaleY;
+			if (a * d < b * c) a = -a, b = -b, skewX = -skewX, scaleX = -scaleX;
+			return {
+				translateX: e,
+				translateY: f,
+				rotate: Math.atan2(b, a) * degrees,
+				skewX: Math.atan(skewX) * degrees,
+				scaleX,
+				scaleY
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/transform/parse.js
+		var svgNode;
+		function parseCss(value) {
+			const m = new (typeof DOMMatrix === "function" ? DOMMatrix : WebKitCSSMatrix)(value + "");
+			return m.isIdentity ? identity$1 : decompose_default(m.a, m.b, m.c, m.d, m.e, m.f);
+		}
+		function parseSvg(value) {
+			if (value == null) return identity$1;
+			if (!svgNode) svgNode = document.createElementNS("http://www.w3.org/2000/svg", "g");
+			svgNode.setAttribute("transform", value);
+			if (!(value = svgNode.transform.baseVal.consolidate())) return identity$1;
+			value = value.matrix;
+			return decompose_default(value.a, value.b, value.c, value.d, value.e, value.f);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/transform/index.js
+		function interpolateTransform(parse, pxComma, pxParen, degParen) {
+			function pop(s) {
+				return s.length ? s.pop() + " " : "";
+			}
+			function translate(xa, ya, xb, yb, s, q) {
+				if (xa !== xb || ya !== yb) {
+					var i = s.push("translate(", null, pxComma, null, pxParen);
+					q.push({
+						i: i - 4,
+						x: number_default(xa, xb)
+					}, {
+						i: i - 2,
+						x: number_default(ya, yb)
+					});
+				} else if (xb || yb) s.push("translate(" + xb + pxComma + yb + pxParen);
+			}
+			function rotate(a, b, s, q) {
+				if (a !== b) {
+					if (a - b > 180) b += 360;
+					else if (b - a > 180) a += 360;
+					q.push({
+						i: s.push(pop(s) + "rotate(", null, degParen) - 2,
+						x: number_default(a, b)
+					});
+				} else if (b) s.push(pop(s) + "rotate(" + b + degParen);
+			}
+			function skewX(a, b, s, q) {
+				if (a !== b) q.push({
+					i: s.push(pop(s) + "skewX(", null, degParen) - 2,
+					x: number_default(a, b)
+				});
+				else if (b) s.push(pop(s) + "skewX(" + b + degParen);
+			}
+			function scale(xa, ya, xb, yb, s, q) {
+				if (xa !== xb || ya !== yb) {
+					var i = s.push(pop(s) + "scale(", null, ",", null, ")");
+					q.push({
+						i: i - 4,
+						x: number_default(xa, xb)
+					}, {
+						i: i - 2,
+						x: number_default(ya, yb)
+					});
+				} else if (xb !== 1 || yb !== 1) s.push(pop(s) + "scale(" + xb + "," + yb + ")");
+			}
+			return function(a, b) {
+				var s = [], q = [];
+				a = parse(a), b = parse(b);
+				translate(a.translateX, a.translateY, b.translateX, b.translateY, s, q);
+				rotate(a.rotate, b.rotate, s, q);
+				skewX(a.skewX, b.skewX, s, q);
+				scale(a.scaleX, a.scaleY, b.scaleX, b.scaleY, s, q);
+				a = b = null;
+				return function(t) {
+					var i = -1, n = q.length, o;
+					while (++i < n) s[(o = q[i]).i] = o.x(t);
+					return s.join("");
+				};
+			};
+		}
+		var interpolateTransformCss = interpolateTransform(parseCss, "px, ", "px)", "deg)");
+		var interpolateTransformSvg = interpolateTransform(parseSvg, ", ", ")", ")");
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-interpolate@3.0.1/node_modules/d3-interpolate/src/zoom.js
+		var epsilon2 = 1e-12;
+		function cosh(x) {
+			return ((x = Math.exp(x)) + 1 / x) / 2;
+		}
+		function sinh(x) {
+			return ((x = Math.exp(x)) - 1 / x) / 2;
+		}
+		function tanh(x) {
+			return ((x = Math.exp(2 * x)) - 1) / (x + 1);
+		}
+		var zoom_default$1 = (function zoomRho(rho, rho2, rho4) {
+			function zoom(p0, p1) {
+				var ux0 = p0[0], uy0 = p0[1], w0 = p0[2], ux1 = p1[0], uy1 = p1[1], w1 = p1[2], dx = ux1 - ux0, dy = uy1 - uy0, d2 = dx * dx + dy * dy, i, S;
+				if (d2 < epsilon2) {
+					S = Math.log(w1 / w0) / rho;
+					i = function(t) {
+						return [
+							ux0 + t * dx,
+							uy0 + t * dy,
+							w0 * Math.exp(rho * t * S)
+						];
+					};
+				} else {
+					var d1 = Math.sqrt(d2), b0 = (w1 * w1 - w0 * w0 + rho4 * d2) / (2 * w0 * rho2 * d1), b1 = (w1 * w1 - w0 * w0 - rho4 * d2) / (2 * w1 * rho2 * d1), r0 = Math.log(Math.sqrt(b0 * b0 + 1) - b0);
+					S = (Math.log(Math.sqrt(b1 * b1 + 1) - b1) - r0) / rho;
+					i = function(t) {
+						var s = t * S, coshr0 = cosh(r0), u = w0 / (rho2 * d1) * (coshr0 * tanh(rho * s + r0) - sinh(r0));
+						return [
+							ux0 + u * dx,
+							uy0 + u * dy,
+							w0 * coshr0 / cosh(rho * s + r0)
+						];
+					};
+				}
+				i.duration = S * 1e3 * rho / Math.SQRT2;
+				return i;
+			}
+			zoom.rho = function(_) {
+				var _1 = Math.max(.001, +_), _2 = _1 * _1;
+				return zoomRho(_1, _2, _2 * _2);
+			};
+			return zoom;
+		})(Math.SQRT2, 2, 4);
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-timer@3.0.1/node_modules/d3-timer/src/timer.js
+		var frame = 0;
+		var timeout = 0;
+		var interval = 0;
+		var pokeDelay = 1e3;
+		var taskHead;
+		var taskTail;
+		var clockLast = 0;
+		var clockNow = 0;
+		var clockSkew = 0;
+		var clock = typeof performance === "object" && performance.now ? performance : Date;
+		var setFrame = typeof window === "object" && window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : function(f) {
+			setTimeout(f, 17);
+		};
+		function now() {
+			return clockNow || (setFrame(clearNow), clockNow = clock.now() + clockSkew);
+		}
+		function clearNow() {
+			clockNow = 0;
+		}
+		function Timer() {
+			this._call = this._time = this._next = null;
+		}
+		Timer.prototype = timer.prototype = {
+			constructor: Timer,
+			restart: function(callback, delay, time) {
+				if (typeof callback !== "function") throw new TypeError("callback is not a function");
+				time = (time == null ? now() : +time) + (delay == null ? 0 : +delay);
+				if (!this._next && taskTail !== this) {
+					if (taskTail) taskTail._next = this;
+					else taskHead = this;
+					taskTail = this;
+				}
+				this._call = callback;
+				this._time = time;
+				sleep();
+			},
+			stop: function() {
+				if (this._call) {
+					this._call = null;
+					this._time = Infinity;
+					sleep();
+				}
+			}
+		};
+		function timer(callback, delay, time) {
+			var t = new Timer();
+			t.restart(callback, delay, time);
+			return t;
+		}
+		function timerFlush() {
+			now();
+			++frame;
+			var t = taskHead, e;
+			while (t) {
+				if ((e = clockNow - t._time) >= 0) t._call.call(void 0, e);
+				t = t._next;
+			}
+			--frame;
+		}
+		function wake() {
+			clockNow = (clockLast = clock.now()) + clockSkew;
+			frame = timeout = 0;
+			try {
+				timerFlush();
+			} finally {
+				frame = 0;
+				nap();
+				clockNow = 0;
+			}
+		}
+		function poke() {
+			var now = clock.now(), delay = now - clockLast;
+			if (delay > pokeDelay) clockSkew -= delay, clockLast = now;
+		}
+		function nap() {
+			var t0, t1 = taskHead, t2, time = Infinity;
+			while (t1) if (t1._call) {
+				if (time > t1._time) time = t1._time;
+				t0 = t1, t1 = t1._next;
+			} else {
+				t2 = t1._next, t1._next = null;
+				t1 = t0 ? t0._next = t2 : taskHead = t2;
+			}
+			taskTail = t0;
+			sleep(time);
+		}
+		function sleep(time) {
+			if (frame) return;
+			if (timeout) timeout = clearTimeout(timeout);
+			if (time - clockNow > 24) {
+				if (time < Infinity) timeout = setTimeout(wake, time - clock.now() - clockSkew);
+				if (interval) interval = clearInterval(interval);
+			} else {
+				if (!interval) clockLast = clock.now(), interval = setInterval(poke, pokeDelay);
+				frame = 1, setFrame(wake);
+			}
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-timer@3.0.1/node_modules/d3-timer/src/timeout.js
+		function timeout_default(callback, delay, time) {
+			var t = new Timer();
+			delay = delay == null ? 0 : +delay;
+			t.restart((elapsed) => {
+				t.stop();
+				callback(elapsed + delay);
+			}, delay, time);
+			return t;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/schedule.js
+		var emptyOn = dispatch("start", "end", "cancel", "interrupt");
+		var emptyTween = [];
+		function schedule_default(node, name, id, index, group, timing) {
+			var schedules = node.__transition;
+			if (!schedules) node.__transition = {};
+			else if (id in schedules) return;
+			create(node, id, {
+				name,
+				index,
+				group,
+				on: emptyOn,
+				tween: emptyTween,
+				time: timing.time,
+				delay: timing.delay,
+				duration: timing.duration,
+				ease: timing.ease,
+				timer: null,
+				state: 0
+			});
+		}
+		function init(node, id) {
+			var schedule = get(node, id);
+			if (schedule.state > 0) throw new Error("too late; already scheduled");
+			return schedule;
+		}
+		function set(node, id) {
+			var schedule = get(node, id);
+			if (schedule.state > 3) throw new Error("too late; already running");
+			return schedule;
+		}
+		function get(node, id) {
+			var schedule = node.__transition;
+			if (!schedule || !(schedule = schedule[id])) throw new Error("transition not found");
+			return schedule;
+		}
+		function create(node, id, self) {
+			var schedules = node.__transition, tween;
+			schedules[id] = self;
+			self.timer = timer(schedule, 0, self.time);
+			function schedule(elapsed) {
+				self.state = 1;
+				self.timer.restart(start, self.delay, self.time);
+				if (self.delay <= elapsed) start(elapsed - self.delay);
+			}
+			function start(elapsed) {
+				var i, j, n, o;
+				if (self.state !== 1) return stop();
+				for (i in schedules) {
+					o = schedules[i];
+					if (o.name !== self.name) continue;
+					if (o.state === 3) return timeout_default(start);
+					if (o.state === 4) {
+						o.state = 6;
+						o.timer.stop();
+						o.on.call("interrupt", node, node.__data__, o.index, o.group);
+						delete schedules[i];
+					} else if (+i < id) {
+						o.state = 6;
+						o.timer.stop();
+						o.on.call("cancel", node, node.__data__, o.index, o.group);
+						delete schedules[i];
+					}
+				}
+				timeout_default(function() {
+					if (self.state === 3) {
+						self.state = 4;
+						self.timer.restart(tick, self.delay, self.time);
+						tick(elapsed);
+					}
+				});
+				self.state = 2;
+				self.on.call("start", node, node.__data__, self.index, self.group);
+				if (self.state !== 2) return;
+				self.state = 3;
+				tween = new Array(n = self.tween.length);
+				for (i = 0, j = -1; i < n; ++i) if (o = self.tween[i].value.call(node, node.__data__, self.index, self.group)) tween[++j] = o;
+				tween.length = j + 1;
+			}
+			function tick(elapsed) {
+				var t = elapsed < self.duration ? self.ease.call(null, elapsed / self.duration) : (self.timer.restart(stop), self.state = 5, 1), i = -1, n = tween.length;
+				while (++i < n) tween[i].call(node, t);
+				if (self.state === 5) {
+					self.on.call("end", node, node.__data__, self.index, self.group);
+					stop();
+				}
+			}
+			function stop() {
+				self.state = 6;
+				self.timer.stop();
+				delete schedules[id];
+				for (var i in schedules) return;
+				delete node.__transition;
+			}
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/interrupt.js
+		function interrupt_default$1(node, name) {
+			var schedules = node.__transition, schedule, active, empty = true, i;
+			if (!schedules) return;
+			name = name == null ? null : name + "";
+			for (i in schedules) {
+				if ((schedule = schedules[i]).name !== name) {
+					empty = false;
+					continue;
+				}
+				active = schedule.state > 2 && schedule.state < 5;
+				schedule.state = 6;
+				schedule.timer.stop();
+				schedule.on.call(active ? "interrupt" : "cancel", node, node.__data__, schedule.index, schedule.group);
+				delete schedules[i];
+			}
+			if (empty) delete node.__transition;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/selection/interrupt.js
+		function interrupt_default(name) {
+			return this.each(function() {
+				interrupt_default$1(this, name);
+			});
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/tween.js
+		function tweenRemove(id, name) {
+			var tween0, tween1;
+			return function() {
+				var schedule = set(this, id), tween = schedule.tween;
+				if (tween !== tween0) {
+					tween1 = tween0 = tween;
+					for (var i = 0, n = tween1.length; i < n; ++i) if (tween1[i].name === name) {
+						tween1 = tween1.slice();
+						tween1.splice(i, 1);
+						break;
+					}
+				}
+				schedule.tween = tween1;
+			};
+		}
+		function tweenFunction(id, name, value) {
+			var tween0, tween1;
+			if (typeof value !== "function") throw new Error();
+			return function() {
+				var schedule = set(this, id), tween = schedule.tween;
+				if (tween !== tween0) {
+					tween1 = (tween0 = tween).slice();
+					for (var t = {
+						name,
+						value
+					}, i = 0, n = tween1.length; i < n; ++i) if (tween1[i].name === name) {
+						tween1[i] = t;
+						break;
+					}
+					if (i === n) tween1.push(t);
+				}
+				schedule.tween = tween1;
+			};
+		}
+		function tween_default(name, value) {
+			var id = this._id;
+			name += "";
+			if (arguments.length < 2) {
+				var tween = get(this.node(), id).tween;
+				for (var i = 0, n = tween.length, t; i < n; ++i) if ((t = tween[i]).name === name) return t.value;
+				return null;
+			}
+			return this.each((value == null ? tweenRemove : tweenFunction)(id, name, value));
+		}
+		function tweenValue(transition, name, value) {
+			var id = transition._id;
+			transition.each(function() {
+				var schedule = set(this, id);
+				(schedule.value || (schedule.value = {}))[name] = value.apply(this, arguments);
+			});
+			return function(node) {
+				return get(node, id).value[name];
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/interpolate.js
+		function interpolate_default(a, b) {
+			var c;
+			return (typeof b === "number" ? number_default : b instanceof color ? rgb_default : (c = color(b)) ? (b = c, rgb_default) : string_default)(a, b);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/attr.js
+		function attrRemove(name) {
+			return function() {
+				this.removeAttribute(name);
+			};
+		}
+		function attrRemoveNS(fullname) {
+			return function() {
+				this.removeAttributeNS(fullname.space, fullname.local);
+			};
+		}
+		function attrConstant(name, interpolate, value1) {
+			var string00, string1 = value1 + "", interpolate0;
+			return function() {
+				var string0 = this.getAttribute(name);
+				return string0 === string1 ? null : string0 === string00 ? interpolate0 : interpolate0 = interpolate(string00 = string0, value1);
+			};
+		}
+		function attrConstantNS(fullname, interpolate, value1) {
+			var string00, string1 = value1 + "", interpolate0;
+			return function() {
+				var string0 = this.getAttributeNS(fullname.space, fullname.local);
+				return string0 === string1 ? null : string0 === string00 ? interpolate0 : interpolate0 = interpolate(string00 = string0, value1);
+			};
+		}
+		function attrFunction(name, interpolate, value) {
+			var string00, string10, interpolate0;
+			return function() {
+				var string0, value1 = value(this), string1;
+				if (value1 == null) return void this.removeAttribute(name);
+				string0 = this.getAttribute(name);
+				string1 = value1 + "";
+				return string0 === string1 ? null : string0 === string00 && string1 === string10 ? interpolate0 : (string10 = string1, interpolate0 = interpolate(string00 = string0, value1));
+			};
+		}
+		function attrFunctionNS(fullname, interpolate, value) {
+			var string00, string10, interpolate0;
+			return function() {
+				var string0, value1 = value(this), string1;
+				if (value1 == null) return void this.removeAttributeNS(fullname.space, fullname.local);
+				string0 = this.getAttributeNS(fullname.space, fullname.local);
+				string1 = value1 + "";
+				return string0 === string1 ? null : string0 === string00 && string1 === string10 ? interpolate0 : (string10 = string1, interpolate0 = interpolate(string00 = string0, value1));
+			};
+		}
+		function attr_default(name, value) {
+			var fullname = namespace_default(name), i = fullname === "transform" ? interpolateTransformSvg : interpolate_default;
+			return this.attrTween(name, typeof value === "function" ? (fullname.local ? attrFunctionNS : attrFunction)(fullname, i, tweenValue(this, "attr." + name, value)) : value == null ? (fullname.local ? attrRemoveNS : attrRemove)(fullname) : (fullname.local ? attrConstantNS : attrConstant)(fullname, i, value));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/attrTween.js
+		function attrInterpolate(name, i) {
+			return function(t) {
+				this.setAttribute(name, i.call(this, t));
+			};
+		}
+		function attrInterpolateNS(fullname, i) {
+			return function(t) {
+				this.setAttributeNS(fullname.space, fullname.local, i.call(this, t));
+			};
+		}
+		function attrTweenNS(fullname, value) {
+			var t0, i0;
+			function tween() {
+				var i = value.apply(this, arguments);
+				if (i !== i0) t0 = (i0 = i) && attrInterpolateNS(fullname, i);
+				return t0;
+			}
+			tween._value = value;
+			return tween;
+		}
+		function attrTween(name, value) {
+			var t0, i0;
+			function tween() {
+				var i = value.apply(this, arguments);
+				if (i !== i0) t0 = (i0 = i) && attrInterpolate(name, i);
+				return t0;
+			}
+			tween._value = value;
+			return tween;
+		}
+		function attrTween_default(name, value) {
+			var key = "attr." + name;
+			if (arguments.length < 2) return (key = this.tween(key)) && key._value;
+			if (value == null) return this.tween(key, null);
+			if (typeof value !== "function") throw new Error();
+			var fullname = namespace_default(name);
+			return this.tween(key, (fullname.local ? attrTweenNS : attrTween)(fullname, value));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/delay.js
+		function delayFunction(id, value) {
+			return function() {
+				init(this, id).delay = +value.apply(this, arguments);
+			};
+		}
+		function delayConstant(id, value) {
+			return value = +value, function() {
+				init(this, id).delay = value;
+			};
+		}
+		function delay_default(value) {
+			var id = this._id;
+			return arguments.length ? this.each((typeof value === "function" ? delayFunction : delayConstant)(id, value)) : get(this.node(), id).delay;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/duration.js
+		function durationFunction(id, value) {
+			return function() {
+				set(this, id).duration = +value.apply(this, arguments);
+			};
+		}
+		function durationConstant(id, value) {
+			return value = +value, function() {
+				set(this, id).duration = value;
+			};
+		}
+		function duration_default(value) {
+			var id = this._id;
+			return arguments.length ? this.each((typeof value === "function" ? durationFunction : durationConstant)(id, value)) : get(this.node(), id).duration;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/ease.js
+		function easeConstant(id, value) {
+			if (typeof value !== "function") throw new Error();
+			return function() {
+				set(this, id).ease = value;
+			};
+		}
+		function ease_default(value) {
+			var id = this._id;
+			return arguments.length ? this.each(easeConstant(id, value)) : get(this.node(), id).ease;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/easeVarying.js
+		function easeVarying(id, value) {
+			return function() {
+				var v = value.apply(this, arguments);
+				if (typeof v !== "function") throw new Error();
+				set(this, id).ease = v;
+			};
+		}
+		function easeVarying_default(value) {
+			if (typeof value !== "function") throw new Error();
+			return this.each(easeVarying(this._id, value));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/filter.js
+		function filter_default(match) {
+			if (typeof match !== "function") match = matcher_default(match);
+			for (var groups = this._groups, m = groups.length, subgroups = new Array(m), j = 0; j < m; ++j) for (var group = groups[j], n = group.length, subgroup = subgroups[j] = [], node, i = 0; i < n; ++i) if ((node = group[i]) && match.call(node, node.__data__, i, group)) subgroup.push(node);
+			return new Transition(subgroups, this._parents, this._name, this._id);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/merge.js
+		function merge_default(transition) {
+			if (transition._id !== this._id) throw new Error();
+			for (var groups0 = this._groups, groups1 = transition._groups, m0 = groups0.length, m1 = groups1.length, m = Math.min(m0, m1), merges = new Array(m0), j = 0; j < m; ++j) for (var group0 = groups0[j], group1 = groups1[j], n = group0.length, merge = merges[j] = new Array(n), node, i = 0; i < n; ++i) if (node = group0[i] || group1[i]) merge[i] = node;
+			for (; j < m0; ++j) merges[j] = groups0[j];
+			return new Transition(merges, this._parents, this._name, this._id);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/on.js
+		function start(name) {
+			return (name + "").trim().split(/^|\s+/).every(function(t) {
+				var i = t.indexOf(".");
+				if (i >= 0) t = t.slice(0, i);
+				return !t || t === "start";
+			});
+		}
+		function onFunction(id, name, listener) {
+			var on0, on1, sit = start(name) ? init : set;
+			return function() {
+				var schedule = sit(this, id), on = schedule.on;
+				if (on !== on0) (on1 = (on0 = on).copy()).on(name, listener);
+				schedule.on = on1;
+			};
+		}
+		function on_default(name, listener) {
+			var id = this._id;
+			return arguments.length < 2 ? get(this.node(), id).on.on(name) : this.each(onFunction(id, name, listener));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/remove.js
+		function removeFunction(id) {
+			return function() {
+				var parent = this.parentNode;
+				for (var i in this.__transition) if (+i !== id) return;
+				if (parent) parent.removeChild(this);
+			};
+		}
+		function remove_default() {
+			return this.on("end.remove", removeFunction(this._id));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/select.js
+		function select_default(select) {
+			var name = this._name, id = this._id;
+			if (typeof select !== "function") select = selector_default(select);
+			for (var groups = this._groups, m = groups.length, subgroups = new Array(m), j = 0; j < m; ++j) for (var group = groups[j], n = group.length, subgroup = subgroups[j] = new Array(n), node, subnode, i = 0; i < n; ++i) if ((node = group[i]) && (subnode = select.call(node, node.__data__, i, group))) {
+				if ("__data__" in node) subnode.__data__ = node.__data__;
+				subgroup[i] = subnode;
+				schedule_default(subgroup[i], name, id, i, subgroup, get(node, id));
+			}
+			return new Transition(subgroups, this._parents, name, id);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/selectAll.js
+		function selectAll_default(select) {
+			var name = this._name, id = this._id;
+			if (typeof select !== "function") select = selectorAll_default(select);
+			for (var groups = this._groups, m = groups.length, subgroups = [], parents = [], j = 0; j < m; ++j) for (var group = groups[j], n = group.length, node, i = 0; i < n; ++i) if (node = group[i]) {
+				for (var children = select.call(node, node.__data__, i, group), child, inherit = get(node, id), k = 0, l = children.length; k < l; ++k) if (child = children[k]) schedule_default(child, name, id, k, children, inherit);
+				subgroups.push(children);
+				parents.push(node);
+			}
+			return new Transition(subgroups, parents, name, id);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/selection.js
+		var Selection = selection.prototype.constructor;
+		function selection_default() {
+			return new Selection(this._groups, this._parents);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/style.js
+		function styleNull(name, interpolate) {
+			var string00, string10, interpolate0;
+			return function() {
+				var string0 = styleValue(this, name), string1 = (this.style.removeProperty(name), styleValue(this, name));
+				return string0 === string1 ? null : string0 === string00 && string1 === string10 ? interpolate0 : interpolate0 = interpolate(string00 = string0, string10 = string1);
+			};
+		}
+		function styleRemove(name) {
+			return function() {
+				this.style.removeProperty(name);
+			};
+		}
+		function styleConstant(name, interpolate, value1) {
+			var string00, string1 = value1 + "", interpolate0;
+			return function() {
+				var string0 = styleValue(this, name);
+				return string0 === string1 ? null : string0 === string00 ? interpolate0 : interpolate0 = interpolate(string00 = string0, value1);
+			};
+		}
+		function styleFunction(name, interpolate, value) {
+			var string00, string10, interpolate0;
+			return function() {
+				var string0 = styleValue(this, name), value1 = value(this), string1 = value1 + "";
+				if (value1 == null) string1 = value1 = (this.style.removeProperty(name), styleValue(this, name));
+				return string0 === string1 ? null : string0 === string00 && string1 === string10 ? interpolate0 : (string10 = string1, interpolate0 = interpolate(string00 = string0, value1));
+			};
+		}
+		function styleMaybeRemove(id, name) {
+			var on0, on1, listener0, key = "style." + name, event = "end." + key, remove;
+			return function() {
+				var schedule = set(this, id), on = schedule.on, listener = schedule.value[key] == null ? remove || (remove = styleRemove(name)) : void 0;
+				if (on !== on0 || listener0 !== listener) (on1 = (on0 = on).copy()).on(event, listener0 = listener);
+				schedule.on = on1;
+			};
+		}
+		function style_default(name, value, priority) {
+			var i = (name += "") === "transform" ? interpolateTransformCss : interpolate_default;
+			return value == null ? this.styleTween(name, styleNull(name, i)).on("end.style." + name, styleRemove(name)) : typeof value === "function" ? this.styleTween(name, styleFunction(name, i, tweenValue(this, "style." + name, value))).each(styleMaybeRemove(this._id, name)) : this.styleTween(name, styleConstant(name, i, value), priority).on("end.style." + name, null);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/styleTween.js
+		function styleInterpolate(name, i, priority) {
+			return function(t) {
+				this.style.setProperty(name, i.call(this, t), priority);
+			};
+		}
+		function styleTween(name, value, priority) {
+			var t, i0;
+			function tween() {
+				var i = value.apply(this, arguments);
+				if (i !== i0) t = (i0 = i) && styleInterpolate(name, i, priority);
+				return t;
+			}
+			tween._value = value;
+			return tween;
+		}
+		function styleTween_default(name, value, priority) {
+			var key = "style." + (name += "");
+			if (arguments.length < 2) return (key = this.tween(key)) && key._value;
+			if (value == null) return this.tween(key, null);
+			if (typeof value !== "function") throw new Error();
+			return this.tween(key, styleTween(name, value, priority == null ? "" : priority));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/text.js
+		function textConstant(value) {
+			return function() {
+				this.textContent = value;
+			};
+		}
+		function textFunction(value) {
+			return function() {
+				var value1 = value(this);
+				this.textContent = value1 == null ? "" : value1;
+			};
+		}
+		function text_default(value) {
+			return this.tween("text", typeof value === "function" ? textFunction(tweenValue(this, "text", value)) : textConstant(value == null ? "" : value + ""));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/textTween.js
+		function textInterpolate(i) {
+			return function(t) {
+				this.textContent = i.call(this, t);
+			};
+		}
+		function textTween(value) {
+			var t0, i0;
+			function tween() {
+				var i = value.apply(this, arguments);
+				if (i !== i0) t0 = (i0 = i) && textInterpolate(i);
+				return t0;
+			}
+			tween._value = value;
+			return tween;
+		}
+		function textTween_default(value) {
+			var key = "text";
+			if (arguments.length < 1) return (key = this.tween(key)) && key._value;
+			if (value == null) return this.tween(key, null);
+			if (typeof value !== "function") throw new Error();
+			return this.tween(key, textTween(value));
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/transition.js
+		function transition_default$1() {
+			var name = this._name, id0 = this._id, id1 = newId$1();
+			for (var groups = this._groups, m = groups.length, j = 0; j < m; ++j) for (var group = groups[j], n = group.length, node, i = 0; i < n; ++i) if (node = group[i]) {
+				var inherit = get(node, id0);
+				schedule_default(node, name, id1, i, group, {
+					time: inherit.time + inherit.delay + inherit.duration,
+					delay: 0,
+					duration: inherit.duration,
+					ease: inherit.ease
+				});
+			}
+			return new Transition(groups, this._parents, name, id1);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/end.js
+		function end_default() {
+			var on0, on1, that = this, id = that._id, size = that.size();
+			return new Promise(function(resolve, reject) {
+				var cancel = { value: reject }, end = { value: function() {
+					if (--size === 0) resolve();
+				} };
+				that.each(function() {
+					var schedule = set(this, id), on = schedule.on;
+					if (on !== on0) {
+						on1 = (on0 = on).copy();
+						on1._.cancel.push(cancel);
+						on1._.interrupt.push(cancel);
+						on1._.end.push(end);
+					}
+					schedule.on = on1;
+				});
+				if (size === 0) resolve();
+			});
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/transition/index.js
+		var id = 0;
+		function Transition(groups, parents, name, id) {
+			this._groups = groups;
+			this._parents = parents;
+			this._name = name;
+			this._id = id;
+		}
+		function transition(name) {
+			return selection().transition(name);
+		}
+		function newId$1() {
+			return ++id;
+		}
+		var selection_prototype = selection.prototype;
+		Transition.prototype = transition.prototype = {
+			constructor: Transition,
+			select: select_default,
+			selectAll: selectAll_default,
+			selectChild: selection_prototype.selectChild,
+			selectChildren: selection_prototype.selectChildren,
+			filter: filter_default,
+			merge: merge_default,
+			selection: selection_default,
+			transition: transition_default$1,
+			call: selection_prototype.call,
+			nodes: selection_prototype.nodes,
+			node: selection_prototype.node,
+			size: selection_prototype.size,
+			empty: selection_prototype.empty,
+			each: selection_prototype.each,
+			on: on_default,
+			attr: attr_default,
+			attrTween: attrTween_default,
+			style: style_default,
+			styleTween: styleTween_default,
+			text: text_default,
+			textTween: textTween_default,
+			remove: remove_default,
+			tween: tween_default,
+			delay: delay_default,
+			duration: duration_default,
+			ease: ease_default,
+			easeVarying: easeVarying_default,
+			end: end_default,
+			[Symbol.iterator]: selection_prototype[Symbol.iterator]
+		};
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-ease@3.0.1/node_modules/d3-ease/src/cubic.js
+		function cubicInOut(t) {
+			return ((t *= 2) <= 1 ? t * t * t : (t -= 2) * t * t + 2) / 2;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/selection/transition.js
+		var defaultTiming = {
+			time: null,
+			delay: 0,
+			duration: 250,
+			ease: cubicInOut
+		};
+		function inherit(node, id) {
+			var timing;
+			while (!(timing = node.__transition) || !(timing = timing[id])) if (!(node = node.parentNode)) throw new Error(`transition ${id} not found`);
+			return timing;
+		}
+		function transition_default(name) {
+			var id, timing;
+			if (name instanceof Transition) id = name._id, name = name._name;
+			else id = newId$1(), (timing = defaultTiming).time = now(), name = name == null ? null : name + "";
+			for (var groups = this._groups, m = groups.length, j = 0; j < m; ++j) for (var group = groups[j], n = group.length, node, i = 0; i < n; ++i) if (node = group[i]) schedule_default(node, name, id, i, group, timing || inherit(node, id));
+			return new Transition(groups, this._parents, name, id);
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-transition@3.0.1_d3-selection@3.0.0/node_modules/d3-transition/src/selection/index.js
+		selection.prototype.interrupt = interrupt_default;
+		selection.prototype.transition = transition_default;
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-zoom@3.0.0/node_modules/d3-zoom/src/constant.js
+		var constant_default = (x) => () => x;
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-zoom@3.0.0/node_modules/d3-zoom/src/event.js
+		function ZoomEvent(type, { sourceEvent, target, transform, dispatch }) {
+			Object.defineProperties(this, {
+				type: {
+					value: type,
+					enumerable: true,
+					configurable: true
+				},
+				sourceEvent: {
+					value: sourceEvent,
+					enumerable: true,
+					configurable: true
+				},
+				target: {
+					value: target,
+					enumerable: true,
+					configurable: true
+				},
+				transform: {
+					value: transform,
+					enumerable: true,
+					configurable: true
+				},
+				_: { value: dispatch }
+			});
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-zoom@3.0.0/node_modules/d3-zoom/src/transform.js
+		function Transform(k, x, y) {
+			this.k = k;
+			this.x = x;
+			this.y = y;
+		}
+		Transform.prototype = {
+			constructor: Transform,
+			scale: function(k) {
+				return k === 1 ? this : new Transform(this.k * k, this.x, this.y);
+			},
+			translate: function(x, y) {
+				return x === 0 & y === 0 ? this : new Transform(this.k, this.x + this.k * x, this.y + this.k * y);
+			},
+			apply: function(point) {
+				return [point[0] * this.k + this.x, point[1] * this.k + this.y];
+			},
+			applyX: function(x) {
+				return x * this.k + this.x;
+			},
+			applyY: function(y) {
+				return y * this.k + this.y;
+			},
+			invert: function(location) {
+				return [(location[0] - this.x) / this.k, (location[1] - this.y) / this.k];
+			},
+			invertX: function(x) {
+				return (x - this.x) / this.k;
+			},
+			invertY: function(y) {
+				return (y - this.y) / this.k;
+			},
+			rescaleX: function(x) {
+				return x.copy().domain(x.range().map(this.invertX, this).map(x.invert, x));
+			},
+			rescaleY: function(y) {
+				return y.copy().domain(y.range().map(this.invertY, this).map(y.invert, y));
+			},
+			toString: function() {
+				return "translate(" + this.x + "," + this.y + ") scale(" + this.k + ")";
+			}
+		};
+		var identity = new Transform(1, 0, 0);
+		transform.prototype = Transform.prototype;
+		function transform(node) {
+			while (!node.__zoom) if (!(node = node.parentNode)) return identity;
+			return node.__zoom;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-zoom@3.0.0/node_modules/d3-zoom/src/noevent.js
+		function nopropagation(event) {
+			event.stopImmediatePropagation();
+		}
+		function noevent_default(event) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/d3-zoom@3.0.0/node_modules/d3-zoom/src/zoom.js
+		function defaultFilter(event) {
+			return (!event.ctrlKey || event.type === "wheel") && !event.button;
+		}
+		function defaultExtent() {
+			var e = this;
+			if (e instanceof SVGElement) {
+				e = e.ownerSVGElement || e;
+				if (e.hasAttribute("viewBox")) {
+					e = e.viewBox.baseVal;
+					return [[e.x, e.y], [e.x + e.width, e.y + e.height]];
+				}
+				return [[0, 0], [e.width.baseVal.value, e.height.baseVal.value]];
+			}
+			return [[0, 0], [e.clientWidth, e.clientHeight]];
+		}
+		function defaultTransform() {
+			return this.__zoom || identity;
+		}
+		function defaultWheelDelta(event) {
+			return -event.deltaY * (event.deltaMode === 1 ? .05 : event.deltaMode ? 1 : .002) * (event.ctrlKey ? 10 : 1);
+		}
+		function defaultTouchable() {
+			return navigator.maxTouchPoints || "ontouchstart" in this;
+		}
+		function defaultConstrain(transform, extent, translateExtent) {
+			var dx0 = transform.invertX(extent[0][0]) - translateExtent[0][0], dx1 = transform.invertX(extent[1][0]) - translateExtent[1][0], dy0 = transform.invertY(extent[0][1]) - translateExtent[0][1], dy1 = transform.invertY(extent[1][1]) - translateExtent[1][1];
+			return transform.translate(dx1 > dx0 ? (dx0 + dx1) / 2 : Math.min(0, dx0) || Math.max(0, dx1), dy1 > dy0 ? (dy0 + dy1) / 2 : Math.min(0, dy0) || Math.max(0, dy1));
+		}
+		function zoom_default() {
+			var filter = defaultFilter, extent = defaultExtent, constrain = defaultConstrain, wheelDelta = defaultWheelDelta, touchable = defaultTouchable, scaleExtent = [0, Infinity], translateExtent = [[-Infinity, -Infinity], [Infinity, Infinity]], duration = 250, interpolate = zoom_default$1, listeners = dispatch("start", "zoom", "end"), touchstarting, touchfirst, touchending, touchDelay = 500, wheelDelay = 150, clickDistance2 = 0, tapDistance = 10;
+			function zoom(selection) {
+				selection.property("__zoom", defaultTransform).on("wheel.zoom", wheeled, { passive: false }).on("mousedown.zoom", mousedowned).on("dblclick.zoom", dblclicked).filter(touchable).on("touchstart.zoom", touchstarted).on("touchmove.zoom", touchmoved).on("touchend.zoom touchcancel.zoom", touchended).style("-webkit-tap-highlight-color", "rgba(0,0,0,0)");
+			}
+			zoom.transform = function(collection, transform, point, event) {
+				var selection = collection.selection ? collection.selection() : collection;
+				selection.property("__zoom", defaultTransform);
+				if (collection !== selection) schedule(collection, transform, point, event);
+				else selection.interrupt().each(function() {
+					gesture(this, arguments).event(event).start().zoom(null, typeof transform === "function" ? transform.apply(this, arguments) : transform).end();
+				});
+			};
+			zoom.scaleBy = function(selection, k, p, event) {
+				zoom.scaleTo(selection, function() {
+					return this.__zoom.k * (typeof k === "function" ? k.apply(this, arguments) : k);
+				}, p, event);
+			};
+			zoom.scaleTo = function(selection, k, p, event) {
+				zoom.transform(selection, function() {
+					var e = extent.apply(this, arguments), t0 = this.__zoom, p0 = p == null ? centroid(e) : typeof p === "function" ? p.apply(this, arguments) : p, p1 = t0.invert(p0), k1 = typeof k === "function" ? k.apply(this, arguments) : k;
+					return constrain(translate(scale(t0, k1), p0, p1), e, translateExtent);
+				}, p, event);
+			};
+			zoom.translateBy = function(selection, x, y, event) {
+				zoom.transform(selection, function() {
+					return constrain(this.__zoom.translate(typeof x === "function" ? x.apply(this, arguments) : x, typeof y === "function" ? y.apply(this, arguments) : y), extent.apply(this, arguments), translateExtent);
+				}, null, event);
+			};
+			zoom.translateTo = function(selection, x, y, p, event) {
+				zoom.transform(selection, function() {
+					var e = extent.apply(this, arguments), t = this.__zoom, p0 = p == null ? centroid(e) : typeof p === "function" ? p.apply(this, arguments) : p;
+					return constrain(identity.translate(p0[0], p0[1]).scale(t.k).translate(typeof x === "function" ? -x.apply(this, arguments) : -x, typeof y === "function" ? -y.apply(this, arguments) : -y), e, translateExtent);
+				}, p, event);
+			};
+			function scale(transform, k) {
+				k = Math.max(scaleExtent[0], Math.min(scaleExtent[1], k));
+				return k === transform.k ? transform : new Transform(k, transform.x, transform.y);
+			}
+			function translate(transform, p0, p1) {
+				var x = p0[0] - p1[0] * transform.k, y = p0[1] - p1[1] * transform.k;
+				return x === transform.x && y === transform.y ? transform : new Transform(transform.k, x, y);
+			}
+			function centroid(extent) {
+				return [(+extent[0][0] + +extent[1][0]) / 2, (+extent[0][1] + +extent[1][1]) / 2];
+			}
+			function schedule(transition, transform, point, event) {
+				transition.on("start.zoom", function() {
+					gesture(this, arguments).event(event).start();
+				}).on("interrupt.zoom end.zoom", function() {
+					gesture(this, arguments).event(event).end();
+				}).tween("zoom", function() {
+					var that = this, args = arguments, g = gesture(that, args).event(event), e = extent.apply(that, args), p = point == null ? centroid(e) : typeof point === "function" ? point.apply(that, args) : point, w = Math.max(e[1][0] - e[0][0], e[1][1] - e[0][1]), a = that.__zoom, b = typeof transform === "function" ? transform.apply(that, args) : transform, i = interpolate(a.invert(p).concat(w / a.k), b.invert(p).concat(w / b.k));
+					return function(t) {
+						if (t === 1) t = b;
+						else {
+							var l = i(t), k = w / l[2];
+							t = new Transform(k, p[0] - l[0] * k, p[1] - l[1] * k);
+						}
+						g.zoom(null, t);
+					};
+				});
+			}
+			function gesture(that, args, clean) {
+				return !clean && that.__zooming || new Gesture(that, args);
+			}
+			function Gesture(that, args) {
+				this.that = that;
+				this.args = args;
+				this.active = 0;
+				this.sourceEvent = null;
+				this.extent = extent.apply(that, args);
+				this.taps = 0;
+			}
+			Gesture.prototype = {
+				event: function(event) {
+					if (event) this.sourceEvent = event;
+					return this;
+				},
+				start: function() {
+					if (++this.active === 1) {
+						this.that.__zooming = this;
+						this.emit("start");
+					}
+					return this;
+				},
+				zoom: function(key, transform) {
+					if (this.mouse && key !== "mouse") this.mouse[1] = transform.invert(this.mouse[0]);
+					if (this.touch0 && key !== "touch") this.touch0[1] = transform.invert(this.touch0[0]);
+					if (this.touch1 && key !== "touch") this.touch1[1] = transform.invert(this.touch1[0]);
+					this.that.__zoom = transform;
+					this.emit("zoom");
+					return this;
+				},
+				end: function() {
+					if (--this.active === 0) {
+						delete this.that.__zooming;
+						this.emit("end");
+					}
+					return this;
+				},
+				emit: function(type) {
+					var d = select_default$1(this.that).datum();
+					listeners.call(type, this.that, new ZoomEvent(type, {
+						sourceEvent: this.sourceEvent,
+						target: zoom,
+						type,
+						transform: this.that.__zoom,
+						dispatch: listeners
+					}), d);
+				}
+			};
+			function wheeled(event, ...args) {
+				if (!filter.apply(this, arguments)) return;
+				var g = gesture(this, args).event(event), t = this.__zoom, k = Math.max(scaleExtent[0], Math.min(scaleExtent[1], t.k * Math.pow(2, wheelDelta.apply(this, arguments)))), p = pointer_default(event);
+				if (g.wheel) {
+					if (g.mouse[0][0] !== p[0] || g.mouse[0][1] !== p[1]) g.mouse[1] = t.invert(g.mouse[0] = p);
+					clearTimeout(g.wheel);
+				} else if (t.k === k) return;
+				else {
+					g.mouse = [p, t.invert(p)];
+					interrupt_default$1(this);
+					g.start();
+				}
+				noevent_default(event);
+				g.wheel = setTimeout(wheelidled, wheelDelay);
+				g.zoom("mouse", constrain(translate(scale(t, k), g.mouse[0], g.mouse[1]), g.extent, translateExtent));
+				function wheelidled() {
+					g.wheel = null;
+					g.end();
+				}
+			}
+			function mousedowned(event, ...args) {
+				if (touchending || !filter.apply(this, arguments)) return;
+				var currentTarget = event.currentTarget, g = gesture(this, args, true).event(event), v = select_default$1(event.view).on("mousemove.zoom", mousemoved, true).on("mouseup.zoom", mouseupped, true), p = pointer_default(event, currentTarget), x0 = event.clientX, y0 = event.clientY;
+				nodrag_default(event.view);
+				nopropagation(event);
+				g.mouse = [p, this.__zoom.invert(p)];
+				interrupt_default$1(this);
+				g.start();
+				function mousemoved(event) {
+					noevent_default(event);
+					if (!g.moved) {
+						var dx = event.clientX - x0, dy = event.clientY - y0;
+						g.moved = dx * dx + dy * dy > clickDistance2;
+					}
+					g.event(event).zoom("mouse", constrain(translate(g.that.__zoom, g.mouse[0] = pointer_default(event, currentTarget), g.mouse[1]), g.extent, translateExtent));
+				}
+				function mouseupped(event) {
+					v.on("mousemove.zoom mouseup.zoom", null);
+					yesdrag(event.view, g.moved);
+					noevent_default(event);
+					g.event(event).end();
+				}
+			}
+			function dblclicked(event, ...args) {
+				if (!filter.apply(this, arguments)) return;
+				var t0 = this.__zoom, p0 = pointer_default(event.changedTouches ? event.changedTouches[0] : event, this), p1 = t0.invert(p0), k1 = t0.k * (event.shiftKey ? .5 : 2), t1 = constrain(translate(scale(t0, k1), p0, p1), extent.apply(this, args), translateExtent);
+				noevent_default(event);
+				if (duration > 0) select_default$1(this).transition().duration(duration).call(schedule, t1, p0, event);
+				else select_default$1(this).call(zoom.transform, t1, p0, event);
+			}
+			function touchstarted(event, ...args) {
+				if (!filter.apply(this, arguments)) return;
+				var touches = event.touches, n = touches.length, g = gesture(this, args, event.changedTouches.length === n).event(event), started, i, t, p;
+				nopropagation(event);
+				for (i = 0; i < n; ++i) {
+					t = touches[i], p = pointer_default(t, this);
+					p = [
+						p,
+						this.__zoom.invert(p),
+						t.identifier
+					];
+					if (!g.touch0) g.touch0 = p, started = true, g.taps = 1 + !!touchstarting;
+					else if (!g.touch1 && g.touch0[2] !== p[2]) g.touch1 = p, g.taps = 0;
+				}
+				if (touchstarting) touchstarting = clearTimeout(touchstarting);
+				if (started) {
+					if (g.taps < 2) touchfirst = p[0], touchstarting = setTimeout(function() {
+						touchstarting = null;
+					}, touchDelay);
+					interrupt_default$1(this);
+					g.start();
+				}
+			}
+			function touchmoved(event, ...args) {
+				if (!this.__zooming) return;
+				var g = gesture(this, args).event(event), touches = event.changedTouches, n = touches.length, i, t, p, l;
+				noevent_default(event);
+				for (i = 0; i < n; ++i) {
+					t = touches[i], p = pointer_default(t, this);
+					if (g.touch0 && g.touch0[2] === t.identifier) g.touch0[0] = p;
+					else if (g.touch1 && g.touch1[2] === t.identifier) g.touch1[0] = p;
+				}
+				t = g.that.__zoom;
+				if (g.touch1) {
+					var p0 = g.touch0[0], l0 = g.touch0[1], p1 = g.touch1[0], l1 = g.touch1[1], dp = (dp = p1[0] - p0[0]) * dp + (dp = p1[1] - p0[1]) * dp, dl = (dl = l1[0] - l0[0]) * dl + (dl = l1[1] - l0[1]) * dl;
+					t = scale(t, Math.sqrt(dp / dl));
+					p = [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
+					l = [(l0[0] + l1[0]) / 2, (l0[1] + l1[1]) / 2];
+				} else if (g.touch0) p = g.touch0[0], l = g.touch0[1];
+				else return;
+				g.zoom("touch", constrain(translate(t, p, l), g.extent, translateExtent));
+			}
+			function touchended(event, ...args) {
+				if (!this.__zooming) return;
+				var g = gesture(this, args).event(event), touches = event.changedTouches, n = touches.length, i, t;
+				nopropagation(event);
+				if (touchending) clearTimeout(touchending);
+				touchending = setTimeout(function() {
+					touchending = null;
+				}, touchDelay);
+				for (i = 0; i < n; ++i) {
+					t = touches[i];
+					if (g.touch0 && g.touch0[2] === t.identifier) delete g.touch0;
+					else if (g.touch1 && g.touch1[2] === t.identifier) delete g.touch1;
+				}
+				if (g.touch1 && !g.touch0) g.touch0 = g.touch1, delete g.touch1;
+				if (g.touch0) g.touch0[1] = this.__zoom.invert(g.touch0[0]);
+				else {
+					g.end();
+					if (g.taps === 2) {
+						t = pointer_default(t, this);
+						if (Math.hypot(touchfirst[0] - t[0], touchfirst[1] - t[1]) < tapDistance) {
+							var p = select_default$1(this).on("dblclick.zoom");
+							if (p) p.apply(this, arguments);
+						}
+					}
+				}
+			}
+			zoom.wheelDelta = function(_) {
+				return arguments.length ? (wheelDelta = typeof _ === "function" ? _ : constant_default(+_), zoom) : wheelDelta;
+			};
+			zoom.filter = function(_) {
+				return arguments.length ? (filter = typeof _ === "function" ? _ : constant_default(!!_), zoom) : filter;
+			};
+			zoom.touchable = function(_) {
+				return arguments.length ? (touchable = typeof _ === "function" ? _ : constant_default(!!_), zoom) : touchable;
+			};
+			zoom.extent = function(_) {
+				return arguments.length ? (extent = typeof _ === "function" ? _ : constant_default([[+_[0][0], +_[0][1]], [+_[1][0], +_[1][1]]]), zoom) : extent;
+			};
+			zoom.scaleExtent = function(_) {
+				return arguments.length ? (scaleExtent[0] = +_[0], scaleExtent[1] = +_[1], zoom) : [scaleExtent[0], scaleExtent[1]];
+			};
+			zoom.translateExtent = function(_) {
+				return arguments.length ? (translateExtent[0][0] = +_[0][0], translateExtent[1][0] = +_[1][0], translateExtent[0][1] = +_[0][1], translateExtent[1][1] = +_[1][1], zoom) : [[translateExtent[0][0], translateExtent[0][1]], [translateExtent[1][0], translateExtent[1][1]]];
+			};
+			zoom.constrain = function(_) {
+				return arguments.length ? (constrain = _, zoom) : constrain;
+			};
+			zoom.duration = function(_) {
+				return arguments.length ? (duration = +_, zoom) : duration;
+			};
+			zoom.interpolate = function(_) {
+				return arguments.length ? (interpolate = _, zoom) : interpolate;
+			};
+			zoom.on = function() {
+				var value = listeners.on.apply(listeners, arguments);
+				return value === listeners ? zoom : value;
+			};
+			zoom.clickDistance = function(_) {
+				return arguments.length ? (clickDistance2 = (_ = +_) * _, zoom) : Math.sqrt(clickDistance2);
+			};
+			zoom.tapDistance = function(_) {
+				return arguments.length ? (tapDistance = +_, zoom) : tapDistance;
+			};
+			return zoom;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@xyflow+system@0.0.80/node_modules/@xyflow/system/dist/esm/index.js
+		const errorMessages = {
+			error001: (lib = "react") => `Seems like you have not used ${lib === "svelte" ? "SvelteFlowProvider" : "ReactFlowProvider"} as an ancestor. Help: https://${lib}flow.dev/error#001`,
+			error002: () => "It looks like you've created a new nodeTypes or edgeTypes object. If this wasn't on purpose please define the nodeTypes/edgeTypes outside of the component or memoize them.",
+			error003: (nodeType) => `Node type "${nodeType}" not found. Using fallback type "default".`,
+			error004: () => "The parent container needs a width and a height to render the graph.",
+			error005: () => "Only child nodes can use a parent extent.",
+			error006: () => "Can't create edge. An edge needs a source and a target.",
+			error007: (id) => `The old edge with id=${id} does not exist.`,
+			error009: (type) => `Marker type "${type}" doesn't exist.`,
+			error008: (handleType, { id, sourceHandle, targetHandle }) => `Couldn't create edge for ${handleType} handle id: "${handleType === "source" ? sourceHandle : targetHandle}", edge id: ${id}.`,
+			error010: () => "Handle: No node id found. Make sure to only use a Handle inside a custom Node.",
+			error011: (edgeType) => `Edge type "${edgeType}" not found. Using fallback type "default".`,
+			error012: (id) => `Node with id "${id}" does not exist, it may have been removed. This can happen when a node is deleted before the "onNodeClick" handler is called.`,
+			error013: (lib = "react") => `It seems that you haven't loaded the styles. Please import '@xyflow/${lib}/dist/style.css' or base.css to make sure everything is working properly.`,
+			error014: () => "useNodeConnections: No node ID found. Call useNodeConnections inside a custom Node or provide a node ID.",
+			error015: () => "It seems that you are trying to drag a node that is not initialized. Please use onNodesChange as explained in the docs.",
+			error016: (id) => `Edge with id "${id}" does not exist, it may have been removed. This can happen when an edge is deleted before the "onEdgeClick" handler is called.`
+		};
+		const infiniteExtent = [[Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY], [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]];
+		const elementSelectionKeys = [
+			"Enter",
+			" ",
+			"Escape"
+		];
+		const defaultAriaLabelConfig = {
+			"node.a11yDescription.default": "Press enter or space to select a node. Press delete to remove it and escape to cancel.",
+			"node.a11yDescription.keyboardDisabled": "Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel.",
+			"node.a11yDescription.ariaLiveMessage": ({ direction, x, y }) => `Moved selected node ${direction}. New position, x: ${x}, y: ${y}`,
+			"edge.a11yDescription.default": "Press enter or space to select an edge. You can then press delete to remove it or escape to cancel.",
+			"controls.ariaLabel": "Control Panel",
+			"controls.zoomIn.ariaLabel": "Zoom In",
+			"controls.zoomOut.ariaLabel": "Zoom Out",
+			"controls.fitView.ariaLabel": "Fit View",
+			"controls.interactive.ariaLabel": "Toggle Interactivity",
+			"minimap.ariaLabel": "Mini Map",
+			"handle.ariaLabel": "Handle"
+		};
+		/**
+		* The `ConnectionMode` is used to set the mode of connection between nodes.
+		* The `Strict` mode is the default one and only allows source to target edges.
+		* `Loose` mode allows source to source and target to target edges as well.
+		*
+		* @public
+		*/
+		var ConnectionMode;
+		(function(ConnectionMode) {
+			ConnectionMode["Strict"] = "strict";
+			ConnectionMode["Loose"] = "loose";
+		})(ConnectionMode || (ConnectionMode = {}));
+		/**
+		* This enum is used to set the different modes of panning the viewport when the
+		* user scrolls. The `Free` mode allows the user to pan in any direction by scrolling
+		* with a device like a trackpad. The `Vertical` and `Horizontal` modes restrict
+		* scroll panning to only the vertical or horizontal axis, respectively.
+		*
+		* @public
+		*/
+		var PanOnScrollMode;
+		(function(PanOnScrollMode) {
+			PanOnScrollMode["Free"] = "free";
+			PanOnScrollMode["Vertical"] = "vertical";
+			PanOnScrollMode["Horizontal"] = "horizontal";
+		})(PanOnScrollMode || (PanOnScrollMode = {}));
+		var SelectionMode;
+		(function(SelectionMode) {
+			SelectionMode["Partial"] = "partial";
+			SelectionMode["Full"] = "full";
+		})(SelectionMode || (SelectionMode = {}));
+		const initialConnection = {
+			inProgress: false,
+			isValid: null,
+			from: null,
+			fromHandle: null,
+			fromPosition: null,
+			fromNode: null,
+			to: null,
+			toHandle: null,
+			toPosition: null,
+			toNode: null,
+			pointer: null
+		};
+		/**
+		* If you set the `connectionLineType` prop on your [`<ReactFlow />`](/api-reference/react-flow#connection-connectionLineType)
+		*component, it will dictate the style of connection line rendered when creating
+		*new edges.
+		*
+		* @public
+		*
+		* @remarks If you choose to render a custom connection line component, this value will be
+		*passed to your component as part of its [`ConnectionLineComponentProps`](/api-reference/types/connection-line-component-props).
+		*/
+		var ConnectionLineType;
+		(function(ConnectionLineType) {
+			ConnectionLineType["Bezier"] = "default";
+			ConnectionLineType["Straight"] = "straight";
+			ConnectionLineType["Step"] = "step";
+			ConnectionLineType["SmoothStep"] = "smoothstep";
+			ConnectionLineType["SimpleBezier"] = "simplebezier";
+		})(ConnectionLineType || (ConnectionLineType = {}));
+		/**
+		* Edges may optionally have a marker on either end. The MarkerType type enumerates
+		* the options available to you when configuring a given marker.
+		*
+		* @public
+		*/
+		var MarkerType;
+		(function(MarkerType) {
+			MarkerType["Arrow"] = "arrow";
+			MarkerType["ArrowClosed"] = "arrowclosed";
+		})(MarkerType || (MarkerType = {}));
+		/**
+		* While [`PanelPosition`](/api-reference/types/panel-position) can be used to place a
+		* component in the corners of a container, the `Position` enum is less precise and used
+		* primarily in relation to edges and handles.
+		*
+		* @public
+		*/
+		var Position;
+		(function(Position) {
+			Position["Left"] = "left";
+			Position["Top"] = "top";
+			Position["Right"] = "right";
+			Position["Bottom"] = "bottom";
+		})(Position || (Position = {}));
+		const oppositePosition = {
+			[Position.Left]: Position.Right,
+			[Position.Right]: Position.Left,
+			[Position.Top]: Position.Bottom,
+			[Position.Bottom]: Position.Top
+		};
+		function getConnectionStatus(isValid) {
+			return isValid === null ? null : isValid ? "valid" : "invalid";
+		}
+		/**
+		* Test whether an object is usable as an Edge
+		* @public
+		* @remarks In TypeScript this is a type guard that will narrow the type of whatever you pass in to Edge if it returns true
+		* @param element - The element to test
+		* @returns A boolean indicating whether the element is an Edge
+		*/
+		const isEdgeBase = (element) => !!element && typeof element === "object" && "id" in element && "source" in element && "target" in element;
+		/**
+		* Test whether an object is usable as a Node
+		* @public
+		* @remarks In TypeScript this is a type guard that will narrow the type of whatever you pass in to Node if it returns true
+		* @param element - The element to test
+		* @returns A boolean indicating whether the element is an Node
+		*/
+		const isNodeBase = (element) => !!element && typeof element === "object" && "id" in element && "position" in element && !("source" in element) && !("target" in element);
+		const isInternalNodeBase = (element) => !!element && typeof element === "object" && "id" in element && "internals" in element && !("source" in element) && !("target" in element);
+		const getNodePositionWithOrigin = (node, nodeOrigin = [0, 0]) => {
+			const { width, height } = getNodeDimensions(node);
+			const origin = node.origin ?? nodeOrigin;
+			const offsetX = width * origin[0];
+			const offsetY = height * origin[1];
+			return {
+				x: node.position.x - offsetX,
+				y: node.position.y - offsetY
+			};
+		};
+		/**
+		* Returns the bounding box that contains all the given nodes in an array. This can
+		* be useful when combined with [`getViewportForBounds`](/api-reference/utils/get-viewport-for-bounds)
+		* to calculate the correct transform to fit the given nodes in a viewport.
+		* @public
+		* @remarks Useful when combined with {@link getViewportForBounds} to calculate the correct transform to fit the given nodes in a viewport.
+		* @param nodes - Nodes to calculate the bounds for.
+		* @returns Bounding box enclosing all nodes.
+		*
+		* @remarks This function was previously called `getRectOfNodes`
+		*
+		* @example
+		* ```js
+		*import { getNodesBounds } from '@xyflow/react';
+		*
+		*const nodes = [
+		*  {
+		*    id: 'a',
+		*    position: { x: 0, y: 0 },
+		*    data: { label: 'a' },
+		*    width: 50,
+		*    height: 25,
+		*  },
+		*  {
+		*    id: 'b',
+		*    position: { x: 100, y: 100 },
+		*    data: { label: 'b' },
+		*    width: 50,
+		*    height: 25,
+		*  },
+		*];
+		*
+		*const bounds = getNodesBounds(nodes);
+		*```
+		*/
+		const getNodesBounds = (nodes, params = { nodeOrigin: [0, 0] }) => {
+			if (process.env.NODE_ENV === "development" && !params.nodeLookup) console.warn("Please use `getNodesBounds` from `useReactFlow`/`useSvelteFlow` hook to ensure correct values for sub flows. If not possible, you have to provide a nodeLookup to support sub flows.");
+			if (nodes.length === 0) return {
+				x: 0,
+				y: 0,
+				width: 0,
+				height: 0
+			};
+			let hasNode = false;
+			const box = nodes.reduce((currBox, nodeOrId) => {
+				const isId = typeof nodeOrId === "string";
+				let currentNode = !params.nodeLookup && !isId ? nodeOrId : void 0;
+				if (params.nodeLookup) currentNode = isId ? params.nodeLookup.get(nodeOrId) : !isInternalNodeBase(nodeOrId) ? params.nodeLookup.get(nodeOrId.id) : nodeOrId;
+				if (!currentNode) return currBox;
+				hasNode = true;
+				return getBoundsOfBoxes(currBox, nodeToBox(currentNode, params.nodeOrigin));
+			}, {
+				x: Infinity,
+				y: Infinity,
+				x2: -Infinity,
+				y2: -Infinity
+			});
+			return hasNode ? boxToRect(box) : {
+				x: 0,
+				y: 0,
+				width: 0,
+				height: 0
+			};
+		};
+		/**
+		* Determines a bounding box that contains all given nodes in an array
+		* @internal
+		*/
+		const getInternalNodesBounds = (nodeLookup, params = {}) => {
+			let box = {
+				x: Infinity,
+				y: Infinity,
+				x2: -Infinity,
+				y2: -Infinity
+			};
+			let hasVisibleNodes = false;
+			nodeLookup.forEach((node) => {
+				if (params.filter === void 0 || params.filter(node)) {
+					box = getBoundsOfBoxes(box, nodeToBox(node));
+					hasVisibleNodes = true;
+				}
+			});
+			return hasVisibleNodes ? boxToRect(box) : {
+				x: 0,
+				y: 0,
+				width: 0,
+				height: 0
+			};
+		};
+		const getNodesInside = (nodes, rect, [tx, ty, tScale] = [
+			0,
+			0,
+			1
+		], partially = false, excludeNonSelectableNodes = false) => {
+			const paneX = (rect.x - tx) / tScale;
+			const paneY = (rect.y - ty) / tScale;
+			const paneWidth = rect.width / tScale;
+			const paneHeight = rect.height / tScale;
+			const visibleNodes = [];
+			for (const node of nodes.values()) {
+				const { measured, selectable = true, hidden = false } = node;
+				if (excludeNonSelectableNodes && !selectable || hidden) continue;
+				const width = measured.width ?? node.width ?? node.initialWidth ?? 0;
+				const height = measured.height ?? node.height ?? node.initialHeight ?? 0;
+				const { x, y } = node.internals.positionAbsolute;
+				const overlappingArea = getRectsOverlappingArea(paneX, paneY, paneWidth, paneHeight, x, y, width, height);
+				const area = width * height;
+				const partiallyVisible = partially && overlappingArea > 0;
+				if (!node.internals.handleBounds || partiallyVisible || overlappingArea >= area || node.dragging) visibleNodes.push(node);
+			}
+			return visibleNodes;
+		};
+		/**
+		* This utility filters an array of edges, keeping only those where either the source or target
+		* node is present in the given array of nodes.
+		* @public
+		* @param nodes - Nodes you want to get the connected edges for.
+		* @param edges - All edges.
+		* @returns Array of edges that connect any of the given nodes with each other.
+		*
+		* @example
+		* ```js
+		*import { getConnectedEdges } from '@xyflow/react';
+		*
+		*const nodes = [
+		*  { id: 'a', position: { x: 0, y: 0 } },
+		*  { id: 'b', position: { x: 100, y: 0 } },
+		*];
+		*
+		*const edges = [
+		*  { id: 'a->c', source: 'a', target: 'c' },
+		*  { id: 'c->d', source: 'c', target: 'd' },
+		*];
+		*
+		*const connectedEdges = getConnectedEdges(nodes, edges);
+		* // => [{ id: 'a->c', source: 'a', target: 'c' }]
+		*```
+		*/
+		const getConnectedEdges = (nodes, edges) => {
+			const nodeIds = /* @__PURE__ */ new Set();
+			nodes.forEach((node) => {
+				nodeIds.add(node.id);
+			});
+			return edges.filter((edge) => nodeIds.has(edge.source) || nodeIds.has(edge.target));
+		};
+		function getFitViewNodes(nodeLookup, options) {
+			const fitViewNodes = /* @__PURE__ */ new Map();
+			const optionNodeIds = options?.nodes ? new Set(options.nodes.map((node) => node.id)) : null;
+			nodeLookup.forEach((n) => {
+				let isVisible;
+				if (options?.includeHiddenNodes) {
+					const { width, height } = getNodeDimensions(n);
+					isVisible = width > 0 && height > 0;
+				} else isVisible = Boolean(n.measured.width && n.measured.height && !n.hidden);
+				if (isVisible && (!optionNodeIds || optionNodeIds.has(n.id))) fitViewNodes.set(n.id, n);
+			});
+			return fitViewNodes;
+		}
+		async function fitViewport({ nodes, width, height, panZoom, minZoom, maxZoom }, options) {
+			if (nodes.size === 0) return true;
+			const nodesToFit = getFitViewNodes(nodes, options);
+			const bounds = getInternalNodesBounds(nodesToFit);
+			const viewport = getViewportForBounds(bounds, width, height, options?.minZoom ?? minZoom, options?.maxZoom ?? maxZoom, options?.padding ?? .1);
+			await panZoom.setViewport(viewport, {
+				duration: options?.duration,
+				ease: options?.ease,
+				interpolate: options?.interpolate
+			});
+			return true;
+		}
+		/**
+		* This function calculates the next position of a node, taking into account the node's extent, parent node, and origin.
+		*
+		* @internal
+		* @returns position, positionAbsolute
+		*/
+		function calculateNodePosition({ nodeId, nextPosition, nodeLookup, nodeOrigin = [0, 0], nodeExtent, onError }) {
+			const node = nodeLookup.get(nodeId);
+			const parentNode = node.parentId ? nodeLookup.get(node.parentId) : void 0;
+			const { x: parentX, y: parentY } = parentNode ? parentNode.internals.positionAbsolute : {
+				x: 0,
+				y: 0
+			};
+			const origin = node.origin ?? nodeOrigin;
+			let extent = node.extent || nodeExtent;
+			if (node.extent === "parent" && !node.expandParent) {
+				if (!parentNode) onError?.("005", errorMessages["error005"]());
+				else {
+					const { width: parentWidth, height: parentHeight } = getNodeDimensions(parentNode);
+					if (parentWidth && parentHeight) extent = [[parentX, parentY], [parentX + parentWidth, parentY + parentHeight]];
+				}
+			} else if (parentNode && isCoordinateExtent(node.extent)) extent = [[node.extent[0][0] + parentX, node.extent[0][1] + parentY], [node.extent[1][0] + parentX, node.extent[1][1] + parentY]];
+			const positionAbsolute = isCoordinateExtent(extent) ? clampPosition(nextPosition, extent, node.measured) : nextPosition;
+			if (node.measured.width === void 0 || node.measured.height === void 0) onError?.("015", errorMessages["error015"]());
+			return {
+				position: {
+					x: positionAbsolute.x - parentX + (node.measured.width ?? 0) * origin[0],
+					y: positionAbsolute.y - parentY + (node.measured.height ?? 0) * origin[1]
+				},
+				positionAbsolute
+			};
+		}
+		/**
+		* Pass in nodes & edges to delete, get arrays of nodes and edges that actually can be deleted
+		* @internal
+		* @param param.nodesToRemove - The nodes to remove
+		* @param param.edgesToRemove - The edges to remove
+		* @param param.nodes - All nodes
+		* @param param.edges - All edges
+		* @param param.onBeforeDelete - Callback to check which nodes and edges can be deleted
+		* @returns nodes: nodes that can be deleted, edges: edges that can be deleted
+		*/
+		async function getElementsToRemove({ nodesToRemove = [], edgesToRemove = [], nodes, edges, onBeforeDelete }) {
+			const nodeIds = new Set(nodesToRemove.map((node) => node.id));
+			const matchingNodes = [];
+			for (const node of nodes) {
+				if (node.deletable === false) continue;
+				const isIncluded = nodeIds.has(node.id);
+				const parentHit = !isIncluded && node.parentId && matchingNodes.find((n) => n.id === node.parentId);
+				if (isIncluded || parentHit) matchingNodes.push(node);
+			}
+			const edgeIds = new Set(edgesToRemove.map((edge) => edge.id));
+			const deletableEdges = edges.filter((edge) => edge.deletable !== false);
+			const matchingEdges = getConnectedEdges(matchingNodes, deletableEdges);
+			for (const edge of deletableEdges) if (edgeIds.has(edge.id) && !matchingEdges.find((e) => e.id === edge.id)) matchingEdges.push(edge);
+			if (!onBeforeDelete) return {
+				edges: matchingEdges,
+				nodes: matchingNodes
+			};
+			const onBeforeDeleteResult = await onBeforeDelete({
+				nodes: matchingNodes,
+				edges: matchingEdges
+			});
+			if (typeof onBeforeDeleteResult === "boolean") return onBeforeDeleteResult ? {
+				edges: matchingEdges,
+				nodes: matchingNodes
+			} : {
+				edges: [],
+				nodes: []
+			};
+			return onBeforeDeleteResult;
+		}
+		const clamp = (val, min = 0, max = 1) => Math.min(Math.max(val, min), max);
+		const clampPosition = (position = {
+			x: 0,
+			y: 0
+		}, extent, dimensions) => ({
+			x: clamp(position.x, extent[0][0], extent[1][0] - (dimensions?.width ?? 0)),
+			y: clamp(position.y, extent[0][1], extent[1][1] - (dimensions?.height ?? 0))
+		});
+		function clampPositionToParent(childPosition, childDimensions, parent) {
+			const { width: parentWidth, height: parentHeight } = getNodeDimensions(parent);
+			const { x: parentX, y: parentY } = parent.internals.positionAbsolute;
+			return clampPosition(childPosition, [[parentX, parentY], [parentX + parentWidth, parentY + parentHeight]], childDimensions);
+		}
+		/**
+		* Calculates the velocity of panning when the mouse is close to the edge of the canvas
+		* @internal
+		* @param value - One dimensional poition of the mouse (x or y)
+		* @param min - Minimal position on canvas before panning starts
+		* @param max - Maximal position on canvas before panning starts
+		* @returns - A number between 0 and 1 that represents the velocity of panning
+		*/
+		const calcAutoPanVelocity = (value, min, max) => {
+			if (value < min) return clamp(Math.abs(value - min), 1, min) / min;
+			else if (value > max) return -clamp(Math.abs(value - max), 1, min) / min;
+			return 0;
+		};
+		const calcAutoPan = (pos, bounds, speed = 15, distance = 40) => {
+			return [calcAutoPanVelocity(pos.x, distance, bounds.width - distance) * speed, calcAutoPanVelocity(pos.y, distance, bounds.height - distance) * speed];
+		};
+		const getBoundsOfBoxes = (box1, box2) => ({
+			x: Math.min(box1.x, box2.x),
+			y: Math.min(box1.y, box2.y),
+			x2: Math.max(box1.x2, box2.x2),
+			y2: Math.max(box1.y2, box2.y2)
+		});
+		const rectToBox = ({ x, y, width, height }) => ({
+			x,
+			y,
+			x2: x + width,
+			y2: y + height
+		});
+		const boxToRect = ({ x, y, x2, y2 }) => ({
+			x,
+			y,
+			width: x2 - x,
+			height: y2 - y
+		});
+		const nodeToRect = (node, nodeOrigin = [0, 0]) => {
+			const { x, y } = isInternalNodeBase(node) ? node.internals.positionAbsolute : getNodePositionWithOrigin(node, nodeOrigin);
+			return {
+				x,
+				y,
+				width: node.measured?.width ?? node.width ?? node.initialWidth ?? 0,
+				height: node.measured?.height ?? node.height ?? node.initialHeight ?? 0
+			};
+		};
+		const nodeToBox = (node, nodeOrigin = [0, 0]) => {
+			const { x, y } = isInternalNodeBase(node) ? node.internals.positionAbsolute : getNodePositionWithOrigin(node, nodeOrigin);
+			return {
+				x,
+				y,
+				x2: x + (node.measured?.width ?? node.width ?? node.initialWidth ?? 0),
+				y2: y + (node.measured?.height ?? node.height ?? node.initialHeight ?? 0)
+			};
+		};
+		const getBoundsOfRects = (rect1, rect2) => boxToRect(getBoundsOfBoxes(rectToBox(rect1), rectToBox(rect2)));
+		const getRectsOverlappingArea = (aX, aY, aWidth, aHeight, bX, bY, bWidth, bHeight) => {
+			const xOverlap = Math.max(0, Math.min(aX + aWidth, bX + bWidth) - Math.max(aX, bX));
+			const yOverlap = Math.max(0, Math.min(aY + aHeight, bY + bHeight) - Math.max(aY, bY));
+			return Math.ceil(xOverlap * yOverlap);
+		};
+		const getOverlappingArea = (rectA, rectB) => getRectsOverlappingArea(rectA.x, rectA.y, rectA.width, rectA.height, rectB.x, rectB.y, rectB.width, rectB.height);
+		const isRectObject = (obj) => isNumeric(obj.width) && isNumeric(obj.height) && isNumeric(obj.x) && isNumeric(obj.y);
+		const isNumeric = (n) => !isNaN(n) && isFinite(n);
+		const createDevWarn = (lib, helpUrl) => (id, message) => {
+			if (process.env.NODE_ENV === "development") console.warn(`[${lib}]: ${message} Help: ${helpUrl}error#${id}`);
+		};
+		const snapPosition = (position, snapGrid = [1, 1]) => {
+			return {
+				x: snapGrid[0] * Math.round(position.x / snapGrid[0]),
+				y: snapGrid[1] * Math.round(position.y / snapGrid[1])
+			};
+		};
+		const pointToRendererPoint = ({ x, y }, [tx, ty, tScale], snapToGrid = false, snapGrid = [1, 1]) => {
+			const position = {
+				x: (x - tx) / tScale,
+				y: (y - ty) / tScale
+			};
+			return snapToGrid ? snapPosition(position, snapGrid) : position;
+		};
+		const rendererPointToPoint = ({ x, y }, [tx, ty, tScale]) => {
+			return {
+				x: x * tScale + tx,
+				y: y * tScale + ty
+			};
+		};
+		/**
+		* Parses a single padding value to a number
+		* @internal
+		* @param padding - Padding to parse
+		* @param viewport - Width or height of the viewport
+		* @returns The padding in pixels
+		*/
+		function parsePadding(padding, viewport) {
+			if (typeof padding === "number") return Math.floor((viewport - viewport / (1 + padding)) * .5);
+			if (typeof padding === "string" && padding.endsWith("px")) {
+				const paddingValue = parseFloat(padding);
+				if (!Number.isNaN(paddingValue)) return Math.floor(paddingValue);
+			}
+			if (typeof padding === "string" && padding.endsWith("%")) {
+				const paddingValue = parseFloat(padding);
+				if (!Number.isNaN(paddingValue)) return Math.floor(viewport * paddingValue * .01);
+			}
+			console.error(`The padding value "${padding}" is invalid. Please provide a number or a string with a valid unit (px or %).`);
+			return 0;
+		}
+		/**
+		* Parses the paddings to an object with top, right, bottom, left, x and y paddings
+		* @internal
+		* @param padding - Padding to parse
+		* @param width - Width of the viewport
+		* @param height - Height of the viewport
+		* @returns An object with the paddings in pixels
+		*/
+		function parsePaddings(padding, width, height) {
+			if (typeof padding === "string" || typeof padding === "number") {
+				const paddingY = parsePadding(padding, height);
+				const paddingX = parsePadding(padding, width);
+				return {
+					top: paddingY,
+					right: paddingX,
+					bottom: paddingY,
+					left: paddingX,
+					x: paddingX * 2,
+					y: paddingY * 2
+				};
+			}
+			if (typeof padding === "object") {
+				const top = parsePadding(padding.top ?? padding.y ?? 0, height);
+				const bottom = parsePadding(padding.bottom ?? padding.y ?? 0, height);
+				const left = parsePadding(padding.left ?? padding.x ?? 0, width);
+				const right = parsePadding(padding.right ?? padding.x ?? 0, width);
+				return {
+					top,
+					right,
+					bottom,
+					left,
+					x: left + right,
+					y: top + bottom
+				};
+			}
+			return {
+				top: 0,
+				right: 0,
+				bottom: 0,
+				left: 0,
+				x: 0,
+				y: 0
+			};
+		}
+		/**
+		* Calculates the resulting paddings if the new viewport is applied
+		* @internal
+		* @param bounds - Bounds to fit inside viewport
+		* @param x - X position of the viewport
+		* @param y - Y position of the viewport
+		* @param zoom - Zoom level of the viewport
+		* @param width - Width of the viewport
+		* @param height - Height of the viewport
+		* @returns An object with the minimum padding required to fit the bounds inside the viewport
+		*/
+		function calculateAppliedPaddings(bounds, x, y, zoom, width, height) {
+			const { x: left, y: top } = rendererPointToPoint(bounds, [
+				x,
+				y,
+				zoom
+			]);
+			const { x: boundRight, y: boundBottom } = rendererPointToPoint({
+				x: bounds.x + bounds.width,
+				y: bounds.y + bounds.height
+			}, [
+				x,
+				y,
+				zoom
+			]);
+			const right = width - boundRight;
+			const bottom = height - boundBottom;
+			return {
+				left: Math.floor(left),
+				top: Math.floor(top),
+				right: Math.floor(right),
+				bottom: Math.floor(bottom)
+			};
+		}
+		/**
+		* Returns a viewport that encloses the given bounds with padding.
+		* @public
+		* @remarks You can determine bounds of nodes with {@link getNodesBounds} and {@link getBoundsOfRects}
+		* @param bounds - Bounds to fit inside viewport.
+		* @param width - Width of the viewport.
+		* @param height  - Height of the viewport.
+		* @param minZoom - Minimum zoom level of the resulting viewport.
+		* @param maxZoom - Maximum zoom level of the resulting viewport.
+		* @param padding - Padding around the bounds.
+		* @returns A transformed {@link Viewport} that encloses the given bounds which you can pass to e.g. {@link setViewport}.
+		* @example
+		* const { x, y, zoom } = getViewportForBounds(
+		* { x: 0, y: 0, width: 100, height: 100},
+		* 1200, 800, 0.5, 2);
+		*/
+		const getViewportForBounds = (bounds, width, height, minZoom, maxZoom, padding) => {
+			const p = parsePaddings(padding, width, height);
+			const xZoom = (width - p.x) / bounds.width;
+			const yZoom = (height - p.y) / bounds.height;
+			const clampedZoom = clamp(Math.min(xZoom, yZoom), minZoom, maxZoom);
+			const boundsCenterX = bounds.x + bounds.width / 2;
+			const boundsCenterY = bounds.y + bounds.height / 2;
+			const x = width / 2 - boundsCenterX * clampedZoom;
+			const y = height / 2 - boundsCenterY * clampedZoom;
+			const newPadding = calculateAppliedPaddings(bounds, x, y, clampedZoom, width, height);
+			const offset = {
+				left: Math.min(newPadding.left - p.left, 0),
+				top: Math.min(newPadding.top - p.top, 0),
+				right: Math.min(newPadding.right - p.right, 0),
+				bottom: Math.min(newPadding.bottom - p.bottom, 0)
+			};
+			return {
+				x: x - offset.left + offset.right,
+				y: y - offset.top + offset.bottom,
+				zoom: clampedZoom
+			};
+		};
+		const isMacOs = () => typeof navigator !== "undefined" && navigator?.userAgent?.indexOf("Mac") >= 0;
+		function isCoordinateExtent(extent) {
+			return extent !== void 0 && extent !== null && extent !== "parent";
+		}
+		function getNodeDimensions(node) {
+			return {
+				width: node.measured?.width ?? node.width ?? node.initialWidth ?? 0,
+				height: node.measured?.height ?? node.height ?? node.initialHeight ?? 0
+			};
+		}
+		function nodeHasDimensions(node) {
+			return (node.measured?.width ?? node.width ?? node.initialWidth) !== void 0 && (node.measured?.height ?? node.height ?? node.initialHeight) !== void 0;
+		}
+		/**
+		* Convert child position to absolute position
+		*
+		* @internal
+		* @param position
+		* @param parentId
+		* @param nodeLookup
+		* @param nodeOrigin
+		* @returns an internal node with an absolute position
+		*/
+		function evaluateAbsolutePosition(position, dimensions = {
+			width: 0,
+			height: 0
+		}, parentId, nodeLookup, nodeOrigin) {
+			const positionAbsolute = { ...position };
+			const parent = nodeLookup.get(parentId);
+			if (parent) {
+				const origin = parent.origin || nodeOrigin;
+				positionAbsolute.x += parent.internals.positionAbsolute.x - (dimensions.width ?? 0) * origin[0];
+				positionAbsolute.y += parent.internals.positionAbsolute.y - (dimensions.height ?? 0) * origin[1];
+			}
+			return positionAbsolute;
+		}
+		function areSetsEqual(a, b) {
+			if (a.size !== b.size) return false;
+			for (const item of a) if (!b.has(item)) return false;
+			return true;
+		}
+		/**
+		* Polyfill for Promise.withResolvers until we can use it in all browsers
+		* @internal
+		*/
+		function withResolvers() {
+			let resolve;
+			let reject;
+			return {
+				promise: new Promise((res, rej) => {
+					resolve = res;
+					reject = rej;
+				}),
+				resolve,
+				reject
+			};
+		}
+		function mergeAriaLabelConfig(partial) {
+			return {
+				...defaultAriaLabelConfig,
+				...partial || {}
+			};
+		}
+		function getPointerPosition(event, { snapGrid = [0, 0], snapToGrid = false, transform, containerBounds }) {
+			const { x, y } = getEventPosition(event);
+			const pointerPos = pointToRendererPoint({
+				x: x - (containerBounds?.left ?? 0),
+				y: y - (containerBounds?.top ?? 0)
+			}, transform);
+			const { x: xSnapped, y: ySnapped } = snapToGrid ? snapPosition(pointerPos, snapGrid) : pointerPos;
+			return {
+				xSnapped,
+				ySnapped,
+				...pointerPos
+			};
+		}
+		const getDimensions = (node) => ({
+			width: node.offsetWidth,
+			height: node.offsetHeight
+		});
+		const getHostForElement = (element) => element?.getRootNode?.() || window?.document;
+		const inputTags = [
+			"INPUT",
+			"SELECT",
+			"TEXTAREA"
+		];
+		function isInputDOMNode(event) {
+			const target = event.composedPath?.()?.[0] || event.target;
+			if (target?.nodeType !== 1) return false;
+			return inputTags.includes(target.nodeName) || target.hasAttribute("contenteditable") || !!target.closest(".nokey");
+		}
+		const isMouseEvent = (event) => "clientX" in event;
+		const getEventPosition = (event, bounds) => {
+			const isMouse = isMouseEvent(event);
+			const evtX = isMouse ? event.clientX : event.touches?.[0].clientX;
+			const evtY = isMouse ? event.clientY : event.touches?.[0].clientY;
+			return {
+				x: evtX - (bounds?.left ?? 0),
+				y: evtY - (bounds?.top ?? 0)
+			};
+		};
+		const getHandleBounds = (type, nodeElement, nodeBounds, zoom, nodeId) => {
+			const handles = nodeElement.querySelectorAll(`.${type}`);
+			if (!handles || !handles.length) return null;
+			return Array.from(handles).map((handle) => {
+				const handleBounds = handle.getBoundingClientRect();
+				return {
+					id: handle.getAttribute("data-handleid"),
+					type,
+					nodeId,
+					position: handle.getAttribute("data-handlepos"),
+					x: (handleBounds.left - nodeBounds.left) / zoom,
+					y: (handleBounds.top - nodeBounds.top) / zoom,
+					...getDimensions(handle)
+				};
+			});
+		};
+		function getBezierEdgeCenter({ sourceX, sourceY, targetX, targetY, sourceControlX, sourceControlY, targetControlX, targetControlY }) {
+			const centerX = sourceX * .125 + sourceControlX * .375 + targetControlX * .375 + targetX * .125;
+			const centerY = sourceY * .125 + sourceControlY * .375 + targetControlY * .375 + targetY * .125;
+			return [
+				centerX,
+				centerY,
+				Math.abs(centerX - sourceX),
+				Math.abs(centerY - sourceY)
+			];
+		}
+		function calculateControlOffset(distance, curvature) {
+			if (distance >= 0) return .5 * distance;
+			return curvature * 25 * Math.sqrt(-distance);
+		}
+		function getControlWithCurvature({ pos, x1, y1, x2, y2, c }) {
+			switch (pos) {
+				case Position.Left: return [x1 - calculateControlOffset(x1 - x2, c), y1];
+				case Position.Right: return [x1 + calculateControlOffset(x2 - x1, c), y1];
+				case Position.Top: return [x1, y1 - calculateControlOffset(y1 - y2, c)];
+				case Position.Bottom: return [x1, y1 + calculateControlOffset(y2 - y1, c)];
+			}
+		}
+		/**
+		* The `getBezierPath` util returns everything you need to render a bezier edge
+		*between two nodes.
+		* @public
+		* @returns A path string you can use in an SVG, the `labelX` and `labelY` position (center of path)
+		* and `offsetX`, `offsetY` between source handle and label.
+		* - `path`: the path to use in an SVG `<path>` element.
+		* - `labelX`: the `x` position you can use to render a label for this edge.
+		* - `labelY`: the `y` position you can use to render a label for this edge.
+		* - `offsetX`: the absolute difference between the source `x` position and the `x` position of the
+		* middle of this path.
+		* - `offsetY`: the absolute difference between the source `y` position and the `y` position of the
+		* middle of this path.
+		* @example
+		* ```js
+		*  const source = { x: 0, y: 20 };
+		*  const target = { x: 150, y: 100 };
+		*
+		*  const [path, labelX, labelY, offsetX, offsetY] = getBezierPath({
+		*    sourceX: source.x,
+		*    sourceY: source.y,
+		*    sourcePosition: Position.Right,
+		*    targetX: target.x,
+		*    targetY: target.y,
+		*    targetPosition: Position.Left,
+		*});
+		*```
+		*
+		* @remarks This function returns a tuple (aka a fixed-size array) to make it easier to
+		*work with multiple edge paths at once.
+		*/
+		function getBezierPath({ sourceX, sourceY, sourcePosition = Position.Bottom, targetX, targetY, targetPosition = Position.Top, curvature = .25 }) {
+			const [sourceControlX, sourceControlY] = getControlWithCurvature({
+				pos: sourcePosition,
+				x1: sourceX,
+				y1: sourceY,
+				x2: targetX,
+				y2: targetY,
+				c: curvature
+			});
+			const [targetControlX, targetControlY] = getControlWithCurvature({
+				pos: targetPosition,
+				x1: targetX,
+				y1: targetY,
+				x2: sourceX,
+				y2: sourceY,
+				c: curvature
+			});
+			const [labelX, labelY, offsetX, offsetY] = getBezierEdgeCenter({
+				sourceX,
+				sourceY,
+				targetX,
+				targetY,
+				sourceControlX,
+				sourceControlY,
+				targetControlX,
+				targetControlY
+			});
+			return [
+				`M${sourceX},${sourceY} C${sourceControlX},${sourceControlY} ${targetControlX},${targetControlY} ${targetX},${targetY}`,
+				labelX,
+				labelY,
+				offsetX,
+				offsetY
+			];
+		}
+		function getEdgeCenter({ sourceX, sourceY, targetX, targetY }) {
+			const xOffset = Math.abs(targetX - sourceX) / 2;
+			const centerX = targetX < sourceX ? targetX + xOffset : targetX - xOffset;
+			const yOffset = Math.abs(targetY - sourceY) / 2;
+			return [
+				centerX,
+				targetY < sourceY ? targetY + yOffset : targetY - yOffset,
+				xOffset,
+				yOffset
+			];
+		}
+		/**
+		* Returns the z-index for an edge based on the node it connects and whether it is selected.
+		* By default, edges are rendered below nodes. This behaviour is different for edges that are
+		* connected to nodes with a parent, as they are rendered above the parent node.
+		*/
+		function getElevatedEdgeZIndex({ sourceNode, targetNode, selected = false, zIndex = 0, elevateOnSelect = false, zIndexMode = "basic" }) {
+			if (zIndexMode === "manual") return zIndex;
+			return (elevateOnSelect && selected ? zIndex + 1e3 : zIndex) + Math.max(sourceNode.parentId || elevateOnSelect && sourceNode.selected ? sourceNode.internals.z : 0, targetNode.parentId || elevateOnSelect && targetNode.selected ? targetNode.internals.z : 0);
+		}
+		function isEdgeVisible({ sourceNode, targetNode, width, height, transform }) {
+			const edgeBox = getBoundsOfBoxes(nodeToBox(sourceNode), nodeToBox(targetNode));
+			if (edgeBox.x === edgeBox.x2) edgeBox.x2 += 1;
+			if (edgeBox.y === edgeBox.y2) edgeBox.y2 += 1;
+			const viewRect = {
+				x: -transform[0] / transform[2],
+				y: -transform[1] / transform[2],
+				width: width / transform[2],
+				height: height / transform[2]
+			};
+			return getOverlappingArea(viewRect, boxToRect(edgeBox)) > 0;
+		}
+		/**
+		* The default edge ID generator function. Generates an ID based on the source, target, and handles.
+		* @public
+		* @param params - The connection or edge to generate an ID for.
+		* @returns The generated edge ID.
+		*/
+		const getEdgeId = ({ source, sourceHandle, target, targetHandle }) => `xy-edge__${source}${sourceHandle || ""}-${target}${targetHandle || ""}`;
+		const connectionExists = (edge, edges) => {
+			return edges.some((el) => el.source === edge.source && el.target === edge.target && (el.sourceHandle === edge.sourceHandle || !el.sourceHandle && !edge.sourceHandle) && (el.targetHandle === edge.targetHandle || !el.targetHandle && !edge.targetHandle));
+		};
+		/**
+		* This util is a convenience function to add a new Edge to an array of edges. It also performs some validation to make sure you don't add an invalid edge or duplicate an existing one.
+		* @public
+		* @param edgeParams - Either an `Edge` or a `Connection` you want to add.
+		* @param edges - The array of all current edges.
+		* @param options - Optional configuration object.
+		* @returns A new array of edges with the new edge added.
+		*
+		* @remarks If an edge with the same `target` and `source` already exists (and the same
+		*`targetHandle` and `sourceHandle` if those are set), then this util won't add
+		*a new edge even if the `id` property is different.
+		*
+		*/
+		const addEdge$1 = (edgeParams, edges, options = {}) => {
+			if (!edgeParams.source || !edgeParams.target) {
+				options.onError?.("006", errorMessages["error006"]());
+				return edges;
+			}
+			const edgeIdGenerator = options.getEdgeId || getEdgeId;
+			let edge;
+			if (isEdgeBase(edgeParams)) edge = { ...edgeParams };
+			else edge = {
+				...edgeParams,
+				id: edgeIdGenerator(edgeParams)
+			};
+			if (connectionExists(edge, edges)) return edges;
+			if (edge.sourceHandle === null) delete edge.sourceHandle;
+			if (edge.targetHandle === null) delete edge.targetHandle;
+			return edges.concat(edge);
+		};
+		/**
+		* Calculates the straight line path between two points.
+		* @public
+		* @returns A path string you can use in an SVG, the `labelX` and `labelY` position (center of path)
+		* and `offsetX`, `offsetY` between source handle and label.
+		*
+		* - `path`: the path to use in an SVG `<path>` element.
+		* - `labelX`: the `x` position you can use to render a label for this edge.
+		* - `labelY`: the `y` position you can use to render a label for this edge.
+		* - `offsetX`: the absolute difference between the source `x` position and the `x` position of the
+		* middle of this path.
+		* - `offsetY`: the absolute difference between the source `y` position and the `y` position of the
+		* middle of this path.
+		* @example
+		* ```js
+		*  const source = { x: 0, y: 20 };
+		*  const target = { x: 150, y: 100 };
+		*
+		*  const [path, labelX, labelY, offsetX, offsetY] = getStraightPath({
+		*    sourceX: source.x,
+		*    sourceY: source.y,
+		*    sourcePosition: Position.Right,
+		*    targetX: target.x,
+		*    targetY: target.y,
+		*    targetPosition: Position.Left,
+		*  });
+		* ```
+		* @remarks This function returns a tuple (aka a fixed-size array) to make it easier to work with multiple edge paths at once.
+		*/
+		function getStraightPath({ sourceX, sourceY, targetX, targetY }) {
+			const [labelX, labelY, offsetX, offsetY] = getEdgeCenter({
+				sourceX,
+				sourceY,
+				targetX,
+				targetY
+			});
+			return [
+				`M ${sourceX},${sourceY}L ${targetX},${targetY}`,
+				labelX,
+				labelY,
+				offsetX,
+				offsetY
+			];
+		}
+		const handleDirections = {
+			[Position.Left]: {
+				x: -1,
+				y: 0
+			},
+			[Position.Right]: {
+				x: 1,
+				y: 0
+			},
+			[Position.Top]: {
+				x: 0,
+				y: -1
+			},
+			[Position.Bottom]: {
+				x: 0,
+				y: 1
+			}
+		};
+		const getDirection = ({ source, sourcePosition = Position.Bottom, target }) => {
+			if (sourcePosition === Position.Left || sourcePosition === Position.Right) return source.x < target.x ? {
+				x: 1,
+				y: 0
+			} : {
+				x: -1,
+				y: 0
+			};
+			return source.y < target.y ? {
+				x: 0,
+				y: 1
+			} : {
+				x: 0,
+				y: -1
+			};
+		};
+		const distance = (a, b) => Math.sqrt(Math.pow(b.x - a.x, 2) + Math.pow(b.y - a.y, 2));
+		function getPoints({ source, sourcePosition = Position.Bottom, target, targetPosition = Position.Top, center, offset, stepPosition }) {
+			const sourceDir = handleDirections[sourcePosition];
+			const targetDir = handleDirections[targetPosition];
+			const sourceGapped = {
+				x: source.x + sourceDir.x * offset,
+				y: source.y + sourceDir.y * offset
+			};
+			const targetGapped = {
+				x: target.x + targetDir.x * offset,
+				y: target.y + targetDir.y * offset
+			};
+			const dir = getDirection({
+				source: sourceGapped,
+				sourcePosition,
+				target: targetGapped
+			});
+			const dirAccessor = dir.x !== 0 ? "x" : "y";
+			const currDir = dir[dirAccessor];
+			let points = [];
+			let centerX, centerY;
+			const sourceGapOffset = {
+				x: 0,
+				y: 0
+			};
+			const targetGapOffset = {
+				x: 0,
+				y: 0
+			};
+			const [, , defaultOffsetX, defaultOffsetY] = getEdgeCenter({
+				sourceX: source.x,
+				sourceY: source.y,
+				targetX: target.x,
+				targetY: target.y
+			});
+			if (sourceDir[dirAccessor] * targetDir[dirAccessor] === -1) {
+				if (dirAccessor === "x") {
+					centerX = center.x ?? sourceGapped.x + (targetGapped.x - sourceGapped.x) * stepPosition;
+					centerY = center.y ?? (sourceGapped.y + targetGapped.y) / 2;
+				} else {
+					centerX = center.x ?? (sourceGapped.x + targetGapped.x) / 2;
+					centerY = center.y ?? sourceGapped.y + (targetGapped.y - sourceGapped.y) * stepPosition;
+				}
+				const verticalSplit = [{
+					x: centerX,
+					y: sourceGapped.y
+				}, {
+					x: centerX,
+					y: targetGapped.y
+				}];
+				const horizontalSplit = [{
+					x: sourceGapped.x,
+					y: centerY
+				}, {
+					x: targetGapped.x,
+					y: centerY
+				}];
+				if (sourceDir[dirAccessor] === currDir) points = dirAccessor === "x" ? verticalSplit : horizontalSplit;
+				else points = dirAccessor === "x" ? horizontalSplit : verticalSplit;
+			} else {
+				const sourceTarget = [{
+					x: sourceGapped.x,
+					y: targetGapped.y
+				}];
+				const targetSource = [{
+					x: targetGapped.x,
+					y: sourceGapped.y
+				}];
+				if (dirAccessor === "x") points = sourceDir.x === currDir ? targetSource : sourceTarget;
+				else points = sourceDir.y === currDir ? sourceTarget : targetSource;
+				if (sourcePosition === targetPosition) {
+					const diff = Math.abs(source[dirAccessor] - target[dirAccessor]);
+					if (diff <= offset) {
+						const gapOffset = Math.min(offset - 1, offset - diff);
+						if (sourceDir[dirAccessor] === currDir) sourceGapOffset[dirAccessor] = (sourceGapped[dirAccessor] > source[dirAccessor] ? -1 : 1) * gapOffset;
+						else targetGapOffset[dirAccessor] = (targetGapped[dirAccessor] > target[dirAccessor] ? -1 : 1) * gapOffset;
+					}
+				}
+				if (sourcePosition !== targetPosition) {
+					const dirAccessorOpposite = dirAccessor === "x" ? "y" : "x";
+					const isSameDir = sourceDir[dirAccessor] === targetDir[dirAccessorOpposite];
+					const sourceGtTargetOppo = sourceGapped[dirAccessorOpposite] > targetGapped[dirAccessorOpposite];
+					const sourceLtTargetOppo = sourceGapped[dirAccessorOpposite] < targetGapped[dirAccessorOpposite];
+					if (sourceDir[dirAccessor] === 1 && (!isSameDir && sourceGtTargetOppo || isSameDir && sourceLtTargetOppo) || sourceDir[dirAccessor] !== 1 && (!isSameDir && sourceLtTargetOppo || isSameDir && sourceGtTargetOppo)) points = dirAccessor === "x" ? sourceTarget : targetSource;
+				}
+				const sourceGapPoint = {
+					x: sourceGapped.x + sourceGapOffset.x,
+					y: sourceGapped.y + sourceGapOffset.y
+				};
+				const targetGapPoint = {
+					x: targetGapped.x + targetGapOffset.x,
+					y: targetGapped.y + targetGapOffset.y
+				};
+				if (Math.max(Math.abs(sourceGapPoint.x - points[0].x), Math.abs(targetGapPoint.x - points[0].x)) >= Math.max(Math.abs(sourceGapPoint.y - points[0].y), Math.abs(targetGapPoint.y - points[0].y))) {
+					centerX = (sourceGapPoint.x + targetGapPoint.x) / 2;
+					centerY = points[0].y;
+				} else {
+					centerX = points[0].x;
+					centerY = (sourceGapPoint.y + targetGapPoint.y) / 2;
+				}
+			}
+			const gappedSource = {
+				x: sourceGapped.x + sourceGapOffset.x,
+				y: sourceGapped.y + sourceGapOffset.y
+			};
+			const gappedTarget = {
+				x: targetGapped.x + targetGapOffset.x,
+				y: targetGapped.y + targetGapOffset.y
+			};
+			return [
+				[
+					source,
+					...gappedSource.x !== points[0].x || gappedSource.y !== points[0].y ? [gappedSource] : [],
+					...points,
+					...gappedTarget.x !== points[points.length - 1].x || gappedTarget.y !== points[points.length - 1].y ? [gappedTarget] : [],
+					target
+				],
+				centerX,
+				centerY,
+				defaultOffsetX,
+				defaultOffsetY
+			];
+		}
+		function getBend(a, b, c, size) {
+			const bendSize = Math.min(distance(a, b) / 2, distance(b, c) / 2, size);
+			const { x, y } = b;
+			if (a.x === x && x === c.x || a.y === y && y === c.y) return `L${x} ${y}`;
+			if (a.y === y) {
+				const xDir = a.x < c.x ? -1 : 1;
+				const yDir = a.y < c.y ? 1 : -1;
+				return `L ${x + bendSize * xDir},${y}Q ${x},${y} ${x},${y + bendSize * yDir}`;
+			}
+			const xDir = a.x < c.x ? 1 : -1;
+			return `L ${x},${y + bendSize * (a.y < c.y ? -1 : 1)}Q ${x},${y} ${x + bendSize * xDir},${y}`;
+		}
+		/**
+		* The `getSmoothStepPath` util returns everything you need to render a stepped path
+		* between two nodes. The `borderRadius` property can be used to choose how rounded
+		* the corners of those steps are.
+		* @public
+		* @returns A path string you can use in an SVG, the `labelX` and `labelY` position (center of path)
+		* and `offsetX`, `offsetY` between source handle and label.
+		*
+		* - `path`: the path to use in an SVG `<path>` element.
+		* - `labelX`: the `x` position you can use to render a label for this edge.
+		* - `labelY`: the `y` position you can use to render a label for this edge.
+		* - `offsetX`: the absolute difference between the source `x` position and the `x` position of the
+		* middle of this path.
+		* - `offsetY`: the absolute difference between the source `y` position and the `y` position of the
+		* middle of this path.
+		* @example
+		* ```js
+		*  const source = { x: 0, y: 20 };
+		*  const target = { x: 150, y: 100 };
+		*
+		*  const [path, labelX, labelY, offsetX, offsetY] = getSmoothStepPath({
+		*    sourceX: source.x,
+		*    sourceY: source.y,
+		*    sourcePosition: Position.Right,
+		*    targetX: target.x,
+		*    targetY: target.y,
+		*    targetPosition: Position.Left,
+		*  });
+		* ```
+		* @remarks This function returns a tuple (aka a fixed-size array) to make it easier to work with multiple edge paths at once.
+		*/
+		function getSmoothStepPath({ sourceX, sourceY, sourcePosition = Position.Bottom, targetX, targetY, targetPosition = Position.Top, borderRadius = 5, centerX, centerY, offset = 20, stepPosition = .5 }) {
+			const [points, labelX, labelY, offsetX, offsetY] = getPoints({
+				source: {
+					x: sourceX,
+					y: sourceY
+				},
+				sourcePosition,
+				target: {
+					x: targetX,
+					y: targetY
+				},
+				targetPosition,
+				center: {
+					x: centerX,
+					y: centerY
+				},
+				offset,
+				stepPosition
+			});
+			let path = `M${points[0].x} ${points[0].y}`;
+			for (let i = 1; i < points.length - 1; i++) path += getBend(points[i - 1], points[i], points[i + 1], borderRadius);
+			path += `L${points[points.length - 1].x} ${points[points.length - 1].y}`;
+			return [
+				path,
+				labelX,
+				labelY,
+				offsetX,
+				offsetY
+			];
+		}
+		function isNodeInitialized(node) {
+			return node && !!(node.internals.handleBounds || node.handles?.length) && !!(node.measured.width || node.width || node.initialWidth);
+		}
+		function getEdgePosition(params) {
+			const { sourceNode, targetNode } = params;
+			if (!isNodeInitialized(sourceNode) || !isNodeInitialized(targetNode)) return null;
+			const sourceHandleBounds = sourceNode.internals.handleBounds || toHandleBounds(sourceNode.handles);
+			const targetHandleBounds = targetNode.internals.handleBounds || toHandleBounds(targetNode.handles);
+			const sourceHandle = getHandle$1(sourceHandleBounds?.source ?? [], params.sourceHandle);
+			const targetHandle = getHandle$1(params.connectionMode === ConnectionMode.Strict ? targetHandleBounds?.target ?? [] : (targetHandleBounds?.target ?? []).concat(targetHandleBounds?.source ?? []), params.targetHandle);
+			if (!sourceHandle || !targetHandle) {
+				params.onError?.("008", errorMessages["error008"](!sourceHandle ? "source" : "target", {
+					id: params.id,
+					sourceHandle: params.sourceHandle,
+					targetHandle: params.targetHandle
+				}));
+				return null;
+			}
+			const sourcePosition = sourceHandle?.position || Position.Bottom;
+			const targetPosition = targetHandle?.position || Position.Top;
+			const source = getHandlePosition(sourceNode, sourceHandle, sourcePosition);
+			const target = getHandlePosition(targetNode, targetHandle, targetPosition);
+			return {
+				sourceX: source.x,
+				sourceY: source.y,
+				targetX: target.x,
+				targetY: target.y,
+				sourcePosition,
+				targetPosition
+			};
+		}
+		function toHandleBounds(handles) {
+			if (!handles) return null;
+			const source = [];
+			const target = [];
+			for (const handle of handles) {
+				handle.width = handle.width ?? 1;
+				handle.height = handle.height ?? 1;
+				if (handle.type === "source") source.push(handle);
+				else if (handle.type === "target") target.push(handle);
+			}
+			return {
+				source,
+				target
+			};
+		}
+		function getHandlePosition(node, handle, fallbackPosition = Position.Left, center = false) {
+			const x = (handle?.x ?? 0) + node.internals.positionAbsolute.x;
+			const y = (handle?.y ?? 0) + node.internals.positionAbsolute.y;
+			const { width, height } = handle ?? getNodeDimensions(node);
+			if (center) return {
+				x: x + width / 2,
+				y: y + height / 2
+			};
+			switch (handle?.position ?? fallbackPosition) {
+				case Position.Top: return {
+					x: x + width / 2,
+					y
+				};
+				case Position.Right: return {
+					x: x + width,
+					y: y + height / 2
+				};
+				case Position.Bottom: return {
+					x: x + width / 2,
+					y: y + height
+				};
+				case Position.Left: return {
+					x,
+					y: y + height / 2
+				};
+			}
+		}
+		function getHandle$1(bounds, handleId) {
+			if (!bounds) return null;
+			return (!handleId ? bounds[0] : bounds.find((d) => d.id === handleId)) || null;
+		}
+		function getMarkerId(marker, id) {
+			if (!marker) return "";
+			if (typeof marker === "string") return marker;
+			return `${id ? `${id}__` : ""}${Object.keys(marker).sort().map((key) => `${key}=${marker[key]}`).join("&")}`;
+		}
+		function createMarkerIds(edges, { id, defaultColor, defaultMarkerStart, defaultMarkerEnd }) {
+			const ids = /* @__PURE__ */ new Set();
+			return edges.reduce((markers, edge) => {
+				[edge.markerStart || defaultMarkerStart, edge.markerEnd || defaultMarkerEnd].forEach((marker) => {
+					if (marker && typeof marker === "object") {
+						const markerId = getMarkerId(marker, id);
+						if (!ids.has(markerId)) {
+							markers.push({
+								id: markerId,
+								color: marker.color || defaultColor,
+								...marker
+							});
+							ids.add(markerId);
+						}
+					}
+				});
+				return markers;
+			}, []).sort((a, b) => a.id.localeCompare(b.id));
+		}
+		const SELECTED_NODE_Z = 1e3;
+		const ROOT_PARENT_Z_INCREMENT = 10;
+		const defaultOptions = {
+			nodeOrigin: [0, 0],
+			nodeExtent: infiniteExtent,
+			elevateNodesOnSelect: true,
+			zIndexMode: "basic",
+			defaults: {}
+		};
+		const adoptUserNodesDefaultOptions = {
+			...defaultOptions,
+			checkEquality: true
+		};
+		function mergeObjects(base, incoming) {
+			const result = { ...base };
+			for (const key in incoming) if (incoming[key] !== void 0) result[key] = incoming[key];
+			return result;
+		}
+		function updateAbsolutePositions(nodeLookup, parentLookup, options) {
+			const _options = mergeObjects(defaultOptions, options);
+			for (const node of nodeLookup.values()) if (node.parentId) updateChildNode(node, nodeLookup, parentLookup, _options);
+			else {
+				const positionWithOrigin = getNodePositionWithOrigin(node, _options.nodeOrigin);
+				const extent = isCoordinateExtent(node.extent) ? node.extent : _options.nodeExtent;
+				const clampedPosition = clampPosition(positionWithOrigin, extent, getNodeDimensions(node));
+				node.internals.positionAbsolute = clampedPosition;
+			}
+		}
+		function parseHandles(userNode, internalNode) {
+			if (!userNode.handles) return !userNode.measured ? void 0 : internalNode?.internals.handleBounds;
+			const source = [];
+			const target = [];
+			for (const handle of userNode.handles) {
+				const handleBounds = {
+					id: handle.id,
+					width: handle.width ?? 1,
+					height: handle.height ?? 1,
+					nodeId: userNode.id,
+					x: handle.x,
+					y: handle.y,
+					position: handle.position,
+					type: handle.type
+				};
+				if (handle.type === "source") source.push(handleBounds);
+				else if (handle.type === "target") target.push(handleBounds);
+			}
+			return {
+				source,
+				target
+			};
+		}
+		function isManualZIndexMode(zIndexMode) {
+			return zIndexMode === "manual";
+		}
+		function adoptUserNodes(nodes, nodeLookup, parentLookup, options = {}) {
+			const _options = mergeObjects(adoptUserNodesDefaultOptions, options);
+			const rootParentIndex = { i: 0 };
+			const tmpLookup = new Map(nodeLookup);
+			const selectedNodeZ = _options?.elevateNodesOnSelect && !isManualZIndexMode(_options.zIndexMode) ? SELECTED_NODE_Z : 0;
+			let nodesInitialized = nodes.length > 0;
+			let hasSelectedNodes = false;
+			nodeLookup.clear();
+			parentLookup.clear();
+			for (const userNode of nodes) {
+				let internalNode = tmpLookup.get(userNode.id);
+				if (_options.checkEquality && userNode === internalNode?.internals.userNode) nodeLookup.set(userNode.id, internalNode);
+				else {
+					const positionWithOrigin = getNodePositionWithOrigin(userNode, _options.nodeOrigin);
+					const extent = isCoordinateExtent(userNode.extent) ? userNode.extent : _options.nodeExtent;
+					const clampedPosition = clampPosition(positionWithOrigin, extent, getNodeDimensions(userNode));
+					internalNode = {
+						..._options.defaults,
+						...userNode,
+						measured: {
+							width: userNode.measured?.width,
+							height: userNode.measured?.height
+						},
+						internals: {
+							positionAbsolute: clampedPosition,
+							handleBounds: parseHandles(userNode, internalNode),
+							z: calculateZ(userNode, selectedNodeZ, _options.zIndexMode),
+							userNode
+						}
+					};
+					nodeLookup.set(userNode.id, internalNode);
+				}
+				if ((internalNode.measured === void 0 || internalNode.measured.width === void 0 || internalNode.measured.height === void 0) && !internalNode.hidden) nodesInitialized = false;
+				if (userNode.parentId) updateChildNode(internalNode, nodeLookup, parentLookup, options, rootParentIndex);
+				hasSelectedNodes ||= userNode.selected ?? false;
+			}
+			return {
+				nodesInitialized,
+				hasSelectedNodes
+			};
+		}
+		function updateParentLookup(node, parentLookup) {
+			if (!node.parentId) return;
+			const childNodes = parentLookup.get(node.parentId);
+			if (childNodes) childNodes.set(node.id, node);
+			else parentLookup.set(node.parentId, /* @__PURE__ */ new Map([[node.id, node]]));
+		}
+		/**
+		* Updates positionAbsolute and zIndex of a child node and the parentLookup.
+		*/
+		function updateChildNode(node, nodeLookup, parentLookup, options, rootParentIndex) {
+			const { elevateNodesOnSelect, nodeOrigin, nodeExtent, zIndexMode } = mergeObjects(defaultOptions, options);
+			const parentId = node.parentId;
+			const parentNode = nodeLookup.get(parentId);
+			if (!parentNode) {
+				console.warn(`Parent node ${parentId} not found. Please make sure that parent nodes are in front of their child nodes in the nodes array.`);
+				return;
+			}
+			updateParentLookup(node, parentLookup);
+			if (rootParentIndex && !parentNode.parentId && parentNode.internals.rootParentIndex === void 0 && zIndexMode === "auto") {
+				parentNode.internals.rootParentIndex = ++rootParentIndex.i;
+				parentNode.internals.z = parentNode.internals.z + rootParentIndex.i * ROOT_PARENT_Z_INCREMENT;
+			}
+			if (rootParentIndex && parentNode.internals.rootParentIndex !== void 0) rootParentIndex.i = parentNode.internals.rootParentIndex;
+			const { x, y, z } = calculateChildXYZ(node, parentNode, nodeOrigin, nodeExtent, elevateNodesOnSelect && !isManualZIndexMode(zIndexMode) ? SELECTED_NODE_Z : 0, zIndexMode);
+			const { positionAbsolute } = node.internals;
+			const positionChanged = x !== positionAbsolute.x || y !== positionAbsolute.y;
+			if (positionChanged || z !== node.internals.z) nodeLookup.set(node.id, {
+				...node,
+				internals: {
+					...node.internals,
+					positionAbsolute: positionChanged ? {
+						x,
+						y
+					} : positionAbsolute,
+					z
+				}
+			});
+		}
+		function calculateZ(node, selectedNodeZ, zIndexMode) {
+			const zIndex = isNumeric(node.zIndex) ? node.zIndex : 0;
+			if (isManualZIndexMode(zIndexMode)) return zIndex;
+			return zIndex + (node.selected ? selectedNodeZ : 0);
+		}
+		function calculateChildXYZ(childNode, parentNode, nodeOrigin, nodeExtent, selectedNodeZ, zIndexMode) {
+			const { x: parentX, y: parentY } = parentNode.internals.positionAbsolute;
+			const childDimensions = getNodeDimensions(childNode);
+			const positionWithOrigin = getNodePositionWithOrigin(childNode, nodeOrigin);
+			const clampedPosition = isCoordinateExtent(childNode.extent) ? clampPosition(positionWithOrigin, childNode.extent, childDimensions) : positionWithOrigin;
+			let absolutePosition = clampPosition({
+				x: parentX + clampedPosition.x,
+				y: parentY + clampedPosition.y
+			}, nodeExtent, childDimensions);
+			if (childNode.extent === "parent") absolutePosition = clampPositionToParent(absolutePosition, childDimensions, parentNode);
+			const childZ = calculateZ(childNode, selectedNodeZ, zIndexMode);
+			const parentZ = parentNode.internals.z ?? 0;
+			return {
+				x: absolutePosition.x,
+				y: absolutePosition.y,
+				z: parentZ >= childZ ? parentZ + 1 : childZ
+			};
+		}
+		function handleExpandParent(children, nodeLookup, parentLookup, nodeOrigin = [0, 0]) {
+			const changes = [];
+			const parentExpansions = /* @__PURE__ */ new Map();
+			for (const child of children) {
+				const parent = nodeLookup.get(child.parentId);
+				if (!parent) continue;
+				const parentRect = parentExpansions.get(child.parentId)?.expandedRect ?? nodeToRect(parent);
+				const expandedRect = getBoundsOfRects(parentRect, child.rect);
+				parentExpansions.set(child.parentId, {
+					expandedRect,
+					parent
+				});
+			}
+			if (parentExpansions.size > 0) parentExpansions.forEach(({ expandedRect, parent }, parentId) => {
+				const positionAbsolute = parent.internals.positionAbsolute;
+				const dimensions = getNodeDimensions(parent);
+				const origin = parent.origin ?? nodeOrigin;
+				const xChange = expandedRect.x < positionAbsolute.x ? Math.round(Math.abs(positionAbsolute.x - expandedRect.x)) : 0;
+				const yChange = expandedRect.y < positionAbsolute.y ? Math.round(Math.abs(positionAbsolute.y - expandedRect.y)) : 0;
+				const newWidth = Math.max(dimensions.width, Math.round(expandedRect.width));
+				const newHeight = Math.max(dimensions.height, Math.round(expandedRect.height));
+				const widthChange = (newWidth - dimensions.width) * origin[0];
+				const heightChange = (newHeight - dimensions.height) * origin[1];
+				if (xChange > 0 || yChange > 0 || widthChange || heightChange) {
+					changes.push({
+						id: parentId,
+						type: "position",
+						position: {
+							x: parent.position.x - xChange + widthChange,
+							y: parent.position.y - yChange + heightChange
+						}
+					});
+					parentLookup.get(parentId)?.forEach((childNode) => {
+						if (!children.some((child) => child.id === childNode.id)) changes.push({
+							id: childNode.id,
+							type: "position",
+							position: {
+								x: childNode.position.x + xChange,
+								y: childNode.position.y + yChange
+							}
+						});
+					});
+				}
+				if (dimensions.width < expandedRect.width || dimensions.height < expandedRect.height || xChange || yChange) changes.push({
+					id: parentId,
+					type: "dimensions",
+					setAttributes: true,
+					dimensions: {
+						width: newWidth + (xChange ? origin[0] * xChange - widthChange : 0),
+						height: newHeight + (yChange ? origin[1] * yChange - heightChange : 0)
+					}
+				});
+			});
+			return changes;
+		}
+		function updateNodeInternals(updates, nodeLookup, parentLookup, domNode, nodeOrigin, nodeExtent, zIndexMode) {
+			const viewportNode = domNode?.querySelector(".xyflow__viewport");
+			let updatedInternals = false;
+			if (!viewportNode) return {
+				changes: [],
+				updatedInternals
+			};
+			const changes = [];
+			const style = window.getComputedStyle(viewportNode);
+			const { m22: zoom } = new window.DOMMatrixReadOnly(style.transform);
+			const parentExpandChildren = [];
+			for (const update of updates.values()) {
+				const node = nodeLookup.get(update.id);
+				if (!node) continue;
+				if (node.hidden) {
+					nodeLookup.set(node.id, {
+						...node,
+						internals: {
+							...node.internals,
+							handleBounds: void 0
+						}
+					});
+					updatedInternals = true;
+					continue;
+				}
+				const dimensions = getDimensions(update.nodeElement);
+				const dimensionChanged = node.measured.width !== dimensions.width || node.measured.height !== dimensions.height;
+				if (!!(dimensions.width && dimensions.height && (dimensionChanged || !node.internals.handleBounds || update.force))) {
+					const nodeBounds = update.nodeElement.getBoundingClientRect();
+					const extent = isCoordinateExtent(node.extent) ? node.extent : nodeExtent;
+					let { positionAbsolute } = node.internals;
+					if (node.parentId && node.extent === "parent") {
+						const parentNode = nodeLookup.get(node.parentId);
+						if (parentNode) positionAbsolute = clampPositionToParent(positionAbsolute, dimensions, parentNode);
+					} else if (extent) positionAbsolute = clampPosition(positionAbsolute, extent, dimensions);
+					const newNode = {
+						...node,
+						measured: dimensions,
+						internals: {
+							...node.internals,
+							positionAbsolute,
+							handleBounds: {
+								source: getHandleBounds("source", update.nodeElement, nodeBounds, zoom, node.id),
+								target: getHandleBounds("target", update.nodeElement, nodeBounds, zoom, node.id)
+							}
+						}
+					};
+					nodeLookup.set(node.id, newNode);
+					if (node.parentId) updateChildNode(newNode, nodeLookup, parentLookup, {
+						nodeOrigin,
+						zIndexMode
+					});
+					updatedInternals = true;
+					if (dimensionChanged) {
+						changes.push({
+							id: node.id,
+							type: "dimensions",
+							dimensions
+						});
+						if (node.expandParent && node.parentId) parentExpandChildren.push({
+							id: node.id,
+							parentId: node.parentId,
+							rect: nodeToRect(newNode, nodeOrigin)
+						});
+					}
+				}
+			}
+			if (parentExpandChildren.length > 0) {
+				const parentExpandChanges = handleExpandParent(parentExpandChildren, nodeLookup, parentLookup, nodeOrigin);
+				changes.push(...parentExpandChanges);
+			}
+			return {
+				changes,
+				updatedInternals
+			};
+		}
+		async function panBy({ delta, panZoom, transform, translateExtent, width, height }) {
+			if (!panZoom || !delta.x && !delta.y) return false;
+			const nextViewport = await panZoom.setViewportConstrained({
+				x: transform[0] + delta.x,
+				y: transform[1] + delta.y,
+				zoom: transform[2]
+			}, [[0, 0], [width, height]], translateExtent);
+			return !!nextViewport && (nextViewport.x !== transform[0] || nextViewport.y !== transform[1] || nextViewport.k !== transform[2]);
+		}
+		/**
+		* this function adds the connection to the connectionLookup
+		* at the following keys: nodeId-type-handleId, nodeId-type and nodeId
+		* @param type type of the connection
+		* @param connection connection that should be added to the lookup
+		* @param connectionKey at which key the connection should be added
+		* @param connectionLookup reference to the connection lookup
+		* @param nodeId nodeId of the connection
+		* @param handleId handleId of the connection
+		*/
+		function addConnectionToLookup(type, connection, connectionKey, connectionLookup, nodeId, handleId) {
+			let key = nodeId;
+			const nodeMap = connectionLookup.get(key) || /* @__PURE__ */ new Map();
+			connectionLookup.set(key, nodeMap.set(connectionKey, connection));
+			key = `${nodeId}-${type}`;
+			const typeMap = connectionLookup.get(key) || /* @__PURE__ */ new Map();
+			connectionLookup.set(key, typeMap.set(connectionKey, connection));
+			if (handleId) {
+				key = `${nodeId}-${type}-${handleId}`;
+				const handleMap = connectionLookup.get(key) || /* @__PURE__ */ new Map();
+				connectionLookup.set(key, handleMap.set(connectionKey, connection));
+			}
+		}
+		function updateConnectionLookup(connectionLookup, edgeLookup, edges) {
+			connectionLookup.clear();
+			edgeLookup.clear();
+			for (const edge of edges) {
+				const { source: sourceNode, target: targetNode, sourceHandle = null, targetHandle = null } = edge;
+				const connection = {
+					edgeId: edge.id,
+					source: sourceNode,
+					target: targetNode,
+					sourceHandle,
+					targetHandle
+				};
+				const sourceKey = `${sourceNode}-${sourceHandle}--${targetNode}-${targetHandle}`;
+				addConnectionToLookup("source", connection, `${targetNode}-${targetHandle}--${sourceNode}-${sourceHandle}`, connectionLookup, sourceNode, sourceHandle);
+				addConnectionToLookup("target", connection, sourceKey, connectionLookup, targetNode, targetHandle);
+				edgeLookup.set(edge.id, edge);
+			}
+		}
+		function isParentSelected(node, nodeLookup) {
+			if (!node.parentId) return false;
+			const parentNode = nodeLookup.get(node.parentId);
+			if (!parentNode) return false;
+			if (parentNode.selected) return true;
+			return isParentSelected(parentNode, nodeLookup);
+		}
+		function hasSelector(target, selector, domNode) {
+			let current = target;
+			do {
+				if (current?.matches?.(selector)) return true;
+				if (current === domNode) return false;
+				current = current?.parentElement;
+			} while (current);
+			return false;
+		}
+		function getDragItems(nodeLookup, nodesDraggable, mousePos, nodeId) {
+			const dragItems = /* @__PURE__ */ new Map();
+			for (const [id, node] of nodeLookup) if ((node.selected || node.id === nodeId) && (!node.parentId || !isParentSelected(node, nodeLookup)) && (node.draggable || nodesDraggable && typeof node.draggable === "undefined")) {
+				const internalNode = nodeLookup.get(id);
+				if (internalNode) dragItems.set(id, {
+					id,
+					position: internalNode.position || {
+						x: 0,
+						y: 0
+					},
+					distance: {
+						x: mousePos.x - internalNode.internals.positionAbsolute.x,
+						y: mousePos.y - internalNode.internals.positionAbsolute.y
+					},
+					extent: internalNode.extent,
+					parentId: internalNode.parentId,
+					origin: internalNode.origin,
+					expandParent: internalNode.expandParent,
+					internals: { positionAbsolute: internalNode.internals.positionAbsolute || {
+						x: 0,
+						y: 0
+					} },
+					measured: {
+						width: internalNode.measured.width ?? 0,
+						height: internalNode.measured.height ?? 0
+					}
+				});
+			}
+			return dragItems;
+		}
+		function getEventHandlerParams({ nodeId, dragItems, nodeLookup, dragging = true }) {
+			const nodesFromDragItems = [];
+			for (const [id, dragItem] of dragItems) {
+				const node = nodeLookup.get(id)?.internals.userNode;
+				if (node) nodesFromDragItems.push({
+					...node,
+					position: dragItem.position,
+					dragging
+				});
+			}
+			if (!nodeId) return [nodesFromDragItems[0], nodesFromDragItems];
+			const node = nodeLookup.get(nodeId)?.internals.userNode;
+			return [!node ? nodesFromDragItems[0] : {
+				...node,
+				position: dragItems.get(nodeId)?.position || node.position,
+				dragging
+			}, nodesFromDragItems];
+		}
+		/**
+		* If a selection is being dragged we want to apply the same snap offset to all nodes in the selection.
+		* This function calculates the snap offset based on the first node in the selection.
+		*/
+		function calculateSnapOffset({ dragItems, snapGrid, x, y }) {
+			const refDragItem = dragItems.values().next().value;
+			if (!refDragItem) return null;
+			const refPos = {
+				x: x - refDragItem.distance.x,
+				y: y - refDragItem.distance.y
+			};
+			const refPosSnapped = snapPosition(refPos, snapGrid);
+			return {
+				x: refPosSnapped.x - refPos.x,
+				y: refPosSnapped.y - refPos.y
+			};
+		}
+		function XYDrag({ onNodeMouseDown, getStoreItems, onDragStart, onDrag, onDragStop }) {
+			let lastPos = {
+				x: null,
+				y: null
+			};
+			let autoPanId = 0;
+			let dragItems = /* @__PURE__ */ new Map();
+			let autoPanStarted = false;
+			let mousePosition = {
+				x: 0,
+				y: 0
+			};
+			let containerBounds = null;
+			let dragStarted = false;
+			let d3Selection = null;
+			let abortDrag = false;
+			let nodePositionsChanged = false;
+			let dragEvent = null;
+			function update({ noDragClassName, handleSelector, domNode, isSelectable, nodeId, nodeClickDistance = 0 }) {
+				d3Selection = select_default$1(domNode);
+				function updateNodes({ x, y }) {
+					const { nodeLookup, nodeExtent, snapGrid, snapToGrid, nodeOrigin, onNodeDrag, onSelectionDrag, onError, updateNodePositions } = getStoreItems();
+					lastPos = {
+						x,
+						y
+					};
+					let hasChange = false;
+					const isMultiDrag = dragItems.size > 1;
+					const nodesBox = isMultiDrag && nodeExtent ? rectToBox(getInternalNodesBounds(dragItems)) : null;
+					const multiDragSnapOffset = isMultiDrag && snapToGrid ? calculateSnapOffset({
+						dragItems,
+						snapGrid,
+						x,
+						y
+					}) : null;
+					for (const [id, dragItem] of dragItems) {
+						if (!nodeLookup.has(id)) continue;
+						let nextPosition = {
+							x: x - dragItem.distance.x,
+							y: y - dragItem.distance.y
+						};
+						if (snapToGrid) nextPosition = multiDragSnapOffset ? {
+							x: Math.round(nextPosition.x + multiDragSnapOffset.x),
+							y: Math.round(nextPosition.y + multiDragSnapOffset.y)
+						} : snapPosition(nextPosition, snapGrid);
+						let adjustedNodeExtent = null;
+						if (isMultiDrag && nodeExtent && !dragItem.extent && nodesBox) {
+							const { positionAbsolute } = dragItem.internals;
+							const x1 = positionAbsolute.x - nodesBox.x + nodeExtent[0][0];
+							const x2 = positionAbsolute.x + dragItem.measured.width - nodesBox.x2 + nodeExtent[1][0];
+							const y1 = positionAbsolute.y - nodesBox.y + nodeExtent[0][1];
+							const y2 = positionAbsolute.y + dragItem.measured.height - nodesBox.y2 + nodeExtent[1][1];
+							adjustedNodeExtent = [[x1, y1], [x2, y2]];
+						}
+						const { position, positionAbsolute } = calculateNodePosition({
+							nodeId: id,
+							nextPosition,
+							nodeLookup,
+							nodeExtent: adjustedNodeExtent ? adjustedNodeExtent : nodeExtent,
+							nodeOrigin,
+							onError
+						});
+						hasChange = hasChange || dragItem.position.x !== position.x || dragItem.position.y !== position.y;
+						dragItem.position = position;
+						dragItem.internals.positionAbsolute = positionAbsolute;
+					}
+					nodePositionsChanged = nodePositionsChanged || hasChange;
+					if (!hasChange) return;
+					updateNodePositions(dragItems, true);
+					if (dragEvent && (onDrag || onNodeDrag || !nodeId && onSelectionDrag)) {
+						const [currentNode, currentNodes] = getEventHandlerParams({
+							nodeId,
+							dragItems,
+							nodeLookup
+						});
+						onDrag?.(dragEvent, dragItems, currentNode, currentNodes);
+						onNodeDrag?.(dragEvent, currentNode, currentNodes);
+						if (!nodeId) onSelectionDrag?.(dragEvent, currentNodes);
+					}
+				}
+				async function autoPan() {
+					if (!containerBounds) return;
+					const { transform, panBy, autoPanSpeed, autoPanOnNodeDrag } = getStoreItems();
+					if (!autoPanOnNodeDrag) {
+						autoPanStarted = false;
+						cancelAnimationFrame(autoPanId);
+						return;
+					}
+					const [xMovement, yMovement] = calcAutoPan(mousePosition, containerBounds, autoPanSpeed);
+					if (xMovement !== 0 || yMovement !== 0) {
+						lastPos.x = (lastPos.x ?? 0) - xMovement / transform[2];
+						lastPos.y = (lastPos.y ?? 0) - yMovement / transform[2];
+						if (await panBy({
+							x: xMovement,
+							y: yMovement
+						})) updateNodes(lastPos);
+					}
+					autoPanId = requestAnimationFrame(autoPan);
+				}
+				function startDrag(event) {
+					const { nodeLookup, multiSelectionActive, nodesDraggable, transform, snapGrid, snapToGrid, selectNodesOnDrag, onNodeDragStart, onSelectionDragStart, unselectNodesAndEdges } = getStoreItems();
+					dragStarted = true;
+					if ((!selectNodesOnDrag || !isSelectable) && !multiSelectionActive && nodeId) {
+						if (!nodeLookup.get(nodeId)?.selected) unselectNodesAndEdges();
+					}
+					if (isSelectable && selectNodesOnDrag && nodeId) onNodeMouseDown?.(nodeId);
+					const pointerPos = getPointerPosition(event.sourceEvent, {
+						transform,
+						snapGrid,
+						snapToGrid,
+						containerBounds
+					});
+					lastPos = pointerPos;
+					dragItems = getDragItems(nodeLookup, nodesDraggable, pointerPos, nodeId);
+					if (dragItems.size > 0 && (onDragStart || onNodeDragStart || !nodeId && onSelectionDragStart)) {
+						const [currentNode, currentNodes] = getEventHandlerParams({
+							nodeId,
+							dragItems,
+							nodeLookup
+						});
+						onDragStart?.(event.sourceEvent, dragItems, currentNode, currentNodes);
+						onNodeDragStart?.(event.sourceEvent, currentNode, currentNodes);
+						if (!nodeId) onSelectionDragStart?.(event.sourceEvent, currentNodes);
+					}
+				}
+				const d3DragInstance = drag_default().clickDistance(nodeClickDistance).on("start", (event) => {
+					const { domNode, nodeDragThreshold, transform, snapGrid, snapToGrid } = getStoreItems();
+					containerBounds = domNode?.getBoundingClientRect() || null;
+					abortDrag = false;
+					nodePositionsChanged = false;
+					dragEvent = event.sourceEvent;
+					if (nodeDragThreshold === 0) startDrag(event);
+					lastPos = getPointerPosition(event.sourceEvent, {
+						transform,
+						snapGrid,
+						snapToGrid,
+						containerBounds
+					});
+					mousePosition = getEventPosition(event.sourceEvent, containerBounds);
+				}).on("drag", (event) => {
+					const { autoPanOnNodeDrag, transform, snapGrid, snapToGrid, nodeDragThreshold, nodeLookup } = getStoreItems();
+					const pointerPos = getPointerPosition(event.sourceEvent, {
+						transform,
+						snapGrid,
+						snapToGrid,
+						containerBounds
+					});
+					dragEvent = event.sourceEvent;
+					if (event.sourceEvent.type === "touchmove" && event.sourceEvent.touches.length > 1 || nodeId && !nodeLookup.has(nodeId)) abortDrag = true;
+					if (abortDrag) return;
+					if (!autoPanStarted && autoPanOnNodeDrag && dragStarted) {
+						autoPanStarted = true;
+						autoPan();
+					}
+					if (!dragStarted) {
+						const currentMousePosition = getEventPosition(event.sourceEvent, containerBounds);
+						const x = currentMousePosition.x - mousePosition.x;
+						const y = currentMousePosition.y - mousePosition.y;
+						if (Math.sqrt(x * x + y * y) > nodeDragThreshold) startDrag(event);
+					}
+					if ((lastPos.x !== pointerPos.xSnapped || lastPos.y !== pointerPos.ySnapped) && dragItems && dragStarted) {
+						mousePosition = getEventPosition(event.sourceEvent, containerBounds);
+						updateNodes(pointerPos);
+					}
+				}).on("end", (event) => {
+					if (!dragStarted || abortDrag) {
+						if (abortDrag && dragItems.size > 0) getStoreItems().updateNodePositions(dragItems, false);
+						return;
+					}
+					autoPanStarted = false;
+					dragStarted = false;
+					cancelAnimationFrame(autoPanId);
+					if (dragItems.size > 0) {
+						const { nodeLookup, updateNodePositions, onNodeDragStop, onSelectionDragStop } = getStoreItems();
+						if (nodePositionsChanged) {
+							updateNodePositions(dragItems, false);
+							nodePositionsChanged = false;
+						}
+						if (onDragStop || onNodeDragStop || !nodeId && onSelectionDragStop) {
+							const [currentNode, currentNodes] = getEventHandlerParams({
+								nodeId,
+								dragItems,
+								nodeLookup,
+								dragging: false
+							});
+							onDragStop?.(event.sourceEvent, dragItems, currentNode, currentNodes);
+							onNodeDragStop?.(event.sourceEvent, currentNode, currentNodes);
+							if (!nodeId) onSelectionDragStop?.(event.sourceEvent, currentNodes);
+						}
+					}
+				}).filter((event) => {
+					const target = event.target;
+					return !event.button && (!noDragClassName || !hasSelector(target, `.${noDragClassName}`, domNode)) && (!handleSelector || hasSelector(target, handleSelector, domNode));
+				});
+				d3Selection.call(d3DragInstance);
+			}
+			function destroy() {
+				d3Selection?.on(".drag", null);
+			}
+			return {
+				update,
+				destroy
+			};
+		}
+		function getNodesWithinDistance(position, nodeLookup, distance) {
+			const nodes = [];
+			const rect = {
+				x: position.x - distance,
+				y: position.y - distance,
+				width: distance * 2,
+				height: distance * 2
+			};
+			for (const node of nodeLookup.values()) if (getOverlappingArea(rect, nodeToRect(node)) > 0) nodes.push(node);
+			return nodes;
+		}
+		const ADDITIONAL_DISTANCE = 250;
+		function getClosestHandle(position, connectionRadius, nodeLookup, fromHandle) {
+			let closestHandles = [];
+			let minDistance = Infinity;
+			const closeNodes = getNodesWithinDistance(position, nodeLookup, connectionRadius + ADDITIONAL_DISTANCE);
+			for (const node of closeNodes) {
+				const allHandles = [...node.internals.handleBounds?.source ?? [], ...node.internals.handleBounds?.target ?? []];
+				for (const handle of allHandles) {
+					if (fromHandle.nodeId === handle.nodeId && fromHandle.type === handle.type && fromHandle.id === handle.id) continue;
+					const { x, y } = getHandlePosition(node, handle, handle.position, true);
+					const distance = Math.sqrt(Math.pow(x - position.x, 2) + Math.pow(y - position.y, 2));
+					if (distance > connectionRadius) continue;
+					if (distance < minDistance) {
+						closestHandles = [{
+							...handle,
+							x,
+							y
+						}];
+						minDistance = distance;
+					} else if (distance === minDistance) closestHandles.push({
+						...handle,
+						x,
+						y
+					});
+				}
+			}
+			if (!closestHandles.length) return null;
+			if (closestHandles.length > 1) {
+				const oppositeHandleType = fromHandle.type === "source" ? "target" : "source";
+				return closestHandles.find((handle) => handle.type === oppositeHandleType) ?? closestHandles[0];
+			}
+			return closestHandles[0];
+		}
+		function getHandle(nodeId, handleType, handleId, nodeLookup, connectionMode, withAbsolutePosition = false) {
+			const node = nodeLookup.get(nodeId);
+			if (!node) return null;
+			const handles = connectionMode === "strict" ? node.internals.handleBounds?.[handleType] : [...node.internals.handleBounds?.source ?? [], ...node.internals.handleBounds?.target ?? []];
+			const handle = (handleId ? handles?.find((h) => h.id === handleId) : handles?.[0]) ?? null;
+			return handle && withAbsolutePosition ? {
+				...handle,
+				...getHandlePosition(node, handle, handle.position, true)
+			} : handle;
+		}
+		function getHandleType(edgeUpdaterType, handleDomNode) {
+			if (edgeUpdaterType) return edgeUpdaterType;
+			else if (handleDomNode?.classList.contains("target")) return "target";
+			else if (handleDomNode?.classList.contains("source")) return "source";
+			return null;
+		}
+		function isConnectionValid(isInsideConnectionRadius, isHandleValid) {
+			let isValid = null;
+			if (isHandleValid) isValid = true;
+			else if (isInsideConnectionRadius && !isHandleValid) isValid = false;
+			return isValid;
+		}
+		const alwaysValid = () => true;
+		function onPointerDown(event, { connectionMode, connectionRadius, handleId, nodeId, edgeUpdaterType, isTarget, domNode, nodeLookup, lib, autoPanOnConnect, flowId, panBy, cancelConnection, onConnectStart, onConnect, onConnectEnd, isValidConnection = alwaysValid, onReconnectEnd, updateConnection, getTransform, getFromHandle, autoPanSpeed, dragThreshold = 1, handleDomNode }) {
+			const doc = getHostForElement(event.target);
+			let autoPanId = 0;
+			let closestHandle;
+			const { x, y } = getEventPosition(event);
+			const handleType = getHandleType(edgeUpdaterType, handleDomNode);
+			const containerBounds = domNode?.getBoundingClientRect();
+			let connectionStarted = false;
+			if (!containerBounds || !handleType) return;
+			const fromHandleInternal = getHandle(nodeId, handleType, handleId, nodeLookup, connectionMode);
+			if (!fromHandleInternal) return;
+			let position = getEventPosition(event, containerBounds);
+			let autoPanStarted = false;
+			let connection = null;
+			let isValid = false;
+			let resultHandleDomNode = null;
+			function autoPan() {
+				if (!autoPanOnConnect || !containerBounds) return;
+				const [x, y] = calcAutoPan(position, containerBounds, autoPanSpeed);
+				panBy({
+					x,
+					y
+				});
+				autoPanId = requestAnimationFrame(autoPan);
+			}
+			const fromHandle = {
+				...fromHandleInternal,
+				nodeId,
+				type: handleType,
+				position: fromHandleInternal.position
+			};
+			const fromInternalNode = nodeLookup.get(nodeId);
+			let previousConnection = {
+				inProgress: true,
+				isValid: null,
+				from: getHandlePosition(fromInternalNode, fromHandle, Position.Left, true),
+				fromHandle,
+				fromPosition: fromHandle.position,
+				fromNode: fromInternalNode,
+				to: position,
+				toHandle: null,
+				toPosition: oppositePosition[fromHandle.position],
+				toNode: null,
+				pointer: position
+			};
+			function startConnection() {
+				connectionStarted = true;
+				updateConnection(previousConnection);
+				onConnectStart?.(event, {
+					nodeId,
+					handleId,
+					handleType
+				});
+			}
+			if (dragThreshold === 0) startConnection();
+			function onPointerMove(event) {
+				if (!connectionStarted) {
+					const { x: evtX, y: evtY } = getEventPosition(event);
+					const dx = evtX - x;
+					const dy = evtY - y;
+					if (!(dx * dx + dy * dy > dragThreshold * dragThreshold)) return;
+					startConnection();
+				}
+				if (!getFromHandle() || !fromHandle) {
+					onPointerUp(event);
+					return;
+				}
+				const transform = getTransform();
+				position = getEventPosition(event, containerBounds);
+				closestHandle = getClosestHandle(pointToRendererPoint(position, transform, false, [1, 1]), connectionRadius, nodeLookup, fromHandle);
+				if (!autoPanStarted) {
+					autoPan();
+					autoPanStarted = true;
+				}
+				const result = isValidHandle(event, {
+					handle: closestHandle,
+					connectionMode,
+					fromNodeId: nodeId,
+					fromHandleId: handleId,
+					fromType: isTarget ? "target" : "source",
+					isValidConnection,
+					doc,
+					lib,
+					flowId,
+					nodeLookup
+				});
+				resultHandleDomNode = result.handleDomNode;
+				connection = result.connection;
+				isValid = isConnectionValid(!!closestHandle, result.isValid);
+				const fromInternalNode = nodeLookup.get(nodeId);
+				const from = fromInternalNode ? getHandlePosition(fromInternalNode, fromHandle, Position.Left, true) : previousConnection.from;
+				const newConnection = {
+					...previousConnection,
+					from,
+					isValid,
+					to: result.toHandle && isValid ? rendererPointToPoint({
+						x: result.toHandle.x,
+						y: result.toHandle.y
+					}, transform) : position,
+					toHandle: result.toHandle,
+					toPosition: isValid && result.toHandle ? result.toHandle.position : oppositePosition[fromHandle.position],
+					toNode: result.toHandle ? nodeLookup.get(result.toHandle.nodeId) : null,
+					pointer: position
+				};
+				updateConnection(newConnection);
+				previousConnection = newConnection;
+			}
+			function onPointerUp(event) {
+				if ("touches" in event && event.touches.length > 0) return;
+				if (connectionStarted) {
+					if ((closestHandle || resultHandleDomNode) && connection && isValid) onConnect?.(connection);
+					const { inProgress, ...connectionState } = previousConnection;
+					const finalConnectionState = {
+						...connectionState,
+						toPosition: previousConnection.toHandle ? previousConnection.toPosition : null
+					};
+					onConnectEnd?.(event, finalConnectionState);
+					if (edgeUpdaterType) onReconnectEnd?.(event, finalConnectionState);
+				}
+				cancelConnection();
+				cancelAnimationFrame(autoPanId);
+				autoPanStarted = false;
+				isValid = false;
+				connection = null;
+				resultHandleDomNode = null;
+				doc.removeEventListener("mousemove", onPointerMove);
+				doc.removeEventListener("mouseup", onPointerUp);
+				doc.removeEventListener("touchmove", onPointerMove);
+				doc.removeEventListener("touchend", onPointerUp);
+			}
+			doc.addEventListener("mousemove", onPointerMove);
+			doc.addEventListener("mouseup", onPointerUp);
+			doc.addEventListener("touchmove", onPointerMove);
+			doc.addEventListener("touchend", onPointerUp);
+		}
+		function isValidHandle(event, { handle, connectionMode, fromNodeId, fromHandleId, fromType, doc, lib, flowId, isValidConnection = alwaysValid, nodeLookup }) {
+			const isTarget = fromType === "target";
+			const handleDomNode = handle ? doc.querySelector(`.${lib}-flow__handle[data-id="${flowId}-${handle?.nodeId}-${handle?.id}-${handle?.type}"]`) : null;
+			const { x, y } = getEventPosition(event);
+			const handleBelow = doc.elementFromPoint(x, y);
+			const handleToCheck = handleBelow?.classList.contains(`${lib}-flow__handle`) ? handleBelow : handleDomNode;
+			const result = {
+				handleDomNode: handleToCheck,
+				isValid: false,
+				connection: null,
+				toHandle: null
+			};
+			if (handleToCheck) {
+				const handleType = getHandleType(void 0, handleToCheck);
+				const handleNodeId = handleToCheck.getAttribute("data-nodeid");
+				const handleId = handleToCheck.getAttribute("data-handleid");
+				const connectable = handleToCheck.classList.contains("connectable");
+				const connectableEnd = handleToCheck.classList.contains("connectableend");
+				if (!handleNodeId || !handleType) return result;
+				const connection = {
+					source: isTarget ? handleNodeId : fromNodeId,
+					sourceHandle: isTarget ? handleId : fromHandleId,
+					target: isTarget ? fromNodeId : handleNodeId,
+					targetHandle: isTarget ? fromHandleId : handleId
+				};
+				result.connection = connection;
+				result.isValid = connectable && connectableEnd && (connectionMode === ConnectionMode.Strict ? isTarget && handleType === "source" || !isTarget && handleType === "target" : handleNodeId !== fromNodeId || handleId !== fromHandleId) && isValidConnection(connection);
+				result.toHandle = getHandle(handleNodeId, handleType, handleId, nodeLookup, connectionMode, true);
+			}
+			return result;
+		}
+		const XYHandle = {
+			onPointerDown,
+			isValid: isValidHandle
+		};
+		function XYMinimap({ domNode, panZoom, getTransform, getViewScale }) {
+			const selection = select_default$1(domNode);
+			function update({ translateExtent, width, height, zoomStep = 1, pannable = true, zoomable = true, inversePan = false }) {
+				const zoomHandler = (event) => {
+					if (event.sourceEvent.type !== "wheel" || !panZoom) return;
+					const transform = getTransform();
+					const factor = event.sourceEvent.ctrlKey && isMacOs() ? 10 : 1;
+					const pinchDelta = -event.sourceEvent.deltaY * (event.sourceEvent.deltaMode === 1 ? .05 : event.sourceEvent.deltaMode ? 1 : .002) * zoomStep;
+					const nextZoom = transform[2] * Math.pow(2, pinchDelta * factor);
+					panZoom.scaleTo(nextZoom);
+				};
+				let panStart = [0, 0];
+				const panStartHandler = (event) => {
+					if (event.sourceEvent.type === "mousedown" || event.sourceEvent.type === "touchstart") panStart = [event.sourceEvent.clientX ?? event.sourceEvent.touches[0].clientX, event.sourceEvent.clientY ?? event.sourceEvent.touches[0].clientY];
+				};
+				const panHandler = (event) => {
+					const transform = getTransform();
+					if (event.sourceEvent.type !== "mousemove" && event.sourceEvent.type !== "touchmove" || !panZoom) return;
+					const panCurrent = [event.sourceEvent.clientX ?? event.sourceEvent.touches[0].clientX, event.sourceEvent.clientY ?? event.sourceEvent.touches[0].clientY];
+					const panDelta = [panCurrent[0] - panStart[0], panCurrent[1] - panStart[1]];
+					panStart = panCurrent;
+					const moveScale = getViewScale() * Math.max(transform[2], Math.log(transform[2])) * (inversePan ? -1 : 1);
+					const position = {
+						x: transform[0] - panDelta[0] * moveScale,
+						y: transform[1] - panDelta[1] * moveScale
+					};
+					const extent = [[0, 0], [width, height]];
+					panZoom.setViewportConstrained({
+						x: position.x,
+						y: position.y,
+						zoom: transform[2]
+					}, extent, translateExtent);
+				};
+				const zoomAndPanHandler = zoom_default().on("start", panStartHandler).on("zoom", pannable ? panHandler : null).on("zoom.wheel", zoomable ? zoomHandler : null);
+				selection.call(zoomAndPanHandler, {});
+			}
+			function destroy() {
+				selection.on("zoom", null);
+			}
+			return {
+				update,
+				destroy,
+				pointer: pointer_default
+			};
+		}
+		const transformToViewport = (transform) => ({
+			x: transform.x,
+			y: transform.y,
+			zoom: transform.k
+		});
+		const viewportToTransform = ({ x, y, zoom }) => identity.translate(x, y).scale(zoom);
+		const isWrappedWithClass = (event, className) => event.target.closest(`.${className}`);
+		const isRightClickPan = (panOnDrag, usedButton) => usedButton === 2 && Array.isArray(panOnDrag) && panOnDrag.includes(2);
+		const defaultEase = (t) => ((t *= 2) <= 1 ? t * t * t : (t -= 2) * t * t + 2) / 2;
+		const getD3Transition = (selection, duration = 0, ease = defaultEase, onEnd = () => {}) => {
+			const hasDuration = typeof duration === "number" && duration > 0;
+			if (!hasDuration) onEnd();
+			return hasDuration ? selection.transition().duration(duration).ease(ease).on("end", onEnd) : selection;
+		};
+		const wheelDelta = (event) => {
+			const factor = event.ctrlKey && isMacOs() ? 10 : 1;
+			return -event.deltaY * (event.deltaMode === 1 ? .05 : event.deltaMode ? 1 : .002) * factor;
+		};
+		function createPanOnScrollHandler({ zoomPanValues, noWheelClassName, d3Selection, d3Zoom, panOnScrollMode, panOnScrollSpeed, zoomOnPinch, onPanZoomStart, onPanZoom, onPanZoomEnd }) {
+			return (event) => {
+				if (isWrappedWithClass(event, noWheelClassName)) {
+					if (event.ctrlKey) event.preventDefault();
+					return false;
+				}
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				const currentZoom = d3Selection.property("__zoom").k || 1;
+				if (event.ctrlKey && zoomOnPinch) {
+					const point = pointer_default(event);
+					const pinchDelta = wheelDelta(event);
+					const zoom = currentZoom * Math.pow(2, pinchDelta);
+					d3Zoom.scaleTo(d3Selection, zoom, point, event);
+					return;
+				}
+				const deltaNormalize = event.deltaMode === 1 ? 20 : 1;
+				let deltaX = panOnScrollMode === PanOnScrollMode.Vertical ? 0 : event.deltaX * deltaNormalize;
+				let deltaY = panOnScrollMode === PanOnScrollMode.Horizontal ? 0 : event.deltaY * deltaNormalize;
+				if (!isMacOs() && event.shiftKey && panOnScrollMode !== PanOnScrollMode.Vertical) {
+					deltaX = event.deltaY * deltaNormalize;
+					deltaY = 0;
+				}
+				d3Zoom.translateBy(d3Selection, -(deltaX / currentZoom) * panOnScrollSpeed, -(deltaY / currentZoom) * panOnScrollSpeed, { internal: true });
+				const nextViewport = transformToViewport(d3Selection.property("__zoom"));
+				clearTimeout(zoomPanValues.panScrollTimeout);
+				if (!zoomPanValues.isPanScrolling) {
+					zoomPanValues.isPanScrolling = true;
+					onPanZoomStart?.(event, nextViewport);
+				} else onPanZoom?.(event, nextViewport);
+				zoomPanValues.panScrollTimeout = setTimeout(() => {
+					onPanZoomEnd?.(event, nextViewport);
+					zoomPanValues.isPanScrolling = false;
+				}, 150);
+			};
+		}
+		function createZoomOnScrollHandler({ noWheelClassName, preventScrolling, d3ZoomHandler }) {
+			return function(event, d) {
+				const isWheel = event.type === "wheel";
+				const preventZoom = !preventScrolling && isWheel && !event.ctrlKey;
+				const hasNoWheelClass = isWrappedWithClass(event, noWheelClassName);
+				if (event.ctrlKey && isWheel && hasNoWheelClass) event.preventDefault();
+				if (preventZoom || hasNoWheelClass) return null;
+				event.preventDefault();
+				d3ZoomHandler.call(this, event, d);
+			};
+		}
+		function createPanZoomStartHandler({ zoomPanValues, onDraggingChange, onPanZoomStart }) {
+			return (event) => {
+				if (event.sourceEvent?.internal) return;
+				const viewport = transformToViewport(event.transform);
+				zoomPanValues.mouseButton = event.sourceEvent?.button || 0;
+				zoomPanValues.isZoomingOrPanning = true;
+				zoomPanValues.prevViewport = viewport;
+				if (event.sourceEvent?.type === "mousedown") onDraggingChange(true);
+				if (onPanZoomStart) onPanZoomStart?.(event.sourceEvent, viewport);
+			};
+		}
+		function createPanZoomHandler({ zoomPanValues, panOnDrag, onPaneContextMenu, onTransformChange, onPanZoom }) {
+			return (event) => {
+				zoomPanValues.usedRightMouseButton = !!(onPaneContextMenu && isRightClickPan(panOnDrag, zoomPanValues.mouseButton ?? 0));
+				if (!event.sourceEvent?.sync) onTransformChange([
+					event.transform.x,
+					event.transform.y,
+					event.transform.k
+				]);
+				if (onPanZoom && !event.sourceEvent?.internal) onPanZoom?.(event.sourceEvent, transformToViewport(event.transform));
+			};
+		}
+		function createPanZoomEndHandler({ zoomPanValues, panOnDrag, panOnScroll, onDraggingChange, onPanZoomEnd, onPaneContextMenu }) {
+			return (event) => {
+				if (event.sourceEvent?.internal) return;
+				zoomPanValues.isZoomingOrPanning = false;
+				if (onPaneContextMenu && isRightClickPan(panOnDrag, zoomPanValues.mouseButton ?? 0) && !zoomPanValues.usedRightMouseButton && event.sourceEvent) onPaneContextMenu(event.sourceEvent);
+				zoomPanValues.usedRightMouseButton = false;
+				onDraggingChange(false);
+				if (onPanZoomEnd) {
+					const viewport = transformToViewport(event.transform);
+					zoomPanValues.prevViewport = viewport;
+					clearTimeout(zoomPanValues.timerId);
+					zoomPanValues.timerId = setTimeout(() => {
+						onPanZoomEnd?.(event.sourceEvent, viewport);
+					}, panOnScroll ? 150 : 0);
+				}
+			};
+		}
+		function createFilter({ panActivationKeyPressed, zoomActivationKeyPressed, zoomOnScroll, zoomOnPinch, panOnDrag, panOnScroll, zoomOnDoubleClick, userSelectionActive, noWheelClassName, noPanClassName, lib, connectionInProgress }) {
+			return (event) => {
+				const zoomScroll = zoomActivationKeyPressed || zoomOnScroll;
+				const pinchZoom = zoomOnPinch && event.ctrlKey;
+				const isWheelEvent = event.type === "wheel";
+				if (event.button === 1 && event.type === "mousedown" && (isWrappedWithClass(event, `${lib}-flow__node`) || isWrappedWithClass(event, `${lib}-flow__edge`) || isWrappedWithClass(event, `${lib}-flow__selection`) || isWrappedWithClass(event, `${lib}-flow__nodesselection`))) return true;
+				if (!panOnDrag && !zoomScroll && !panOnScroll && !zoomOnDoubleClick && !zoomOnPinch) return false;
+				if (userSelectionActive) return false;
+				if (connectionInProgress && !isWheelEvent) return false;
+				if (isWrappedWithClass(event, noWheelClassName) && isWheelEvent) return false;
+				if (isWrappedWithClass(event, noPanClassName) && (!isWheelEvent || panOnScroll && isWheelEvent && !zoomActivationKeyPressed)) return false;
+				if (!zoomOnPinch && event.ctrlKey && isWheelEvent) return false;
+				if (!zoomOnPinch && event.type === "touchstart" && event.touches?.length > 1) {
+					event.preventDefault();
+					return false;
+				}
+				if (!zoomScroll && !panOnScroll && !pinchZoom && isWheelEvent) return false;
+				if (!panOnDrag && (event.type === "mousedown" || event.type === "touchstart")) return false;
+				if (Array.isArray(panOnDrag) && !panOnDrag.includes(event.button) && event.type === "mousedown") return false;
+				const buttonAllowed = Array.isArray(panOnDrag) && panOnDrag.includes(event.button) || !event.button || event.button <= 1;
+				return (!event.ctrlKey || isWheelEvent || panActivationKeyPressed) && buttonAllowed;
+			};
+		}
+		function XYPanZoom({ domNode, minZoom, maxZoom, translateExtent, viewport, onPanZoom, onPanZoomStart, onPanZoomEnd, onDraggingChange }) {
+			const zoomPanValues = {
+				isZoomingOrPanning: false,
+				usedRightMouseButton: false,
+				prevViewport: {},
+				mouseButton: 0,
+				timerId: void 0,
+				panScrollTimeout: void 0,
+				isPanScrolling: false
+			};
+			const bbox = domNode.getBoundingClientRect();
+			let cachedExtent = [[0, 0], [bbox.width, bbox.height]];
+			(typeof ResizeObserver !== "undefined" ? new ResizeObserver((entries) => {
+				const entry = entries[0];
+				if (entry) cachedExtent = [[0, 0], [entry.contentRect.width, entry.contentRect.height]];
+			}) : null)?.observe(domNode);
+			const d3ZoomInstance = zoom_default().extent(() => cachedExtent).scaleExtent([minZoom, maxZoom]).translateExtent(translateExtent);
+			const d3Selection = select_default$1(domNode).call(d3ZoomInstance);
+			setViewportConstrained({
+				x: viewport.x,
+				y: viewport.y,
+				zoom: clamp(viewport.zoom, minZoom, maxZoom)
+			}, [[0, 0], [bbox.width, bbox.height]], translateExtent);
+			const d3ZoomHandler = d3Selection.on("wheel.zoom");
+			const d3DblClickZoomHandler = d3Selection.on("dblclick.zoom");
+			d3ZoomInstance.wheelDelta(wheelDelta);
+			async function setTransform(transform, options) {
+				if (d3Selection) return new Promise((resolve) => {
+					d3ZoomInstance?.interpolate(options?.interpolate === "linear" ? value_default : zoom_default$1).transform(getD3Transition(d3Selection, options?.duration, options?.ease, () => resolve(true)), transform);
+				});
+				return false;
+			}
+			function update({ noWheelClassName, noPanClassName, onPaneContextMenu, userSelectionActive, panOnScroll, panOnDrag, panOnScrollMode, panOnScrollSpeed, preventScrolling, zoomOnPinch, zoomOnScroll, zoomOnDoubleClick, panActivationKeyPressed = false, zoomActivationKeyPressed, lib, onTransformChange, connectionInProgress, paneClickDistance, selectionOnDrag }) {
+				if (userSelectionActive && !zoomPanValues.isZoomingOrPanning) destroy();
+				const isPanOnScroll = panOnScroll && !zoomActivationKeyPressed && !userSelectionActive;
+				d3ZoomInstance.clickDistance(selectionOnDrag ? Infinity : !isNumeric(paneClickDistance) || paneClickDistance < 0 ? 0 : paneClickDistance);
+				const wheelHandler = isPanOnScroll ? createPanOnScrollHandler({
+					zoomPanValues,
+					noWheelClassName,
+					d3Selection,
+					d3Zoom: d3ZoomInstance,
+					panOnScrollMode,
+					panOnScrollSpeed,
+					zoomOnPinch,
+					onPanZoomStart,
+					onPanZoom,
+					onPanZoomEnd
+				}) : createZoomOnScrollHandler({
+					noWheelClassName,
+					preventScrolling,
+					d3ZoomHandler
+				});
+				d3Selection.on("wheel.zoom", wheelHandler, { passive: false });
+				const startHandler = createPanZoomStartHandler({
+					zoomPanValues,
+					onDraggingChange,
+					onPanZoomStart
+				});
+				d3ZoomInstance.on("start", startHandler);
+				const panZoomHandler = createPanZoomHandler({
+					zoomPanValues,
+					panOnDrag,
+					onPaneContextMenu: !!onPaneContextMenu,
+					onPanZoom,
+					onTransformChange
+				});
+				d3ZoomInstance.on("zoom", panZoomHandler);
+				const panZoomEndHandler = createPanZoomEndHandler({
+					zoomPanValues,
+					panOnDrag,
+					panOnScroll,
+					onPaneContextMenu,
+					onPanZoomEnd,
+					onDraggingChange
+				});
+				d3ZoomInstance.on("end", panZoomEndHandler);
+				const filter = createFilter({
+					panActivationKeyPressed,
+					zoomActivationKeyPressed,
+					panOnDrag,
+					zoomOnScroll,
+					panOnScroll,
+					zoomOnDoubleClick,
+					zoomOnPinch,
+					userSelectionActive,
+					noPanClassName,
+					noWheelClassName,
+					lib,
+					connectionInProgress
+				});
+				d3ZoomInstance.filter(filter);
+				if (zoomOnDoubleClick) d3Selection.on("dblclick.zoom", d3DblClickZoomHandler);
+				else d3Selection.on("dblclick.zoom", null);
+			}
+			function destroy() {
+				d3ZoomInstance.on("zoom", null);
+			}
+			async function setViewportConstrained(viewport, extent, translateExtent) {
+				const nextTransform = viewportToTransform(viewport);
+				const contrainedTransform = d3ZoomInstance?.constrain()(nextTransform, extent, translateExtent);
+				if (contrainedTransform) await setTransform(contrainedTransform);
+				return contrainedTransform;
+			}
+			async function setViewport(viewport, options) {
+				const nextTransform = viewportToTransform(viewport);
+				await setTransform(nextTransform, options);
+				return nextTransform;
+			}
+			function syncViewport(viewport) {
+				if (d3Selection) {
+					const nextTransform = viewportToTransform(viewport);
+					const currentTransform = d3Selection.property("__zoom");
+					if (currentTransform.k !== viewport.zoom || currentTransform.x !== viewport.x || currentTransform.y !== viewport.y) d3ZoomInstance?.transform(d3Selection, nextTransform, null, { sync: true });
+				}
+			}
+			function getViewport() {
+				const transform$2 = d3Selection ? transform(d3Selection.node()) : {
+					x: 0,
+					y: 0,
+					k: 1
+				};
+				return {
+					x: transform$2.x,
+					y: transform$2.y,
+					zoom: transform$2.k
+				};
+			}
+			async function scaleTo(zoom, options) {
+				if (d3Selection) return new Promise((resolve) => {
+					d3ZoomInstance?.interpolate(options?.interpolate === "linear" ? value_default : zoom_default$1).scaleTo(getD3Transition(d3Selection, options?.duration, options?.ease, () => resolve(true)), zoom);
+				});
+				return false;
+			}
+			async function scaleBy(factor, options) {
+				if (d3Selection) return new Promise((resolve) => {
+					d3ZoomInstance?.interpolate(options?.interpolate === "linear" ? value_default : zoom_default$1).scaleBy(getD3Transition(d3Selection, options?.duration, options?.ease, () => resolve(true)), factor);
+				});
+				return false;
+			}
+			function setScaleExtent(scaleExtent) {
+				d3ZoomInstance?.scaleExtent(scaleExtent);
+			}
+			function setTranslateExtent(translateExtent) {
+				d3ZoomInstance?.translateExtent(translateExtent);
+			}
+			function setClickDistance(distance) {
+				const validDistance = !isNumeric(distance) || distance < 0 ? 0 : distance;
+				d3ZoomInstance?.clickDistance(validDistance);
+			}
+			return {
+				update,
+				destroy,
+				setViewport,
+				setViewportConstrained,
+				getViewport,
+				scaleTo,
+				scaleBy,
+				setScaleExtent,
+				setTranslateExtent,
+				syncViewport,
+				setClickDistance
+			};
+		}
+		/**
+		* Used to determine the variant of the resize control
+		*
+		* @public
+		*/
+		var ResizeControlVariant;
+		(function(ResizeControlVariant) {
+			ResizeControlVariant["Line"] = "line";
+			ResizeControlVariant["Handle"] = "handle";
+		})(ResizeControlVariant || (ResizeControlVariant = {}));
+		/**
+		* Get all connecting edges for a given set of nodes
+		* @param width - new width of the node
+		* @param prevWidth - previous width of the node
+		* @param height - new height of the node
+		* @param prevHeight - previous height of the node
+		* @param affectsX - whether to invert the resize direction for the x axis
+		* @param affectsY - whether to invert the resize direction for the y axis
+		* @returns array of two numbers representing the direction of the resize for each axis, 0 = no change, 1 = increase, -1 = decrease
+		*/
+		function getResizeDirection({ width, prevWidth, height, prevHeight, affectsX, affectsY }) {
+			const deltaWidth = width - prevWidth;
+			const deltaHeight = height - prevHeight;
+			const direction = [deltaWidth > 0 ? 1 : deltaWidth < 0 ? -1 : 0, deltaHeight > 0 ? 1 : deltaHeight < 0 ? -1 : 0];
+			if (deltaWidth && affectsX) direction[0] = direction[0] * -1;
+			if (deltaHeight && affectsY) direction[1] = direction[1] * -1;
+			return direction;
+		}
+		/**
+		* Parses the control position that is being dragged to dimensions that are being resized
+		* @param controlPosition - position of the control that is being dragged
+		* @returns isHorizontal, isVertical, affectsX, affectsY,
+		*/
+		function getControlDirection(controlPosition) {
+			return {
+				isHorizontal: controlPosition.includes("right") || controlPosition.includes("left"),
+				isVertical: controlPosition.includes("bottom") || controlPosition.includes("top"),
+				affectsX: controlPosition.includes("left"),
+				affectsY: controlPosition.includes("top")
+			};
+		}
+		function getLowerExtentClamp(lowerExtent, lowerBound) {
+			return Math.max(0, lowerBound - lowerExtent);
+		}
+		function getUpperExtentClamp(upperExtent, upperBound) {
+			return Math.max(0, upperExtent - upperBound);
+		}
+		function getSizeClamp(size, minSize, maxSize) {
+			return Math.max(0, minSize - size, size - maxSize);
+		}
+		function xor(a, b) {
+			return a ? !b : b;
+		}
+		/**
+		* Calculates new width & height and x & y of node after resize based on pointer position
+		* @description - Buckle up, this is a chunky one... If you want to determine the new dimensions of a node after a resize,
+		* you have to account for all possible restrictions: min/max width/height of the node, the maximum extent the node is allowed
+		* to move in (in this case: resize into) determined by the parent node, the minimal extent determined by child nodes
+		* with expandParent or extent: 'parent' set and oh yeah, these things also have to work with keepAspectRatio!
+		* The way this is done is by determining how much each of these restricting actually restricts the resize and then applying the
+		* strongest restriction. Because the resize affects x, y and width, height and width, height of a opposing side with keepAspectRatio,
+		* the resize amount is always kept in distX & distY amount (the distance in mouse movement)
+		* Instead of clamping each value, we first calculate the biggest 'clamp' (for the lack of a better name) and then apply it to all values.
+		* To complicate things nodeOrigin has to be taken into account as well. This is done by offsetting the nodes as if their origin is [0, 0],
+		* then calculating the restrictions as usual
+		* @param startValues - starting values of resize
+		* @param controlDirection - dimensions affected by the resize
+		* @param pointerPosition - the current pointer position corrected for snapping
+		* @param boundaries - minimum and maximum dimensions of the node
+		* @param keepAspectRatio - prevent changes of asprect ratio
+		* @returns x, y, width and height of the node after resize
+		*/
+		function getDimensionsAfterResize(startValues, controlDirection, pointerPosition, boundaries, keepAspectRatio, nodeOrigin, extent, childExtent) {
+			let { affectsX, affectsY } = controlDirection;
+			const { isHorizontal, isVertical } = controlDirection;
+			const isDiagonal = isHorizontal && isVertical;
+			const { xSnapped, ySnapped } = pointerPosition;
+			const { minWidth, maxWidth, minHeight, maxHeight } = boundaries;
+			const { x: startX, y: startY, width: startWidth, height: startHeight, aspectRatio } = startValues;
+			let distX = Math.floor(isHorizontal ? xSnapped - startValues.pointerX : 0);
+			let distY = Math.floor(isVertical ? ySnapped - startValues.pointerY : 0);
+			const newWidth = startWidth + (affectsX ? -distX : distX);
+			const newHeight = startHeight + (affectsY ? -distY : distY);
+			const originOffsetX = -nodeOrigin[0] * startWidth;
+			const originOffsetY = -nodeOrigin[1] * startHeight;
+			let clampX = getSizeClamp(newWidth, minWidth, maxWidth);
+			let clampY = getSizeClamp(newHeight, minHeight, maxHeight);
+			if (extent) {
+				let xExtentClamp = 0;
+				let yExtentClamp = 0;
+				if (affectsX && distX < 0) xExtentClamp = getLowerExtentClamp(startX + distX + originOffsetX, extent[0][0]);
+				else if (!affectsX && distX > 0) xExtentClamp = getUpperExtentClamp(startX + newWidth + originOffsetX, extent[1][0]);
+				if (affectsY && distY < 0) yExtentClamp = getLowerExtentClamp(startY + distY + originOffsetY, extent[0][1]);
+				else if (!affectsY && distY > 0) yExtentClamp = getUpperExtentClamp(startY + newHeight + originOffsetY, extent[1][1]);
+				clampX = Math.max(clampX, xExtentClamp);
+				clampY = Math.max(clampY, yExtentClamp);
+			}
+			if (childExtent) {
+				let xExtentClamp = 0;
+				let yExtentClamp = 0;
+				if (affectsX && distX > 0) xExtentClamp = getUpperExtentClamp(startX + distX, childExtent[0][0]);
+				else if (!affectsX && distX < 0) xExtentClamp = getLowerExtentClamp(startX + newWidth, childExtent[1][0]);
+				if (affectsY && distY > 0) yExtentClamp = getUpperExtentClamp(startY + distY, childExtent[0][1]);
+				else if (!affectsY && distY < 0) yExtentClamp = getLowerExtentClamp(startY + newHeight, childExtent[1][1]);
+				clampX = Math.max(clampX, xExtentClamp);
+				clampY = Math.max(clampY, yExtentClamp);
+			}
+			if (keepAspectRatio) {
+				if (isHorizontal) {
+					const aspectHeightClamp = getSizeClamp(newWidth / aspectRatio, minHeight, maxHeight) * aspectRatio;
+					clampX = Math.max(clampX, aspectHeightClamp);
+					if (extent) {
+						let aspectExtentClamp = 0;
+						if (!affectsX && !affectsY || affectsX && !affectsY && isDiagonal) aspectExtentClamp = getUpperExtentClamp(startY + originOffsetY + newWidth / aspectRatio, extent[1][1]) * aspectRatio;
+						else aspectExtentClamp = getLowerExtentClamp(startY + originOffsetY + (affectsX ? distX : -distX) / aspectRatio, extent[0][1]) * aspectRatio;
+						clampX = Math.max(clampX, aspectExtentClamp);
+					}
+					if (childExtent) {
+						let aspectExtentClamp = 0;
+						if (!affectsX && !affectsY || affectsX && !affectsY && isDiagonal) aspectExtentClamp = getLowerExtentClamp(startY + newWidth / aspectRatio, childExtent[1][1]) * aspectRatio;
+						else aspectExtentClamp = getUpperExtentClamp(startY + (affectsX ? distX : -distX) / aspectRatio, childExtent[0][1]) * aspectRatio;
+						clampX = Math.max(clampX, aspectExtentClamp);
+					}
+				}
+				if (isVertical) {
+					const aspectWidthClamp = getSizeClamp(newHeight * aspectRatio, minWidth, maxWidth) / aspectRatio;
+					clampY = Math.max(clampY, aspectWidthClamp);
+					if (extent) {
+						let aspectExtentClamp = 0;
+						if (!affectsX && !affectsY || affectsY && !affectsX && isDiagonal) aspectExtentClamp = getUpperExtentClamp(startX + newHeight * aspectRatio + originOffsetX, extent[1][0]) / aspectRatio;
+						else aspectExtentClamp = getLowerExtentClamp(startX + (affectsY ? distY : -distY) * aspectRatio + originOffsetX, extent[0][0]) / aspectRatio;
+						clampY = Math.max(clampY, aspectExtentClamp);
+					}
+					if (childExtent) {
+						let aspectExtentClamp = 0;
+						if (!affectsX && !affectsY || affectsY && !affectsX && isDiagonal) aspectExtentClamp = getLowerExtentClamp(startX + newHeight * aspectRatio, childExtent[1][0]) / aspectRatio;
+						else aspectExtentClamp = getUpperExtentClamp(startX + (affectsY ? distY : -distY) * aspectRatio, childExtent[0][0]) / aspectRatio;
+						clampY = Math.max(clampY, aspectExtentClamp);
+					}
+				}
+			}
+			distY = distY + (distY < 0 ? clampY : -clampY);
+			distX = distX + (distX < 0 ? clampX : -clampX);
+			if (keepAspectRatio) {
+				if (isDiagonal) {
+					if (newWidth > newHeight * aspectRatio) distY = (xor(affectsX, affectsY) ? -distX : distX) / aspectRatio;
+					else distX = (xor(affectsX, affectsY) ? -distY : distY) * aspectRatio;
+				} else if (isHorizontal) {
+					distY = distX / aspectRatio;
+					affectsY = affectsX;
+				} else {
+					distX = distY * aspectRatio;
+					affectsX = affectsY;
+				}
+			}
+			const x = affectsX ? startX + distX : startX;
+			const y = affectsY ? startY + distY : startY;
+			return {
+				width: startWidth + (affectsX ? -distX : distX),
+				height: startHeight + (affectsY ? -distY : distY),
+				x: nodeOrigin[0] * distX * (!affectsX ? 1 : -1) + x,
+				y: nodeOrigin[1] * distY * (!affectsY ? 1 : -1) + y
+			};
+		}
+		const initPrevValues$1 = {
+			width: 0,
+			height: 0,
+			x: 0,
+			y: 0
+		};
+		const initStartValues = {
+			...initPrevValues$1,
+			pointerX: 0,
+			pointerY: 0,
+			aspectRatio: 1
+		};
+		function nodeToChildExtent(child, parent, nodeOrigin) {
+			const x = parent.position.x + child.position.x;
+			const y = parent.position.y + child.position.y;
+			const width = child.measured.width ?? 0;
+			const height = child.measured.height ?? 0;
+			const originOffsetX = nodeOrigin[0] * width;
+			const originOffsetY = nodeOrigin[1] * height;
+			return [[x - originOffsetX, y - originOffsetY], [x + width - originOffsetX, y + height - originOffsetY]];
+		}
+		function XYResizer({ domNode, nodeId, getStoreItems, onChange, onEnd }) {
+			const selection = select_default$1(domNode);
+			let params = {
+				controlDirection: getControlDirection("bottom-right"),
+				boundaries: {
+					minWidth: 0,
+					minHeight: 0,
+					maxWidth: Number.MAX_VALUE,
+					maxHeight: Number.MAX_VALUE
+				},
+				resizeDirection: void 0,
+				keepAspectRatio: false
+			};
+			function update({ controlPosition, boundaries, keepAspectRatio, resizeDirection, onResizeStart, onResize, onResizeEnd, shouldResize }) {
+				let prevValues = { ...initPrevValues$1 };
+				let startValues = { ...initStartValues };
+				params = {
+					boundaries,
+					resizeDirection,
+					keepAspectRatio,
+					controlDirection: getControlDirection(controlPosition)
+				};
+				let node = void 0;
+				let containerBounds = null;
+				let childNodes = [];
+				let parentNode = void 0;
+				let nodeExtent = void 0;
+				let childExtent = void 0;
+				let resizeDetected = false;
+				const dragHandler = drag_default().on("start", (event) => {
+					const { nodeLookup, transform, snapGrid, snapToGrid, nodeOrigin, paneDomNode } = getStoreItems();
+					node = nodeLookup.get(nodeId);
+					if (!node) return;
+					containerBounds = paneDomNode?.getBoundingClientRect() ?? null;
+					const { xSnapped, ySnapped } = getPointerPosition(event.sourceEvent, {
+						transform,
+						snapGrid,
+						snapToGrid,
+						containerBounds
+					});
+					prevValues = {
+						width: node.measured.width ?? 0,
+						height: node.measured.height ?? 0,
+						x: node.position.x ?? 0,
+						y: node.position.y ?? 0
+					};
+					startValues = {
+						...prevValues,
+						pointerX: xSnapped,
+						pointerY: ySnapped,
+						aspectRatio: prevValues.width / prevValues.height
+					};
+					parentNode = void 0;
+					nodeExtent = isCoordinateExtent(node.extent) ? node.extent : void 0;
+					if (node.parentId && (node.extent === "parent" || node.expandParent)) parentNode = nodeLookup.get(node.parentId);
+					if (parentNode && node.extent === "parent") nodeExtent = [[0, 0], [parentNode.measured.width, parentNode.measured.height]];
+					childNodes = [];
+					childExtent = void 0;
+					for (const [childId, child] of nodeLookup) if (child.parentId === nodeId) {
+						childNodes.push({
+							id: childId,
+							position: { ...child.position },
+							extent: child.extent
+						});
+						if (child.extent === "parent" || child.expandParent) {
+							const extent = nodeToChildExtent(child, node, child.origin ?? nodeOrigin);
+							if (childExtent) childExtent = [[Math.min(extent[0][0], childExtent[0][0]), Math.min(extent[0][1], childExtent[0][1])], [Math.max(extent[1][0], childExtent[1][0]), Math.max(extent[1][1], childExtent[1][1])]];
+							else childExtent = extent;
+						}
+					}
+					onResizeStart?.(event, { ...prevValues });
+				}).on("drag", (event) => {
+					const { transform, snapGrid, snapToGrid, nodeOrigin: storeNodeOrigin } = getStoreItems();
+					const pointerPosition = getPointerPosition(event.sourceEvent, {
+						transform,
+						snapGrid,
+						snapToGrid,
+						containerBounds
+					});
+					const childChanges = [];
+					if (!node) return;
+					const { x: prevX, y: prevY, width: prevWidth, height: prevHeight } = prevValues;
+					const change = {};
+					const nodeOrigin = node.origin ?? storeNodeOrigin;
+					const { width, height, x, y } = getDimensionsAfterResize(startValues, params.controlDirection, pointerPosition, params.boundaries, params.keepAspectRatio, nodeOrigin, nodeExtent, childExtent);
+					const isWidthChange = width !== prevWidth;
+					const isHeightChange = height !== prevHeight;
+					const isXPosChange = x !== prevX && isWidthChange;
+					const isYPosChange = y !== prevY && isHeightChange;
+					if (!isXPosChange && !isYPosChange && !isWidthChange && !isHeightChange) return;
+					if (isXPosChange || isYPosChange || nodeOrigin[0] === 1 || nodeOrigin[1] === 1) {
+						change.x = isXPosChange ? x : prevValues.x;
+						change.y = isYPosChange ? y : prevValues.y;
+						prevValues.x = change.x;
+						prevValues.y = change.y;
+						if (childNodes.length > 0) {
+							const xChange = x - prevX;
+							const yChange = y - prevY;
+							for (const childNode of childNodes) {
+								childNode.position = {
+									x: childNode.position.x - xChange + nodeOrigin[0] * (width - prevWidth),
+									y: childNode.position.y - yChange + nodeOrigin[1] * (height - prevHeight)
+								};
+								childChanges.push(childNode);
+							}
+						}
+					}
+					if (isWidthChange || isHeightChange) {
+						change.width = isWidthChange && (!params.resizeDirection || params.resizeDirection === "horizontal") ? width : prevValues.width;
+						change.height = isHeightChange && (!params.resizeDirection || params.resizeDirection === "vertical") ? height : prevValues.height;
+						prevValues.width = change.width;
+						prevValues.height = change.height;
+					}
+					if (parentNode && node.expandParent) {
+						const xLimit = nodeOrigin[0] * (change.width ?? 0);
+						if (change.x && change.x < xLimit) {
+							prevValues.x = xLimit;
+							startValues.x = startValues.x - (change.x - xLimit);
+						}
+						const yLimit = nodeOrigin[1] * (change.height ?? 0);
+						if (change.y && change.y < yLimit) {
+							prevValues.y = yLimit;
+							startValues.y = startValues.y - (change.y - yLimit);
+						}
+					}
+					const direction = getResizeDirection({
+						width: prevValues.width,
+						prevWidth,
+						height: prevValues.height,
+						prevHeight,
+						affectsX: params.controlDirection.affectsX,
+						affectsY: params.controlDirection.affectsY
+					});
+					const nextValues = {
+						...prevValues,
+						direction
+					};
+					if (shouldResize?.(event, nextValues) === false) return;
+					resizeDetected = true;
+					onResize?.(event, nextValues);
+					onChange(change, childChanges);
+				}).on("end", (event) => {
+					if (!resizeDetected) return;
+					onResizeEnd?.(event, { ...prevValues });
+					onEnd?.({ ...prevValues });
+					resizeDetected = false;
+				});
+				selection.call(dragHandler);
+			}
+			function destroy() {
+				selection.on(".drag", null);
+			}
+			return {
+				update,
+				destroy
+			};
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/use-sync-external-store@1.2.0_react@18.3.1/node_modules/use-sync-external-store/cjs/use-sync-external-store-shim.production.min.js
+		/**
+		* @license React
+		* use-sync-external-store-shim.production.min.js
+		*
+		* Copyright (c) Facebook, Inc. and its affiliates.
+		*
+		* This source code is licensed under the MIT license found in the
+		* LICENSE file in the root directory of this source tree.
+		*/
+		var require_use_sync_external_store_shim_production_min = /* @__PURE__ */ __commonJSMin(((exports) => {
+			var e = require("react");
+			function h(a, b) {
+				return a === b && (0 !== a || 1 / a === 1 / b) || a !== a && b !== b;
+			}
+			var k = "function" === typeof Object.is ? Object.is : h;
+			var l = e.useState;
+			var m = e.useEffect;
+			var n = e.useLayoutEffect;
+			var p = e.useDebugValue;
+			function q(a, b) {
+				var d = b(), f = l({ inst: {
+					value: d,
+					getSnapshot: b
+				} }), c = f[0].inst, g = f[1];
+				n(function() {
+					c.value = d;
+					c.getSnapshot = b;
+					r(c) && g({ inst: c });
+				}, [
+					a,
+					d,
+					b
+				]);
+				m(function() {
+					r(c) && g({ inst: c });
+					return a(function() {
+						r(c) && g({ inst: c });
+					});
+				}, [a]);
+				p(d);
+				return d;
+			}
+			function r(a) {
+				var b = a.getSnapshot;
+				a = a.value;
+				try {
+					var d = b();
+					return !k(a, d);
+				} catch (f) {
+					return !0;
+				}
+			}
+			function t(a, b) {
+				return b();
+			}
+			var u = "undefined" === typeof window || "undefined" === typeof window.document || "undefined" === typeof window.document.createElement ? t : q;
+			exports.useSyncExternalStore = void 0 !== e.useSyncExternalStore ? e.useSyncExternalStore : u;
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/use-sync-external-store@1.2.0_react@18.3.1/node_modules/use-sync-external-store/cjs/use-sync-external-store-shim.development.js
+		/**
+		* @license React
+		* use-sync-external-store-shim.development.js
+		*
+		* Copyright (c) Facebook, Inc. and its affiliates.
+		*
+		* This source code is licensed under the MIT license found in the
+		* LICENSE file in the root directory of this source tree.
+		*/
+		var require_use_sync_external_store_shim_development = /* @__PURE__ */ __commonJSMin(((exports) => {
+			if (process.env.NODE_ENV !== "production") (function() {
+				"use strict";
+				if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart === "function") __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(/* @__PURE__ */ new Error());
+				var React = require("react");
+				var ReactSharedInternals = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
+				function error(format) {
+					for (var _len2 = arguments.length, args = new Array(_len2 > 1 ? _len2 - 1 : 0), _key2 = 1; _key2 < _len2; _key2++) args[_key2 - 1] = arguments[_key2];
+					printWarning("error", format, args);
+				}
+				function printWarning(level, format, args) {
+					var stack = ReactSharedInternals.ReactDebugCurrentFrame.getStackAddendum();
+					if (stack !== "") {
+						format += "%s";
+						args = args.concat([stack]);
+					}
+					var argsWithFormat = args.map(function(item) {
+						return String(item);
+					});
+					argsWithFormat.unshift("Warning: " + format);
+					Function.prototype.apply.call(console[level], console, argsWithFormat);
+				}
+				/**
+				* inlined Object.is polyfill to avoid requiring consumers ship their own
+				* https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is
+				*/
+				function is(x, y) {
+					return x === y && (x !== 0 || 1 / x === 1 / y) || x !== x && y !== y;
+				}
+				var objectIs = typeof Object.is === "function" ? Object.is : is;
+				var useState = React.useState, useEffect = React.useEffect, useLayoutEffect = React.useLayoutEffect, useDebugValue = React.useDebugValue;
+				var didWarnOld18Alpha = false;
+				var didWarnUncachedGetSnapshot = false;
+				function useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot) {
+					if (!didWarnOld18Alpha) {
+						if (React.startTransition !== void 0) {
+							didWarnOld18Alpha = true;
+							error("You are using an outdated, pre-release alpha of React 18 that does not support useSyncExternalStore. The use-sync-external-store shim will not work correctly. Upgrade to a newer pre-release.");
+						}
+					}
+					var value = getSnapshot();
+					if (!didWarnUncachedGetSnapshot) {
+						if (!objectIs(value, getSnapshot())) {
+							error("The result of getSnapshot should be cached to avoid an infinite loop");
+							didWarnUncachedGetSnapshot = true;
+						}
+					}
+					var _useState = useState({ inst: {
+						value,
+						getSnapshot
+					} }), inst = _useState[0].inst, forceUpdate = _useState[1];
+					useLayoutEffect(function() {
+						inst.value = value;
+						inst.getSnapshot = getSnapshot;
+						if (checkIfSnapshotChanged(inst)) forceUpdate({ inst });
+					}, [
+						subscribe,
+						value,
+						getSnapshot
+					]);
+					useEffect(function() {
+						if (checkIfSnapshotChanged(inst)) forceUpdate({ inst });
+						var handleStoreChange = function() {
+							if (checkIfSnapshotChanged(inst)) forceUpdate({ inst });
+						};
+						return subscribe(handleStoreChange);
+					}, [subscribe]);
+					useDebugValue(value);
+					return value;
+				}
+				function checkIfSnapshotChanged(inst) {
+					var latestGetSnapshot = inst.getSnapshot;
+					var prevValue = inst.value;
+					try {
+						return !objectIs(prevValue, latestGetSnapshot());
+					} catch (error) {
+						return true;
+					}
+				}
+				function useSyncExternalStore$1(subscribe, getSnapshot, getServerSnapshot) {
+					return getSnapshot();
+				}
+				var shim = !!!(typeof window !== "undefined" && typeof window.document !== "undefined" && typeof window.document.createElement !== "undefined") ? useSyncExternalStore$1 : useSyncExternalStore;
+				exports.useSyncExternalStore = React.useSyncExternalStore !== void 0 ? React.useSyncExternalStore : shim;
+				if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop === "function") __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop(/* @__PURE__ */ new Error());
+			})();
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/use-sync-external-store@1.2.0_react@18.3.1/node_modules/use-sync-external-store/shim/index.js
+		var require_shim = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			if (process.env.NODE_ENV === "production") module.exports = require_use_sync_external_store_shim_production_min();
+			else module.exports = require_use_sync_external_store_shim_development();
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/use-sync-external-store@1.2.0_react@18.3.1/node_modules/use-sync-external-store/cjs/use-sync-external-store-shim/with-selector.production.min.js
+		/**
+		* @license React
+		* use-sync-external-store-shim/with-selector.production.min.js
+		*
+		* Copyright (c) Facebook, Inc. and its affiliates.
+		*
+		* This source code is licensed under the MIT license found in the
+		* LICENSE file in the root directory of this source tree.
+		*/
+		var require_with_selector_production_min = /* @__PURE__ */ __commonJSMin(((exports) => {
+			var h = require("react");
+			var n = require_shim();
+			function p(a, b) {
+				return a === b && (0 !== a || 1 / a === 1 / b) || a !== a && b !== b;
+			}
+			var q = "function" === typeof Object.is ? Object.is : p;
+			var r = n.useSyncExternalStore;
+			var t = h.useRef;
+			var u = h.useEffect;
+			var v = h.useMemo;
+			var w = h.useDebugValue;
+			exports.useSyncExternalStoreWithSelector = function(a, b, e, l, g) {
+				var c = t(null);
+				if (null === c.current) {
+					var f = {
+						hasValue: !1,
+						value: null
+					};
+					c.current = f;
+				} else f = c.current;
+				c = v(function() {
+					function a(a) {
+						if (!c) {
+							c = !0;
+							d = a;
+							a = l(a);
+							if (void 0 !== g && f.hasValue) {
+								var b = f.value;
+								if (g(b, a)) return k = b;
+							}
+							return k = a;
+						}
+						b = k;
+						if (q(d, a)) return b;
+						var e = l(a);
+						if (void 0 !== g && g(b, e)) return b;
+						d = a;
+						return k = e;
+					}
+					var c = !1, d, k, m = void 0 === e ? null : e;
+					return [function() {
+						return a(b());
+					}, null === m ? void 0 : function() {
+						return a(m());
+					}];
+				}, [
+					b,
+					e,
+					l,
+					g
+				]);
+				var d = r(a, c[0], c[1]);
+				u(function() {
+					f.hasValue = !0;
+					f.value = d;
+				}, [d]);
+				w(d);
+				return d;
+			};
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/use-sync-external-store@1.2.0_react@18.3.1/node_modules/use-sync-external-store/cjs/use-sync-external-store-shim/with-selector.development.js
+		/**
+		* @license React
+		* use-sync-external-store-shim/with-selector.development.js
+		*
+		* Copyright (c) Facebook, Inc. and its affiliates.
+		*
+		* This source code is licensed under the MIT license found in the
+		* LICENSE file in the root directory of this source tree.
+		*/
+		var require_with_selector_development = /* @__PURE__ */ __commonJSMin(((exports) => {
+			if (process.env.NODE_ENV !== "production") (function() {
+				"use strict";
+				if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart === "function") __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(/* @__PURE__ */ new Error());
+				var React = require("react");
+				var shim = require_shim();
+				/**
+				* inlined Object.is polyfill to avoid requiring consumers ship their own
+				* https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is
+				*/
+				function is(x, y) {
+					return x === y && (x !== 0 || 1 / x === 1 / y) || x !== x && y !== y;
+				}
+				var objectIs = typeof Object.is === "function" ? Object.is : is;
+				var useSyncExternalStore = shim.useSyncExternalStore;
+				var useRef = React.useRef, useEffect = React.useEffect, useMemo = React.useMemo, useDebugValue = React.useDebugValue;
+				function useSyncExternalStoreWithSelector(subscribe, getSnapshot, getServerSnapshot, selector, isEqual) {
+					var instRef = useRef(null);
+					var inst;
+					if (instRef.current === null) {
+						inst = {
+							hasValue: false,
+							value: null
+						};
+						instRef.current = inst;
+					} else inst = instRef.current;
+					var _useMemo = useMemo(function() {
+						var hasMemo = false;
+						var memoizedSnapshot;
+						var memoizedSelection;
+						var memoizedSelector = function(nextSnapshot) {
+							if (!hasMemo) {
+								hasMemo = true;
+								memoizedSnapshot = nextSnapshot;
+								var _nextSelection = selector(nextSnapshot);
+								if (isEqual !== void 0) {
+									if (inst.hasValue) {
+										var currentSelection = inst.value;
+										if (isEqual(currentSelection, _nextSelection)) {
+											memoizedSelection = currentSelection;
+											return currentSelection;
+										}
+									}
+								}
+								memoizedSelection = _nextSelection;
+								return _nextSelection;
+							}
+							var prevSnapshot = memoizedSnapshot;
+							var prevSelection = memoizedSelection;
+							if (objectIs(prevSnapshot, nextSnapshot)) return prevSelection;
+							var nextSelection = selector(nextSnapshot);
+							if (isEqual !== void 0 && isEqual(prevSelection, nextSelection)) return prevSelection;
+							memoizedSnapshot = nextSnapshot;
+							memoizedSelection = nextSelection;
+							return nextSelection;
+						};
+						var maybeGetServerSnapshot = getServerSnapshot === void 0 ? null : getServerSnapshot;
+						var getSnapshotWithSelector = function() {
+							return memoizedSelector(getSnapshot());
+						};
+						return [getSnapshotWithSelector, maybeGetServerSnapshot === null ? void 0 : function() {
+							return memoizedSelector(maybeGetServerSnapshot());
+						}];
+					}, [
+						getSnapshot,
+						getServerSnapshot,
+						selector,
+						isEqual
+					]), getSelection = _useMemo[0], getServerSelection = _useMemo[1];
+					var value = useSyncExternalStore(subscribe, getSelection, getServerSelection);
+					useEffect(function() {
+						inst.hasValue = true;
+						inst.value = value;
+					}, [value]);
+					useDebugValue(value);
+					return value;
+				}
+				exports.useSyncExternalStoreWithSelector = useSyncExternalStoreWithSelector;
+				if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== "undefined" && typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop === "function") __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStop(/* @__PURE__ */ new Error());
+			})();
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/zustand@4.4.7_@types+react@18.3.31_immer@10.2.0_react@18.3.1/node_modules/zustand/esm/vanilla.mjs
+		var import_with_selector = /* @__PURE__ */ __toESM((/* @__PURE__ */ __commonJSMin(((exports, module) => {
+			if (process.env.NODE_ENV === "production") module.exports = require_with_selector_production_min();
+			else module.exports = require_with_selector_development();
+		})))(), 1);
+		const createStoreImpl = (createState) => {
+			let state;
+			const listeners = /* @__PURE__ */ new Set();
+			const setState = (partial, replace) => {
+				const nextState = typeof partial === "function" ? partial(state) : partial;
+				if (!Object.is(nextState, state)) {
+					const previousState = state;
+					state = (replace != null ? replace : typeof nextState !== "object" || nextState === null) ? nextState : Object.assign({}, state, nextState);
+					listeners.forEach((listener) => listener(state, previousState));
+				}
+			};
+			const getState = () => state;
+			const subscribe = (listener) => {
+				listeners.add(listener);
+				return () => listeners.delete(listener);
+			};
+			const destroy = () => {
+				if (({}.env ? {}.env.MODE : void 0) !== "production") console.warn("[DEPRECATED] The `destroy` method will be unsupported in a future version. Instead use unsubscribe function returned by subscribe. Everything will be garbage-collected if store is garbage-collected.");
+				listeners.clear();
+			};
+			const api = {
+				setState,
+				getState,
+				subscribe,
+				destroy
+			};
+			state = createState(setState, getState, api);
+			return api;
+		};
+		const createStore$1 = (createState) => createState ? createStoreImpl(createState) : createStoreImpl;
+		//#endregion
+		//#region ../../../node_modules/.pnpm/zustand@4.4.7_@types+react@18.3.31_immer@10.2.0_react@18.3.1/node_modules/zustand/esm/traditional.mjs
+		const { useDebugValue } = react.default;
+		const { useSyncExternalStoreWithSelector } = import_with_selector.default;
+		function useStoreWithEqualityFn(api, selector = api.getState, equalityFn) {
+			const slice = useSyncExternalStoreWithSelector(api.subscribe, api.getState, api.getServerState || api.getState, selector, equalityFn);
+			useDebugValue(slice);
+			return slice;
+		}
+		const createWithEqualityFnImpl = (createState, defaultEqualityFn) => {
+			const api = createStore$1(createState);
+			const useBoundStoreWithEqualityFn = (selector, equalityFn = defaultEqualityFn) => useStoreWithEqualityFn(api, selector, equalityFn);
+			Object.assign(useBoundStoreWithEqualityFn, api);
+			return useBoundStoreWithEqualityFn;
+		};
+		const createWithEqualityFn = (createState, defaultEqualityFn) => createState ? createWithEqualityFnImpl(createState, defaultEqualityFn) : createWithEqualityFnImpl;
+		//#endregion
+		//#region ../../../node_modules/.pnpm/zustand@4.4.7_@types+react@18.3.31_immer@10.2.0_react@18.3.1/node_modules/zustand/esm/shallow.mjs
+		function shallow$1(objA, objB) {
+			if (Object.is(objA, objB)) return true;
+			if (typeof objA !== "object" || objA === null || typeof objB !== "object" || objB === null) return false;
+			if (objA instanceof Map && objB instanceof Map) {
+				if (objA.size !== objB.size) return false;
+				for (const [key, value] of objA) if (!Object.is(value, objB.get(key))) return false;
+				return true;
+			}
+			if (objA instanceof Set && objB instanceof Set) {
+				if (objA.size !== objB.size) return false;
+				for (const value of objA) if (!objB.has(value)) return false;
+				return true;
+			}
+			const keysA = Object.keys(objA);
+			if (keysA.length !== Object.keys(objB).length) return false;
+			for (let i = 0; i < keysA.length; i++) if (!Object.prototype.hasOwnProperty.call(objB, keysA[i]) || !Object.is(objA[keysA[i]], objB[keysA[i]])) return false;
+			return true;
+		}
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@xyflow+react@12.11.3_@type_5cca42739064cc655d3ade03bbcb6aef/node_modules/@xyflow/react/dist/esm/index.js
+		const StoreContext = (0, react.createContext)(null);
+		const Provider$1 = StoreContext.Provider;
+		const zustandErrorMessage = errorMessages["error001"]("react");
+		/**
+		* This hook can be used to subscribe to internal state changes of the React Flow
+		* component. The `useStore` hook is re-exported from the [Zustand](https://github.com/pmndrs/zustand)
+		* state management library, so you should check out their docs for more details.
+		*
+		* @public
+		* @param selector - A selector function that returns a slice of the flow's internal state.
+		* Extracting or transforming just the state you need is a good practice to avoid unnecessary
+		* re-renders.
+		* @param equalityFn - A function to compare the previous and next value. This is incredibly useful
+		* for preventing unnecessary re-renders. Good sensible defaults are using `Object.is` or importing
+		* `zustand/shallow`, but you can be as granular as you like.
+		* @returns The selected state slice.
+		*
+		* @example
+		* ```ts
+		* const nodes = useStore((state) => state.nodes);
+		* ```
+		*
+		* @remarks This hook should only be used if there is no other way to access the internal
+		* state. For many of the common use cases, there are dedicated hooks available
+		* such as {@link useReactFlow}, {@link useViewport}, etc.
+		*/
+		function useStore(selector, equalityFn) {
+			const store = (0, react.useContext)(StoreContext);
+			if (store === null) throw new Error(zustandErrorMessage);
+			return useStoreWithEqualityFn(store, selector, equalityFn);
+		}
+		/**
+		* In some cases, you might need to access the store directly. This hook returns the store object which can be used on demand to access the state or dispatch actions.
+		*
+		* @returns The store object.
+		* @example
+		* ```ts
+		* const store = useStoreApi();
+		* ```
+		*
+		* @remarks This hook should only be used if there is no other way to access the internal
+		* state. For many of the common use cases, there are dedicated hooks available
+		* such as {@link useReactFlow}, {@link useViewport}, etc.
+		*/
+		function useStoreApi() {
+			const store = (0, react.useContext)(StoreContext);
+			if (store === null) throw new Error(zustandErrorMessage);
+			return (0, react.useMemo)(() => ({
+				getState: store.getState,
+				setState: store.setState,
+				subscribe: store.subscribe
+			}), [store]);
+		}
+		const style = { display: "none" };
+		const ariaLiveStyle = {
+			position: "absolute",
+			width: 1,
+			height: 1,
+			margin: -1,
+			border: 0,
+			padding: 0,
+			overflow: "hidden",
+			clip: "rect(0px, 0px, 0px, 0px)",
+			clipPath: "inset(100%)"
+		};
+		const ARIA_NODE_DESC_KEY = "react-flow__node-desc";
+		const ARIA_EDGE_DESC_KEY = "react-flow__edge-desc";
+		const ARIA_LIVE_MESSAGE = "react-flow__aria-live";
+		const ariaLiveSelector = (s) => s.ariaLiveMessage;
+		const ariaLabelConfigSelector = (s) => s.ariaLabelConfig;
+		function AriaLiveMessage({ rfId }) {
+			const ariaLiveMessage = useStore(ariaLiveSelector);
+			return (0, react_jsx_runtime.jsx)("div", {
+				id: `${ARIA_LIVE_MESSAGE}-${rfId}`,
+				"aria-live": "assertive",
+				"aria-atomic": "true",
+				style: ariaLiveStyle,
+				children: ariaLiveMessage
+			});
+		}
+		function A11yDescriptions({ rfId, disableKeyboardA11y }) {
+			const ariaLabelConfig = useStore(ariaLabelConfigSelector);
+			return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+				(0, react_jsx_runtime.jsx)("div", {
+					id: `${ARIA_NODE_DESC_KEY}-${rfId}`,
+					style,
+					children: disableKeyboardA11y ? ariaLabelConfig["node.a11yDescription.default"] : ariaLabelConfig["node.a11yDescription.keyboardDisabled"]
+				}),
+				(0, react_jsx_runtime.jsx)("div", {
+					id: `${ARIA_EDGE_DESC_KEY}-${rfId}`,
+					style,
+					children: ariaLabelConfig["edge.a11yDescription.default"]
+				}),
+				!disableKeyboardA11y && (0, react_jsx_runtime.jsx)(AriaLiveMessage, { rfId })
+			] });
+		}
+		/**
+		* The `<Panel />` component helps you position content above the viewport.
+		* It is used internally by the [`<MiniMap />`](/api-reference/components/minimap)
+		* and [`<Controls />`](/api-reference/components/controls) components.
+		*
+		* @public
+		*
+		* @example
+		* ```jsx
+		*import { ReactFlow, Background, Panel } from '@xyflow/react';
+		*
+		*export default function Flow() {
+		*  return (
+		*    <ReactFlow nodes={[]} fitView>
+		*      <Panel position="top-left">top-left</Panel>
+		*      <Panel position="top-center">top-center</Panel>
+		*      <Panel position="top-right">top-right</Panel>
+		*      <Panel position="bottom-left">bottom-left</Panel>
+		*      <Panel position="bottom-center">bottom-center</Panel>
+		*      <Panel position="bottom-right">bottom-right</Panel>
+		*    </ReactFlow>
+		*  );
+		*}
+		*```
+		*/
+		const Panel = (0, react.forwardRef)(({ position = "top-left", children, className, style, ...rest }, ref) => {
+			const positionClasses = `${position}`.split("-");
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: cc([
+					"react-flow__panel",
+					className,
+					...positionClasses
+				]),
+				style,
+				ref,
+				...rest,
+				children
+			});
+		});
+		Panel.displayName = "Panel";
+		const link = `https://reactflow.dev${process.env.NODE_ENV === "production" ? "?utm_source=attribution" : "/attribution"}`;
+		function Attribution({ proOptions, position = "bottom-right" }) {
+			if (proOptions?.hideAttribution) return null;
+			return (0, react_jsx_runtime.jsx)(Panel, {
+				position,
+				className: "react-flow__attribution",
+				"data-message": `Please only hide this attribution when you are subscribed to React Flow Pro: ${link}`,
+				children: (0, react_jsx_runtime.jsx)("a", {
+					href: link,
+					target: "_blank",
+					rel: "noopener noreferrer",
+					"aria-label": "React Flow attribution",
+					children: "React Flow"
+				})
+			});
+		}
+		const selector$l = (s) => {
+			const selectedNodes = [];
+			const selectedEdges = [];
+			for (const [, node] of s.nodeLookup) if (node.selected) selectedNodes.push(node.internals.userNode);
+			for (const [, edge] of s.edgeLookup) if (edge.selected) selectedEdges.push(edge);
+			return {
+				selectedNodes,
+				selectedEdges
+			};
+		};
+		const selectId = (obj) => obj.id;
+		function areEqual$1(a, b) {
+			return shallow$1(a.selectedNodes.map(selectId), b.selectedNodes.map(selectId)) && shallow$1(a.selectedEdges.map(selectId), b.selectedEdges.map(selectId));
+		}
+		function SelectionListenerInner({ onSelectionChange }) {
+			const store = useStoreApi();
+			const { selectedNodes, selectedEdges } = useStore(selector$l, areEqual$1);
+			(0, react.useEffect)(() => {
+				const params = {
+					nodes: selectedNodes,
+					edges: selectedEdges
+				};
+				onSelectionChange?.(params);
+				store.getState().onSelectionChangeHandlers.forEach((fn) => fn(params));
+			}, [
+				selectedNodes,
+				selectedEdges,
+				onSelectionChange
+			]);
+			return null;
+		}
+		const changeSelector = (s) => !!s.onSelectionChangeHandlers;
+		function SelectionListener({ onSelectionChange }) {
+			const storeHasSelectionChangeHandlers = useStore(changeSelector);
+			if (onSelectionChange || storeHasSelectionChangeHandlers) return (0, react_jsx_runtime.jsx)(SelectionListenerInner, { onSelectionChange });
+			return null;
+		}
+		const defaultNodeOrigin = [0, 0];
+		const defaultViewport = {
+			x: 0,
+			y: 0,
+			zoom: 1
+		};
+		const fieldsToTrack = [...[
+			"nodes",
+			"edges",
+			"defaultNodes",
+			"defaultEdges",
+			"onConnect",
+			"onConnectStart",
+			"onConnectEnd",
+			"onClickConnectStart",
+			"onClickConnectEnd",
+			"nodesDraggable",
+			"autoPanOnNodeFocus",
+			"nodesConnectable",
+			"nodesFocusable",
+			"edgesFocusable",
+			"edgesReconnectable",
+			"elevateNodesOnSelect",
+			"elevateEdgesOnSelect",
+			"minZoom",
+			"maxZoom",
+			"nodeExtent",
+			"onNodesChange",
+			"onEdgesChange",
+			"elementsSelectable",
+			"connectionMode",
+			"snapGrid",
+			"snapToGrid",
+			"translateExtent",
+			"connectOnClick",
+			"defaultEdgeOptions",
+			"fitView",
+			"fitViewOptions",
+			"onNodesDelete",
+			"onEdgesDelete",
+			"onDelete",
+			"onNodeDrag",
+			"onNodeDragStart",
+			"onNodeDragStop",
+			"onSelectionDrag",
+			"onSelectionDragStart",
+			"onSelectionDragStop",
+			"onMoveStart",
+			"onMove",
+			"onMoveEnd",
+			"noPanClassName",
+			"nodeOrigin",
+			"autoPanOnConnect",
+			"autoPanOnNodeDrag",
+			"onError",
+			"connectionRadius",
+			"isValidConnection",
+			"selectNodesOnDrag",
+			"nodeDragThreshold",
+			"connectionDragThreshold",
+			"onBeforeDelete",
+			"debug",
+			"autoPanSpeed",
+			"ariaLabelConfig",
+			"zIndexMode"
+		], "rfId"];
+		const selector$k = (s) => ({
+			setNodes: s.setNodes,
+			setEdges: s.setEdges,
+			setMinZoom: s.setMinZoom,
+			setMaxZoom: s.setMaxZoom,
+			setTranslateExtent: s.setTranslateExtent,
+			setNodeExtent: s.setNodeExtent,
+			reset: s.reset,
+			setDefaultNodesAndEdges: s.setDefaultNodesAndEdges
+		});
+		const initPrevValues = {
+			translateExtent: infiniteExtent,
+			nodeOrigin: defaultNodeOrigin,
+			minZoom: .5,
+			maxZoom: 2,
+			elementsSelectable: true,
+			noPanClassName: "nopan",
+			rfId: "1"
+		};
+		function StoreUpdater(props) {
+			const { setNodes, setEdges, setMinZoom, setMaxZoom, setTranslateExtent, setNodeExtent, reset, setDefaultNodesAndEdges } = useStore(selector$k, shallow$1);
+			const store = useStoreApi();
+			(0, react.useEffect)(() => {
+				setDefaultNodesAndEdges(props.defaultNodes, props.defaultEdges);
+				return () => {
+					previousFields.current = initPrevValues;
+					reset();
+				};
+			}, []);
+			const previousFields = (0, react.useRef)(initPrevValues);
+			(0, react.useEffect)(() => {
+				for (const fieldName of fieldsToTrack) {
+					const fieldValue = props[fieldName];
+					if (fieldValue === previousFields.current[fieldName]) continue;
+					if (typeof props[fieldName] === "undefined") continue;
+					if (fieldName === "nodes") setNodes(fieldValue);
+					else if (fieldName === "edges") setEdges(fieldValue);
+					else if (fieldName === "minZoom") setMinZoom(fieldValue);
+					else if (fieldName === "maxZoom") setMaxZoom(fieldValue);
+					else if (fieldName === "translateExtent") setTranslateExtent(fieldValue);
+					else if (fieldName === "nodeExtent") setNodeExtent(fieldValue);
+					else if (fieldName === "ariaLabelConfig") store.setState({ ariaLabelConfig: mergeAriaLabelConfig(fieldValue) });
+					else if (fieldName === "fitView") store.setState({ fitViewQueued: fieldValue });
+					else if (fieldName === "fitViewOptions") store.setState({ fitViewOptions: fieldValue });
+					else store.setState({ [fieldName]: fieldValue });
+				}
+				previousFields.current = props;
+			}, fieldsToTrack.map((fieldName) => props[fieldName]));
+			return null;
+		}
+		function getMediaQuery() {
+			if (typeof window === "undefined" || !window.matchMedia) return null;
+			return window.matchMedia("(prefers-color-scheme: dark)");
+		}
+		/**
+		* Hook for receiving the current color mode class 'dark' or 'light'.
+		*
+		* @internal
+		* @param colorMode - The color mode to use ('dark', 'light' or 'system')
+		*/
+		function useColorModeClass(colorMode) {
+			const [colorModeClass, setColorModeClass] = (0, react.useState)(colorMode === "system" ? null : colorMode);
+			(0, react.useEffect)(() => {
+				if (colorMode !== "system") {
+					setColorModeClass(colorMode);
+					return;
+				}
+				const mediaQuery = getMediaQuery();
+				const updateColorModeClass = () => setColorModeClass(mediaQuery?.matches ? "dark" : "light");
+				updateColorModeClass();
+				mediaQuery?.addEventListener("change", updateColorModeClass);
+				return () => {
+					mediaQuery?.removeEventListener("change", updateColorModeClass);
+				};
+			}, [colorMode]);
+			return colorModeClass !== null ? colorModeClass : getMediaQuery()?.matches ? "dark" : "light";
+		}
+		const defaultDoc = typeof document !== "undefined" ? document : null;
+		/**
+		* This hook lets you listen for specific key codes and tells you whether they are
+		* currently pressed or not.
+		*
+		* @public
+		* @param options - Options
+		*
+		* @example
+		* ```tsx
+		*import { useKeyPress } from '@xyflow/react';
+		*
+		*export default function () {
+		*  const spacePressed = useKeyPress('Space');
+		*  const cmdAndSPressed = useKeyPress(['Meta+s', 'Strg+s']);
+		*
+		*  return (
+		*    <div>
+		*     {spacePressed && <p>Space pressed!</p>}
+		*     {cmdAndSPressed && <p>Cmd + S pressed!</p>}
+		*    </div>
+		*  );
+		*}
+		*```
+		*/
+		function useKeyPress(keyCode = null, options = {
+			target: defaultDoc,
+			actInsideInputWithModifier: true
+		}) {
+			const [keyPressed, setKeyPressed] = (0, react.useState)(false);
+			const modifierPressed = (0, react.useRef)(false);
+			const pressedKeys = (0, react.useRef)(/* @__PURE__ */ new Set([]));
+			const [keyCodes, keysToWatch] = (0, react.useMemo)(() => {
+				if (keyCode !== null) {
+					const keys = (Array.isArray(keyCode) ? keyCode : [keyCode]).filter((kc) => typeof kc === "string").map((kc) => kc.replace(/\+/g, "\n").replace("\n\n", "\n+").split("\n"));
+					return [keys, keys.reduce((res, item) => res.concat(...item), [])];
+				}
+				return [[], []];
+			}, [keyCode]);
+			(0, react.useEffect)(() => {
+				const target = options?.target ?? defaultDoc;
+				const actInsideInputWithModifier = options?.actInsideInputWithModifier ?? true;
+				if (keyCode !== null) {
+					const downHandler = (event) => {
+						modifierPressed.current = event.ctrlKey || event.metaKey || event.shiftKey || event.altKey;
+						if ((!modifierPressed.current || modifierPressed.current && !actInsideInputWithModifier) && isInputDOMNode(event)) return false;
+						const keyOrCode = useKeyOrCode(event.code, keysToWatch);
+						pressedKeys.current.add(event[keyOrCode]);
+						if (isMatchingKey(keyCodes, pressedKeys.current, false)) {
+							const target = event.composedPath?.()?.[0] || event.target;
+							const isInteractiveElement = target?.nodeName === "BUTTON" || target?.nodeName === "A";
+							if (options.preventDefault !== false && (modifierPressed.current || !isInteractiveElement)) event.preventDefault();
+							setKeyPressed(true);
+						}
+					};
+					const upHandler = (event) => {
+						const keyOrCode = useKeyOrCode(event.code, keysToWatch);
+						if (isMatchingKey(keyCodes, pressedKeys.current, true)) {
+							setKeyPressed(false);
+							pressedKeys.current.clear();
+						} else pressedKeys.current.delete(event[keyOrCode]);
+						if (event.key === "Meta") pressedKeys.current.clear();
+						modifierPressed.current = false;
+					};
+					const resetHandler = () => {
+						pressedKeys.current.clear();
+						setKeyPressed(false);
+					};
+					target?.addEventListener("keydown", downHandler);
+					target?.addEventListener("keyup", upHandler);
+					window.addEventListener("blur", resetHandler);
+					window.addEventListener("contextmenu", resetHandler);
+					return () => {
+						target?.removeEventListener("keydown", downHandler);
+						target?.removeEventListener("keyup", upHandler);
+						window.removeEventListener("blur", resetHandler);
+						window.removeEventListener("contextmenu", resetHandler);
+					};
+				}
+			}, [keyCode, setKeyPressed]);
+			return keyPressed;
+		}
+		function isMatchingKey(keyCodes, pressedKeys, isUp) {
+			return keyCodes.filter((keys) => isUp || keys.length === pressedKeys.size).some((keys) => keys.every((k) => pressedKeys.has(k)));
+		}
+		function useKeyOrCode(eventCode, keysToWatch) {
+			return keysToWatch.includes(eventCode) ? "code" : "key";
+		}
+		/**
+		* Hook for getting viewport helper functions.
+		*
+		* @internal
+		* @returns viewport helper functions
+		*/
+		const useViewportHelper = () => {
+			const store = useStoreApi();
+			return (0, react.useMemo)(() => {
+				return {
+					zoomIn: async (options) => {
+						const { panZoom } = store.getState();
+						return panZoom ? panZoom.scaleBy(1.2, options) : false;
+					},
+					zoomOut: async (options) => {
+						const { panZoom } = store.getState();
+						return panZoom ? panZoom.scaleBy(1 / 1.2, options) : false;
+					},
+					zoomTo: async (zoomLevel, options) => {
+						const { panZoom } = store.getState();
+						return panZoom ? panZoom.scaleTo(zoomLevel, options) : false;
+					},
+					getZoom: () => store.getState().transform[2],
+					setViewport: async (viewport, options) => {
+						const { transform: [tX, tY, tZoom], panZoom } = store.getState();
+						if (!panZoom) return false;
+						await panZoom.setViewport({
+							x: viewport.x ?? tX,
+							y: viewport.y ?? tY,
+							zoom: viewport.zoom ?? tZoom
+						}, options);
+						return true;
+					},
+					getViewport: () => {
+						const [x, y, zoom] = store.getState().transform;
+						return {
+							x,
+							y,
+							zoom
+						};
+					},
+					setCenter: async (x, y, options) => {
+						return store.getState().setCenter(x, y, options);
+					},
+					fitBounds: async (bounds, options) => {
+						const { width, height, minZoom, maxZoom, panZoom } = store.getState();
+						const viewport = getViewportForBounds(bounds, width, height, minZoom, maxZoom, options?.padding ?? .1);
+						if (!panZoom) return false;
+						await panZoom.setViewport(viewport, {
+							duration: options?.duration,
+							ease: options?.ease,
+							interpolate: options?.interpolate
+						});
+						return true;
+					},
+					screenToFlowPosition: (clientPosition, options = {}) => {
+						const { transform, snapGrid, snapToGrid, domNode } = store.getState();
+						if (!domNode) return clientPosition;
+						const { x: domX, y: domY } = domNode.getBoundingClientRect();
+						const correctedPosition = {
+							x: clientPosition.x - domX,
+							y: clientPosition.y - domY
+						};
+						const _snapGrid = options.snapGrid ?? snapGrid;
+						const _snapToGrid = options.snapToGrid ?? snapToGrid;
+						return pointToRendererPoint(correctedPosition, transform, _snapToGrid, _snapGrid);
+					},
+					flowToScreenPosition: (flowPosition) => {
+						const { transform, domNode } = store.getState();
+						if (!domNode) return flowPosition;
+						const { x: domX, y: domY } = domNode.getBoundingClientRect();
+						const rendererPosition = rendererPointToPoint(flowPosition, transform);
+						return {
+							x: rendererPosition.x + domX,
+							y: rendererPosition.y + domY
+						};
+					}
+				};
+			}, []);
+		};
+		function applyChanges(changes, elements) {
+			const updatedElements = [];
+			const changesMap = /* @__PURE__ */ new Map();
+			const addItemChanges = [];
+			for (const change of changes) if (change.type === "add") {
+				addItemChanges.push(change);
+				continue;
+			} else if (change.type === "remove" || change.type === "replace") changesMap.set(change.id, [change]);
+			else {
+				const elementChanges = changesMap.get(change.id);
+				if (elementChanges) elementChanges.push(change);
+				else changesMap.set(change.id, [change]);
+			}
+			for (const element of elements) {
+				const changes = changesMap.get(element.id);
+				if (!changes) {
+					updatedElements.push(element);
+					continue;
+				}
+				if (changes[0].type === "remove") continue;
+				if (changes[0].type === "replace") {
+					updatedElements.push({ ...changes[0].item });
+					continue;
+				}
+				/**
+				* For other types of changes, we want to start with a shallow copy of the
+				* object so React knows this element has changed. Sequential changes will
+				* each _mutate_ this object, so there's only ever one copy.
+				*/
+				const updatedElement = { ...element };
+				for (const change of changes) applyChange(change, updatedElement);
+				updatedElements.push(updatedElement);
+			}
+			if (addItemChanges.length) addItemChanges.forEach((change) => {
+				if (change.index !== void 0) updatedElements.splice(change.index, 0, { ...change.item });
+				else updatedElements.push({ ...change.item });
+			});
+			return updatedElements;
+		}
+		function applyChange(change, element) {
+			switch (change.type) {
+				case "select":
+					element.selected = change.selected;
+					break;
+				case "position":
+					if (typeof change.position !== "undefined") element.position = change.position;
+					if (typeof change.dragging !== "undefined") element.dragging = change.dragging;
+					break;
+				case "dimensions":
+					if (typeof change.dimensions !== "undefined") {
+						element.measured = { ...change.dimensions };
+						if (change.setAttributes) {
+							if (change.setAttributes === true || change.setAttributes === "width") element.width = change.dimensions.width;
+							if (change.setAttributes === true || change.setAttributes === "height") element.height = change.dimensions.height;
+						}
+					}
+					if (typeof change.resizing === "boolean") element.resizing = change.resizing;
+			}
+		}
+		/**
+		* Drop in function that applies node changes to an array of nodes.
+		* @public
+		* @param changes - Array of changes to apply.
+		* @param nodes - Array of nodes to apply the changes to.
+		* @returns Array of updated nodes.
+		* @example
+		*```tsx
+		*import { useState, useCallback } from 'react';
+		*import { ReactFlow, applyNodeChanges, type Node, type Edge, type OnNodesChange } from '@xyflow/react';
+		*
+		*export default function Flow() {
+		*  const [nodes, setNodes] = useState<Node[]>([]);
+		*  const [edges, setEdges] = useState<Edge[]>([]);
+		*  const onNodesChange: OnNodesChange = useCallback(
+		*    (changes) => {
+		*      setNodes((oldNodes) => applyNodeChanges(changes, oldNodes));
+		*    },
+		*    [setNodes],
+		*  );
+		*
+		*  return (
+		*    <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNodesChange} />
+		*  );
+		*}
+		*```
+		* @remarks Various events on the <ReactFlow /> component can produce an {@link NodeChange}
+		* that describes how to update the edges of your flow in some way.
+		* If you don't need any custom behaviour, this util can be used to take an array
+		* of these changes and apply them to your edges.
+		*/
+		function applyNodeChanges(changes, nodes) {
+			return applyChanges(changes, nodes);
+		}
+		/**
+		* Drop in function that applies edge changes to an array of edges.
+		* @public
+		* @param changes - Array of changes to apply.
+		* @param edges - Array of edge to apply the changes to.
+		* @returns Array of updated edges.
+		* @example
+		* ```tsx
+		*import { useState, useCallback } from 'react';
+		*import { ReactFlow, applyEdgeChanges } from '@xyflow/react';
+		*
+		*export default function Flow() {
+		*  const [nodes, setNodes] = useState([]);
+		*  const [edges, setEdges] = useState([]);
+		*  const onEdgesChange = useCallback(
+		*    (changes) => {
+		*      setEdges((oldEdges) => applyEdgeChanges(changes, oldEdges));
+		*    },
+		*    [setEdges],
+		*  );
+		*
+		*  return (
+		*    <ReactFlow nodes={nodes} edges={edges} onEdgesChange={onEdgesChange} />
+		*  );
+		*}
+		*```
+		* @remarks Various events on the <ReactFlow /> component can produce an {@link EdgeChange}
+		* that describes how to update the edges of your flow in some way.
+		* If you don't need any custom behaviour, this util can be used to take an array
+		* of these changes and apply them to your edges.
+		*/
+		function applyEdgeChanges(changes, edges) {
+			return applyChanges(changes, edges);
+		}
+		function createSelectionChange(id, selected) {
+			return {
+				id,
+				type: "select",
+				selected
+			};
+		}
+		function getSelectionChanges(items, selectedIds = /* @__PURE__ */ new Set(), mutateItem = false) {
+			const changes = [];
+			for (const [id, item] of items) {
+				const willBeSelected = selectedIds.has(id);
+				if (!(item.selected === void 0 && !willBeSelected) && item.selected !== willBeSelected) {
+					if (mutateItem) item.selected = willBeSelected;
+					changes.push(createSelectionChange(item.id, willBeSelected));
+				}
+			}
+			return changes;
+		}
+		function getElementsDiffChanges({ items = [], lookup }) {
+			const changes = [];
+			const itemsLookup = new Map(items.map((item) => [item.id, item]));
+			for (const [index, item] of items.entries()) {
+				const lookupItem = lookup.get(item.id);
+				const storeItem = lookupItem?.internals?.userNode ?? lookupItem;
+				if (storeItem !== void 0 && storeItem !== item) changes.push({
+					id: item.id,
+					item,
+					type: "replace"
+				});
+				if (storeItem === void 0) changes.push({
+					item,
+					type: "add",
+					index
+				});
+			}
+			for (const [id] of lookup) if (itemsLookup.get(id) === void 0) changes.push({
+				id,
+				type: "remove"
+			});
+			return changes;
+		}
+		function elementToRemoveChange(item) {
+			return {
+				id: item.id,
+				type: "remove"
+			};
+		}
+		const defaultOnError = createDevWarn("React Flow", "https://reactflow.dev/");
+		function addEdge(edgeParams, edges, options = {}) {
+			return addEdge$1(edgeParams, edges, {
+				...options,
+				onError: options.onError ?? defaultOnError
+			});
+		}
+		/**
+		* Test whether an object is usable as an [`Node`](/api-reference/types/node).
+		* In TypeScript this is a type guard that will narrow the type of whatever you pass in to
+		* [`Node`](/api-reference/types/node) if it returns `true`.
+		*
+		* @public
+		* @remarks In TypeScript this is a type guard that will narrow the type of whatever you pass in to Node if it returns true
+		* @param element - The element to test.
+		* @returns Tests whether the provided value can be used as a `Node`. If you're using TypeScript,
+		* this function acts as a type guard and will narrow the type of the value to `Node` if it returns
+		* `true`.
+		*
+		* @example
+		* ```js
+		*import { isNode } from '@xyflow/react';
+		*
+		*if (isNode(node)) {
+		* // ...
+		*}
+		*```
+		*/
+		const isNode = (element) => isNodeBase(element);
+		/**
+		* Test whether an object is usable as an [`Edge`](/api-reference/types/edge).
+		* In TypeScript this is a type guard that will narrow the type of whatever you pass in to
+		* [`Edge`](/api-reference/types/edge) if it returns `true`.
+		*
+		* @public
+		* @remarks In TypeScript this is a type guard that will narrow the type of whatever you pass in to Edge if it returns true
+		* @param element - The element to test
+		* @returns Tests whether the provided value can be used as an `Edge`. If you're using TypeScript,
+		* this function acts as a type guard and will narrow the type of the value to `Edge` if it returns
+		* `true`.
+		*
+		* @example
+		* ```js
+		*import { isEdge } from '@xyflow/react';
+		*
+		*if (isEdge(edge)) {
+		* // ...
+		*}
+		*```
+		*/
+		const isEdge = (element) => isEdgeBase(element);
+		function fixedForwardRef(render) {
+			return (0, react.forwardRef)(render);
+		}
+		const useIsomorphicLayoutEffect = typeof window !== "undefined" ? react.useLayoutEffect : react.useEffect;
+		/**
+		* This hook returns a queue that can be used to batch updates.
+		*
+		* @param runQueue - a function that gets called when the queue is flushed
+		* @internal
+		*
+		* @returns a Queue object
+		*/
+		function useQueue(runQueue) {
+			const [serial, setSerial] = (0, react.useState)(BigInt(0));
+			const [queue] = (0, react.useState)(() => createQueue(() => setSerial((n) => n + BigInt(1))));
+			useIsomorphicLayoutEffect(() => {
+				const queueItems = queue.get();
+				if (queueItems.length) {
+					runQueue(queueItems);
+					queue.reset();
+				}
+			}, [serial]);
+			return queue;
+		}
+		function createQueue(cb) {
+			let queue = [];
+			return {
+				get: () => queue,
+				reset: () => {
+					queue = [];
+				},
+				push: (item) => {
+					queue.push(item);
+					cb();
+				}
+			};
+		}
+		const BatchContext = (0, react.createContext)(null);
+		/**
+		* This is a context provider that holds and processes the node and edge update queues
+		* that are needed to handle setNodes, addNodes, setEdges and addEdges.
+		*
+		* @internal
+		*/
+		function BatchProvider({ children }) {
+			const store = useStoreApi();
+			const nodeQueue = useQueue((0, react.useCallback)((queueItems) => {
+				const { nodes = [], setNodes, hasDefaultNodes, onNodesChange, nodeLookup, fitViewQueued, onNodesChangeMiddlewareMap } = store.getState();
+				let next = nodes;
+				for (const payload of queueItems) next = typeof payload === "function" ? payload(next) : payload;
+				let changes = getElementsDiffChanges({
+					items: next,
+					lookup: nodeLookup
+				});
+				for (const middleware of onNodesChangeMiddlewareMap.values()) changes = middleware(changes);
+				if (hasDefaultNodes) setNodes(next);
+				if (changes.length > 0) onNodesChange?.(changes);
+				else if (fitViewQueued) window.requestAnimationFrame(() => {
+					const { fitViewQueued, nodes, setNodes } = store.getState();
+					if (fitViewQueued) setNodes(nodes);
+				});
+			}, []));
+			const edgeQueue = useQueue((0, react.useCallback)((queueItems) => {
+				const { edges = [], setEdges, hasDefaultEdges, onEdgesChange, edgeLookup } = store.getState();
+				let next = edges;
+				for (const payload of queueItems) next = typeof payload === "function" ? payload(next) : payload;
+				if (hasDefaultEdges) setEdges(next);
+				else if (onEdgesChange) onEdgesChange(getElementsDiffChanges({
+					items: next,
+					lookup: edgeLookup
+				}));
+			}, []));
+			const value = (0, react.useMemo)(() => ({
+				nodeQueue,
+				edgeQueue
+			}), []);
+			return (0, react_jsx_runtime.jsx)(BatchContext.Provider, {
+				value,
+				children
+			});
+		}
+		function useBatchContext() {
+			const batchContext = (0, react.useContext)(BatchContext);
+			if (!batchContext) throw new Error("useBatchContext must be used within a BatchProvider");
+			return batchContext;
+		}
+		const selector$j = (s) => !!s.panZoom;
+		/**
+		* This hook returns a ReactFlowInstance that can be used to update nodes and edges, manipulate the viewport, or query the current state of the flow.
+		*
+		* @public
+		* @example
+		* ```jsx
+		*import { useCallback, useState } from 'react';
+		*import { useReactFlow } from '@xyflow/react';
+		*
+		*export function NodeCounter() {
+		*  const reactFlow = useReactFlow();
+		*  const [count, setCount] = useState(0);
+		*  const countNodes = useCallback(() => {
+		*    setCount(reactFlow.getNodes().length);
+		*    // you need to pass it as a dependency if you are using it with useEffect or useCallback
+		*    // because at the first render, it's not initialized yet and some functions might not work.
+		*  }, [reactFlow]);
+		*
+		*  return (
+		*    <div>
+		*      <button onClick={countNodes}>Update count</button>
+		*      <p>There are {count} nodes in the flow.</p>
+		*    </div>
+		*  );
+		*}
+		*```
+		*/
+		function useReactFlow() {
+			const viewportHelper = useViewportHelper();
+			const store = useStoreApi();
+			const batchContext = useBatchContext();
+			const viewportInitialized = useStore(selector$j);
+			const generalHelper = (0, react.useMemo)(() => {
+				const getInternalNode = (id) => store.getState().nodeLookup.get(id);
+				const setNodes = (payload) => {
+					batchContext.nodeQueue.push(payload);
+				};
+				const setEdges = (payload) => {
+					batchContext.edgeQueue.push(payload);
+				};
+				const getNodeRect = (node) => {
+					const { nodeLookup, nodeOrigin } = store.getState();
+					const nodeToUse = isNode(node) ? node : nodeLookup.get(node.id);
+					const position = nodeToUse.parentId ? evaluateAbsolutePosition(nodeToUse.position, nodeToUse.measured, nodeToUse.parentId, nodeLookup, nodeOrigin) : nodeToUse.position;
+					const nodeWithPosition = {
+						...nodeToUse,
+						position,
+						width: nodeToUse.measured?.width ?? nodeToUse.width,
+						height: nodeToUse.measured?.height ?? nodeToUse.height
+					};
+					return nodeToRect(nodeWithPosition);
+				};
+				const updateNode = (id, nodeUpdate, options = { replace: false }) => {
+					setNodes((prevNodes) => prevNodes.map((node) => {
+						if (node.id === id) {
+							const nextNode = typeof nodeUpdate === "function" ? nodeUpdate(node) : nodeUpdate;
+							return options.replace && isNode(nextNode) ? nextNode : {
+								...node,
+								...nextNode
+							};
+						}
+						return node;
+					}));
+				};
+				const updateEdge = (id, edgeUpdate, options = { replace: false }) => {
+					setEdges((prevEdges) => prevEdges.map((edge) => {
+						if (edge.id === id) {
+							const nextEdge = typeof edgeUpdate === "function" ? edgeUpdate(edge) : edgeUpdate;
+							return options.replace && isEdge(nextEdge) ? nextEdge : {
+								...edge,
+								...nextEdge
+							};
+						}
+						return edge;
+					}));
+				};
+				return {
+					getNodes: () => store.getState().nodes.map((n) => ({ ...n })),
+					getNode: (id) => getInternalNode(id)?.internals.userNode,
+					getInternalNode,
+					getEdges: () => {
+						const { edges = [] } = store.getState();
+						return edges.map((e) => ({ ...e }));
+					},
+					getEdge: (id) => store.getState().edgeLookup.get(id),
+					setNodes,
+					setEdges,
+					addNodes: (payload) => {
+						const newNodes = Array.isArray(payload) ? payload : [payload];
+						batchContext.nodeQueue.push((nodes) => [...nodes, ...newNodes]);
+					},
+					addEdges: (payload) => {
+						const newEdges = Array.isArray(payload) ? payload : [payload];
+						batchContext.edgeQueue.push((edges) => [...edges, ...newEdges]);
+					},
+					toObject: () => {
+						const { nodes = [], edges = [], transform } = store.getState();
+						const [x, y, zoom] = transform;
+						return {
+							nodes: nodes.map((n) => ({ ...n })),
+							edges: edges.map((e) => ({ ...e })),
+							viewport: {
+								x,
+								y,
+								zoom
+							}
+						};
+					},
+					deleteElements: async ({ nodes: nodesToRemove = [], edges: edgesToRemove = [] }) => {
+						const { nodes, edges, onNodesDelete, onEdgesDelete, triggerNodeChanges, triggerEdgeChanges, onDelete, onBeforeDelete } = store.getState();
+						const { nodes: matchingNodes, edges: matchingEdges } = await getElementsToRemove({
+							nodesToRemove,
+							edgesToRemove,
+							nodes,
+							edges,
+							onBeforeDelete
+						});
+						const hasMatchingEdges = matchingEdges.length > 0;
+						const hasMatchingNodes = matchingNodes.length > 0;
+						if (hasMatchingEdges) {
+							const edgeChanges = matchingEdges.map(elementToRemoveChange);
+							onEdgesDelete?.(matchingEdges);
+							triggerEdgeChanges(edgeChanges);
+						}
+						if (hasMatchingNodes) {
+							const nodeChanges = matchingNodes.map(elementToRemoveChange);
+							onNodesDelete?.(matchingNodes);
+							triggerNodeChanges(nodeChanges);
+						}
+						if (hasMatchingNodes || hasMatchingEdges) onDelete?.({
+							nodes: matchingNodes,
+							edges: matchingEdges
+						});
+						return {
+							deletedNodes: matchingNodes,
+							deletedEdges: matchingEdges
+						};
+					},
+					/**
+					* Partial is defined as "the 2 nodes/areas are intersecting partially".
+					* If a is contained in b or b is contained in a, they are both
+					* considered fully intersecting.
+					*/
+					getIntersectingNodes: (nodeOrRect, partially = true, nodes) => {
+						const isRect = isRectObject(nodeOrRect);
+						const nodeRect = isRect ? nodeOrRect : getNodeRect(nodeOrRect);
+						const hasNodesOption = nodes !== void 0;
+						if (!nodeRect) return [];
+						return (nodes || store.getState().nodes).filter((n) => {
+							const internalNode = store.getState().nodeLookup.get(n.id);
+							if (internalNode && !isRect && (n.id === nodeOrRect.id || !internalNode.internals.positionAbsolute)) return false;
+							const currNodeRect = nodeToRect(hasNodesOption ? n : internalNode);
+							const overlappingArea = getOverlappingArea(currNodeRect, nodeRect);
+							return partially && overlappingArea > 0 || overlappingArea >= currNodeRect.width * currNodeRect.height || overlappingArea >= nodeRect.width * nodeRect.height;
+						});
+					},
+					isNodeIntersecting: (nodeOrRect, area, partially = true) => {
+						const nodeRect = isRectObject(nodeOrRect) ? nodeOrRect : getNodeRect(nodeOrRect);
+						if (!nodeRect) return false;
+						const overlappingArea = getOverlappingArea(nodeRect, area);
+						return partially && overlappingArea > 0 || overlappingArea >= area.width * area.height || overlappingArea >= nodeRect.width * nodeRect.height;
+					},
+					updateNode,
+					updateNodeData: (id, dataUpdate, options = { replace: false }) => {
+						updateNode(id, (node) => {
+							const nextData = typeof dataUpdate === "function" ? dataUpdate(node) : dataUpdate;
+							return options.replace ? {
+								...node,
+								data: nextData
+							} : {
+								...node,
+								data: {
+									...node.data,
+									...nextData
+								}
+							};
+						}, options);
+					},
+					updateEdge,
+					updateEdgeData: (id, dataUpdate, options = { replace: false }) => {
+						updateEdge(id, (edge) => {
+							const nextData = typeof dataUpdate === "function" ? dataUpdate(edge) : dataUpdate;
+							return options.replace ? {
+								...edge,
+								data: nextData
+							} : {
+								...edge,
+								data: {
+									...edge.data,
+									...nextData
+								}
+							};
+						}, options);
+					},
+					getNodesBounds: (nodes) => {
+						const { nodeLookup, nodeOrigin } = store.getState();
+						return getNodesBounds(nodes, {
+							nodeLookup,
+							nodeOrigin
+						});
+					},
+					getHandleConnections: ({ type, id, nodeId }) => Array.from(store.getState().connectionLookup.get(`${nodeId}-${type}${id ? `-${id}` : ""}`)?.values() ?? []),
+					getNodeConnections: ({ type, handleId, nodeId }) => Array.from(store.getState().connectionLookup.get(`${nodeId}${type ? handleId ? `-${type}-${handleId}` : `-${type}` : ""}`)?.values() ?? []),
+					fitView: async (options) => {
+						const fitViewResolver = store.getState().fitViewResolver ?? withResolvers();
+						store.setState({
+							fitViewQueued: true,
+							fitViewOptions: options,
+							fitViewResolver
+						});
+						batchContext.nodeQueue.push((nodes) => [...nodes]);
+						return fitViewResolver.promise;
+					}
+				};
+			}, []);
+			return (0, react.useMemo)(() => {
+				return {
+					...generalHelper,
+					...viewportHelper,
+					viewportInitialized
+				};
+			}, [viewportInitialized]);
+		}
+		const selected = (item) => item.selected;
+		const win$1 = typeof window !== "undefined" ? window : void 0;
+		/**
+		* Hook for handling global key events.
+		*
+		* @internal
+		*/
+		function useGlobalKeyHandler({ deleteKeyCode, multiSelectionKeyCode }) {
+			const store = useStoreApi();
+			const { deleteElements } = useReactFlow();
+			const deleteKeyPressed = useKeyPress(deleteKeyCode, { actInsideInputWithModifier: false });
+			const multiSelectionKeyPressed = useKeyPress(multiSelectionKeyCode, { target: win$1 });
+			(0, react.useEffect)(() => {
+				if (deleteKeyPressed) {
+					const { edges, nodes } = store.getState();
+					deleteElements({
+						nodes: nodes.filter(selected),
+						edges: edges.filter(selected)
+					});
+					store.setState({ nodesSelectionActive: false });
+				}
+			}, [deleteKeyPressed]);
+			(0, react.useEffect)(() => {
+				store.setState({ multiSelectionActive: multiSelectionKeyPressed });
+			}, [multiSelectionKeyPressed]);
+		}
+		/**
+		* Hook for handling resize events.
+		*
+		* @internal
+		*/
+		function useResizeHandler(domNode) {
+			const store = useStoreApi();
+			(0, react.useEffect)(() => {
+				const updateDimensions = () => {
+					if (!domNode.current || !(domNode.current.checkVisibility?.() ?? true)) return false;
+					const size = getDimensions(domNode.current);
+					if (size.height === 0 || size.width === 0) store.getState().onError?.("004", errorMessages["error004"]());
+					store.setState({
+						width: size.width || 500,
+						height: size.height || 500
+					});
+				};
+				if (domNode.current) {
+					updateDimensions();
+					window.addEventListener("resize", updateDimensions);
+					const resizeObserver = new ResizeObserver(() => updateDimensions());
+					resizeObserver.observe(domNode.current);
+					return () => {
+						window.removeEventListener("resize", updateDimensions);
+						if (resizeObserver && domNode.current) resizeObserver.unobserve(domNode.current);
+					};
+				}
+			}, []);
+		}
+		const containerStyle = {
+			position: "absolute",
+			width: "100%",
+			height: "100%",
+			top: 0,
+			left: 0
+		};
+		const selector$i = (s) => ({
+			userSelectionActive: s.userSelectionActive,
+			lib: s.lib,
+			connectionInProgress: s.connection.inProgress
+		});
+		function ZoomPane({ onPaneContextMenu, zoomOnScroll = true, zoomOnPinch = true, panOnScroll = false, panActivationKeyPressed, panOnScrollSpeed = .5, panOnScrollMode = PanOnScrollMode.Free, zoomOnDoubleClick = true, panOnDrag = true, defaultViewport, translateExtent, minZoom, maxZoom, zoomActivationKeyCode, preventScrolling = true, children, noWheelClassName, noPanClassName, onViewportChange, isControlledViewport, paneClickDistance, selectionOnDrag }) {
+			const store = useStoreApi();
+			const zoomPane = (0, react.useRef)(null);
+			const { userSelectionActive, lib, connectionInProgress } = useStore(selector$i, shallow$1);
+			const zoomActivationKeyPressed = useKeyPress(zoomActivationKeyCode);
+			const panZoom = (0, react.useRef)();
+			useResizeHandler(zoomPane);
+			const onTransformChange = (0, react.useCallback)((transform) => {
+				onViewportChange?.({
+					x: transform[0],
+					y: transform[1],
+					zoom: transform[2]
+				});
+				if (!isControlledViewport) store.setState({ transform });
+			}, [onViewportChange, isControlledViewport]);
+			(0, react.useEffect)(() => {
+				if (zoomPane.current) {
+					panZoom.current = XYPanZoom({
+						domNode: zoomPane.current,
+						minZoom,
+						maxZoom,
+						translateExtent,
+						viewport: defaultViewport,
+						onDraggingChange: (paneDragging) => store.setState((prevState) => prevState.paneDragging === paneDragging ? prevState : { paneDragging }),
+						onPanZoomStart: (event, vp) => {
+							const { onViewportChangeStart, onMoveStart } = store.getState();
+							onMoveStart?.(event, vp);
+							onViewportChangeStart?.(vp);
+						},
+						onPanZoom: (event, vp) => {
+							const { onViewportChange, onMove } = store.getState();
+							onMove?.(event, vp);
+							onViewportChange?.(vp);
+						},
+						onPanZoomEnd: (event, vp) => {
+							const { onViewportChangeEnd, onMoveEnd } = store.getState();
+							onMoveEnd?.(event, vp);
+							onViewportChangeEnd?.(vp);
+						}
+					});
+					const { x, y, zoom } = panZoom.current.getViewport();
+					store.setState({
+						panZoom: panZoom.current,
+						transform: [
+							x,
+							y,
+							zoom
+						],
+						domNode: zoomPane.current.closest(".react-flow")
+					});
+					return () => {
+						panZoom.current?.destroy();
+					};
+				}
+			}, []);
+			(0, react.useEffect)(() => {
+				panZoom.current?.update({
+					onPaneContextMenu,
+					zoomOnScroll,
+					zoomOnPinch,
+					panOnScroll,
+					panActivationKeyPressed,
+					panOnScrollSpeed,
+					panOnScrollMode,
+					zoomOnDoubleClick,
+					panOnDrag,
+					zoomActivationKeyPressed,
+					preventScrolling,
+					noPanClassName,
+					userSelectionActive,
+					noWheelClassName,
+					lib,
+					onTransformChange,
+					connectionInProgress,
+					selectionOnDrag,
+					paneClickDistance
+				});
+			}, [
+				onPaneContextMenu,
+				zoomOnScroll,
+				zoomOnPinch,
+				panOnScroll,
+				panActivationKeyPressed,
+				panOnScrollSpeed,
+				panOnScrollMode,
+				zoomOnDoubleClick,
+				panOnDrag,
+				zoomActivationKeyPressed,
+				preventScrolling,
+				noPanClassName,
+				userSelectionActive,
+				noWheelClassName,
+				lib,
+				onTransformChange,
+				connectionInProgress,
+				selectionOnDrag,
+				paneClickDistance
+			]);
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: "react-flow__renderer",
+				ref: zoomPane,
+				style: containerStyle,
+				children
+			});
+		}
+		const selector$h = (s) => ({
+			userSelectionActive: s.userSelectionActive,
+			userSelectionRect: s.userSelectionRect
+		});
+		function UserSelection() {
+			const { userSelectionActive, userSelectionRect } = useStore(selector$h, shallow$1);
+			if (!(userSelectionActive && userSelectionRect)) return null;
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: "react-flow__selection react-flow__container",
+				style: {
+					width: userSelectionRect.width,
+					height: userSelectionRect.height,
+					transform: `translate(${userSelectionRect.x}px, ${userSelectionRect.y}px)`
+				}
+			});
+		}
+		const wrapHandler = (handler, containerRef) => {
+			return (event) => {
+				if (event.target !== containerRef.current) return;
+				handler?.(event);
+			};
+		};
+		const selector$g = (s) => ({
+			userSelectionActive: s.userSelectionActive,
+			elementsSelectable: s.elementsSelectable,
+			dragging: s.paneDragging,
+			panBy: s.panBy,
+			autoPanSpeed: s.autoPanSpeed
+		});
+		function Pane({ isSelecting, selectionKeyPressed, selectionMode = SelectionMode.Full, panOnDrag, autoPanOnSelection, paneClickDistance, selectionOnDrag, onSelectionStart, onSelectionEnd, onPaneClick, onPaneContextMenu, onPaneScroll, onPaneMouseEnter, onPaneMouseMove, onPaneMouseLeave, children }) {
+			const autoPanId = (0, react.useRef)(0);
+			const store = useStoreApi();
+			const { userSelectionActive, elementsSelectable, dragging, panBy, autoPanSpeed } = useStore(selector$g, shallow$1);
+			const isSelectionEnabled = elementsSelectable && (isSelecting || userSelectionActive);
+			const container = (0, react.useRef)(null);
+			const containerBounds = (0, react.useRef)();
+			const selectedNodeIds = (0, react.useRef)(/* @__PURE__ */ new Set());
+			const selectedEdgeIds = (0, react.useRef)(/* @__PURE__ */ new Set());
+			const connectionEndedOnPane = (0, react.useRef)(false);
+			const selectionInProgress = (0, react.useRef)(false);
+			const position = (0, react.useRef)({
+				x: 0,
+				y: 0
+			});
+			const autoPanStarted = (0, react.useRef)(false);
+			const onClick = (event) => {
+				if (selectionInProgress.current || connectionEndedOnPane.current || store.getState().connection.inProgress) {
+					selectionInProgress.current = false;
+					connectionEndedOnPane.current = false;
+					return;
+				}
+				onPaneClick?.(event);
+				store.getState().resetSelectedElements();
+				store.setState({ nodesSelectionActive: false });
+			};
+			const onContextMenu = (event) => {
+				if (Array.isArray(panOnDrag) && panOnDrag?.includes(2)) {
+					event.preventDefault();
+					return;
+				}
+				onPaneContextMenu?.(event);
+			};
+			const onWheel = onPaneScroll ? (event) => onPaneScroll(event) : void 0;
+			const onClickCapture = (event) => {
+				if (selectionInProgress.current) {
+					event.stopPropagation();
+					selectionInProgress.current = false;
+				}
+			};
+			const onPointerDownCapture = (event) => {
+				if (event.pointerType === "touch" && panOnDrag !== false && !selectionKeyPressed) return;
+				const { domNode, transform } = store.getState();
+				containerBounds.current = domNode?.getBoundingClientRect();
+				if (!containerBounds.current) return;
+				const eventTargetIsContainer = event.target === container.current;
+				if (!eventTargetIsContainer && !!event.target.closest(".nokey") || !isSelecting || !(selectionOnDrag && eventTargetIsContainer || selectionKeyPressed) || event.button !== 0 || !event.isPrimary) return;
+				event.target?.setPointerCapture?.(event.pointerId);
+				selectionInProgress.current = false;
+				const { x, y } = getEventPosition(event.nativeEvent, containerBounds.current);
+				const userSelectionStartPosition = pointToRendererPoint({
+					x,
+					y
+				}, transform);
+				store.setState({ userSelectionRect: {
+					width: 0,
+					height: 0,
+					startX: userSelectionStartPosition.x,
+					startY: userSelectionStartPosition.y,
+					x,
+					y
+				} });
+				if (!eventTargetIsContainer) {
+					event.stopPropagation();
+					event.preventDefault();
+				}
+			};
+			function commitUserSelectionRect(mouseX, mouseY) {
+				const { userSelectionRect } = store.getState();
+				if (!userSelectionRect) return;
+				const { transform, nodeLookup, edgeLookup, connectionLookup, triggerNodeChanges, triggerEdgeChanges, defaultEdgeOptions } = store.getState();
+				const userStartPosition = {
+					x: userSelectionRect.startX,
+					y: userSelectionRect.startY
+				};
+				const { x: screenStartX, y: screenStartY } = rendererPointToPoint(userStartPosition, transform);
+				const nextUserSelectRect = {
+					startX: userStartPosition.x,
+					startY: userStartPosition.y,
+					x: mouseX < screenStartX ? mouseX : screenStartX,
+					y: mouseY < screenStartY ? mouseY : screenStartY,
+					width: Math.abs(mouseX - screenStartX),
+					height: Math.abs(mouseY - screenStartY)
+				};
+				const prevSelectedNodeIds = selectedNodeIds.current;
+				const prevSelectedEdgeIds = selectedEdgeIds.current;
+				selectedNodeIds.current = new Set(getNodesInside(nodeLookup, nextUserSelectRect, transform, selectionMode === SelectionMode.Partial, true).map((node) => node.id));
+				selectedEdgeIds.current = /* @__PURE__ */ new Set();
+				const edgesSelectable = defaultEdgeOptions?.selectable ?? true;
+				for (const nodeId of selectedNodeIds.current) {
+					const connections = connectionLookup.get(nodeId);
+					if (!connections) continue;
+					for (const { edgeId } of connections.values()) {
+						const edge = edgeLookup.get(edgeId);
+						if (edge && (edge.selectable ?? edgesSelectable)) selectedEdgeIds.current.add(edgeId);
+					}
+				}
+				if (!areSetsEqual(prevSelectedNodeIds, selectedNodeIds.current)) triggerNodeChanges(getSelectionChanges(nodeLookup, selectedNodeIds.current, true));
+				if (!areSetsEqual(prevSelectedEdgeIds, selectedEdgeIds.current)) triggerEdgeChanges(getSelectionChanges(edgeLookup, selectedEdgeIds.current));
+				store.setState({
+					userSelectionRect: nextUserSelectRect,
+					userSelectionActive: true,
+					nodesSelectionActive: false
+				});
+			}
+			function autoPan() {
+				if (!autoPanOnSelection || !containerBounds.current) return;
+				const [x, y] = calcAutoPan(position.current, containerBounds.current, autoPanSpeed);
+				panBy({
+					x,
+					y
+				}).then((panned) => {
+					if (!selectionInProgress.current || !panned) {
+						autoPanId.current = requestAnimationFrame(autoPan);
+						return;
+					}
+					const { x: mx, y: my } = position.current;
+					commitUserSelectionRect(mx, my);
+					autoPanId.current = requestAnimationFrame(autoPan);
+				});
+			}
+			const cleanupAutoPan = () => {
+				cancelAnimationFrame(autoPanId.current);
+				autoPanId.current = 0;
+				autoPanStarted.current = false;
+			};
+			(0, react.useEffect)(() => {
+				return () => cleanupAutoPan();
+			}, []);
+			const onPointerMove = (event) => {
+				const { userSelectionRect, transform, resetSelectedElements } = store.getState();
+				if (!containerBounds.current || !userSelectionRect) return;
+				const { x: mouseX, y: mouseY } = getEventPosition(event.nativeEvent, containerBounds.current);
+				position.current = {
+					x: mouseX,
+					y: mouseY
+				};
+				const screenStart = rendererPointToPoint({
+					x: userSelectionRect.startX,
+					y: userSelectionRect.startY
+				}, transform);
+				if (!selectionInProgress.current) {
+					const requiredDistance = selectionKeyPressed ? 0 : paneClickDistance;
+					if (Math.hypot(mouseX - screenStart.x, mouseY - screenStart.y) <= requiredDistance) return;
+					resetSelectedElements();
+					onSelectionStart?.(event);
+				}
+				selectionInProgress.current = true;
+				if (!autoPanStarted.current) {
+					autoPan();
+					autoPanStarted.current = true;
+				}
+				commitUserSelectionRect(mouseX, mouseY);
+			};
+			const onPointerUp = (event) => {
+				if (!isSelectionEnabled) {
+					if (event.target === container.current && store.getState().connection.inProgress) connectionEndedOnPane.current = true;
+					return;
+				}
+				if (event.button !== 0) return;
+				event.target?.releasePointerCapture?.(event.pointerId);
+				if (!userSelectionActive && event.target === container.current && store.getState().userSelectionRect) onClick?.(event);
+				store.setState({
+					userSelectionActive: false,
+					userSelectionRect: null
+				});
+				if (selectionInProgress.current) {
+					onSelectionEnd?.(event);
+					store.setState({ nodesSelectionActive: selectedNodeIds.current.size > 0 });
+				}
+				cleanupAutoPan();
+			};
+			const onPointerCancel = (event) => {
+				event.target?.releasePointerCapture?.(event.pointerId);
+				cleanupAutoPan();
+			};
+			const draggable = panOnDrag === true || Array.isArray(panOnDrag) && panOnDrag.includes(0);
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: cc(["react-flow__pane", {
+					draggable,
+					dragging,
+					selection: isSelecting
+				}]),
+				onClick: isSelectionEnabled ? void 0 : wrapHandler(onClick, container),
+				onContextMenu: wrapHandler(onContextMenu, container),
+				onWheel: wrapHandler(onWheel, container),
+				onPointerEnter: isSelectionEnabled ? void 0 : onPaneMouseEnter,
+				onPointerMove: isSelectionEnabled ? onPointerMove : onPaneMouseMove,
+				onPointerUp,
+				onPointerCancel: isSelectionEnabled ? onPointerCancel : void 0,
+				onPointerDownCapture: isSelectionEnabled ? onPointerDownCapture : void 0,
+				onClickCapture: isSelectionEnabled ? onClickCapture : void 0,
+				onPointerLeave: onPaneMouseLeave,
+				ref: container,
+				style: containerStyle,
+				children: [children, (0, react_jsx_runtime.jsx)(UserSelection, {})]
+			});
+		}
+		function handleNodeClick({ id, store, unselect = false, nodeRef }) {
+			const { addSelectedNodes, unselectNodesAndEdges, multiSelectionActive, nodeLookup, onError } = store.getState();
+			const node = nodeLookup.get(id);
+			if (!node) {
+				onError?.("012", errorMessages["error012"](id));
+				return;
+			}
+			store.setState({ nodesSelectionActive: false });
+			if (!node.selected) addSelectedNodes([id]);
+			else if (unselect || node.selected && multiSelectionActive) {
+				unselectNodesAndEdges({
+					nodes: [node],
+					edges: []
+				});
+				requestAnimationFrame(() => nodeRef?.current?.blur());
+			}
+		}
+		/**
+		* Hook for calling XYDrag helper from @xyflow/system.
+		*
+		* @internal
+		*/
+		function useDrag({ nodeRef, disabled = false, noDragClassName, handleSelector, nodeId, isSelectable, nodeClickDistance }) {
+			const store = useStoreApi();
+			const [dragging, setDragging] = (0, react.useState)(false);
+			const xyDrag = (0, react.useRef)();
+			(0, react.useEffect)(() => {
+				if (disabled) return;
+				xyDrag.current = XYDrag({
+					getStoreItems: () => store.getState(),
+					onNodeMouseDown: (id) => {
+						handleNodeClick({
+							id,
+							store,
+							nodeRef
+						});
+					},
+					onDragStart: () => {
+						setDragging(true);
+					},
+					onDragStop: () => {
+						setDragging(false);
+					}
+				});
+				return () => {
+					xyDrag.current?.destroy();
+					xyDrag.current = void 0;
+				};
+			}, [
+				disabled,
+				store,
+				nodeRef
+			]);
+			(0, react.useEffect)(() => {
+				if (disabled || !nodeRef.current || !xyDrag.current) return;
+				xyDrag.current.update({
+					noDragClassName,
+					handleSelector,
+					domNode: nodeRef.current,
+					isSelectable,
+					nodeId,
+					nodeClickDistance
+				});
+			}, [
+				noDragClassName,
+				handleSelector,
+				disabled,
+				isSelectable,
+				nodeRef,
+				nodeId,
+				nodeClickDistance
+			]);
+			return dragging;
+		}
+		const selectedAndDraggable = (nodesDraggable) => (n) => n.selected && (n.draggable || nodesDraggable && typeof n.draggable === "undefined");
+		/**
+		* Hook for updating node positions by passing a direction and factor
+		*
+		* @internal
+		* @returns function for updating node positions
+		*/
+		function useMoveSelectedNodes() {
+			const store = useStoreApi();
+			return (0, react.useCallback)((params) => {
+				const { nodeExtent, snapToGrid, snapGrid, nodesDraggable, onError, updateNodePositions, nodeLookup, nodeOrigin } = store.getState();
+				const nodeUpdates = /* @__PURE__ */ new Map();
+				const isSelected = selectedAndDraggable(nodesDraggable);
+				const xVelo = snapToGrid ? snapGrid[0] : 5;
+				const yVelo = snapToGrid ? snapGrid[1] : 5;
+				const xDiff = params.direction.x * xVelo * params.factor;
+				const yDiff = params.direction.y * yVelo * params.factor;
+				for (const [, node] of nodeLookup) {
+					if (!isSelected(node)) continue;
+					let nextPosition = {
+						x: node.internals.positionAbsolute.x + xDiff,
+						y: node.internals.positionAbsolute.y + yDiff
+					};
+					if (snapToGrid) nextPosition = snapPosition(nextPosition, snapGrid);
+					const { position, positionAbsolute } = calculateNodePosition({
+						nodeId: node.id,
+						nextPosition,
+						nodeLookup,
+						nodeExtent,
+						nodeOrigin,
+						onError
+					});
+					node.position = position;
+					node.internals.positionAbsolute = positionAbsolute;
+					nodeUpdates.set(node.id, node);
+				}
+				updateNodePositions(nodeUpdates);
+			}, []);
+		}
+		const NodeIdContext = (0, react.createContext)(null);
+		const Provider = NodeIdContext.Provider;
+		NodeIdContext.Consumer;
+		/**
+		* You can use this hook to get the id of the node it is used inside. It is useful
+		* if you need the node's id deeper in the render tree but don't want to manually
+		* drill down the id as a prop.
+		*
+		* @public
+		* @returns The id for a node in the flow.
+		*
+		* @example
+		*```jsx
+		*import { useNodeId } from '@xyflow/react';
+		*
+		*export default function CustomNode() {
+		*  return (
+		*    <div>
+		*      <span>This node has an id of </span>
+		*      <NodeIdDisplay />
+		*    </div>
+		*  );
+		*}
+		*
+		*function NodeIdDisplay() {
+		*  const nodeId = useNodeId();
+		*
+		*  return <span>{nodeId}</span>;
+		*}
+		*```
+		*/
+		const useNodeId = () => {
+			return (0, react.useContext)(NodeIdContext);
+		};
+		const selector$f = (s) => ({
+			connectOnClick: s.connectOnClick,
+			noPanClassName: s.noPanClassName,
+			rfId: s.rfId
+		});
+		const HandleConfigContext = (0, react.createContext)(null);
+		function HandleConfigProvider({ children }) {
+			const config = useStore(selector$f, shallow$1);
+			return (0, react_jsx_runtime.jsx)(HandleConfigContext.Provider, {
+				value: config,
+				children
+			});
+		}
+		function useHandleConfig() {
+			const config = (0, react.useContext)(HandleConfigContext);
+			if (!config) throw new Error("useHandleConfig must be used within a HandleConfigProvider");
+			return config;
+		}
+		const idleConnectingState = {
+			connectingFrom: false,
+			connectingTo: false,
+			clickConnecting: false,
+			isPossibleEndHandle: true,
+			connectionInProcess: false,
+			clickConnectionInProcess: false,
+			valid: false
+		};
+		const connectingSelector = (nodeId, handleId, type) => (state) => {
+			const { connectionClickStartHandle: clickHandle, connectionMode, connection } = state;
+			const { fromHandle, toHandle, isValid } = connection;
+			if (!fromHandle && !clickHandle) return idleConnectingState;
+			const connectingTo = toHandle?.nodeId === nodeId && toHandle?.id === handleId && toHandle?.type === type;
+			return {
+				connectingFrom: fromHandle?.nodeId === nodeId && fromHandle?.id === handleId && fromHandle?.type === type,
+				connectingTo,
+				clickConnecting: clickHandle?.nodeId === nodeId && clickHandle?.id === handleId && clickHandle?.type === type,
+				isPossibleEndHandle: connectionMode === ConnectionMode.Strict ? fromHandle?.type !== type : nodeId !== fromHandle?.nodeId || handleId !== fromHandle?.id,
+				connectionInProcess: !!fromHandle,
+				clickConnectionInProcess: !!clickHandle,
+				valid: connectingTo && isValid
+			};
+		};
+		function HandleComponent({ type = "source", position = Position.Top, isValidConnection, isConnectable = true, isConnectableStart = true, isConnectableEnd = true, id, onConnect, children, className, onMouseDown, onTouchStart, ...rest }, ref) {
+			const handleId = id || null;
+			const isTarget = type === "target";
+			const store = useStoreApi();
+			const nodeId = useNodeId();
+			const { connectOnClick, noPanClassName, rfId } = useHandleConfig();
+			const { connectingFrom, connectingTo, clickConnecting, isPossibleEndHandle, connectionInProcess, clickConnectionInProcess, valid } = useStore(connectingSelector(nodeId, handleId, type), shallow$1);
+			if (!nodeId) store.getState().onError?.("010", errorMessages["error010"]());
+			const onConnectExtended = (params) => {
+				const { defaultEdgeOptions, onConnect: onConnectAction, hasDefaultEdges } = store.getState();
+				const edgeParams = {
+					...defaultEdgeOptions,
+					...params
+				};
+				if (hasDefaultEdges) {
+					const { edges, setEdges, onError } = store.getState();
+					setEdges(addEdge(edgeParams, edges, { onError }));
+				}
+				onConnectAction?.(edgeParams);
+				onConnect?.(edgeParams);
+			};
+			const onPointerDown = (event) => {
+				if (!nodeId) return;
+				const isMouseTriggered = isMouseEvent(event.nativeEvent);
+				if (isConnectableStart && (isMouseTriggered && event.button === 0 || !isMouseTriggered)) {
+					const currentStore = store.getState();
+					XYHandle.onPointerDown(event.nativeEvent, {
+						handleDomNode: event.currentTarget,
+						autoPanOnConnect: currentStore.autoPanOnConnect,
+						connectionMode: currentStore.connectionMode,
+						connectionRadius: currentStore.connectionRadius,
+						domNode: currentStore.domNode,
+						nodeLookup: currentStore.nodeLookup,
+						lib: currentStore.lib,
+						isTarget,
+						handleId,
+						nodeId,
+						flowId: currentStore.rfId,
+						panBy: currentStore.panBy,
+						cancelConnection: currentStore.cancelConnection,
+						onConnectStart: currentStore.onConnectStart,
+						onConnectEnd: (...args) => store.getState().onConnectEnd?.(...args),
+						updateConnection: currentStore.updateConnection,
+						onConnect: onConnectExtended,
+						isValidConnection: isValidConnection || ((...args) => store.getState().isValidConnection?.(...args) ?? true),
+						getTransform: () => store.getState().transform,
+						getFromHandle: () => store.getState().connection.fromHandle,
+						autoPanSpeed: currentStore.autoPanSpeed,
+						dragThreshold: currentStore.connectionDragThreshold
+					});
+				}
+				if (isMouseTriggered) onMouseDown?.(event);
+				else onTouchStart?.(event);
+			};
+			const onClick = (event) => {
+				const { onClickConnectStart, onClickConnectEnd, connectionClickStartHandle, connectionMode, isValidConnection: isValidConnectionStore, lib, rfId: flowId, nodeLookup, connection: connectionState } = store.getState();
+				if (!nodeId || !connectionClickStartHandle && !isConnectableStart) return;
+				if (!connectionClickStartHandle) {
+					onClickConnectStart?.(event.nativeEvent, {
+						nodeId,
+						handleId,
+						handleType: type
+					});
+					store.setState({ connectionClickStartHandle: {
+						nodeId,
+						type,
+						id: handleId
+					} });
+					return;
+				}
+				const doc = getHostForElement(event.target);
+				const isValidConnectionHandler = isValidConnection || isValidConnectionStore;
+				const { connection, isValid } = XYHandle.isValid(event.nativeEvent, {
+					handle: {
+						nodeId,
+						id: handleId,
+						type
+					},
+					connectionMode,
+					fromNodeId: connectionClickStartHandle.nodeId,
+					fromHandleId: connectionClickStartHandle.id || null,
+					fromType: connectionClickStartHandle.type,
+					isValidConnection: isValidConnectionHandler,
+					flowId,
+					doc,
+					lib,
+					nodeLookup
+				});
+				if (isValid && connection) onConnectExtended(connection);
+				const connectionClone = structuredClone(connectionState);
+				delete connectionClone.inProgress;
+				connectionClone.toPosition = connectionClone.toHandle ? connectionClone.toHandle.position : null;
+				onClickConnectEnd?.(event, connectionClone);
+				store.setState({ connectionClickStartHandle: null });
+			};
+			return (0, react_jsx_runtime.jsx)("div", {
+				"data-handleid": handleId,
+				"data-nodeid": nodeId,
+				"data-handlepos": position,
+				"data-id": `${rfId}-${nodeId}-${handleId}-${type}`,
+				className: cc([
+					"react-flow__handle",
+					`react-flow__handle-${position}`,
+					"nodrag",
+					noPanClassName,
+					className,
+					{
+						source: !isTarget,
+						target: isTarget,
+						connectable: isConnectable,
+						connectablestart: isConnectableStart,
+						connectableend: isConnectableEnd,
+						clickconnecting: clickConnecting,
+						connectingfrom: connectingFrom,
+						connectingto: connectingTo,
+						valid,
+						connectionindicator: isConnectable && (!connectionInProcess || isPossibleEndHandle) && (connectionInProcess || clickConnectionInProcess ? isConnectableEnd : isConnectableStart)
+					}
+				]),
+				onMouseDown: onPointerDown,
+				onTouchStart: onPointerDown,
+				onClick: connectOnClick ? onClick : void 0,
+				ref,
+				...rest,
+				children
+			});
+		}
+		/**
+		* The `<Handle />` component is used in your [custom nodes](/learn/customization/custom-nodes)
+		* to define connection points.
+		*
+		*@public
+		*
+		*@example
+		*
+		*```jsx
+		*import { Handle, Position } from '@xyflow/react';
+		*
+		*export function CustomNode({ data }) {
+		*  return (
+		*    <>
+		*      <div style={{ padding: '10px 20px' }}>
+		*        {data.label}
+		*      </div>
+		*
+		*      <Handle type="target" position={Position.Left} />
+		*      <Handle type="source" position={Position.Right} />
+		*    </>
+		*  );
+		*};
+		*```
+		*/
+		const Handle = (0, react.memo)(fixedForwardRef(HandleComponent));
+		function InputNode({ data, isConnectable, sourcePosition = Position.Bottom }) {
+			return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [data?.label, (0, react_jsx_runtime.jsx)(Handle, {
+				type: "source",
+				position: sourcePosition,
+				isConnectable
+			})] });
+		}
+		function DefaultNode({ data, isConnectable, targetPosition = Position.Top, sourcePosition = Position.Bottom }) {
+			return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+				(0, react_jsx_runtime.jsx)(Handle, {
+					type: "target",
+					position: targetPosition,
+					isConnectable
+				}),
+				data?.label,
+				(0, react_jsx_runtime.jsx)(Handle, {
+					type: "source",
+					position: sourcePosition,
+					isConnectable
+				})
+			] });
+		}
+		function GroupNode() {
+			return null;
+		}
+		function OutputNode({ data, isConnectable, targetPosition = Position.Top }) {
+			return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(Handle, {
+				type: "target",
+				position: targetPosition,
+				isConnectable
+			}), data?.label] });
+		}
+		const arrowKeyDiffs = {
+			ArrowUp: {
+				x: 0,
+				y: -1
+			},
+			ArrowDown: {
+				x: 0,
+				y: 1
+			},
+			ArrowLeft: {
+				x: -1,
+				y: 0
+			},
+			ArrowRight: {
+				x: 1,
+				y: 0
+			}
+		};
+		const builtinNodeTypes = {
+			input: InputNode,
+			default: DefaultNode,
+			output: OutputNode,
+			group: GroupNode
+		};
+		function getNodeInlineStyleDimensions(node) {
+			if (node.internals.handleBounds === void 0) return {
+				width: node.width ?? node.initialWidth ?? node.style?.width,
+				height: node.height ?? node.initialHeight ?? node.style?.height
+			};
+			return {
+				width: node.width ?? node.style?.width,
+				height: node.height ?? node.style?.height
+			};
+		}
+		const selector$e = (s) => {
+			const { width, height, x, y } = getInternalNodesBounds(s.nodeLookup, { filter: (node) => !!node.selected });
+			return {
+				width: isNumeric(width) ? width : null,
+				height: isNumeric(height) ? height : null,
+				userSelectionActive: s.userSelectionActive,
+				transformString: `translate(${s.transform[0]}px,${s.transform[1]}px) scale(${s.transform[2]}) translate(${x}px,${y}px)`
+			};
+		};
+		function NodesSelection({ onSelectionContextMenu, noPanClassName, disableKeyboardA11y }) {
+			const store = useStoreApi();
+			const { width, height, transformString, userSelectionActive } = useStore(selector$e, shallow$1);
+			const moveSelectedNodes = useMoveSelectedNodes();
+			const nodeRef = (0, react.useRef)(null);
+			(0, react.useEffect)(() => {
+				if (!disableKeyboardA11y) nodeRef.current?.focus({ preventScroll: true });
+			}, [disableKeyboardA11y]);
+			const shouldRender = !userSelectionActive && width !== null && height !== null;
+			useDrag({
+				nodeRef,
+				disabled: !shouldRender
+			});
+			if (!shouldRender) return null;
+			const onContextMenu = onSelectionContextMenu ? (event) => {
+				onSelectionContextMenu(event, store.getState().nodes.filter((n) => n.selected));
+			} : void 0;
+			const onKeyDown = (event) => {
+				if (Object.prototype.hasOwnProperty.call(arrowKeyDiffs, event.key)) {
+					event.preventDefault();
+					moveSelectedNodes({
+						direction: arrowKeyDiffs[event.key],
+						factor: event.shiftKey ? 4 : 1
+					});
+				}
+			};
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: cc([
+					"react-flow__nodesselection",
+					"react-flow__container",
+					noPanClassName
+				]),
+				style: { transform: transformString },
+				children: (0, react_jsx_runtime.jsx)("div", {
+					ref: nodeRef,
+					className: "react-flow__nodesselection-rect",
+					onContextMenu,
+					tabIndex: disableKeyboardA11y ? void 0 : -1,
+					onKeyDown: disableKeyboardA11y ? void 0 : onKeyDown,
+					style: {
+						width,
+						height
+					}
+				})
+			});
+		}
+		const win = typeof window !== "undefined" ? window : void 0;
+		const selector$d = (s) => {
+			return {
+				nodesSelectionActive: s.nodesSelectionActive,
+				userSelectionActive: s.userSelectionActive
+			};
+		};
+		function FlowRendererComponent({ children, onPaneClick, onPaneMouseEnter, onPaneMouseMove, onPaneMouseLeave, onPaneContextMenu, onPaneScroll, paneClickDistance, deleteKeyCode, selectionKeyCode, selectionOnDrag, selectionMode, onSelectionStart, onSelectionEnd, multiSelectionKeyCode, panActivationKeyCode, zoomActivationKeyCode, elementsSelectable, zoomOnScroll, zoomOnPinch, panOnScroll: _panOnScroll, panOnScrollSpeed, panOnScrollMode, zoomOnDoubleClick, panOnDrag: _panOnDrag, autoPanOnSelection, defaultViewport, translateExtent, minZoom, maxZoom, preventScrolling, onSelectionContextMenu, noWheelClassName, noPanClassName, disableKeyboardA11y, onViewportChange, isControlledViewport }) {
+			const { nodesSelectionActive, userSelectionActive } = useStore(selector$d, shallow$1);
+			const selectionKeyPressed = useKeyPress(selectionKeyCode, { target: win });
+			const panActivationKeyPressed = useKeyPress(panActivationKeyCode, { target: win });
+			const panOnDrag = panActivationKeyPressed || _panOnDrag;
+			const panOnScroll = panActivationKeyPressed || _panOnScroll;
+			const _selectionOnDrag = selectionOnDrag && panOnDrag !== true;
+			const isSelecting = selectionKeyPressed || userSelectionActive || _selectionOnDrag;
+			useGlobalKeyHandler({
+				deleteKeyCode,
+				multiSelectionKeyCode
+			});
+			return (0, react_jsx_runtime.jsx)(ZoomPane, {
+				onPaneContextMenu,
+				elementsSelectable,
+				zoomOnScroll,
+				zoomOnPinch,
+				panOnScroll,
+				panActivationKeyPressed,
+				panOnScrollSpeed,
+				panOnScrollMode,
+				zoomOnDoubleClick,
+				panOnDrag: !selectionKeyPressed && panOnDrag,
+				defaultViewport,
+				translateExtent,
+				minZoom,
+				maxZoom,
+				zoomActivationKeyCode,
+				preventScrolling,
+				noWheelClassName,
+				noPanClassName,
+				onViewportChange,
+				isControlledViewport,
+				paneClickDistance,
+				selectionOnDrag: _selectionOnDrag,
+				children: (0, react_jsx_runtime.jsxs)(Pane, {
+					onSelectionStart,
+					onSelectionEnd,
+					onPaneClick,
+					onPaneMouseEnter,
+					onPaneMouseMove,
+					onPaneMouseLeave,
+					onPaneContextMenu,
+					onPaneScroll,
+					panOnDrag,
+					autoPanOnSelection,
+					isSelecting: !!isSelecting,
+					selectionMode,
+					selectionKeyPressed,
+					paneClickDistance,
+					selectionOnDrag: _selectionOnDrag,
+					children: [children, nodesSelectionActive && (0, react_jsx_runtime.jsx)(NodesSelection, {
+						onSelectionContextMenu,
+						noPanClassName,
+						disableKeyboardA11y
+					})]
+				})
+			});
+		}
+		FlowRendererComponent.displayName = "FlowRenderer";
+		const FlowRenderer = (0, react.memo)(FlowRendererComponent);
+		const selector$c = (onlyRenderVisible) => (s) => {
+			return onlyRenderVisible ? getNodesInside(s.nodeLookup, {
+				x: 0,
+				y: 0,
+				width: s.width,
+				height: s.height
+			}, s.transform, true).map((node) => node.id) : Array.from(s.nodeLookup.keys());
+		};
+		/**
+		* Hook for getting the visible node ids from the store.
+		*
+		* @internal
+		* @param onlyRenderVisible
+		* @returns array with visible node ids
+		*/
+		function useVisibleNodeIds(onlyRenderVisible) {
+			return useStore((0, react.useCallback)(selector$c(onlyRenderVisible), [onlyRenderVisible]), shallow$1);
+		}
+		const selector$b = (s) => s.updateNodeInternals;
+		function useResizeObserver() {
+			const updateNodeInternals = useStore(selector$b);
+			const [resizeObserver] = (0, react.useState)(() => {
+				if (typeof ResizeObserver === "undefined") return null;
+				return new ResizeObserver((entries) => {
+					const updates = /* @__PURE__ */ new Map();
+					entries.forEach((entry) => {
+						const id = entry.target.getAttribute("data-id");
+						updates.set(id, {
+							id,
+							nodeElement: entry.target,
+							force: true
+						});
+					});
+					updateNodeInternals(updates);
+				});
+			});
+			(0, react.useEffect)(() => {
+				return () => {
+					resizeObserver?.disconnect();
+				};
+			}, [resizeObserver]);
+			return resizeObserver;
+		}
+		/**
+		* Hook to handle the resize observation + internal updates for the passed node.
+		*
+		* @internal
+		* @returns nodeRef - reference to the node element
+		*/
+		function useNodeObserver({ node, nodeType, hasDimensions, resizeObserver }) {
+			const store = useStoreApi();
+			const nodeRef = (0, react.useRef)(null);
+			const observedNode = (0, react.useRef)(null);
+			const prevSourcePosition = (0, react.useRef)(node.sourcePosition);
+			const prevTargetPosition = (0, react.useRef)(node.targetPosition);
+			const prevType = (0, react.useRef)(nodeType);
+			const isInitialized = hasDimensions && !!node.internals.handleBounds;
+			(0, react.useEffect)(() => {
+				if (nodeRef.current && !node.hidden && (!isInitialized || observedNode.current !== nodeRef.current)) {
+					if (observedNode.current) resizeObserver?.unobserve(observedNode.current);
+					resizeObserver?.observe(nodeRef.current);
+					observedNode.current = nodeRef.current;
+				}
+			}, [isInitialized, node.hidden]);
+			(0, react.useEffect)(() => {
+				return () => {
+					if (observedNode.current) {
+						resizeObserver?.unobserve(observedNode.current);
+						observedNode.current = null;
+					}
+				};
+			}, []);
+			(0, react.useEffect)(() => {
+				if (nodeRef.current) {
+					const typeChanged = prevType.current !== nodeType;
+					const sourcePosChanged = prevSourcePosition.current !== node.sourcePosition;
+					const targetPosChanged = prevTargetPosition.current !== node.targetPosition;
+					if (typeChanged || sourcePosChanged || targetPosChanged) {
+						prevType.current = nodeType;
+						prevSourcePosition.current = node.sourcePosition;
+						prevTargetPosition.current = node.targetPosition;
+						store.getState().updateNodeInternals(/* @__PURE__ */ new Map([[node.id, {
+							id: node.id,
+							nodeElement: nodeRef.current,
+							force: true
+						}]]));
+					}
+				}
+			}, [
+				node.id,
+				nodeType,
+				node.sourcePosition,
+				node.targetPosition
+			]);
+			return nodeRef;
+		}
+		function NodeWrapper({ id, onClick, onMouseEnter, onMouseMove, onMouseLeave, onContextMenu, onDoubleClick, nodesDraggable, elementsSelectable, nodesConnectable, nodesFocusable, resizeObserver, noDragClassName, noPanClassName, disableKeyboardA11y, rfId, nodeTypes, nodeClickDistance, onError }) {
+			const { node, internals, isParent } = useStore((s) => {
+				const node = s.nodeLookup.get(id);
+				const isParent = s.parentLookup.has(id);
+				return {
+					node,
+					internals: node.internals,
+					isParent
+				};
+			}, shallow$1);
+			let nodeType = node.type || "default";
+			let NodeComponent = nodeTypes?.[nodeType] || builtinNodeTypes[nodeType];
+			if (NodeComponent === void 0) {
+				onError?.("003", errorMessages["error003"](nodeType));
+				nodeType = "default";
+				NodeComponent = nodeTypes?.["default"] || builtinNodeTypes.default;
+			}
+			const isDraggable = !!(node.draggable || nodesDraggable && typeof node.draggable === "undefined");
+			const isSelectable = !!(node.selectable || elementsSelectable && typeof node.selectable === "undefined");
+			const isConnectable = !!(node.connectable || nodesConnectable && typeof node.connectable === "undefined");
+			const isFocusable = !!(node.focusable || nodesFocusable && typeof node.focusable === "undefined");
+			const store = useStoreApi();
+			const hasDimensions = nodeHasDimensions(node);
+			const nodeRef = useNodeObserver({
+				node,
+				nodeType,
+				hasDimensions,
+				resizeObserver
+			});
+			const dragging = useDrag({
+				nodeRef,
+				disabled: node.hidden || !isDraggable,
+				noDragClassName,
+				handleSelector: node.dragHandle,
+				nodeId: id,
+				isSelectable,
+				nodeClickDistance
+			});
+			const moveSelectedNodes = useMoveSelectedNodes();
+			if (node.hidden) return null;
+			const nodeDimensions = getNodeDimensions(node);
+			const inlineDimensions = getNodeInlineStyleDimensions(node);
+			const hasPointerEvents = isSelectable || isDraggable || onClick || onMouseEnter || onMouseMove || onMouseLeave;
+			const onMouseEnterHandler = onMouseEnter ? (event) => onMouseEnter(event, { ...internals.userNode }) : void 0;
+			const onMouseMoveHandler = onMouseMove ? (event) => onMouseMove(event, { ...internals.userNode }) : void 0;
+			const onMouseLeaveHandler = onMouseLeave ? (event) => onMouseLeave(event, { ...internals.userNode }) : void 0;
+			const onContextMenuHandler = onContextMenu ? (event) => onContextMenu(event, { ...internals.userNode }) : void 0;
+			const onDoubleClickHandler = onDoubleClick ? (event) => onDoubleClick(event, { ...internals.userNode }) : void 0;
+			const onSelectNodeHandler = (event) => {
+				const { selectNodesOnDrag, nodeDragThreshold } = store.getState();
+				if (isSelectable && (!selectNodesOnDrag || !isDraggable || nodeDragThreshold > 0)) handleNodeClick({
+					id,
+					store,
+					nodeRef
+				});
+				if (onClick) onClick(event, { ...internals.userNode });
+			};
+			const onKeyDown = (event) => {
+				if (isInputDOMNode(event.nativeEvent) || disableKeyboardA11y) return;
+				if (elementSelectionKeys.includes(event.key) && isSelectable) {
+					const unselect = event.key === "Escape";
+					handleNodeClick({
+						id,
+						store,
+						unselect,
+						nodeRef
+					});
+				} else if (isDraggable && node.selected && Object.prototype.hasOwnProperty.call(arrowKeyDiffs, event.key)) {
+					event.preventDefault();
+					const { ariaLabelConfig } = store.getState();
+					store.setState({ ariaLiveMessage: ariaLabelConfig["node.a11yDescription.ariaLiveMessage"]({
+						direction: event.key.replace("Arrow", "").toLowerCase(),
+						x: ~~internals.positionAbsolute.x,
+						y: ~~internals.positionAbsolute.y
+					}) });
+					moveSelectedNodes({
+						direction: arrowKeyDiffs[event.key],
+						factor: event.shiftKey ? 4 : 1
+					});
+				}
+			};
+			const onFocus = () => {
+				if (disableKeyboardA11y || !nodeRef.current?.matches(":focus-visible")) return;
+				const { transform, width, height, autoPanOnNodeFocus, setCenter } = store.getState();
+				if (!autoPanOnNodeFocus) return;
+				if (!(getNodesInside(/* @__PURE__ */ new Map([[id, node]]), {
+					x: 0,
+					y: 0,
+					width,
+					height
+				}, transform, true).length > 0)) setCenter(node.position.x + nodeDimensions.width / 2, node.position.y + nodeDimensions.height / 2, { zoom: transform[2] });
+			};
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: cc([
+					"react-flow__node",
+					`react-flow__node-${nodeType}`,
+					{ [noPanClassName]: isDraggable },
+					node.className,
+					{
+						selected: node.selected,
+						selectable: isSelectable,
+						parent: isParent,
+						draggable: isDraggable,
+						dragging
+					}
+				]),
+				ref: nodeRef,
+				style: {
+					zIndex: internals.z,
+					transform: `translate(${internals.positionAbsolute.x}px,${internals.positionAbsolute.y}px)`,
+					pointerEvents: hasPointerEvents ? "all" : "none",
+					visibility: hasDimensions ? "visible" : "hidden",
+					...node.style,
+					...inlineDimensions
+				},
+				"data-id": id,
+				"data-testid": `rf__node-${id}`,
+				onMouseEnter: onMouseEnterHandler,
+				onMouseMove: onMouseMoveHandler,
+				onMouseLeave: onMouseLeaveHandler,
+				onContextMenu: onContextMenuHandler,
+				onClick: onSelectNodeHandler,
+				onDoubleClick: onDoubleClickHandler,
+				onKeyDown: isFocusable ? onKeyDown : void 0,
+				tabIndex: isFocusable ? 0 : void 0,
+				onFocus: isFocusable ? onFocus : void 0,
+				role: node.ariaRole ?? (isFocusable ? "group" : void 0),
+				"aria-roledescription": "node",
+				"aria-describedby": disableKeyboardA11y ? void 0 : `${ARIA_NODE_DESC_KEY}-${rfId}`,
+				"aria-label": node.ariaLabel,
+				...node.domAttributes,
+				children: (0, react_jsx_runtime.jsx)(Provider, {
+					value: id,
+					children: (0, react_jsx_runtime.jsx)(NodeComponent, {
+						id,
+						data: node.data,
+						type: nodeType,
+						positionAbsoluteX: internals.positionAbsolute.x,
+						positionAbsoluteY: internals.positionAbsolute.y,
+						selected: node.selected ?? false,
+						selectable: isSelectable,
+						draggable: isDraggable,
+						deletable: node.deletable ?? true,
+						isConnectable,
+						sourcePosition: node.sourcePosition,
+						targetPosition: node.targetPosition,
+						dragging,
+						dragHandle: node.dragHandle,
+						zIndex: internals.z,
+						parentId: node.parentId,
+						...nodeDimensions
+					})
+				})
+			});
+		}
+		var NodeWrapper$1 = (0, react.memo)(NodeWrapper);
+		const selector$a = (s) => ({
+			nodesConnectable: s.nodesConnectable,
+			nodesFocusable: s.nodesFocusable,
+			elementsSelectable: s.elementsSelectable,
+			onError: s.onError
+		});
+		function NodeRendererComponent(props) {
+			const { nodesConnectable, nodesFocusable, elementsSelectable, onError } = useStore(selector$a, shallow$1);
+			const nodeIds = useVisibleNodeIds(props.onlyRenderVisibleElements);
+			const resizeObserver = useResizeObserver();
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: "react-flow__nodes",
+				style: containerStyle,
+				children: nodeIds.map((nodeId) => {
+					return (0, react_jsx_runtime.jsx)(NodeWrapper$1, {
+						id: nodeId,
+						nodeTypes: props.nodeTypes,
+						nodeExtent: props.nodeExtent,
+						onClick: props.onNodeClick,
+						onMouseEnter: props.onNodeMouseEnter,
+						onMouseMove: props.onNodeMouseMove,
+						onMouseLeave: props.onNodeMouseLeave,
+						onContextMenu: props.onNodeContextMenu,
+						onDoubleClick: props.onNodeDoubleClick,
+						noDragClassName: props.noDragClassName,
+						noPanClassName: props.noPanClassName,
+						rfId: props.rfId,
+						disableKeyboardA11y: props.disableKeyboardA11y,
+						resizeObserver,
+						nodesDraggable: props.nodesDraggable ?? true,
+						nodesConnectable,
+						nodesFocusable,
+						elementsSelectable,
+						nodeClickDistance: props.nodeClickDistance,
+						onError
+					}, nodeId);
+				})
+			});
+		}
+		NodeRendererComponent.displayName = "NodeRenderer";
+		const NodeRenderer = (0, react.memo)(NodeRendererComponent);
+		/**
+		* Hook for getting the visible edge ids from the store.
+		*
+		* @internal
+		* @param onlyRenderVisible
+		* @returns array with visible edge ids
+		*/
+		function useVisibleEdgeIds(onlyRenderVisible) {
+			return useStore((0, react.useCallback)((s) => {
+				if (!onlyRenderVisible) return s.edges.map((edge) => edge.id);
+				const visibleEdgeIds = [];
+				if (s.width && s.height) for (const edge of s.edges) {
+					const sourceNode = s.nodeLookup.get(edge.source);
+					const targetNode = s.nodeLookup.get(edge.target);
+					if (sourceNode && targetNode && isEdgeVisible({
+						sourceNode,
+						targetNode,
+						width: s.width,
+						height: s.height,
+						transform: s.transform
+					})) visibleEdgeIds.push(edge.id);
+				}
+				return visibleEdgeIds;
+			}, [onlyRenderVisible]), shallow$1);
+		}
+		const ArrowSymbol = ({ color = "none", strokeWidth = 1 }) => {
+			const style = {
+				strokeWidth,
+				...color && { stroke: color }
+			};
+			return (0, react_jsx_runtime.jsx)("polyline", {
+				className: "arrow",
+				style,
+				strokeLinecap: "round",
+				fill: "none",
+				strokeLinejoin: "round",
+				points: "-5,-4 0,0 -5,4"
+			});
+		};
+		const ArrowClosedSymbol = ({ color = "none", strokeWidth = 1 }) => {
+			const style = {
+				strokeWidth,
+				...color && {
+					stroke: color,
+					fill: color
+				}
+			};
+			return (0, react_jsx_runtime.jsx)("polyline", {
+				className: "arrowclosed",
+				style,
+				strokeLinecap: "round",
+				strokeLinejoin: "round",
+				points: "-5,-4 0,0 -5,4 -5,-4"
+			});
+		};
+		const MarkerSymbols = {
+			[MarkerType.Arrow]: ArrowSymbol,
+			[MarkerType.ArrowClosed]: ArrowClosedSymbol
+		};
+		function useMarkerSymbol(type) {
+			const store = useStoreApi();
+			return (0, react.useMemo)(() => {
+				if (!Object.prototype.hasOwnProperty.call(MarkerSymbols, type)) {
+					store.getState().onError?.("009", errorMessages["error009"](type));
+					return null;
+				}
+				return MarkerSymbols[type];
+			}, [type]);
+		}
+		const Marker = ({ id, type, color, width = 12.5, height = 12.5, markerUnits = "strokeWidth", strokeWidth, orient = "auto-start-reverse" }) => {
+			const Symbol = useMarkerSymbol(type);
+			if (!Symbol) return null;
+			return (0, react_jsx_runtime.jsx)("marker", {
+				className: "react-flow__arrowhead",
+				id,
+				markerWidth: `${width}`,
+				markerHeight: `${height}`,
+				viewBox: "-10 -10 20 20",
+				markerUnits,
+				orient,
+				refX: "0",
+				refY: "0",
+				children: (0, react_jsx_runtime.jsx)(Symbol, {
+					color,
+					strokeWidth
+				})
+			});
+		};
+		const MarkerDefinitions = ({ defaultColor, rfId }) => {
+			const edges = useStore((s) => s.edges);
+			const defaultEdgeOptions = useStore((s) => s.defaultEdgeOptions);
+			const markers = (0, react.useMemo)(() => {
+				return createMarkerIds(edges, {
+					id: rfId,
+					defaultColor,
+					defaultMarkerStart: defaultEdgeOptions?.markerStart,
+					defaultMarkerEnd: defaultEdgeOptions?.markerEnd
+				});
+			}, [
+				edges,
+				defaultEdgeOptions,
+				rfId,
+				defaultColor
+			]);
+			if (!markers.length) return null;
+			return (0, react_jsx_runtime.jsx)("svg", {
+				className: "react-flow__marker",
+				"aria-hidden": "true",
+				children: (0, react_jsx_runtime.jsx)("defs", { children: markers.map((marker) => (0, react_jsx_runtime.jsx)(Marker, {
+					id: marker.id,
+					type: marker.type,
+					color: marker.color,
+					width: marker.width,
+					height: marker.height,
+					markerUnits: marker.markerUnits,
+					strokeWidth: marker.strokeWidth,
+					orient: marker.orient
+				}, marker.id)) })
+			});
+		};
+		MarkerDefinitions.displayName = "MarkerDefinitions";
+		var MarkerDefinitions$1 = (0, react.memo)(MarkerDefinitions);
+		function EdgeTextComponent({ x, y, label, labelStyle, labelShowBg = true, labelBgStyle, labelBgPadding = [2, 4], labelBgBorderRadius = 2, children, className, ...rest }) {
+			const [edgeTextBbox, setEdgeTextBbox] = (0, react.useState)({
+				x: 1,
+				y: 0,
+				width: 0,
+				height: 0
+			});
+			const edgeTextClasses = cc(["react-flow__edge-textwrapper", className]);
+			const edgeTextRef = (0, react.useRef)(null);
+			(0, react.useEffect)(() => {
+				if (edgeTextRef.current) {
+					const textBbox = edgeTextRef.current.getBBox();
+					setEdgeTextBbox({
+						x: textBbox.x,
+						y: textBbox.y,
+						width: textBbox.width,
+						height: textBbox.height
+					});
+				}
+			}, [label]);
+			if (!label) return null;
+			return (0, react_jsx_runtime.jsxs)("g", {
+				transform: `translate(${x - edgeTextBbox.width / 2} ${y - edgeTextBbox.height / 2})`,
+				className: edgeTextClasses,
+				visibility: edgeTextBbox.width ? "visible" : "hidden",
+				...rest,
+				children: [
+					labelShowBg && (0, react_jsx_runtime.jsx)("rect", {
+						width: edgeTextBbox.width + 2 * labelBgPadding[0],
+						x: -labelBgPadding[0],
+						y: -labelBgPadding[1],
+						height: edgeTextBbox.height + 2 * labelBgPadding[1],
+						className: "react-flow__edge-textbg",
+						style: labelBgStyle,
+						rx: labelBgBorderRadius,
+						ry: labelBgBorderRadius
+					}),
+					(0, react_jsx_runtime.jsx)("text", {
+						className: "react-flow__edge-text",
+						y: edgeTextBbox.height / 2,
+						dy: "0.3em",
+						ref: edgeTextRef,
+						style: labelStyle,
+						children: label
+					}),
+					children
+				]
+			});
+		}
+		EdgeTextComponent.displayName = "EdgeText";
+		/**
+		* You can use the `<EdgeText />` component as a helper component to display text
+		* within your custom edges.
+		*
+		* @public
+		*
+		* @example
+		* ```jsx
+		* import { EdgeText } from '@xyflow/react';
+		*
+		* export function CustomEdgeLabel({ label }) {
+		*   return (
+		*     <EdgeText
+		*       x={100}
+		*       y={100}
+		*       label={label}
+		*       labelStyle={{ fill: 'white' }}
+		*       labelShowBg
+		*       labelBgStyle={{ fill: 'red' }}
+		*       labelBgPadding={[2, 4]}
+		*       labelBgBorderRadius={2}
+		*     />
+		*   );
+		* }
+		*```
+		*/
+		const EdgeText = (0, react.memo)(EdgeTextComponent);
+		/**
+		* The `<BaseEdge />` component gets used internally for all the edges. It can be
+		* used inside a custom edge and handles the invisible helper edge and the edge label
+		* for you.
+		*
+		* @public
+		* @example
+		* ```jsx
+		*import { BaseEdge } from '@xyflow/react';
+		*
+		*export function CustomEdge({ sourceX, sourceY, targetX, targetY, ...props }) {
+		*  const [edgePath] = getStraightPath({
+		*    sourceX,
+		*    sourceY,
+		*    targetX,
+		*    targetY,
+		*  });
+		*
+		*  return <BaseEdge path={edgePath} {...props} />;
+		*}
+		*```
+		*
+		* @remarks If you want to use an edge marker with the [`<BaseEdge />`](/api-reference/components/base-edge) component,
+		* you can pass the `markerStart` or `markerEnd` props passed to your custom edge
+		* through to the [`<BaseEdge />`](/api-reference/components/base-edge) component.
+		* You can see all the props passed to a custom edge by looking at the [`EdgeProps`](/api-reference/types/edge-props) type.
+		*/
+		function BaseEdge({ path, labelX, labelY, label, labelStyle, labelShowBg, labelBgStyle, labelBgPadding, labelBgBorderRadius, interactionWidth = 20, ...props }) {
+			return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+				(0, react_jsx_runtime.jsx)("path", {
+					...props,
+					d: path,
+					fill: "none",
+					className: cc(["react-flow__edge-path", props.className])
+				}),
+				interactionWidth ? (0, react_jsx_runtime.jsx)("path", {
+					d: path,
+					fill: "none",
+					strokeOpacity: 0,
+					strokeWidth: interactionWidth,
+					className: "react-flow__edge-interaction"
+				}) : null,
+				label && isNumeric(labelX) && isNumeric(labelY) ? (0, react_jsx_runtime.jsx)(EdgeText, {
+					x: labelX,
+					y: labelY,
+					label,
+					labelStyle,
+					labelShowBg,
+					labelBgStyle,
+					labelBgPadding,
+					labelBgBorderRadius
+				}) : null
+			] });
+		}
+		function getControl({ pos, x1, y1, x2, y2 }) {
+			if (pos === Position.Left || pos === Position.Right) return [.5 * (x1 + x2), y1];
+			return [x1, .5 * (y1 + y2)];
+		}
+		/**
+		* The `getSimpleBezierPath` util returns everything you need to render a simple
+		* bezier edge between two nodes.
+		* @public
+		* @returns
+		* - `path`: the path to use in an SVG `<path>` element.
+		* - `labelX`: the `x` position you can use to render a label for this edge.
+		* - `labelY`: the `y` position you can use to render a label for this edge.
+		* - `offsetX`: the absolute difference between the source `x` position and the `x` position of the
+		* middle of this path.
+		* - `offsetY`: the absolute difference between the source `y` position and the `y` position of the
+		* middle of this path.
+		*/
+		function getSimpleBezierPath({ sourceX, sourceY, sourcePosition = Position.Bottom, targetX, targetY, targetPosition = Position.Top }) {
+			const [sourceControlX, sourceControlY] = getControl({
+				pos: sourcePosition,
+				x1: sourceX,
+				y1: sourceY,
+				x2: targetX,
+				y2: targetY
+			});
+			const [targetControlX, targetControlY] = getControl({
+				pos: targetPosition,
+				x1: targetX,
+				y1: targetY,
+				x2: sourceX,
+				y2: sourceY
+			});
+			const [labelX, labelY, offsetX, offsetY] = getBezierEdgeCenter({
+				sourceX,
+				sourceY,
+				targetX,
+				targetY,
+				sourceControlX,
+				sourceControlY,
+				targetControlX,
+				targetControlY
+			});
+			return [
+				`M${sourceX},${sourceY} C${sourceControlX},${sourceControlY} ${targetControlX},${targetControlY} ${targetX},${targetY}`,
+				labelX,
+				labelY,
+				offsetX,
+				offsetY
+			];
+		}
+		function createSimpleBezierEdge(params) {
+			return (0, react.memo)(({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, label, labelStyle, labelShowBg, labelBgStyle, labelBgPadding, labelBgBorderRadius, style, markerEnd, markerStart, interactionWidth }) => {
+				const [path, labelX, labelY] = getSimpleBezierPath({
+					sourceX,
+					sourceY,
+					sourcePosition,
+					targetX,
+					targetY,
+					targetPosition
+				});
+				const _id = params.isInternal ? void 0 : id;
+				return (0, react_jsx_runtime.jsx)(BaseEdge, {
+					id: _id,
+					path,
+					labelX,
+					labelY,
+					label,
+					labelStyle,
+					labelShowBg,
+					labelBgStyle,
+					labelBgPadding,
+					labelBgBorderRadius,
+					style,
+					markerEnd,
+					markerStart,
+					interactionWidth
+				});
+			});
+		}
+		const SimpleBezierEdge = createSimpleBezierEdge({ isInternal: false });
+		const SimpleBezierEdgeInternal = createSimpleBezierEdge({ isInternal: true });
+		SimpleBezierEdge.displayName = "SimpleBezierEdge";
+		SimpleBezierEdgeInternal.displayName = "SimpleBezierEdgeInternal";
+		function createSmoothStepEdge(params) {
+			return (0, react.memo)(({ id, sourceX, sourceY, targetX, targetY, label, labelStyle, labelShowBg, labelBgStyle, labelBgPadding, labelBgBorderRadius, style, sourcePosition = Position.Bottom, targetPosition = Position.Top, markerEnd, markerStart, pathOptions, interactionWidth }) => {
+				const [path, labelX, labelY] = getSmoothStepPath({
+					sourceX,
+					sourceY,
+					sourcePosition,
+					targetX,
+					targetY,
+					targetPosition,
+					borderRadius: pathOptions?.borderRadius,
+					offset: pathOptions?.offset,
+					stepPosition: pathOptions?.stepPosition
+				});
+				const _id = params.isInternal ? void 0 : id;
+				return (0, react_jsx_runtime.jsx)(BaseEdge, {
+					id: _id,
+					path,
+					labelX,
+					labelY,
+					label,
+					labelStyle,
+					labelShowBg,
+					labelBgStyle,
+					labelBgPadding,
+					labelBgBorderRadius,
+					style,
+					markerEnd,
+					markerStart,
+					interactionWidth
+				});
+			});
+		}
+		/**
+		* Component that can be used inside a custom edge to render a smooth step edge.
+		*
+		* @public
+		* @example
+		*
+		* ```tsx
+		* import { SmoothStepEdge } from '@xyflow/react';
+		*
+		* function CustomEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }) {
+		*   return (
+		*     <SmoothStepEdge
+		*       sourceX={sourceX}
+		*       sourceY={sourceY}
+		*       targetX={targetX}
+		*       targetY={targetY}
+		*       sourcePosition={sourcePosition}
+		*       targetPosition={targetPosition}
+		*     />
+		*   );
+		* }
+		* ```
+		*/
+		const SmoothStepEdge = createSmoothStepEdge({ isInternal: false });
+		/**
+		* @internal
+		*/
+		const SmoothStepEdgeInternal = createSmoothStepEdge({ isInternal: true });
+		SmoothStepEdge.displayName = "SmoothStepEdge";
+		SmoothStepEdgeInternal.displayName = "SmoothStepEdgeInternal";
+		function createStepEdge(params) {
+			return (0, react.memo)(({ id, ...props }) => {
+				const _id = params.isInternal ? void 0 : id;
+				return (0, react_jsx_runtime.jsx)(SmoothStepEdge, {
+					...props,
+					id: _id,
+					pathOptions: (0, react.useMemo)(() => ({
+						borderRadius: 0,
+						offset: props.pathOptions?.offset
+					}), [props.pathOptions?.offset])
+				});
+			});
+		}
+		/**
+		* Component that can be used inside a custom edge to render a step edge.
+		*
+		* @public
+		* @example
+		*
+		* ```tsx
+		* import { StepEdge } from '@xyflow/react';
+		*
+		* function CustomEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }) {
+		*   return (
+		*     <StepEdge
+		*       sourceX={sourceX}
+		*       sourceY={sourceY}
+		*       targetX={targetX}
+		*       targetY={targetY}
+		*       sourcePosition={sourcePosition}
+		*       targetPosition={targetPosition}
+		*     />
+		*   );
+		* }
+		* ```
+		*/
+		const StepEdge = createStepEdge({ isInternal: false });
+		/**
+		* @internal
+		*/
+		const StepEdgeInternal = createStepEdge({ isInternal: true });
+		StepEdge.displayName = "StepEdge";
+		StepEdgeInternal.displayName = "StepEdgeInternal";
+		function createStraightEdge(params) {
+			return (0, react.memo)(({ id, sourceX, sourceY, targetX, targetY, label, labelStyle, labelShowBg, labelBgStyle, labelBgPadding, labelBgBorderRadius, style, markerEnd, markerStart, interactionWidth }) => {
+				const [path, labelX, labelY] = getStraightPath({
+					sourceX,
+					sourceY,
+					targetX,
+					targetY
+				});
+				const _id = params.isInternal ? void 0 : id;
+				return (0, react_jsx_runtime.jsx)(BaseEdge, {
+					id: _id,
+					path,
+					labelX,
+					labelY,
+					label,
+					labelStyle,
+					labelShowBg,
+					labelBgStyle,
+					labelBgPadding,
+					labelBgBorderRadius,
+					style,
+					markerEnd,
+					markerStart,
+					interactionWidth
+				});
+			});
+		}
+		/**
+		* Component that can be used inside a custom edge to render a straight line.
+		*
+		* @public
+		* @example
+		*
+		* ```tsx
+		* import { StraightEdge } from '@xyflow/react';
+		*
+		* function CustomEdge({ sourceX, sourceY, targetX, targetY }) {
+		*   return (
+		*     <StraightEdge
+		*       sourceX={sourceX}
+		*       sourceY={sourceY}
+		*       targetX={targetX}
+		*       targetY={targetY}
+		*     />
+		*   );
+		* }
+		* ```
+		*/
+		const StraightEdge = createStraightEdge({ isInternal: false });
+		/**
+		* @internal
+		*/
+		const StraightEdgeInternal = createStraightEdge({ isInternal: true });
+		StraightEdge.displayName = "StraightEdge";
+		StraightEdgeInternal.displayName = "StraightEdgeInternal";
+		function createBezierEdge(params) {
+			return (0, react.memo)(({ id, sourceX, sourceY, targetX, targetY, sourcePosition = Position.Bottom, targetPosition = Position.Top, label, labelStyle, labelShowBg, labelBgStyle, labelBgPadding, labelBgBorderRadius, style, markerEnd, markerStart, pathOptions, interactionWidth }) => {
+				const [path, labelX, labelY] = getBezierPath({
+					sourceX,
+					sourceY,
+					sourcePosition,
+					targetX,
+					targetY,
+					targetPosition,
+					curvature: pathOptions?.curvature
+				});
+				const _id = params.isInternal ? void 0 : id;
+				return (0, react_jsx_runtime.jsx)(BaseEdge, {
+					id: _id,
+					path,
+					labelX,
+					labelY,
+					label,
+					labelStyle,
+					labelShowBg,
+					labelBgStyle,
+					labelBgPadding,
+					labelBgBorderRadius,
+					style,
+					markerEnd,
+					markerStart,
+					interactionWidth
+				});
+			});
+		}
+		/**
+		* Component that can be used inside a custom edge to render a bezier curve.
+		*
+		* @public
+		* @example
+		*
+		* ```tsx
+		* import { BezierEdge } from '@xyflow/react';
+		*
+		* function CustomEdge({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }) {
+		*   return (
+		*     <BezierEdge
+		*       sourceX={sourceX}
+		*       sourceY={sourceY}
+		*       targetX={targetX}
+		*       targetY={targetY}
+		*       sourcePosition={sourcePosition}
+		*       targetPosition={targetPosition}
+		*     />
+		*   );
+		* }
+		* ```
+		*/
+		const BezierEdge = createBezierEdge({ isInternal: false });
+		/**
+		* @internal
+		*/
+		const BezierEdgeInternal = createBezierEdge({ isInternal: true });
+		BezierEdge.displayName = "BezierEdge";
+		BezierEdgeInternal.displayName = "BezierEdgeInternal";
+		const builtinEdgeTypes = {
+			default: BezierEdgeInternal,
+			straight: StraightEdgeInternal,
+			step: StepEdgeInternal,
+			smoothstep: SmoothStepEdgeInternal,
+			simplebezier: SimpleBezierEdgeInternal
+		};
+		const nullPosition = {
+			sourceX: null,
+			sourceY: null,
+			targetX: null,
+			targetY: null,
+			sourcePosition: null,
+			targetPosition: null,
+			zIndex: void 0
+		};
+		const shiftX = (x, shift, position) => {
+			if (position === Position.Left) return x - shift;
+			if (position === Position.Right) return x + shift;
+			return x;
+		};
+		const shiftY = (y, shift, position) => {
+			if (position === Position.Top) return y - shift;
+			if (position === Position.Bottom) return y + shift;
+			return y;
+		};
+		const EdgeUpdaterClassName = "react-flow__edgeupdater";
+		/**
+		* @internal
+		*/
+		function EdgeAnchor({ position, centerX, centerY, radius = 10, onMouseDown, onMouseEnter, onMouseOut, type }) {
+			return (0, react_jsx_runtime.jsx)("circle", {
+				onMouseDown,
+				onMouseEnter,
+				onMouseOut,
+				className: cc([EdgeUpdaterClassName, `${EdgeUpdaterClassName}-${type}`]),
+				cx: shiftX(centerX, radius, position),
+				cy: shiftY(centerY, radius, position),
+				r: radius,
+				stroke: "transparent",
+				fill: "transparent"
+			});
+		}
+		function EdgeUpdateAnchors({ isReconnectable, reconnectRadius, edge, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, onReconnect, onReconnectStart, onReconnectEnd, setReconnecting, setUpdateHover }) {
+			const store = useStoreApi();
+			const handleEdgeUpdater = (event, oppositeHandle) => {
+				if (event.button !== 0) return;
+				const { autoPanOnConnect, domNode, connectionMode, connectionRadius, lib, onConnectStart, cancelConnection, nodeLookup, rfId: flowId, panBy, updateConnection } = store.getState();
+				const isTarget = oppositeHandle.type === "target";
+				const _onReconnectEnd = (evt, connectionState) => {
+					setReconnecting(false);
+					onReconnectEnd?.(evt, edge, oppositeHandle.type, connectionState);
+				};
+				const onConnectEdge = (connection) => onReconnect?.(edge, connection);
+				const _onConnectStart = (_event, params) => {
+					setReconnecting(true);
+					onReconnectStart?.(event, edge, oppositeHandle.type);
+					onConnectStart?.(_event, params);
+				};
+				XYHandle.onPointerDown(event.nativeEvent, {
+					autoPanOnConnect,
+					connectionMode,
+					connectionRadius,
+					domNode,
+					handleId: oppositeHandle.id,
+					nodeId: oppositeHandle.nodeId,
+					nodeLookup,
+					isTarget,
+					edgeUpdaterType: oppositeHandle.type,
+					lib,
+					flowId,
+					cancelConnection,
+					panBy,
+					isValidConnection: (...args) => store.getState().isValidConnection?.(...args) ?? true,
+					onConnect: onConnectEdge,
+					onConnectStart: _onConnectStart,
+					onConnectEnd: (...args) => store.getState().onConnectEnd?.(...args),
+					onReconnectEnd: _onReconnectEnd,
+					updateConnection,
+					getTransform: () => store.getState().transform,
+					getFromHandle: () => store.getState().connection.fromHandle,
+					dragThreshold: store.getState().connectionDragThreshold,
+					handleDomNode: event.currentTarget
+				});
+			};
+			const onReconnectSourceMouseDown = (event) => handleEdgeUpdater(event, {
+				nodeId: edge.target,
+				id: edge.targetHandle ?? null,
+				type: "target"
+			});
+			const onReconnectTargetMouseDown = (event) => handleEdgeUpdater(event, {
+				nodeId: edge.source,
+				id: edge.sourceHandle ?? null,
+				type: "source"
+			});
+			const onReconnectMouseEnter = () => setUpdateHover(true);
+			const onReconnectMouseOut = () => setUpdateHover(false);
+			return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(isReconnectable === true || isReconnectable === "source") && (0, react_jsx_runtime.jsx)(EdgeAnchor, {
+				position: sourcePosition,
+				centerX: sourceX,
+				centerY: sourceY,
+				radius: reconnectRadius,
+				onMouseDown: onReconnectSourceMouseDown,
+				onMouseEnter: onReconnectMouseEnter,
+				onMouseOut: onReconnectMouseOut,
+				type: "source"
+			}), (isReconnectable === true || isReconnectable === "target") && (0, react_jsx_runtime.jsx)(EdgeAnchor, {
+				position: targetPosition,
+				centerX: targetX,
+				centerY: targetY,
+				radius: reconnectRadius,
+				onMouseDown: onReconnectTargetMouseDown,
+				onMouseEnter: onReconnectMouseEnter,
+				onMouseOut: onReconnectMouseOut,
+				type: "target"
+			})] });
+		}
+		function EdgeWrapper({ id, edgesFocusable, edgesReconnectable, elementsSelectable, onClick, onDoubleClick, onContextMenu, onMouseEnter, onMouseMove, onMouseLeave, reconnectRadius, onReconnect, onReconnectStart, onReconnectEnd, rfId, edgeTypes, noPanClassName, onError, disableKeyboardA11y }) {
+			let edge = useStore((s) => s.edgeLookup.get(id));
+			const defaultEdgeOptions = useStore((s) => s.defaultEdgeOptions);
+			edge = defaultEdgeOptions ? {
+				...defaultEdgeOptions,
+				...edge
+			} : edge;
+			let edgeType = edge.type || "default";
+			let EdgeComponent = edgeTypes?.[edgeType] || builtinEdgeTypes[edgeType];
+			if (EdgeComponent === void 0) {
+				onError?.("011", errorMessages["error011"](edgeType));
+				edgeType = "default";
+				EdgeComponent = edgeTypes?.["default"] || builtinEdgeTypes.default;
+			}
+			const isFocusable = !!(edge.focusable || edgesFocusable && typeof edge.focusable === "undefined");
+			const isReconnectable = typeof onReconnect !== "undefined" && (edge.reconnectable || edgesReconnectable && typeof edge.reconnectable === "undefined");
+			const isSelectable = !!(edge.selectable || elementsSelectable && typeof edge.selectable === "undefined");
+			const edgeRef = (0, react.useRef)(null);
+			const [updateHover, setUpdateHover] = (0, react.useState)(false);
+			const [reconnecting, setReconnecting] = (0, react.useState)(false);
+			const store = useStoreApi();
+			const { zIndex = edge.zIndex, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition } = useStore((0, react.useCallback)((store) => {
+				const sourceNode = store.nodeLookup.get(edge.source);
+				const targetNode = store.nodeLookup.get(edge.target);
+				if (!sourceNode || !targetNode) return nullPosition;
+				const edgePosition = getEdgePosition({
+					id,
+					sourceNode,
+					targetNode,
+					sourceHandle: edge.sourceHandle || null,
+					targetHandle: edge.targetHandle || null,
+					connectionMode: store.connectionMode,
+					onError
+				});
+				const zIndex = getElevatedEdgeZIndex({
+					selected: edge.selected,
+					zIndex: edge.zIndex,
+					sourceNode,
+					targetNode,
+					elevateOnSelect: store.elevateEdgesOnSelect,
+					zIndexMode: store.zIndexMode
+				});
+				return {
+					...edgePosition || nullPosition,
+					zIndex
+				};
+			}, [
+				edge.source,
+				edge.target,
+				edge.sourceHandle,
+				edge.targetHandle,
+				edge.selected,
+				edge.zIndex,
+				onError
+			]), shallow$1);
+			const markerStartUrl = (0, react.useMemo)(() => edge.markerStart ? `url('#${getMarkerId(edge.markerStart, rfId)}')` : void 0, [edge.markerStart, rfId]);
+			const markerEndUrl = (0, react.useMemo)(() => edge.markerEnd ? `url('#${getMarkerId(edge.markerEnd, rfId)}')` : void 0, [edge.markerEnd, rfId]);
+			if (edge.hidden || sourceX === null || sourceY === null || targetX === null || targetY === null) return null;
+			const onEdgeClick = (event) => {
+				const { addSelectedEdges, unselectNodesAndEdges, multiSelectionActive } = store.getState();
+				if (isSelectable) {
+					store.setState({ nodesSelectionActive: false });
+					if (edge.selected && multiSelectionActive) {
+						unselectNodesAndEdges({
+							nodes: [],
+							edges: [edge]
+						});
+						edgeRef.current?.blur();
+					} else addSelectedEdges([id]);
+				}
+				if (onClick) onClick(event, edge);
+			};
+			const onEdgeDoubleClick = onDoubleClick ? (event) => {
+				onDoubleClick(event, { ...edge });
+			} : void 0;
+			const onEdgeContextMenu = onContextMenu ? (event) => {
+				onContextMenu(event, { ...edge });
+			} : void 0;
+			const onEdgeMouseEnter = onMouseEnter ? (event) => {
+				onMouseEnter(event, { ...edge });
+			} : void 0;
+			const onEdgeMouseMove = onMouseMove ? (event) => {
+				onMouseMove(event, { ...edge });
+			} : void 0;
+			const onEdgeMouseLeave = onMouseLeave ? (event) => {
+				onMouseLeave(event, { ...edge });
+			} : void 0;
+			const onKeyDown = (event) => {
+				if (!disableKeyboardA11y && elementSelectionKeys.includes(event.key) && isSelectable) {
+					const { unselectNodesAndEdges, addSelectedEdges } = store.getState();
+					if (event.key === "Escape") {
+						edgeRef.current?.blur();
+						unselectNodesAndEdges({ edges: [edge] });
+					} else addSelectedEdges([id]);
+				}
+			};
+			return (0, react_jsx_runtime.jsx)("svg", {
+				style: { zIndex },
+				children: (0, react_jsx_runtime.jsxs)("g", {
+					className: cc([
+						"react-flow__edge",
+						`react-flow__edge-${edgeType}`,
+						edge.className,
+						noPanClassName,
+						{
+							selected: edge.selected,
+							animated: edge.animated,
+							inactive: !isSelectable && !onClick,
+							updating: updateHover,
+							selectable: isSelectable
+						}
+					]),
+					onClick: onEdgeClick,
+					onDoubleClick: onEdgeDoubleClick,
+					onContextMenu: onEdgeContextMenu,
+					onMouseEnter: onEdgeMouseEnter,
+					onMouseMove: onEdgeMouseMove,
+					onMouseLeave: onEdgeMouseLeave,
+					onKeyDown: isFocusable ? onKeyDown : void 0,
+					tabIndex: isFocusable ? 0 : void 0,
+					role: edge.ariaRole ?? (isFocusable ? "group" : "img"),
+					"aria-roledescription": "edge",
+					"data-id": id,
+					"data-testid": `rf__edge-${id}`,
+					"aria-label": edge.ariaLabel === null ? void 0 : edge.ariaLabel || `Edge from ${edge.source} to ${edge.target}`,
+					"aria-describedby": isFocusable ? `${ARIA_EDGE_DESC_KEY}-${rfId}` : void 0,
+					ref: edgeRef,
+					...edge.domAttributes,
+					children: [!reconnecting && (0, react_jsx_runtime.jsx)(EdgeComponent, {
+						id,
+						source: edge.source,
+						target: edge.target,
+						type: edge.type,
+						selected: edge.selected,
+						animated: edge.animated,
+						selectable: isSelectable,
+						deletable: edge.deletable ?? true,
+						label: edge.label,
+						labelStyle: edge.labelStyle,
+						labelShowBg: edge.labelShowBg,
+						labelBgStyle: edge.labelBgStyle,
+						labelBgPadding: edge.labelBgPadding,
+						labelBgBorderRadius: edge.labelBgBorderRadius,
+						sourceX,
+						sourceY,
+						targetX,
+						targetY,
+						sourcePosition,
+						targetPosition,
+						data: edge.data,
+						style: edge.style,
+						sourceHandleId: edge.sourceHandle,
+						targetHandleId: edge.targetHandle,
+						markerStart: markerStartUrl,
+						markerEnd: markerEndUrl,
+						pathOptions: "pathOptions" in edge ? edge.pathOptions : void 0,
+						interactionWidth: edge.interactionWidth
+					}), isReconnectable && (0, react_jsx_runtime.jsx)(EdgeUpdateAnchors, {
+						edge,
+						isReconnectable,
+						reconnectRadius,
+						onReconnect,
+						onReconnectStart,
+						onReconnectEnd,
+						sourceX,
+						sourceY,
+						targetX,
+						targetY,
+						sourcePosition,
+						targetPosition,
+						setUpdateHover,
+						setReconnecting
+					})]
+				})
+			});
+		}
+		var EdgeWrapper$1 = (0, react.memo)(EdgeWrapper);
+		const selector$9 = (s) => ({
+			edgesFocusable: s.edgesFocusable,
+			edgesReconnectable: s.edgesReconnectable,
+			elementsSelectable: s.elementsSelectable,
+			connectionMode: s.connectionMode,
+			onError: s.onError
+		});
+		function EdgeRendererComponent({ defaultMarkerColor, onlyRenderVisibleElements, rfId, edgeTypes, noPanClassName, onReconnect, onEdgeContextMenu, onEdgeMouseEnter, onEdgeMouseMove, onEdgeMouseLeave, onEdgeClick, reconnectRadius, onEdgeDoubleClick, onReconnectStart, onReconnectEnd, disableKeyboardA11y }) {
+			const { edgesFocusable, edgesReconnectable, elementsSelectable, onError } = useStore(selector$9, shallow$1);
+			const edgeIds = useVisibleEdgeIds(onlyRenderVisibleElements);
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: "react-flow__edges",
+				children: [(0, react_jsx_runtime.jsx)(MarkerDefinitions$1, {
+					defaultColor: defaultMarkerColor,
+					rfId
+				}), edgeIds.map((id) => {
+					return (0, react_jsx_runtime.jsx)(EdgeWrapper$1, {
+						id,
+						edgesFocusable,
+						edgesReconnectable,
+						elementsSelectable,
+						noPanClassName,
+						onReconnect,
+						onContextMenu: onEdgeContextMenu,
+						onMouseEnter: onEdgeMouseEnter,
+						onMouseMove: onEdgeMouseMove,
+						onMouseLeave: onEdgeMouseLeave,
+						onClick: onEdgeClick,
+						reconnectRadius,
+						onDoubleClick: onEdgeDoubleClick,
+						onReconnectStart,
+						onReconnectEnd,
+						rfId,
+						onError,
+						edgeTypes,
+						disableKeyboardA11y
+					}, id);
+				})]
+			});
+		}
+		EdgeRendererComponent.displayName = "EdgeRenderer";
+		const EdgeRenderer = (0, react.memo)(EdgeRendererComponent);
+		const toTransformString = (transform) => `translate(${transform[0]}px,${transform[1]}px) scale(${transform[2]})`;
+		function Viewport({ children }) {
+			const store = useStoreApi();
+			const viewportRef = (0, react.useRef)(null);
+			const [initialTransform] = (0, react.useState)(() => store.getState().transform);
+			useIsomorphicLayoutEffect(() => {
+				let prevTransform = null;
+				const applyTransform = () => {
+					const transform = store.getState().transform;
+					if (prevTransform && transform[0] === prevTransform[0] && transform[1] === prevTransform[1] && transform[2] === prevTransform[2]) return;
+					prevTransform = transform;
+					if (viewportRef.current) viewportRef.current.style.transform = toTransformString(transform);
+				};
+				applyTransform();
+				return store.subscribe(applyTransform);
+			}, [store]);
+			return (0, react_jsx_runtime.jsx)("div", {
+				ref: viewportRef,
+				className: "react-flow__viewport xyflow__viewport react-flow__container",
+				style: { transform: toTransformString(initialTransform) },
+				children
+			});
+		}
+		/**
+		* Hook for calling onInit handler.
+		*
+		* @internal
+		*/
+		function useOnInitHandler(onInit) {
+			const rfInstance = useReactFlow();
+			const isInitialized = (0, react.useRef)(false);
+			(0, react.useEffect)(() => {
+				if (!isInitialized.current && rfInstance.viewportInitialized && onInit) {
+					setTimeout(() => onInit(rfInstance), 1);
+					isInitialized.current = true;
+				}
+			}, [onInit, rfInstance.viewportInitialized]);
+		}
+		const selector$8 = (state) => state.panZoom?.syncViewport;
+		/**
+		* Hook for syncing the viewport with the panzoom instance.
+		*
+		* @internal
+		* @param viewport
+		*/
+		function useViewportSync(viewport) {
+			const syncViewport = useStore(selector$8);
+			const store = useStoreApi();
+			(0, react.useEffect)(() => {
+				if (viewport) {
+					syncViewport?.(viewport);
+					store.setState({ transform: [
+						viewport.x,
+						viewport.y,
+						viewport.zoom
+					] });
+				}
+			}, [viewport, syncViewport]);
+			return null;
+		}
+		function storeSelector$1(s) {
+			return s.connection.inProgress ? {
+				...s.connection,
+				to: pointToRendererPoint(s.connection.to, s.transform)
+			} : { ...s.connection };
+		}
+		function getSelector(connectionSelector) {
+			if (connectionSelector) {
+				const combinedSelector = (s) => {
+					return connectionSelector(storeSelector$1(s));
+				};
+				return combinedSelector;
+			}
+			return storeSelector$1;
+		}
+		/**
+		* The `useConnection` hook returns the current connection when there is an active
+		* connection interaction. If no connection interaction is active, it returns null
+		* for every property. A typical use case for this hook is to colorize handles
+		* based on a certain condition (e.g. if the connection is valid or not).
+		*
+		* @public
+		* @param connectionSelector - An optional selector function used to extract a slice of the
+		* `ConnectionState` data. Using a selector can prevent component re-renders where data you don't
+		* otherwise care about might change. If a selector is not provided, the entire `ConnectionState`
+		* object is returned unchanged.
+		* @example
+		*
+		* ```tsx
+		*import { useConnection } from '@xyflow/react';
+		*
+		*function App() {
+		*  const connection = useConnection();
+		*
+		*  return (
+		*    <div> {connection ? `Someone is trying to make a connection from ${connection.fromNode} to this one.` : 'There are currently no incoming connections!'}
+		*
+		*   </div>
+		*   );
+		* }
+		* ```
+		*
+		* @returns ConnectionState
+		*/
+		function useConnection(connectionSelector) {
+			return useStore(getSelector(connectionSelector), shallow$1);
+		}
+		const selector$7 = (s) => ({
+			nodesConnectable: s.nodesConnectable,
+			isValid: s.connection.isValid,
+			inProgress: s.connection.inProgress,
+			width: s.width,
+			height: s.height
+		});
+		function ConnectionLineWrapper({ containerStyle, style, type, component }) {
+			const { nodesConnectable, width, height, isValid, inProgress } = useStore(selector$7, shallow$1);
+			if (!!!(width && nodesConnectable && inProgress)) return null;
+			return (0, react_jsx_runtime.jsx)("svg", {
+				style: containerStyle,
+				width,
+				height,
+				className: "react-flow__connectionline react-flow__container",
+				children: (0, react_jsx_runtime.jsx)("g", {
+					className: cc(["react-flow__connection", getConnectionStatus(isValid)]),
+					children: (0, react_jsx_runtime.jsx)(ConnectionLine, {
+						style,
+						type,
+						CustomComponent: component,
+						isValid
+					})
+				})
+			});
+		}
+		const ConnectionLine = ({ style, type = ConnectionLineType.Bezier, CustomComponent, isValid }) => {
+			const { inProgress, from, fromNode, fromHandle, fromPosition, to, toNode, toHandle, toPosition, pointer } = useConnection();
+			if (!inProgress) return;
+			if (CustomComponent) return (0, react_jsx_runtime.jsx)(CustomComponent, {
+				connectionLineType: type,
+				connectionLineStyle: style,
+				fromNode,
+				fromHandle,
+				fromX: from.x,
+				fromY: from.y,
+				toX: to.x,
+				toY: to.y,
+				fromPosition,
+				toPosition,
+				connectionStatus: getConnectionStatus(isValid),
+				toNode,
+				toHandle,
+				pointer
+			});
+			let path = "";
+			const pathParams = {
+				sourceX: from.x,
+				sourceY: from.y,
+				sourcePosition: fromPosition,
+				targetX: to.x,
+				targetY: to.y,
+				targetPosition: toPosition
+			};
+			switch (type) {
+				case ConnectionLineType.Bezier:
+					[path] = getBezierPath(pathParams);
+					break;
+				case ConnectionLineType.SimpleBezier:
+					[path] = getSimpleBezierPath(pathParams);
+					break;
+				case ConnectionLineType.Step:
+					[path] = getSmoothStepPath({
+						...pathParams,
+						borderRadius: 0
+					});
+					break;
+				case ConnectionLineType.SmoothStep:
+					[path] = getSmoothStepPath(pathParams);
+					break;
+				default: [path] = getStraightPath(pathParams);
+			}
+			return (0, react_jsx_runtime.jsx)("path", {
+				d: path,
+				fill: "none",
+				className: "react-flow__connection-path",
+				style
+			});
+		};
+		ConnectionLine.displayName = "ConnectionLine";
+		const emptyTypes = {};
+		function useNodeOrEdgeTypesWarning(nodeOrEdgeTypes = emptyTypes) {
+			const typesRef = (0, react.useRef)(nodeOrEdgeTypes);
+			const store = useStoreApi();
+			(0, react.useEffect)(() => {
+				if (process.env.NODE_ENV === "development") {
+					const usedKeys = /* @__PURE__ */ new Set([...Object.keys(typesRef.current), ...Object.keys(nodeOrEdgeTypes)]);
+					for (const key of usedKeys) if (typesRef.current[key] !== nodeOrEdgeTypes[key]) {
+						store.getState().onError?.("002", errorMessages["error002"]());
+						break;
+					}
+					typesRef.current = nodeOrEdgeTypes;
+				}
+			}, [nodeOrEdgeTypes]);
+		}
+		function useStylesLoadedWarning() {
+			const store = useStoreApi();
+			const checked = (0, react.useRef)(false);
+			(0, react.useEffect)(() => {
+				if (process.env.NODE_ENV === "development") {
+					if (!checked.current) {
+						const pane = document.querySelector(".react-flow__pane");
+						if (pane && !(window.getComputedStyle(pane).zIndex === "1")) store.getState().onError?.("013", errorMessages["error013"]("react"));
+						checked.current = true;
+					}
+				}
+			}, []);
+		}
+		function GraphViewComponent({ nodeTypes, edgeTypes, onInit, onNodeClick, onEdgeClick, onNodeDoubleClick, onEdgeDoubleClick, onNodeMouseEnter, onNodeMouseMove, onNodeMouseLeave, onNodeContextMenu, onSelectionContextMenu, onSelectionStart, onSelectionEnd, connectionLineType, connectionLineStyle, connectionLineComponent, connectionLineContainerStyle, selectionKeyCode, selectionOnDrag, selectionMode, multiSelectionKeyCode, panActivationKeyCode, zoomActivationKeyCode, deleteKeyCode, onlyRenderVisibleElements, elementsSelectable, defaultViewport, translateExtent, minZoom, maxZoom, preventScrolling, defaultMarkerColor, zoomOnScroll, zoomOnPinch, panOnScroll, panOnScrollSpeed, panOnScrollMode, zoomOnDoubleClick, panOnDrag, autoPanOnSelection, onPaneClick, onPaneMouseEnter, onPaneMouseMove, onPaneMouseLeave, onPaneScroll, onPaneContextMenu, paneClickDistance, nodeClickDistance, onEdgeContextMenu, onEdgeMouseEnter, onEdgeMouseMove, onEdgeMouseLeave, reconnectRadius, onReconnect, onReconnectStart, onReconnectEnd, noDragClassName, noWheelClassName, noPanClassName, disableKeyboardA11y, nodeExtent, rfId, viewport, onViewportChange, nodesDraggable }) {
+			useNodeOrEdgeTypesWarning(nodeTypes);
+			useNodeOrEdgeTypesWarning(edgeTypes);
+			useStylesLoadedWarning();
+			useOnInitHandler(onInit);
+			useViewportSync(viewport);
+			return (0, react_jsx_runtime.jsx)(FlowRenderer, {
+				onPaneClick,
+				onPaneMouseEnter,
+				onPaneMouseMove,
+				onPaneMouseLeave,
+				onPaneContextMenu,
+				onPaneScroll,
+				paneClickDistance,
+				deleteKeyCode,
+				selectionKeyCode,
+				selectionOnDrag,
+				selectionMode,
+				onSelectionStart,
+				onSelectionEnd,
+				multiSelectionKeyCode,
+				panActivationKeyCode,
+				zoomActivationKeyCode,
+				elementsSelectable,
+				zoomOnScroll,
+				zoomOnPinch,
+				zoomOnDoubleClick,
+				panOnScroll,
+				panOnScrollSpeed,
+				panOnScrollMode,
+				panOnDrag,
+				autoPanOnSelection,
+				defaultViewport,
+				translateExtent,
+				minZoom,
+				maxZoom,
+				onSelectionContextMenu,
+				preventScrolling,
+				noDragClassName,
+				noWheelClassName,
+				noPanClassName,
+				disableKeyboardA11y,
+				onViewportChange,
+				isControlledViewport: !!viewport,
+				children: (0, react_jsx_runtime.jsxs)(Viewport, { children: [
+					(0, react_jsx_runtime.jsx)(EdgeRenderer, {
+						edgeTypes,
+						onEdgeClick,
+						onEdgeDoubleClick,
+						onReconnect,
+						onReconnectStart,
+						onReconnectEnd,
+						onlyRenderVisibleElements,
+						onEdgeContextMenu,
+						onEdgeMouseEnter,
+						onEdgeMouseMove,
+						onEdgeMouseLeave,
+						reconnectRadius,
+						defaultMarkerColor,
+						noPanClassName,
+						disableKeyboardA11y,
+						rfId
+					}),
+					(0, react_jsx_runtime.jsx)(ConnectionLineWrapper, {
+						style: connectionLineStyle,
+						type: connectionLineType,
+						component: connectionLineComponent,
+						containerStyle: connectionLineContainerStyle
+					}),
+					(0, react_jsx_runtime.jsx)("div", { className: "react-flow__edgelabel-renderer" }),
+					(0, react_jsx_runtime.jsx)(NodeRenderer, {
+						nodeTypes,
+						onNodeClick,
+						onNodeDoubleClick,
+						onNodeMouseEnter,
+						onNodeMouseMove,
+						onNodeMouseLeave,
+						onNodeContextMenu,
+						nodeClickDistance,
+						onlyRenderVisibleElements,
+						noPanClassName,
+						noDragClassName,
+						disableKeyboardA11y,
+						nodeExtent,
+						rfId,
+						nodesDraggable
+					}),
+					(0, react_jsx_runtime.jsx)("div", { className: "react-flow__viewport-portal" })
+				] })
+			});
+		}
+		GraphViewComponent.displayName = "GraphView";
+		const GraphView = (0, react.memo)(GraphViewComponent);
+		const devWarn = createDevWarn("React Flow", "https://reactflow.dev/");
+		const getInitialState = ({ nodes, edges, defaultNodes, defaultEdges, width, height, fitView, fitViewOptions, minZoom = .5, maxZoom = 2, nodeOrigin, nodeExtent, zIndexMode = "basic" } = {}) => {
+			const nodeLookup = /* @__PURE__ */ new Map();
+			const parentLookup = /* @__PURE__ */ new Map();
+			const connectionLookup = /* @__PURE__ */ new Map();
+			const edgeLookup = /* @__PURE__ */ new Map();
+			const storeEdges = defaultEdges ?? edges ?? [];
+			const storeNodes = defaultNodes ?? nodes ?? [];
+			const storeNodeOrigin = nodeOrigin ?? [0, 0];
+			const storeNodeExtent = nodeExtent ?? infiniteExtent;
+			updateConnectionLookup(connectionLookup, edgeLookup, storeEdges);
+			const { nodesInitialized } = adoptUserNodes(storeNodes, nodeLookup, parentLookup, {
+				nodeOrigin: storeNodeOrigin,
+				nodeExtent: storeNodeExtent,
+				zIndexMode
+			});
+			let transform = [
+				0,
+				0,
+				1
+			];
+			if (fitView && width && height) {
+				const bounds = getInternalNodesBounds(nodeLookup, { filter: (node) => !!((node.width || node.initialWidth) && (node.height || node.initialHeight)) });
+				const { x, y, zoom } = getViewportForBounds(bounds, width, height, minZoom, maxZoom, fitViewOptions?.padding ?? .1);
+				transform = [
+					x,
+					y,
+					zoom
+				];
+			}
+			return {
+				rfId: "1",
+				width: width ?? 0,
+				height: height ?? 0,
+				transform,
+				nodes: storeNodes,
+				nodesInitialized,
+				nodeLookup,
+				parentLookup,
+				edges: storeEdges,
+				edgeLookup,
+				connectionLookup,
+				onNodesChange: null,
+				onEdgesChange: null,
+				hasDefaultNodes: defaultNodes !== void 0,
+				hasDefaultEdges: defaultEdges !== void 0,
+				panZoom: null,
+				minZoom,
+				maxZoom,
+				translateExtent: infiniteExtent,
+				nodeExtent: storeNodeExtent,
+				nodesSelectionActive: false,
+				userSelectionActive: false,
+				userSelectionRect: null,
+				connectionMode: ConnectionMode.Strict,
+				domNode: null,
+				paneDragging: false,
+				noPanClassName: "nopan",
+				nodeOrigin: storeNodeOrigin,
+				nodeDragThreshold: 1,
+				connectionDragThreshold: 1,
+				snapGrid: [15, 15],
+				snapToGrid: false,
+				nodesDraggable: true,
+				nodesConnectable: true,
+				nodesFocusable: true,
+				edgesFocusable: true,
+				edgesReconnectable: true,
+				elementsSelectable: true,
+				elevateNodesOnSelect: true,
+				elevateEdgesOnSelect: true,
+				selectNodesOnDrag: true,
+				multiSelectionActive: false,
+				fitViewQueued: fitView ?? false,
+				fitViewOptions,
+				fitViewResolver: null,
+				connection: { ...initialConnection },
+				connectionClickStartHandle: null,
+				connectOnClick: true,
+				ariaLiveMessage: "",
+				autoPanOnConnect: true,
+				autoPanOnNodeDrag: true,
+				autoPanOnNodeFocus: true,
+				autoPanSpeed: 15,
+				connectionRadius: 20,
+				onError: devWarn,
+				isValidConnection: void 0,
+				onSelectionChangeHandlers: [],
+				lib: "react",
+				debug: false,
+				ariaLabelConfig: defaultAriaLabelConfig,
+				zIndexMode,
+				onNodesChangeMiddlewareMap: /* @__PURE__ */ new Map(),
+				onEdgesChangeMiddlewareMap: /* @__PURE__ */ new Map()
+			};
+		};
+		const createStore = ({ nodes, edges, defaultNodes, defaultEdges, width, height, fitView, fitViewOptions, minZoom, maxZoom, nodeOrigin, nodeExtent, zIndexMode }) => createWithEqualityFn((set, get) => {
+			async function resolveFitView() {
+				const { nodeLookup, panZoom, fitViewOptions, fitViewResolver, width, height, minZoom, maxZoom } = get();
+				if (!panZoom) return;
+				await fitViewport({
+					nodes: nodeLookup,
+					width,
+					height,
+					panZoom,
+					minZoom,
+					maxZoom
+				}, fitViewOptions);
+				fitViewResolver?.resolve(true);
+				/**
+				* wait for the fitViewport to resolve before deleting the resolver,
+				* we want to reuse the old resolver if the user calls fitView again in the mean time
+				*/
+				set({ fitViewResolver: null });
+			}
+			return {
+				...getInitialState({
+					nodes,
+					edges,
+					width,
+					height,
+					fitView,
+					fitViewOptions,
+					minZoom,
+					maxZoom,
+					nodeOrigin,
+					nodeExtent,
+					defaultNodes,
+					defaultEdges,
+					zIndexMode
+				}),
+				setNodes: (nodes) => {
+					const { nodeLookup, parentLookup, nodeOrigin, nodeExtent, elevateNodesOnSelect, fitViewQueued, zIndexMode, nodesSelectionActive } = get();
+					const { nodesInitialized, hasSelectedNodes } = adoptUserNodes(nodes, nodeLookup, parentLookup, {
+						nodeOrigin,
+						nodeExtent,
+						elevateNodesOnSelect,
+						checkEquality: true,
+						zIndexMode
+					});
+					const nextNodesSelectionActive = nodesSelectionActive && hasSelectedNodes;
+					if (fitViewQueued && nodesInitialized) {
+						resolveFitView();
+						set({
+							nodes,
+							nodesInitialized,
+							fitViewQueued: false,
+							fitViewOptions: void 0,
+							nodesSelectionActive: nextNodesSelectionActive
+						});
+					} else set({
+						nodes,
+						nodesInitialized,
+						nodesSelectionActive: nextNodesSelectionActive
+					});
+				},
+				setEdges: (edges) => {
+					const { connectionLookup, edgeLookup } = get();
+					updateConnectionLookup(connectionLookup, edgeLookup, edges);
+					set({ edges });
+				},
+				setDefaultNodesAndEdges: (nodes, edges) => {
+					if (nodes) {
+						const { setNodes } = get();
+						setNodes(nodes);
+						set({ hasDefaultNodes: true });
+					}
+					if (edges) {
+						const { setEdges } = get();
+						setEdges(edges);
+						set({ hasDefaultEdges: true });
+					}
+				},
+				updateNodeInternals: (updates) => {
+					const { triggerNodeChanges, nodeLookup, parentLookup, domNode, nodeOrigin, nodeExtent, debug, fitViewQueued, zIndexMode } = get();
+					const { changes, updatedInternals } = updateNodeInternals(updates, nodeLookup, parentLookup, domNode, nodeOrigin, nodeExtent, zIndexMode);
+					if (!updatedInternals) return;
+					updateAbsolutePositions(nodeLookup, parentLookup, {
+						nodeOrigin,
+						nodeExtent,
+						zIndexMode
+					});
+					if (fitViewQueued) {
+						resolveFitView();
+						set({
+							fitViewQueued: false,
+							fitViewOptions: void 0
+						});
+					} else set({});
+					if (changes?.length > 0) {
+						if (debug) console.log("React Flow: trigger node changes", changes);
+						triggerNodeChanges?.(changes);
+					}
+				},
+				updateNodePositions: (nodeDragItems, dragging = false) => {
+					const parentExpandChildren = [];
+					let changes = [];
+					const { nodeLookup, triggerNodeChanges, connection, updateConnection, onNodesChangeMiddlewareMap } = get();
+					for (const [id, dragItem] of nodeDragItems) {
+						const node = nodeLookup.get(id);
+						const expandParent = !!(node?.expandParent && node?.parentId && dragItem?.position);
+						const change = {
+							id,
+							type: "position",
+							position: expandParent ? {
+								x: Math.max(0, dragItem.position.x),
+								y: Math.max(0, dragItem.position.y)
+							} : dragItem.position,
+							dragging
+						};
+						if (node && connection.inProgress && connection.fromNode.id === node.id) {
+							const updatedFrom = getHandlePosition(node, connection.fromHandle, Position.Left, true);
+							updateConnection({
+								...connection,
+								from: updatedFrom
+							});
+						}
+						if (expandParent && node.parentId) parentExpandChildren.push({
+							id,
+							parentId: node.parentId,
+							rect: {
+								...dragItem.internals.positionAbsolute,
+								width: dragItem.measured.width ?? 0,
+								height: dragItem.measured.height ?? 0
+							}
+						});
+						changes.push(change);
+					}
+					if (parentExpandChildren.length > 0) {
+						const { parentLookup, nodeOrigin } = get();
+						const parentExpandChanges = handleExpandParent(parentExpandChildren, nodeLookup, parentLookup, nodeOrigin);
+						changes.push(...parentExpandChanges);
+					}
+					for (const middleware of onNodesChangeMiddlewareMap.values()) changes = middleware(changes);
+					triggerNodeChanges(changes);
+				},
+				triggerNodeChanges: (changes) => {
+					const { onNodesChange, setNodes, nodes, hasDefaultNodes, debug } = get();
+					if (changes?.length) {
+						if (hasDefaultNodes) setNodes(applyNodeChanges(changes, nodes));
+						if (debug) console.log("React Flow: trigger node changes", changes);
+						onNodesChange?.(changes);
+					}
+				},
+				triggerEdgeChanges: (changes) => {
+					const { onEdgesChange, setEdges, edges, hasDefaultEdges, debug } = get();
+					if (changes?.length) {
+						if (hasDefaultEdges) setEdges(applyEdgeChanges(changes, edges));
+						if (debug) console.log("React Flow: trigger edge changes", changes);
+						onEdgesChange?.(changes);
+					}
+				},
+				addSelectedNodes: (selectedNodeIds) => {
+					const { multiSelectionActive, edgeLookup, nodeLookup, triggerNodeChanges, triggerEdgeChanges } = get();
+					if (multiSelectionActive) {
+						triggerNodeChanges(selectedNodeIds.map((nodeId) => createSelectionChange(nodeId, true)));
+						return;
+					}
+					triggerNodeChanges(getSelectionChanges(nodeLookup, /* @__PURE__ */ new Set([...selectedNodeIds]), true));
+					triggerEdgeChanges(getSelectionChanges(edgeLookup));
+				},
+				addSelectedEdges: (selectedEdgeIds) => {
+					const { multiSelectionActive, edgeLookup, nodeLookup, triggerNodeChanges, triggerEdgeChanges } = get();
+					if (multiSelectionActive) {
+						triggerEdgeChanges(selectedEdgeIds.map((edgeId) => createSelectionChange(edgeId, true)));
+						return;
+					}
+					triggerEdgeChanges(getSelectionChanges(edgeLookup, /* @__PURE__ */ new Set([...selectedEdgeIds])));
+					triggerNodeChanges(getSelectionChanges(nodeLookup, /* @__PURE__ */ new Set(), true));
+				},
+				unselectNodesAndEdges: ({ nodes, edges } = {}) => {
+					const { edges: storeEdges, nodes: storeNodes, nodeLookup, triggerNodeChanges, triggerEdgeChanges } = get();
+					const nodesToUnselect = nodes ? nodes : storeNodes;
+					const edgesToUnselect = edges ? edges : storeEdges;
+					const nodeChanges = [];
+					for (const node of nodesToUnselect) {
+						if (!node.selected) continue;
+						const internalNode = nodeLookup.get(node.id);
+						if (internalNode) internalNode.selected = false;
+						nodeChanges.push(createSelectionChange(node.id, false));
+					}
+					const edgeChanges = [];
+					for (const edge of edgesToUnselect) {
+						if (!edge.selected) continue;
+						edgeChanges.push(createSelectionChange(edge.id, false));
+					}
+					triggerNodeChanges(nodeChanges);
+					triggerEdgeChanges(edgeChanges);
+				},
+				setMinZoom: (minZoom) => {
+					const { panZoom, maxZoom } = get();
+					panZoom?.setScaleExtent([minZoom, maxZoom]);
+					set({ minZoom });
+				},
+				setMaxZoom: (maxZoom) => {
+					const { panZoom, minZoom } = get();
+					panZoom?.setScaleExtent([minZoom, maxZoom]);
+					set({ maxZoom });
+				},
+				setTranslateExtent: (translateExtent) => {
+					get().panZoom?.setTranslateExtent(translateExtent);
+					set({ translateExtent });
+				},
+				resetSelectedElements: () => {
+					const { edges, nodes, triggerNodeChanges, triggerEdgeChanges, elementsSelectable } = get();
+					if (!elementsSelectable) return;
+					const nodeChanges = nodes.reduce((res, node) => node.selected ? [...res, createSelectionChange(node.id, false)] : res, []);
+					const edgeChanges = edges.reduce((res, edge) => edge.selected ? [...res, createSelectionChange(edge.id, false)] : res, []);
+					triggerNodeChanges(nodeChanges);
+					triggerEdgeChanges(edgeChanges);
+				},
+				setNodeExtent: (nextNodeExtent) => {
+					const { nodes, nodeLookup, parentLookup, nodeOrigin, elevateNodesOnSelect, nodeExtent, zIndexMode } = get();
+					if (nextNodeExtent[0][0] === nodeExtent[0][0] && nextNodeExtent[0][1] === nodeExtent[0][1] && nextNodeExtent[1][0] === nodeExtent[1][0] && nextNodeExtent[1][1] === nodeExtent[1][1]) return;
+					adoptUserNodes(nodes, nodeLookup, parentLookup, {
+						nodeOrigin,
+						nodeExtent: nextNodeExtent,
+						elevateNodesOnSelect,
+						checkEquality: false,
+						zIndexMode
+					});
+					set({ nodeExtent: nextNodeExtent });
+				},
+				panBy: (delta) => {
+					const { transform, width, height, panZoom, translateExtent } = get();
+					return panBy({
+						delta,
+						panZoom,
+						transform,
+						translateExtent,
+						width,
+						height
+					});
+				},
+				setCenter: async (x, y, options) => {
+					const { width, height, maxZoom, panZoom } = get();
+					if (!panZoom) return false;
+					const nextZoom = typeof options?.zoom !== "undefined" ? options.zoom : maxZoom;
+					await panZoom.setViewport({
+						x: width / 2 - x * nextZoom,
+						y: height / 2 - y * nextZoom,
+						zoom: nextZoom
+					}, {
+						duration: options?.duration,
+						ease: options?.ease,
+						interpolate: options?.interpolate
+					});
+					return true;
+				},
+				cancelConnection: () => {
+					set({ connection: { ...initialConnection } });
+				},
+				updateConnection: (connection) => {
+					set({ connection });
+				},
+				reset: () => set({ ...getInitialState() })
+			};
+		}, Object.is);
+		/**
+		* The `<ReactFlowProvider />` component is a [context provider](https://react.dev/learn/passing-data-deeply-with-context#)
+		* that makes it possible to access a flow's internal state outside of the
+		* [`<ReactFlow />`](/api-reference/react-flow) component. Many of the hooks we
+		* provide rely on this component to work.
+		* @public
+		*
+		* @example
+		* ```tsx
+		*import { ReactFlow, ReactFlowProvider, useNodes } from '@xyflow/react'
+		*
+		*export default function Flow() {
+		*  return (
+		*    <ReactFlowProvider>
+		*      <ReactFlow nodes={...} edges={...} />
+		*      <Sidebar />
+		*    </ReactFlowProvider>
+		*  );
+		*}
+		*
+		*function Sidebar() {
+		*  // This hook will only work if the component it's used in is a child of a
+		*  // <ReactFlowProvider />.
+		*  const nodes = useNodes()
+		*
+		*  return <aside>do something with nodes</aside>;
+		*}
+		*```
+		*
+		* @remarks If you're using a router and want your flow's state to persist across routes,
+		* it's vital that you place the `<ReactFlowProvider />` component _outside_ of
+		* your router. If you have multiple flows on the same page you will need to use a separate
+		* `<ReactFlowProvider />` for each flow.
+		*/
+		function ReactFlowProvider({ initialNodes: nodes, initialEdges: edges, defaultNodes, defaultEdges, initialWidth: width, initialHeight: height, initialMinZoom: minZoom, initialMaxZoom: maxZoom, initialFitViewOptions: fitViewOptions, fitView, nodeOrigin, nodeExtent, zIndexMode, children }) {
+			const [store] = (0, react.useState)(() => createStore({
+				nodes,
+				edges,
+				defaultNodes,
+				defaultEdges,
+				width,
+				height,
+				fitView,
+				minZoom,
+				maxZoom,
+				fitViewOptions,
+				nodeOrigin,
+				nodeExtent,
+				zIndexMode
+			}));
+			return (0, react_jsx_runtime.jsx)(Provider$1, {
+				value: store,
+				children: (0, react_jsx_runtime.jsx)(BatchProvider, { children: (0, react_jsx_runtime.jsx)(HandleConfigProvider, { children }) })
+			});
+		}
+		function Wrapper({ children, nodes, edges, defaultNodes, defaultEdges, width, height, fitView, fitViewOptions, minZoom, maxZoom, nodeOrigin, nodeExtent, zIndexMode }) {
+			if ((0, react.useContext)(StoreContext)) return (0, react_jsx_runtime.jsx)(react_jsx_runtime.Fragment, { children });
+			return (0, react_jsx_runtime.jsx)(ReactFlowProvider, {
+				initialNodes: nodes,
+				initialEdges: edges,
+				defaultNodes,
+				defaultEdges,
+				initialWidth: width,
+				initialHeight: height,
+				fitView,
+				initialFitViewOptions: fitViewOptions,
+				initialMinZoom: minZoom,
+				initialMaxZoom: maxZoom,
+				nodeOrigin,
+				nodeExtent,
+				zIndexMode,
+				children
+			});
+		}
+		const wrapperStyle = {
+			width: "100%",
+			height: "100%",
+			overflow: "hidden",
+			position: "relative",
+			zIndex: 0
+		};
+		function ReactFlow({ nodes, edges, defaultNodes, defaultEdges, className, nodeTypes, edgeTypes, onNodeClick, onEdgeClick, onInit, onMove, onMoveStart, onMoveEnd, onConnect, onConnectStart, onConnectEnd, onClickConnectStart, onClickConnectEnd, onNodeMouseEnter, onNodeMouseMove, onNodeMouseLeave, onNodeContextMenu, onNodeDoubleClick, onNodeDragStart, onNodeDrag, onNodeDragStop, onNodesDelete, onEdgesDelete, onDelete, onSelectionChange, onSelectionDragStart, onSelectionDrag, onSelectionDragStop, onSelectionContextMenu, onSelectionStart, onSelectionEnd, onBeforeDelete, connectionMode, connectionLineType = ConnectionLineType.Bezier, connectionLineStyle, connectionLineComponent, connectionLineContainerStyle, deleteKeyCode = "Backspace", selectionKeyCode = "Shift", selectionOnDrag = false, selectionMode = SelectionMode.Full, panActivationKeyCode = "Space", multiSelectionKeyCode = isMacOs() ? "Meta" : "Control", zoomActivationKeyCode = isMacOs() ? "Meta" : "Control", snapToGrid, snapGrid, onlyRenderVisibleElements = false, selectNodesOnDrag, nodesDraggable, autoPanOnNodeFocus, nodesConnectable, nodesFocusable, nodeOrigin = defaultNodeOrigin, edgesFocusable, edgesReconnectable, elementsSelectable = true, defaultViewport: defaultViewport$1 = defaultViewport, minZoom = .5, maxZoom = 2, translateExtent = infiniteExtent, preventScrolling = true, nodeExtent, defaultMarkerColor = "#b1b1b7", zoomOnScroll = true, zoomOnPinch = true, panOnScroll = false, panOnScrollSpeed = .5, panOnScrollMode = PanOnScrollMode.Free, zoomOnDoubleClick = true, panOnDrag = true, onPaneClick, onPaneMouseEnter, onPaneMouseMove, onPaneMouseLeave, onPaneScroll, onPaneContextMenu, paneClickDistance = 1, nodeClickDistance = 0, children, onReconnect, onReconnectStart, onReconnectEnd, onEdgeContextMenu, onEdgeDoubleClick, onEdgeMouseEnter, onEdgeMouseMove, onEdgeMouseLeave, reconnectRadius = 10, onNodesChange, onEdgesChange, noDragClassName = "nodrag", noWheelClassName = "nowheel", noPanClassName = "nopan", fitView, fitViewOptions, connectOnClick, attributionPosition, proOptions, defaultEdgeOptions, elevateNodesOnSelect = true, elevateEdgesOnSelect = false, disableKeyboardA11y = false, autoPanOnConnect, autoPanOnNodeDrag, autoPanOnSelection = true, autoPanSpeed, connectionRadius, isValidConnection, onError, style, id, nodeDragThreshold, connectionDragThreshold, viewport, onViewportChange, width, height, colorMode = "light", debug, onScroll, ariaLabelConfig, zIndexMode = "basic", ...rest }, ref) {
+			const rfId = id || "1";
+			const colorModeClassName = useColorModeClass(colorMode);
+			const wrapperOnScroll = (0, react.useCallback)((e) => {
+				e.currentTarget.scrollTo({
+					top: 0,
+					left: 0,
+					behavior: "instant"
+				});
+				onScroll?.(e);
+			}, [onScroll]);
+			return (0, react_jsx_runtime.jsx)("div", {
+				"data-testid": "rf__wrapper",
+				...rest,
+				onScroll: wrapperOnScroll,
+				style: {
+					...style,
+					...wrapperStyle
+				},
+				ref,
+				className: cc([
+					"react-flow",
+					className,
+					colorModeClassName
+				]),
+				id,
+				role: "application",
+				children: (0, react_jsx_runtime.jsxs)(Wrapper, {
+					nodes,
+					edges,
+					width,
+					height,
+					fitView,
+					fitViewOptions,
+					minZoom,
+					maxZoom,
+					nodeOrigin,
+					nodeExtent,
+					zIndexMode,
+					children: [
+						(0, react_jsx_runtime.jsx)(StoreUpdater, {
+							nodes,
+							edges,
+							defaultNodes,
+							defaultEdges,
+							onConnect,
+							onConnectStart,
+							onConnectEnd,
+							onClickConnectStart,
+							onClickConnectEnd,
+							nodesDraggable,
+							autoPanOnNodeFocus,
+							nodesConnectable,
+							nodesFocusable,
+							edgesFocusable,
+							edgesReconnectable,
+							elementsSelectable,
+							elevateNodesOnSelect,
+							elevateEdgesOnSelect,
+							minZoom,
+							maxZoom,
+							nodeExtent,
+							onNodesChange,
+							onEdgesChange,
+							snapToGrid,
+							snapGrid,
+							connectionMode,
+							translateExtent,
+							connectOnClick,
+							defaultEdgeOptions,
+							fitView,
+							fitViewOptions,
+							onNodesDelete,
+							onEdgesDelete,
+							onDelete,
+							onNodeDragStart,
+							onNodeDrag,
+							onNodeDragStop,
+							onSelectionDrag,
+							onSelectionDragStart,
+							onSelectionDragStop,
+							onMove,
+							onMoveStart,
+							onMoveEnd,
+							noPanClassName,
+							nodeOrigin,
+							rfId,
+							autoPanOnConnect,
+							autoPanOnNodeDrag,
+							autoPanSpeed,
+							onError,
+							connectionRadius,
+							isValidConnection,
+							selectNodesOnDrag,
+							nodeDragThreshold,
+							connectionDragThreshold,
+							onBeforeDelete,
+							debug,
+							ariaLabelConfig,
+							zIndexMode
+						}),
+						(0, react_jsx_runtime.jsx)(GraphView, {
+							onInit,
+							onNodeClick,
+							onEdgeClick,
+							onNodeMouseEnter,
+							onNodeMouseMove,
+							onNodeMouseLeave,
+							onNodeContextMenu,
+							onNodeDoubleClick,
+							nodeTypes,
+							edgeTypes,
+							connectionLineType,
+							connectionLineStyle,
+							connectionLineComponent,
+							connectionLineContainerStyle,
+							selectionKeyCode,
+							selectionOnDrag,
+							selectionMode,
+							deleteKeyCode,
+							multiSelectionKeyCode,
+							panActivationKeyCode,
+							zoomActivationKeyCode,
+							onlyRenderVisibleElements,
+							defaultViewport: defaultViewport$1,
+							translateExtent,
+							minZoom,
+							maxZoom,
+							preventScrolling,
+							zoomOnScroll,
+							zoomOnPinch,
+							zoomOnDoubleClick,
+							panOnScroll,
+							panOnScrollSpeed,
+							panOnScrollMode,
+							panOnDrag,
+							autoPanOnSelection,
+							onPaneClick,
+							onPaneMouseEnter,
+							onPaneMouseMove,
+							onPaneMouseLeave,
+							onPaneScroll,
+							onPaneContextMenu,
+							paneClickDistance,
+							nodeClickDistance,
+							onSelectionContextMenu,
+							onSelectionStart,
+							onSelectionEnd,
+							onReconnect,
+							onReconnectStart,
+							onReconnectEnd,
+							onEdgeContextMenu,
+							onEdgeDoubleClick,
+							onEdgeMouseEnter,
+							onEdgeMouseMove,
+							onEdgeMouseLeave,
+							reconnectRadius,
+							defaultMarkerColor,
+							noDragClassName,
+							noWheelClassName,
+							noPanClassName,
+							rfId,
+							disableKeyboardA11y,
+							nodeExtent,
+							viewport,
+							onViewportChange,
+							nodesDraggable
+						}),
+						(0, react_jsx_runtime.jsx)(SelectionListener, { onSelectionChange }),
+						children,
+						(0, react_jsx_runtime.jsx)(Attribution, {
+							proOptions,
+							position: attributionPosition
+						}),
+						(0, react_jsx_runtime.jsx)(A11yDescriptions, {
+							rfId,
+							disableKeyboardA11y
+						})
+					]
+				})
+			});
+		}
+		/**
+		* The `<ReactFlow />` component is the heart of your React Flow application.
+		* It renders your nodes and edges and handles user interaction
+		*
+		* @public
+		*
+		* @example
+		* ```tsx
+		*import { ReactFlow } from '@xyflow/react'
+		*
+		*export default function Flow() {
+		*  return (<ReactFlow
+		*    nodes={...}
+		*    edges={...}
+		*    onNodesChange={...}
+		*    ...
+		*  />);
+		*}
+		*```
+		*/
+		var index = fixedForwardRef(ReactFlow);
+		/**
+		* This hook makes it easy to prototype a controlled flow where you manage the
+		* state of nodes and edges outside the `ReactFlowInstance`. You can think of it
+		* like React's `useState` hook with an additional helper callback.
+		*
+		* @public
+		* @returns
+		* - `nodes`: The current array of nodes. You might pass this directly to the `nodes` prop of your
+		* `<ReactFlow />` component, or you may want to manipulate it first to perform some layouting,
+		* for example.
+		* - `setNodes`: A function that you can use to update the nodes. You can pass it a new array of
+		* nodes or a callback that receives the current array of nodes and returns a new array of nodes.
+		* This is the same as the second element of the tuple returned by React's `useState` hook.
+		* - `onNodesChange`: A handy callback that can take an array of `NodeChanges` and update the nodes
+		* state accordingly. You'll typically pass this directly to the `onNodesChange` prop of your
+		* `<ReactFlow />` component.
+		* @example
+		*
+		*```tsx
+		*import { ReactFlow, useNodesState, useEdgesState } from '@xyflow/react';
+		*
+		*const initialNodes = [];
+		*const initialEdges = [];
+		*
+		*export default function () {
+		*  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+		*  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+		*
+		*  return (
+		*    <ReactFlow
+		*      nodes={nodes}
+		*      edges={edges}
+		*      onNodesChange={onNodesChange}
+		*      onEdgesChange={onEdgesChange}
+		*    />
+		*  );
+		*}
+		*```
+		*
+		* @remarks This hook was created to make prototyping easier and our documentation
+		* examples clearer. Although it is OK to use this hook in production, in
+		* practice you may want to use a more sophisticated state management solution
+		* like Zustand {@link https://reactflow.dev/docs/guides/state-management/} instead.
+		*
+		*/
+		function useNodesState(initialNodes) {
+			const [nodes, setNodes] = (0, react.useState)(initialNodes);
+			return [
+				nodes,
+				setNodes,
+				(0, react.useCallback)((changes) => setNodes((nds) => applyNodeChanges(changes, nds)), [])
+			];
+		}
+		/**
+		* This hook makes it easy to prototype a controlled flow where you manage the
+		* state of nodes and edges outside the `ReactFlowInstance`. You can think of it
+		* like React's `useState` hook with an additional helper callback.
+		*
+		* @public
+		* @returns
+		* - `edges`: The current array of edges. You might pass this directly to the `edges` prop of your
+		* `<ReactFlow />` component, or you may want to manipulate it first to perform some layouting,
+		* for example.
+		*
+		* - `setEdges`: A function that you can use to update the edges. You can pass it a new array of
+		* edges or a callback that receives the current array of edges and returns a new array of edges.
+		* This is the same as the second element of the tuple returned by React's `useState` hook.
+		*
+		* - `onEdgesChange`: A handy callback that can take an array of `EdgeChanges` and update the edges
+		* state accordingly. You'll typically pass this directly to the `onEdgesChange` prop of your
+		* `<ReactFlow />` component.
+		* @example
+		*
+		*```tsx
+		*import { ReactFlow, useNodesState, useEdgesState } from '@xyflow/react';
+		*
+		*const initialNodes = [];
+		*const initialEdges = [];
+		*
+		*export default function () {
+		*  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+		*  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+		*
+		*  return (
+		*    <ReactFlow
+		*      nodes={nodes}
+		*      edges={edges}
+		*      onNodesChange={onNodesChange}
+		*      onEdgesChange={onEdgesChange}
+		*    />
+		*  );
+		*}
+		*```
+		*
+		* @remarks This hook was created to make prototyping easier and our documentation
+		* examples clearer. Although it is OK to use this hook in production, in
+		* practice you may want to use a more sophisticated state management solution
+		* like Zustand {@link https://reactflow.dev/docs/guides/state-management/} instead.
+		*
+		*/
+		function useEdgesState(initialEdges) {
+			const [edges, setEdges] = (0, react.useState)(initialEdges);
+			return [
+				edges,
+				setEdges,
+				(0, react.useCallback)((changes) => setEdges((eds) => applyEdgeChanges(changes, eds)), [])
+			];
+		}
+		errorMessages["error014"]();
+		function LinePattern({ dimensions, lineWidth, variant, className }) {
+			return (0, react_jsx_runtime.jsx)("path", {
+				strokeWidth: lineWidth,
+				d: `M${dimensions[0] / 2} 0 V${dimensions[1]} M0 ${dimensions[1] / 2} H${dimensions[0]}`,
+				className: cc([
+					"react-flow__background-pattern",
+					variant,
+					className
+				])
+			});
+		}
+		function DotPattern({ radius, className }) {
+			return (0, react_jsx_runtime.jsx)("circle", {
+				cx: radius,
+				cy: radius,
+				r: radius,
+				className: cc([
+					"react-flow__background-pattern",
+					"dots",
+					className
+				])
+			});
+		}
+		/**
+		* The three variants are exported as an enum for convenience. You can either import
+		* the enum and use it like `BackgroundVariant.Lines` or you can use the raw string
+		* value directly.
+		* @public
+		*/
+		var BackgroundVariant;
+		(function(BackgroundVariant) {
+			BackgroundVariant["Lines"] = "lines";
+			BackgroundVariant["Dots"] = "dots";
+			BackgroundVariant["Cross"] = "cross";
+		})(BackgroundVariant || (BackgroundVariant = {}));
+		const defaultSize = {
+			[BackgroundVariant.Dots]: 1,
+			[BackgroundVariant.Lines]: 1,
+			[BackgroundVariant.Cross]: 6
+		};
+		const selector$3 = (s) => ({
+			transform: s.transform,
+			patternId: `pattern-${s.rfId}`
+		});
+		function BackgroundComponent({ id, variant = BackgroundVariant.Dots, gap = 20, size, lineWidth = 1, offset = 0, color, bgColor, style, className, patternClassName }) {
+			const ref = (0, react.useRef)(null);
+			const { transform, patternId } = useStore(selector$3, shallow$1);
+			const patternSize = size || defaultSize[variant];
+			const isDots = variant === BackgroundVariant.Dots;
+			const isCross = variant === BackgroundVariant.Cross;
+			const gapXY = Array.isArray(gap) ? gap : [gap, gap];
+			const scaledGap = [gapXY[0] * transform[2] || 1, gapXY[1] * transform[2] || 1];
+			const scaledSize = patternSize * transform[2];
+			const offsetXY = Array.isArray(offset) ? offset : [offset, offset];
+			const patternDimensions = isCross ? [scaledSize, scaledSize] : scaledGap;
+			const scaledOffset = [offsetXY[0] * transform[2] + patternDimensions[0] / 2, offsetXY[1] * transform[2] + patternDimensions[1] / 2];
+			const _patternId = `${patternId}${id ? id : ""}`;
+			return (0, react_jsx_runtime.jsxs)("svg", {
+				className: cc(["react-flow__background", className]),
+				style: {
+					...style,
+					...containerStyle,
+					"--xy-background-color-props": bgColor,
+					"--xy-background-pattern-color-props": color
+				},
+				ref,
+				"data-testid": "rf__background",
+				children: [(0, react_jsx_runtime.jsx)("pattern", {
+					id: _patternId,
+					x: transform[0] % scaledGap[0],
+					y: transform[1] % scaledGap[1],
+					width: scaledGap[0],
+					height: scaledGap[1],
+					patternUnits: "userSpaceOnUse",
+					patternTransform: `translate(-${scaledOffset[0]},-${scaledOffset[1]})`,
+					children: isDots ? (0, react_jsx_runtime.jsx)(DotPattern, {
+						radius: scaledSize / 2,
+						className: patternClassName
+					}) : (0, react_jsx_runtime.jsx)(LinePattern, {
+						dimensions: patternDimensions,
+						lineWidth,
+						variant,
+						className: patternClassName
+					})
+				}), (0, react_jsx_runtime.jsx)("rect", {
+					x: "0",
+					y: "0",
+					width: "100%",
+					height: "100%",
+					fill: `url(#${_patternId})`
+				})]
+			});
+		}
+		BackgroundComponent.displayName = "Background";
+		/**
+		* The `<Background />` component makes it convenient to render different types of backgrounds common in node-based UIs. It comes with three variants: lines, dots and cross.
+		*
+		* @example
+		*
+		* A simple example of how to use the Background component.
+		*
+		* ```tsx
+		* import { useState } from 'react';
+		* import { ReactFlow, Background, BackgroundVariant } from '@xyflow/react';
+		*
+		* export default function Flow() {
+		*   return (
+		*     <ReactFlow defaultNodes={[...]} defaultEdges={[...]}>
+		*       <Background color="#ccc" variant={BackgroundVariant.Dots} />
+		*     </ReactFlow>
+		*   );
+		* }
+		* ```
+		*
+		* @example
+		*
+		* In this example you can see how to combine multiple backgrounds
+		*
+		* ```tsx
+		* import { ReactFlow, Background, BackgroundVariant } from '@xyflow/react';
+		* import '@xyflow/react/dist/style.css';
+		*
+		* export default function Flow() {
+		*   return (
+		*     <ReactFlow defaultNodes={[...]} defaultEdges={[...]}>
+		*       <Background
+		*         id="1"
+		*         gap={10}
+		*         color="#f1f1f1"
+		*         variant={BackgroundVariant.Lines}
+		*       />
+		*       <Background
+		*         id="2"
+		*         gap={100}
+		*         color="#ccc"
+		*         variant={BackgroundVariant.Lines}
+		*       />
+		*     </ReactFlow>
+		*   );
+		* }
+		* ```
+		*
+		* @remarks
+		*
+		* When combining multiple <Background /> components it’s important to give each of them a unique id prop!
+		*
+		*/
+		const Background = (0, react.memo)(BackgroundComponent);
+		function PlusIcon() {
+			return (0, react_jsx_runtime.jsx)("svg", {
+				xmlns: "http://www.w3.org/2000/svg",
+				viewBox: "0 0 32 32",
+				children: (0, react_jsx_runtime.jsx)("path", { d: "M32 18.133H18.133V32h-4.266V18.133H0v-4.266h13.867V0h4.266v13.867H32z" })
+			});
+		}
+		function MinusIcon() {
+			return (0, react_jsx_runtime.jsx)("svg", {
+				xmlns: "http://www.w3.org/2000/svg",
+				viewBox: "0 0 32 5",
+				children: (0, react_jsx_runtime.jsx)("path", { d: "M0 0h32v4.2H0z" })
+			});
+		}
+		function FitViewIcon() {
+			return (0, react_jsx_runtime.jsx)("svg", {
+				xmlns: "http://www.w3.org/2000/svg",
+				viewBox: "0 0 32 30",
+				children: (0, react_jsx_runtime.jsx)("path", { d: "M3.692 4.63c0-.53.4-.938.939-.938h5.215V0H4.708C2.13 0 0 2.054 0 4.63v5.216h3.692V4.631zM27.354 0h-5.2v3.692h5.17c.53 0 .984.4.984.939v5.215H32V4.631A4.624 4.624 0 0027.354 0zm.954 24.83c0 .532-.4.94-.939.94h-5.215v3.768h5.215c2.577 0 4.631-2.13 4.631-4.707v-5.139h-3.692v5.139zm-23.677.94c-.531 0-.939-.4-.939-.94v-5.138H0v5.139c0 2.577 2.13 4.707 4.708 4.707h5.138V25.77H4.631z" })
+			});
+		}
+		function LockIcon() {
+			return (0, react_jsx_runtime.jsx)("svg", {
+				xmlns: "http://www.w3.org/2000/svg",
+				viewBox: "0 0 25 32",
+				children: (0, react_jsx_runtime.jsx)("path", { d: "M21.333 10.667H19.81V7.619C19.81 3.429 16.38 0 12.19 0 8 0 4.571 3.429 4.571 7.619v3.048H3.048A3.056 3.056 0 000 13.714v15.238A3.056 3.056 0 003.048 32h18.285a3.056 3.056 0 003.048-3.048V13.714a3.056 3.056 0 00-3.048-3.047zM12.19 24.533a3.056 3.056 0 01-3.047-3.047 3.056 3.056 0 013.047-3.048 3.056 3.056 0 013.048 3.048 3.056 3.056 0 01-3.048 3.047zm4.724-13.866H7.467V7.619c0-2.59 2.133-4.724 4.723-4.724 2.591 0 4.724 2.133 4.724 4.724v3.048z" })
+			});
+		}
+		function UnlockIcon() {
+			return (0, react_jsx_runtime.jsx)("svg", {
+				xmlns: "http://www.w3.org/2000/svg",
+				viewBox: "0 0 25 32",
+				children: (0, react_jsx_runtime.jsx)("path", { d: "M21.333 10.667H19.81V7.619C19.81 3.429 16.38 0 12.19 0c-4.114 1.828-1.37 2.133.305 2.438 1.676.305 4.42 2.59 4.42 5.181v3.048H3.047A3.056 3.056 0 000 13.714v15.238A3.056 3.056 0 003.048 32h18.285a3.056 3.056 0 003.048-3.048V13.714a3.056 3.056 0 00-3.048-3.047zM12.19 24.533a3.056 3.056 0 01-3.047-3.047 3.056 3.056 0 013.047-3.048 3.056 3.056 0 013.048 3.048 3.056 3.056 0 01-3.048 3.047z" })
+			});
+		}
+		/**
+		* You can add buttons to the control panel by using the `<ControlButton />` component
+		* and pass it as a child to the [`<Controls />`](/api-reference/components/controls) component.
+		*
+		* @public
+		* @example
+		*```jsx
+		*import { MagicWand } from '@radix-ui/react-icons'
+		*import { ReactFlow, Controls, ControlButton } from '@xyflow/react'
+		*
+		*export default function Flow() {
+		*  return (
+		*    <ReactFlow nodes={[...]} edges={[...]}>
+		*      <Controls>
+		*        <ControlButton onClick={() => alert('Something magical just happened. ✨')}>
+		*          <MagicWand />
+		*        </ControlButton>
+		*      </Controls>
+		*    </ReactFlow>
+		*  )
+		*}
+		*```
+		*/
+		function ControlButton({ children, className, ...rest }) {
+			return (0, react_jsx_runtime.jsx)("button", {
+				type: "button",
+				className: cc(["react-flow__controls-button", className]),
+				...rest,
+				children
+			});
+		}
+		const selector$2 = (s) => ({
+			isInteractive: s.nodesDraggable || s.nodesConnectable || s.elementsSelectable,
+			minZoomReached: s.transform[2] <= s.minZoom,
+			maxZoomReached: s.transform[2] >= s.maxZoom,
+			ariaLabelConfig: s.ariaLabelConfig
+		});
+		function ControlsComponent({ style, showZoom = true, showFitView = true, showInteractive = true, fitViewOptions, onZoomIn, onZoomOut, onFitView, onInteractiveChange, className, children, position = "bottom-left", orientation = "vertical", "aria-label": ariaLabel }) {
+			const store = useStoreApi();
+			const { isInteractive, minZoomReached, maxZoomReached, ariaLabelConfig } = useStore(selector$2, shallow$1);
+			const { zoomIn, zoomOut, fitView } = useReactFlow();
+			const onZoomInHandler = () => {
+				zoomIn();
+				onZoomIn?.();
+			};
+			const onZoomOutHandler = () => {
+				zoomOut();
+				onZoomOut?.();
+			};
+			const onFitViewHandler = () => {
+				fitView(fitViewOptions);
+				onFitView?.();
+			};
+			const onToggleInteractivity = () => {
+				store.setState({
+					nodesDraggable: !isInteractive,
+					nodesConnectable: !isInteractive,
+					elementsSelectable: !isInteractive
+				});
+				onInteractiveChange?.(!isInteractive);
+			};
+			return (0, react_jsx_runtime.jsxs)(Panel, {
+				className: cc([
+					"react-flow__controls",
+					orientation === "horizontal" ? "horizontal" : "vertical",
+					className
+				]),
+				position,
+				style,
+				"data-testid": "rf__controls",
+				"aria-label": ariaLabel ?? ariaLabelConfig["controls.ariaLabel"],
+				children: [
+					showZoom && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(ControlButton, {
+						onClick: onZoomInHandler,
+						className: "react-flow__controls-zoomin",
+						title: ariaLabelConfig["controls.zoomIn.ariaLabel"],
+						"aria-label": ariaLabelConfig["controls.zoomIn.ariaLabel"],
+						disabled: maxZoomReached,
+						children: (0, react_jsx_runtime.jsx)(PlusIcon, {})
+					}), (0, react_jsx_runtime.jsx)(ControlButton, {
+						onClick: onZoomOutHandler,
+						className: "react-flow__controls-zoomout",
+						title: ariaLabelConfig["controls.zoomOut.ariaLabel"],
+						"aria-label": ariaLabelConfig["controls.zoomOut.ariaLabel"],
+						disabled: minZoomReached,
+						children: (0, react_jsx_runtime.jsx)(MinusIcon, {})
+					})] }),
+					showFitView && (0, react_jsx_runtime.jsx)(ControlButton, {
+						className: "react-flow__controls-fitview",
+						onClick: onFitViewHandler,
+						title: ariaLabelConfig["controls.fitView.ariaLabel"],
+						"aria-label": ariaLabelConfig["controls.fitView.ariaLabel"],
+						children: (0, react_jsx_runtime.jsx)(FitViewIcon, {})
+					}),
+					showInteractive && (0, react_jsx_runtime.jsx)(ControlButton, {
+						className: "react-flow__controls-interactive",
+						onClick: onToggleInteractivity,
+						title: ariaLabelConfig["controls.interactive.ariaLabel"],
+						"aria-label": ariaLabelConfig["controls.interactive.ariaLabel"],
+						children: isInteractive ? (0, react_jsx_runtime.jsx)(UnlockIcon, {}) : (0, react_jsx_runtime.jsx)(LockIcon, {})
+					}),
+					children
+				]
+			});
+		}
+		ControlsComponent.displayName = "Controls";
+		(0, react.memo)(ControlsComponent);
+		function MiniMapNodeComponent({ id, x, y, width, height, style, color, strokeColor, strokeWidth, className, borderRadius, shapeRendering, selected, onClick }) {
+			const { background, backgroundColor } = style || {};
+			const fill = color || background || backgroundColor;
+			return (0, react_jsx_runtime.jsx)("rect", {
+				className: cc([
+					"react-flow__minimap-node",
+					{ selected },
+					className
+				]),
+				x,
+				y,
+				rx: borderRadius,
+				ry: borderRadius,
+				width,
+				height,
+				style: {
+					fill,
+					stroke: strokeColor,
+					strokeWidth
+				},
+				shapeRendering,
+				onClick: onClick ? (event) => onClick(event, id) : void 0
+			});
+		}
+		const MiniMapNode = (0, react.memo)(MiniMapNodeComponent);
+		const selectorNodeIds = (s) => s.nodes.map((node) => node.id);
+		const getAttrFunction = (func) => func instanceof Function ? func : () => func;
+		function MiniMapNodes({ nodeStrokeColor, nodeColor, nodeClassName = "", nodeBorderRadius = 5, nodeStrokeWidth, nodeComponent: NodeComponent = MiniMapNode, onClick }) {
+			const nodeIds = useStore(selectorNodeIds, shallow$1);
+			const nodeColorFunc = getAttrFunction(nodeColor);
+			const nodeStrokeColorFunc = getAttrFunction(nodeStrokeColor);
+			const nodeClassNameFunc = getAttrFunction(nodeClassName);
+			const shapeRendering = typeof window === "undefined" || !!window.chrome ? "crispEdges" : "geometricPrecision";
+			return (0, react_jsx_runtime.jsx)(react_jsx_runtime.Fragment, { children: nodeIds.map((nodeId) => (0, react_jsx_runtime.jsx)(NodeComponentWrapper, {
+				id: nodeId,
+				nodeColorFunc,
+				nodeStrokeColorFunc,
+				nodeClassNameFunc,
+				nodeBorderRadius,
+				nodeStrokeWidth,
+				NodeComponent,
+				onClick,
+				shapeRendering
+			}, nodeId)) });
+		}
+		function NodeComponentWrapperInner({ id, nodeColorFunc, nodeStrokeColorFunc, nodeClassNameFunc, nodeBorderRadius, nodeStrokeWidth, shapeRendering, NodeComponent, onClick }) {
+			const { node, x, y, width, height } = useStore((s) => {
+				const node = s.nodeLookup.get(id);
+				if (!node) return {
+					node: void 0,
+					x: 0,
+					y: 0,
+					width: 0,
+					height: 0
+				};
+				const userNode = node.internals.userNode;
+				const { x, y } = node.internals.positionAbsolute;
+				const { width, height } = getNodeDimensions(userNode);
+				return {
+					node: userNode,
+					x,
+					y,
+					width,
+					height
+				};
+			}, shallow$1);
+			if (!node || node.hidden || !nodeHasDimensions(node)) return null;
+			return (0, react_jsx_runtime.jsx)(NodeComponent, {
+				x,
+				y,
+				width,
+				height,
+				style: node.style,
+				selected: !!node.selected,
+				className: nodeClassNameFunc(node),
+				color: nodeColorFunc(node),
+				borderRadius: nodeBorderRadius,
+				strokeColor: nodeStrokeColorFunc(node),
+				strokeWidth: nodeStrokeWidth,
+				shapeRendering,
+				onClick,
+				id: node.id
+			});
+		}
+		const NodeComponentWrapper = (0, react.memo)(NodeComponentWrapperInner);
+		var MiniMapNodes$1 = (0, react.memo)(MiniMapNodes);
+		const defaultWidth = 200;
+		const defaultHeight = 150;
+		const filterHidden = (node) => !node.hidden;
+		const selector$1 = (s) => {
+			const viewBB = {
+				x: -s.transform[0] / s.transform[2],
+				y: -s.transform[1] / s.transform[2],
+				width: s.width / s.transform[2],
+				height: s.height / s.transform[2]
+			};
+			return {
+				viewBB,
+				boundingRect: s.nodeLookup.size > 0 ? getBoundsOfRects(getInternalNodesBounds(s.nodeLookup, { filter: filterHidden }), viewBB) : viewBB,
+				rfId: s.rfId,
+				panZoom: s.panZoom,
+				translateExtent: s.translateExtent,
+				flowWidth: s.width,
+				flowHeight: s.height,
+				ariaLabelConfig: s.ariaLabelConfig
+			};
+		};
+		const rectEqual = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+		const areEqual = (a, b) => rectEqual(a.viewBB, b.viewBB) && rectEqual(a.boundingRect, b.boundingRect) && a.rfId === b.rfId && a.panZoom === b.panZoom && a.translateExtent === b.translateExtent && a.flowWidth === b.flowWidth && a.flowHeight === b.flowHeight && a.ariaLabelConfig === b.ariaLabelConfig;
+		const ARIA_LABEL_KEY = "react-flow__minimap-desc";
+		function MiniMapComponent({ style, className, nodeStrokeColor, nodeColor, nodeClassName = "", nodeBorderRadius = 5, nodeStrokeWidth, nodeComponent, bgColor, maskColor, maskStrokeColor, maskStrokeWidth, position = "bottom-right", onClick, onNodeClick, pannable = false, zoomable = false, ariaLabel, inversePan, zoomStep = 1, offsetScale = 5 }) {
+			const store = useStoreApi();
+			const svg = (0, react.useRef)(null);
+			const { boundingRect, viewBB, rfId, panZoom, translateExtent, flowWidth, flowHeight, ariaLabelConfig } = useStore(selector$1, areEqual);
+			const elementWidth = style?.width ?? defaultWidth;
+			const elementHeight = style?.height ?? defaultHeight;
+			const scaledWidth = boundingRect.width / elementWidth;
+			const scaledHeight = boundingRect.height / elementHeight;
+			const viewScale = Math.max(scaledWidth, scaledHeight);
+			const viewWidth = viewScale * elementWidth;
+			const viewHeight = viewScale * elementHeight;
+			const offset = offsetScale * viewScale;
+			const x = boundingRect.x - (viewWidth - boundingRect.width) / 2 - offset;
+			const y = boundingRect.y - (viewHeight - boundingRect.height) / 2 - offset;
+			const width = viewWidth + offset * 2;
+			const height = viewHeight + offset * 2;
+			const labelledBy = `${ARIA_LABEL_KEY}-${rfId}`;
+			const viewScaleRef = (0, react.useRef)(0);
+			const minimapInstance = (0, react.useRef)();
+			viewScaleRef.current = viewScale;
+			(0, react.useEffect)(() => {
+				if (svg.current && panZoom) {
+					minimapInstance.current = XYMinimap({
+						domNode: svg.current,
+						panZoom,
+						getTransform: () => store.getState().transform,
+						getViewScale: () => viewScaleRef.current
+					});
+					return () => {
+						minimapInstance.current?.destroy();
+					};
+				}
+			}, [panZoom]);
+			(0, react.useEffect)(() => {
+				minimapInstance.current?.update({
+					translateExtent,
+					width: flowWidth,
+					height: flowHeight,
+					inversePan,
+					pannable,
+					zoomStep,
+					zoomable
+				});
+			}, [
+				pannable,
+				zoomable,
+				inversePan,
+				zoomStep,
+				translateExtent,
+				flowWidth,
+				flowHeight
+			]);
+			const onSvgClick = onClick ? (event) => {
+				const [x, y] = minimapInstance.current?.pointer(event) || [0, 0];
+				onClick(event, {
+					x,
+					y
+				});
+			} : void 0;
+			const onSvgNodeClick = onNodeClick ? (0, react.useCallback)((event, nodeId) => {
+				const node = store.getState().nodeLookup.get(nodeId).internals.userNode;
+				onNodeClick(event, node);
+			}, []) : void 0;
+			const _ariaLabel = ariaLabel ?? ariaLabelConfig["minimap.ariaLabel"];
+			return (0, react_jsx_runtime.jsx)(Panel, {
+				position,
+				style: {
+					...style,
+					"--xy-minimap-background-color-props": typeof bgColor === "string" ? bgColor : void 0,
+					"--xy-minimap-mask-background-color-props": typeof maskColor === "string" ? maskColor : void 0,
+					"--xy-minimap-mask-stroke-color-props": typeof maskStrokeColor === "string" ? maskStrokeColor : void 0,
+					"--xy-minimap-mask-stroke-width-props": typeof maskStrokeWidth === "number" ? maskStrokeWidth * viewScale : void 0,
+					"--xy-minimap-node-background-color-props": typeof nodeColor === "string" ? nodeColor : void 0,
+					"--xy-minimap-node-stroke-color-props": typeof nodeStrokeColor === "string" ? nodeStrokeColor : void 0,
+					"--xy-minimap-node-stroke-width-props": typeof nodeStrokeWidth === "number" ? nodeStrokeWidth : void 0
+				},
+				className: cc(["react-flow__minimap", className]),
+				"data-testid": "rf__minimap",
+				children: (0, react_jsx_runtime.jsxs)("svg", {
+					width: elementWidth,
+					height: elementHeight,
+					viewBox: `${x} ${y} ${width} ${height}`,
+					className: "react-flow__minimap-svg",
+					role: "img",
+					"aria-labelledby": labelledBy,
+					ref: svg,
+					onClick: onSvgClick,
+					children: [
+						_ariaLabel && (0, react_jsx_runtime.jsx)("title", {
+							id: labelledBy,
+							children: _ariaLabel
+						}),
+						(0, react_jsx_runtime.jsx)(MiniMapNodes$1, {
+							onClick: onSvgNodeClick,
+							nodeColor,
+							nodeStrokeColor,
+							nodeBorderRadius,
+							nodeClassName,
+							nodeStrokeWidth,
+							nodeComponent
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							className: "react-flow__minimap-mask",
+							d: `M${x - offset},${y - offset}h${width + offset * 2}v${height + offset * 2}h${-width - offset * 2}z
+        M${viewBB.x},${viewBB.y}h${viewBB.width}v${viewBB.height}h${-viewBB.width}z`,
+							fillRule: "evenodd",
+							pointerEvents: "none"
+						})
+					]
+				})
+			});
+		}
+		MiniMapComponent.displayName = "MiniMap";
+		/**
+		* The `<MiniMap />` component can be used to render an overview of your flow. It
+		* renders each node as an SVG element and visualizes where the current viewport is
+		* in relation to the rest of the flow.
+		*
+		* @public
+		* @example
+		*
+		* ```jsx
+		*import { ReactFlow, MiniMap } from '@xyflow/react';
+		*
+		*export default function Flow() {
+		*  return (
+		*    <ReactFlow nodes={[...]} edges={[...]}>
+		*      <MiniMap nodeStrokeWidth={3} />
+		*    </ReactFlow>
+		*  );
+		*}
+		*```
+		*/
+		const MiniMap = (0, react.memo)(MiniMapComponent);
+		const scaleSelector = (calculateScale) => (store) => calculateScale ? `${Math.max(1 / store.transform[2], 1)}` : void 0;
+		const defaultPositions = {
+			[ResizeControlVariant.Line]: "right",
+			[ResizeControlVariant.Handle]: "bottom-right"
+		};
+		function ResizeControl({ nodeId, position, variant = ResizeControlVariant.Handle, className, style = void 0, children, color, minWidth = 10, minHeight = 10, maxWidth = Number.MAX_VALUE, maxHeight = Number.MAX_VALUE, keepAspectRatio = false, resizeDirection, autoScale = true, shouldResize, onResizeStart, onResize, onResizeEnd }) {
+			const contextNodeId = useNodeId();
+			const id = typeof nodeId === "string" ? nodeId : contextNodeId;
+			const store = useStoreApi();
+			const resizeControlRef = (0, react.useRef)(null);
+			const isHandleControl = variant === ResizeControlVariant.Handle;
+			const scale = useStore((0, react.useCallback)(scaleSelector(isHandleControl && autoScale), [isHandleControl, autoScale]), shallow$1);
+			const resizer = (0, react.useRef)(null);
+			const controlPosition = position ?? defaultPositions[variant];
+			(0, react.useEffect)(() => {
+				if (!resizeControlRef.current || !id) return;
+				if (!resizer.current) resizer.current = XYResizer({
+					domNode: resizeControlRef.current,
+					nodeId: id,
+					getStoreItems: () => {
+						const { nodeLookup, transform, snapGrid, snapToGrid, nodeOrigin, domNode } = store.getState();
+						return {
+							nodeLookup,
+							transform,
+							snapGrid,
+							snapToGrid,
+							nodeOrigin,
+							paneDomNode: domNode
+						};
+					},
+					onChange: (change, childChanges) => {
+						const { triggerNodeChanges, nodeLookup, parentLookup, nodeOrigin } = store.getState();
+						const changes = [];
+						const nextPosition = {
+							x: change.x,
+							y: change.y
+						};
+						const node = nodeLookup.get(id);
+						if (node && node.expandParent && node.parentId) {
+							const origin = node.origin ?? nodeOrigin;
+							const width = change.width ?? node.measured.width ?? 0;
+							const height = change.height ?? node.measured.height ?? 0;
+							const parentExpandChanges = handleExpandParent([{
+								id: node.id,
+								parentId: node.parentId,
+								rect: {
+									width,
+									height,
+									...evaluateAbsolutePosition({
+										x: change.x ?? node.position.x,
+										y: change.y ?? node.position.y
+									}, {
+										width,
+										height
+									}, node.parentId, nodeLookup, origin)
+								}
+							}], nodeLookup, parentLookup, nodeOrigin);
+							changes.push(...parentExpandChanges);
+							nextPosition.x = change.x ? Math.max(origin[0] * width, change.x) : void 0;
+							nextPosition.y = change.y ? Math.max(origin[1] * height, change.y) : void 0;
+						}
+						if (nextPosition.x !== void 0 && nextPosition.y !== void 0) {
+							const positionChange = {
+								id,
+								type: "position",
+								position: { ...nextPosition }
+							};
+							changes.push(positionChange);
+						}
+						if (change.width !== void 0 && change.height !== void 0) {
+							const dimensionChange = {
+								id,
+								type: "dimensions",
+								resizing: true,
+								setAttributes: !resizeDirection ? true : resizeDirection === "horizontal" ? "width" : "height",
+								dimensions: {
+									width: change.width,
+									height: change.height
+								}
+							};
+							changes.push(dimensionChange);
+						}
+						for (const childChange of childChanges) {
+							const positionChange = {
+								...childChange,
+								type: "position"
+							};
+							changes.push(positionChange);
+						}
+						triggerNodeChanges(changes);
+					},
+					onEnd: ({ width, height }) => {
+						const dimensionChange = {
+							id,
+							type: "dimensions",
+							resizing: false,
+							dimensions: {
+								width,
+								height
+							}
+						};
+						store.getState().triggerNodeChanges([dimensionChange]);
+					}
+				});
+				resizer.current.update({
+					controlPosition,
+					boundaries: {
+						minWidth,
+						minHeight,
+						maxWidth,
+						maxHeight
+					},
+					keepAspectRatio,
+					resizeDirection,
+					onResizeStart,
+					onResize,
+					onResizeEnd,
+					shouldResize
+				});
+				return () => {
+					resizer.current?.destroy();
+				};
+			}, [
+				controlPosition,
+				minWidth,
+				minHeight,
+				maxWidth,
+				maxHeight,
+				keepAspectRatio,
+				onResizeStart,
+				onResize,
+				onResizeEnd,
+				shouldResize
+			]);
+			const positionClassNames = controlPosition.split("-");
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: cc([
+					"react-flow__resize-control",
+					"nodrag",
+					...positionClassNames,
+					variant,
+					className
+				]),
+				ref: resizeControlRef,
+				style: {
+					...style,
+					scale,
+					...color && { [isHandleControl ? "backgroundColor" : "borderColor"]: color }
+				},
+				children
+			});
+		}
+		(0, react.memo)(ResizeControl);
+		//#endregion
+		//#region \0sandore-css:xyflow-style.mjs
+		const css$9 = "/* this gets exported as style.css and can be used for the default theming */\n/* these are the necessary styles for React/Svelte Flow, they get used by base.css and style.css */\n.react-flow {\n  direction: ltr;\n\n  --xy-edge-stroke-default: #b1b1b7;\n  --xy-edge-stroke-width-default: 1;\n  --xy-edge-stroke-selected-default: #555;\n\n  --xy-connectionline-stroke-default: #b1b1b7;\n  --xy-connectionline-stroke-width-default: 1;\n\n  --xy-attribution-background-color-default: rgba(255, 255, 255, 0.5);\n\n  --xy-minimap-background-color-default: #fff;\n  --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.6);\n  --xy-minimap-mask-stroke-color-default: transparent;\n  --xy-minimap-mask-stroke-width-default: 1;\n  --xy-minimap-node-background-color-default: #e2e2e2;\n  --xy-minimap-node-stroke-color-default: transparent;\n  --xy-minimap-node-stroke-width-default: 2;\n\n  --xy-background-color-default: transparent;\n  --xy-background-pattern-dots-color-default: #91919a;\n  --xy-background-pattern-lines-color-default: #eee;\n  --xy-background-pattern-cross-color-default: #e2e2e2;\n  background-color: var(--xy-background-color, var(--xy-background-color-default));\n  --xy-node-color-default: inherit;\n  --xy-node-border-default: 1px solid #1a192b;\n  --xy-node-background-color-default: #fff;\n  --xy-node-group-background-color-default: rgba(240, 240, 240, 0.25);\n  --xy-node-boxshadow-hover-default: 0 1px 4px 1px rgba(0, 0, 0, 0.08);\n  --xy-node-boxshadow-selected-default: 0 0 0 0.5px #1a192b;\n  --xy-node-border-radius-default: 3px;\n\n  --xy-handle-background-color-default: #1a192b;\n  --xy-handle-border-color-default: #fff;\n\n  --xy-selection-background-color-default: rgba(0, 89, 220, 0.08);\n  --xy-selection-border-default: 1px dotted rgba(0, 89, 220, 0.8);\n\n  --xy-controls-button-background-color-default: #fefefe;\n  --xy-controls-button-background-color-hover-default: #f4f4f4;\n  --xy-controls-button-color-default: inherit;\n  --xy-controls-button-color-hover-default: inherit;\n  --xy-controls-button-border-color-default: #eee;\n  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.08);\n\n  --xy-edge-label-background-color-default: #ffffff;\n  --xy-edge-label-color-default: inherit;\n  --xy-resize-background-color-default: #3367d9;\n}\n.react-flow.dark {\n  --xy-edge-stroke-default: #3e3e3e;\n  --xy-edge-stroke-width-default: 1;\n  --xy-edge-stroke-selected-default: #727272;\n\n  --xy-connectionline-stroke-default: #b1b1b7;\n  --xy-connectionline-stroke-width-default: 1;\n\n  --xy-attribution-background-color-default: rgba(150, 150, 150, 0.25);\n\n  --xy-minimap-background-color-default: #141414;\n  --xy-minimap-mask-background-color-default: rgba(60, 60, 60, 0.6);\n  --xy-minimap-mask-stroke-color-default: transparent;\n  --xy-minimap-mask-stroke-width-default: 1;\n  --xy-minimap-node-background-color-default: #2b2b2b;\n  --xy-minimap-node-stroke-color-default: transparent;\n  --xy-minimap-node-stroke-width-default: 2;\n\n  --xy-background-color-default: #141414;\n  --xy-background-pattern-dots-color-default: #555;\n  --xy-background-pattern-lines-color-default: #333;\n  --xy-background-pattern-cross-color-default: #333;\n  --xy-node-color-default: #f8f8f8;\n  --xy-node-border-default: 1px solid #3c3c3c;\n  --xy-node-background-color-default: #1e1e1e;\n  --xy-node-group-background-color-default: rgba(240, 240, 240, 0.25);\n  --xy-node-boxshadow-hover-default: 0 1px 4px 1px rgba(255, 255, 255, 0.08);\n  --xy-node-boxshadow-selected-default: 0 0 0 0.5px #999;\n\n  --xy-handle-background-color-default: #bebebe;\n  --xy-handle-border-color-default: #1e1e1e;\n\n  --xy-selection-background-color-default: rgba(200, 200, 220, 0.08);\n  --xy-selection-border-default: 1px dotted rgba(200, 200, 220, 0.8);\n\n  --xy-controls-button-background-color-default: #2b2b2b;\n  --xy-controls-button-background-color-hover-default: #3e3e3e;\n  --xy-controls-button-color-default: #f8f8f8;\n  --xy-controls-button-color-hover-default: #fff;\n  --xy-controls-button-border-color-default: #5b5b5b;\n  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.08);\n\n  --xy-edge-label-background-color-default: #141414;\n  --xy-edge-label-color-default: #f8f8f8;\n}\n.react-flow__background {\n  background-color: var(--xy-background-color-props, var(--xy-background-color, var(--xy-background-color-default)));\n  pointer-events: none;\n  z-index: -1;\n}\n.react-flow__container {\n  position: absolute;\n  width: 100%;\n  height: 100%;\n  top: 0;\n  left: 0;\n}\n.react-flow__pane {\n  z-index: 1;\n  touch-action: none;\n}\n.react-flow__pane.draggable {\n    cursor: grab;\n  }\n.react-flow__pane.dragging {\n    cursor: grabbing;\n  }\n.react-flow__pane.selection {\n    cursor: pointer;\n  }\n.react-flow__viewport {\n  transform-origin: 0 0;\n  z-index: 2;\n  pointer-events: none;\n}\n.react-flow__renderer {\n  z-index: 4;\n}\n.react-flow__selection {\n  z-index: 6;\n}\n.react-flow__nodesselection-rect:focus,\n.react-flow__nodesselection-rect:focus-visible {\n  outline: none;\n}\n.react-flow__edge-path {\n  stroke: var(--xy-edge-stroke, var(--xy-edge-stroke-default));\n  stroke-width: var(--xy-edge-stroke-width, var(--xy-edge-stroke-width-default));\n  fill: none;\n}\n.react-flow__connection-path {\n  stroke: var(--xy-connectionline-stroke, var(--xy-connectionline-stroke-default));\n  stroke-width: var(--xy-connectionline-stroke-width, var(--xy-connectionline-stroke-width-default));\n  fill: none;\n}\n.react-flow .react-flow__edges {\n  position: absolute;\n}\n.react-flow .react-flow__edges svg {\n    overflow: visible;\n    position: absolute;\n    pointer-events: none;\n  }\n.react-flow__edge {\n  pointer-events: visibleStroke;\n}\n.react-flow__edge.selectable {\n    cursor: pointer;\n  }\n.react-flow__edge.animated path {\n    stroke-dasharray: 5;\n    animation: dashdraw 0.5s linear infinite;\n  }\n.react-flow__edge.animated path.react-flow__edge-interaction {\n    stroke-dasharray: none;\n    animation: none;\n  }\n.react-flow__edge.inactive {\n    pointer-events: none;\n  }\n.react-flow__edge.selected,\n  .react-flow__edge:focus,\n  .react-flow__edge:focus-visible {\n    outline: none;\n  }\n.react-flow__edge.selected .react-flow__edge-path,\n  .react-flow__edge.selectable:focus .react-flow__edge-path,\n  .react-flow__edge.selectable:focus-visible .react-flow__edge-path {\n    stroke: var(--xy-edge-stroke-selected, var(--xy-edge-stroke-selected-default));\n  }\n.react-flow__edge-textwrapper {\n    pointer-events: all;\n  }\n.react-flow__edge .react-flow__edge-text {\n    pointer-events: none;\n    -webkit-user-select: none;\n       -moz-user-select: none;\n            user-select: none;\n  }\n/* Arrowhead marker styles - use CSS custom properties as default */\n.react-flow__arrowhead polyline {\n  stroke: var(--xy-edge-stroke, var(--xy-edge-stroke-default));\n}\n.react-flow__arrowhead polyline.arrowclosed {\n  fill: var(--xy-edge-stroke, var(--xy-edge-stroke-default));\n}\n.react-flow__connection {\n  pointer-events: none;\n}\n.react-flow__connection .animated {\n    stroke-dasharray: 5;\n    animation: dashdraw 0.5s linear infinite;\n  }\nsvg.react-flow__connectionline {\n  z-index: 1001;\n  overflow: visible;\n  position: absolute;\n}\n.react-flow__nodes {\n  pointer-events: none;\n  transform-origin: 0 0;\n}\n.react-flow__node {\n  position: absolute;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  pointer-events: all;\n  transform-origin: 0 0;\n  box-sizing: border-box;\n  cursor: default;\n}\n.react-flow__node.selectable {\n    cursor: pointer;\n  }\n.react-flow__node.draggable {\n    cursor: grab;\n    pointer-events: all;\n  }\n.react-flow__node.draggable.dragging {\n      cursor: grabbing;\n    }\n.react-flow__nodesselection {\n  z-index: 3;\n  transform-origin: left top;\n  pointer-events: none;\n}\n.react-flow__nodesselection-rect {\n    position: absolute;\n    pointer-events: all;\n    cursor: grab;\n  }\n.react-flow__handle {\n  position: absolute;\n  pointer-events: none;\n  min-width: 5px;\n  min-height: 5px;\n  width: 6px;\n  height: 6px;\n  background-color: var(--xy-handle-background-color, var(--xy-handle-background-color-default));\n  border: 1px solid var(--xy-handle-border-color, var(--xy-handle-border-color-default));\n  border-radius: 100%;\n}\n.react-flow__handle.connectingfrom {\n    pointer-events: all;\n  }\n.react-flow__handle.connectionindicator {\n    pointer-events: all;\n    cursor: crosshair;\n  }\n.react-flow__handle-bottom {\n    top: auto;\n    left: 50%;\n    bottom: 0;\n    transform: translate(-50%, 50%);\n  }\n.react-flow__handle-top {\n    top: 0;\n    left: 50%;\n    transform: translate(-50%, -50%);\n  }\n.react-flow__handle-left {\n    top: 50%;\n    left: 0;\n    transform: translate(-50%, -50%);\n  }\n.react-flow__handle-right {\n    top: 50%;\n    right: 0;\n    transform: translate(50%, -50%);\n  }\n.react-flow__edgeupdater {\n  cursor: move;\n  pointer-events: all;\n}\n.react-flow__pane.selection .react-flow__panel {\n  pointer-events: none;\n}\n.react-flow__panel {\n  position: absolute;\n  z-index: 5;\n  margin: 15px;\n}\n.react-flow__panel.top {\n    top: 0;\n  }\n.react-flow__panel.bottom {\n    bottom: 0;\n  }\n.react-flow__panel.top.center, .react-flow__panel.bottom.center {\n      left: 50%;\n      transform: translateX(-15px) translateX(-50%);\n    }\n.react-flow__panel.left {\n    left: 0;\n  }\n.react-flow__panel.right {\n    right: 0;\n  }\n.react-flow__panel.left.center, .react-flow__panel.right.center {\n      top: 50%;\n      transform: translateY(-15px) translateY(-50%);\n    }\n.react-flow__attribution {\n  font-size: 10px;\n  background: var(--xy-attribution-background-color, var(--xy-attribution-background-color-default));\n  padding: 2px 3px;\n  margin: 0;\n}\n.react-flow__attribution a {\n    text-decoration: none;\n    color: #999;\n  }\n@keyframes dashdraw {\n  from {\n    stroke-dashoffset: 10;\n  }\n}\n.react-flow__edgelabel-renderer {\n  position: absolute;\n  width: 100%;\n  height: 100%;\n  pointer-events: none;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n  left: 0;\n  top: 0;\n}\n.react-flow__viewport-portal {\n  position: absolute;\n  width: 100%;\n  height: 100%;\n  left: 0;\n  top: 0;\n  -webkit-user-select: none;\n     -moz-user-select: none;\n          user-select: none;\n}\n.react-flow__minimap {\n  background: var(\n    --xy-minimap-background-color-props,\n    var(--xy-minimap-background-color, var(--xy-minimap-background-color-default))\n  );\n}\n.react-flow__minimap-svg {\n    display: block;\n  }\n.react-flow__minimap-mask {\n    fill: var(\n      --xy-minimap-mask-background-color-props,\n      var(--xy-minimap-mask-background-color, var(--xy-minimap-mask-background-color-default))\n    );\n    stroke: var(\n      --xy-minimap-mask-stroke-color-props,\n      var(--xy-minimap-mask-stroke-color, var(--xy-minimap-mask-stroke-color-default))\n    );\n    stroke-width: var(\n      --xy-minimap-mask-stroke-width-props,\n      var(--xy-minimap-mask-stroke-width, var(--xy-minimap-mask-stroke-width-default))\n    );\n  }\n.react-flow__minimap-node {\n    fill: var(\n      --xy-minimap-node-background-color-props,\n      var(--xy-minimap-node-background-color, var(--xy-minimap-node-background-color-default))\n    );\n    stroke: var(\n      --xy-minimap-node-stroke-color-props,\n      var(--xy-minimap-node-stroke-color, var(--xy-minimap-node-stroke-color-default))\n    );\n    stroke-width: var(\n      --xy-minimap-node-stroke-width-props,\n      var(--xy-minimap-node-stroke-width, var(--xy-minimap-node-stroke-width-default))\n    );\n  }\n.react-flow__background-pattern.dots {\n    fill: var(\n      --xy-background-pattern-color-props,\n      var(--xy-background-pattern-color, var(--xy-background-pattern-dots-color-default))\n    );\n  }\n.react-flow__background-pattern.lines {\n    stroke: var(\n      --xy-background-pattern-color-props,\n      var(--xy-background-pattern-color, var(--xy-background-pattern-lines-color-default))\n    );\n  }\n.react-flow__background-pattern.cross {\n    stroke: var(\n      --xy-background-pattern-color-props,\n      var(--xy-background-pattern-color, var(--xy-background-pattern-cross-color-default))\n    );\n  }\n.react-flow__controls {\n  display: flex;\n  flex-direction: column;\n  box-shadow: var(--xy-controls-box-shadow, var(--xy-controls-box-shadow-default));\n}\n.react-flow__controls.horizontal {\n    flex-direction: row;\n  }\n.react-flow__controls-button {\n    display: flex;\n    justify-content: center;\n    align-items: center;\n    height: 26px;\n    width: 26px;\n    padding: 4px;\n    border: none;\n    background: var(--xy-controls-button-background-color, var(--xy-controls-button-background-color-default));\n    border-bottom: 1px solid\n      var(\n        --xy-controls-button-border-color-props,\n        var(--xy-controls-button-border-color, var(--xy-controls-button-border-color-default))\n      );\n    color: var(\n      --xy-controls-button-color-props,\n      var(--xy-controls-button-color, var(--xy-controls-button-color-default))\n    );\n    cursor: pointer;\n    -webkit-user-select: none;\n       -moz-user-select: none;\n            user-select: none;\n  }\n.react-flow__controls-button svg {\n      width: 100%;\n      max-width: 12px;\n      max-height: 12px;\n      fill: currentColor;\n    }\n.react-flow__edge.updating .react-flow__edge-path {\n      stroke: #777;\n    }\n.react-flow__edge-text {\n    font-size: 10px;\n  }\n.react-flow__node.selectable:focus,\n  .react-flow__node.selectable:focus-visible {\n    outline: none;\n  }\n.react-flow__node-input,\n.react-flow__node-default,\n.react-flow__node-output,\n.react-flow__node-group {\n  padding: 10px;\n  border-radius: var(--xy-node-border-radius, var(--xy-node-border-radius-default));\n  width: 150px;\n  font-size: 12px;\n  color: var(--xy-node-color, var(--xy-node-color-default));\n  text-align: center;\n  border: var(--xy-node-border, var(--xy-node-border-default));\n  background-color: var(--xy-node-background-color, var(--xy-node-background-color-default));\n}\n.react-flow__node-input.selectable:hover, .react-flow__node-default.selectable:hover, .react-flow__node-output.selectable:hover, .react-flow__node-group.selectable:hover {\n      box-shadow: var(--xy-node-boxshadow-hover, var(--xy-node-boxshadow-hover-default));\n    }\n.react-flow__node-input.selectable.selected,\n    .react-flow__node-input.selectable:focus,\n    .react-flow__node-input.selectable:focus-visible,\n    .react-flow__node-default.selectable.selected,\n    .react-flow__node-default.selectable:focus,\n    .react-flow__node-default.selectable:focus-visible,\n    .react-flow__node-output.selectable.selected,\n    .react-flow__node-output.selectable:focus,\n    .react-flow__node-output.selectable:focus-visible,\n    .react-flow__node-group.selectable.selected,\n    .react-flow__node-group.selectable:focus,\n    .react-flow__node-group.selectable:focus-visible {\n      box-shadow: var(--xy-node-boxshadow-selected, var(--xy-node-boxshadow-selected-default));\n    }\n.react-flow__node-group {\n  background-color: var(--xy-node-group-background-color, var(--xy-node-group-background-color-default));\n}\n.react-flow__nodesselection-rect,\n.react-flow__selection {\n  background: var(--xy-selection-background-color, var(--xy-selection-background-color-default));\n  border: var(--xy-selection-border, var(--xy-selection-border-default));\n}\n.react-flow__nodesselection-rect:focus,\n  .react-flow__nodesselection-rect:focus-visible,\n  .react-flow__selection:focus,\n  .react-flow__selection:focus-visible {\n    outline: none;\n  }\n.react-flow__controls-button:hover {\n      background: var(\n        --xy-controls-button-background-color-hover-props,\n        var(--xy-controls-button-background-color-hover, var(--xy-controls-button-background-color-hover-default))\n      );\n      color: var(\n        --xy-controls-button-color-hover-props,\n        var(--xy-controls-button-color-hover, var(--xy-controls-button-color-hover-default))\n      );\n    }\n.react-flow__controls-button:disabled {\n      pointer-events: none;\n    }\n.react-flow__controls-button:disabled svg {\n        fill-opacity: 0.4;\n      }\n.react-flow__controls-button:last-child {\n    border-bottom: none;\n  }\n.react-flow__controls.horizontal .react-flow__controls-button {\n    border-bottom: none;\n    border-right: 1px solid\n      var(\n        --xy-controls-button-border-color-props,\n        var(--xy-controls-button-border-color, var(--xy-controls-button-border-color-default))\n      );\n  }\n.react-flow__controls.horizontal .react-flow__controls-button:last-child {\n    border-right: none;\n  }\n.react-flow__resize-control {\n  position: absolute;\n}\n.react-flow__resize-control.left,\n.react-flow__resize-control.right {\n  cursor: ew-resize;\n}\n.react-flow__resize-control.top,\n.react-flow__resize-control.bottom {\n  cursor: ns-resize;\n}\n.react-flow__resize-control.top.left,\n.react-flow__resize-control.bottom.right {\n  cursor: nwse-resize;\n}\n.react-flow__resize-control.bottom.left,\n.react-flow__resize-control.top.right {\n  cursor: nesw-resize;\n}\n/* handle styles */\n.react-flow__resize-control.handle {\n  width: 5px;\n  height: 5px;\n  border: 1px solid #fff;\n  border-radius: 1px;\n  background-color: var(--xy-resize-background-color, var(--xy-resize-background-color-default));\n  translate: -50% -50%;\n}\n.react-flow__resize-control.handle.left {\n  left: 0;\n  top: 50%;\n}\n.react-flow__resize-control.handle.right {\n  left: 100%;\n  top: 50%;\n}\n.react-flow__resize-control.handle.top {\n  left: 50%;\n  top: 0;\n}\n.react-flow__resize-control.handle.bottom {\n  left: 50%;\n  top: 100%;\n}\n.react-flow__resize-control.handle.top.left {\n  left: 0;\n}\n.react-flow__resize-control.handle.bottom.left {\n  left: 0;\n}\n.react-flow__resize-control.handle.top.right {\n  left: 100%;\n}\n.react-flow__resize-control.handle.bottom.right {\n  left: 100%;\n}\n/* line styles */\n.react-flow__resize-control.line {\n  border-color: var(--xy-resize-background-color, var(--xy-resize-background-color-default));\n  border-width: 0;\n  border-style: solid;\n}\n.react-flow__resize-control.line.left,\n.react-flow__resize-control.line.right {\n  width: 1px;\n  transform: translate(-50%, 0);\n  top: 0;\n  height: 100%;\n}\n.react-flow__resize-control.line.left {\n  left: 0;\n  border-left-width: 1px;\n}\n.react-flow__resize-control.line.right {\n  left: 100%;\n  border-right-width: 1px;\n}\n.react-flow__resize-control.line.top,\n.react-flow__resize-control.line.bottom {\n  height: 1px;\n  transform: translate(0, -50%);\n  left: 0;\n  width: 100%;\n}\n.react-flow__resize-control.line.top {\n  top: 0;\n  border-top-width: 1px;\n}\n.react-flow__resize-control.line.bottom {\n  border-bottom-width: 1px;\n  top: 100%;\n}\n.react-flow__edge-textbg {\n  fill: var(--xy-edge-label-background-color, var(--xy-edge-label-background-color-default));\n}\n.react-flow__edge-text {\n  fill: var(--xy-edge-label-color, var(--xy-edge-label-color-default));\n}\n";
+		const tagId$9 = "@deepseek-ai/dsh-client-ui-sandore/xyflow-style.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$9) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$9;
+			tag.textContent = css$9;
+			document.head.appendChild(tag);
+		}
+		//#endregion
+		//#region \0sandore-css:global:D:\project-code\llm\sandore\packages\sandore\ui\src\client\reactflow-theme.css.mjs
+		const css$8 = "/* React Flow 官方主题（照抄官方 dagre 示例 theme css：白底节点、粉色选中、可见边）。 */\n\n.react-flow {\n  --xy-background-color: #f7f9fb;\n  --xy-node-background-color-default: #ffffff;\n  --xy-node-border-default: 1px solid #ededed;\n  --xy-node-boxshadow-default: 0px 3.54px 4.55px 0px #00000005, 0px 3.54px 4.55px 0px #0000000d, 0px 0.51px 1.01px 0px #0000001a;\n  --xy-node-border-radius-default: 8px;\n  --xy-node-color-default: #18181b;\n\n  --xy-handle-background-color-default: #ffffff;\n  --xy-handle-border-color-default: #aaaaaa;\n\n  --xy-edge-label-color-default: #505050;\n  --xy-edge-stroke-default: #b1b1b7;\n  --xy-edge-stroke-width-default: 2;\n\n  --xy-theme-selected: #f57dbd;\n  --xy-theme-hover: #c5c5c5;\n  --xy-theme-edge-hover: #18181b;\n  --xy-theme-color-focus: #e8e8e8;\n  --xy-theme-panel-bg: #ffffff;\n  --xy-theme-panel-text: #111827;\n  --xy-theme-muted-bg: #f3f4f6;\n  --xy-theme-subtle-border: #d1d5db;\n}\n\n.react-flow.dark {\n  --xy-background-color: #101012;\n  --xy-node-background-color-default: #1a1b1e;\n  --xy-node-border-default: 1px solid #303238;\n  --xy-handle-background-color-default: #141519;\n  --xy-handle-border-color-default: #5a5d66;\n  --xy-edge-label-color-default: #e6e7ea;\n  --xy-edge-stroke-default: #8b9099;\n  --xy-theme-hover: #7a7d86;\n  --xy-theme-edge-hover: #f3f4f6;\n  --xy-theme-panel-bg: #141519;\n  --xy-theme-panel-text: #f3f4f6;\n  --xy-theme-color-focus: #4b4e57;\n  --xy-node-boxshadow-default: none;\n}\n\n.react-flow {\n  background-color: var(--xy-background-color);\n}\n\n/* 默认节点样式（与官方一致：白底卡片、居中、padding）。 */\n.react-flow__node {\n  box-shadow: var(--xy-node-boxshadow-default);\n  border-radius: var(--xy-node-border-radius-default);\n  background-color: var(--xy-node-background-color-default);\n  display: flex;\n  justify-content: center;\n  align-items: center;\n  text-align: center;\n  padding: 10px;\n  font-size: 12px;\n  flex-direction: column;\n  border: var(--xy-node-border-default);\n  color: var(--xy-node-color-default);\n}\n\n.react-flow__node.selectable:focus {\n  box-shadow: 0px 0px 0px 4px var(--xy-theme-color-focus);\n  border-color: var(--xy-theme-color-focus);\n}\n\n.react-flow__node.selectable:hover,\n.react-flow__node.draggable:hover {\n  border-color: var(--xy-theme-hover);\n}\n\n.react-flow__node.selectable.selected {\n  border-color: var(--xy-theme-selected);\n  box-shadow: var(--xy-node-boxshadow-default);\n}\n\n.react-flow__edge.selectable:hover .react-flow__edge-path,\n.react-flow__edge.selectable.selected .react-flow__edge-path {\n  stroke: var(--xy-theme-edge-hover);\n}\n\n.react-flow__handle {\n  background-color: var(--xy-handle-background-color-default);\n}\n\n.react-flow__handle.connectingfrom,\n.react-flow__handle.connectingto {\n  border-color: var(--xy-theme-edge-hover);\n}\n";
+		const tagId$8 = "@deepseek-ai/dsh-client-ui-sandore/reactflow-theme.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$8) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$8;
+			tag.textContent = css$8;
+			document.head.appendChild(tag);
+		}
+		//#endregion
 		//#region \0sandore-node-shim:process
-		var _sandore_node_shim_process_exports = /* @__PURE__ */ __exportAll({ default: () => process });
-		var process;
+		var _sandore_node_shim_process_exports = /* @__PURE__ */ __exportAll({
+			argv: () => argv,
+			browser: () => browser,
+			cwd: () => cwd,
+			default: () => _process,
+			emitWarning: () => emitWarning,
+			env: () => env,
+			nextTick: () => nextTick,
+			platform: () => platform,
+			version: () => version,
+			versions: () => versions
+		});
+		var _process, env, platform, version, versions, browser, argv, emitWarning, nextTick, cwd;
 		var init__sandore_node_shim_process = __esmMin((() => {
-			process = {
+			_process = {
 				env: {},
 				platform: "browser",
 				version: "",
@@ -5716,6 +17102,15 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				},
 				cwd: () => "/"
 			};
+			env = _process.env;
+			platform = _process.platform;
+			version = _process.version;
+			versions = _process.versions;
+			browser = _process.browser;
+			argv = _process.argv;
+			emitWarning = _process.emitWarning;
+			nextTick = _process.nextTick;
+			cwd = _process.cwd;
 		}));
 		//#endregion
 		//#region ../../../node_modules/.pnpm/yaml@2.9.0/node_modules/yaml/dist/nodes/identity.js
@@ -12495,19 +23890,26 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			description: string(),
 			refresh: boolean().optional()
 		});
-		/** DAG 分支：省略 `expectation` 表示并行分支。 */
-		const DagBranchSchema = object({
-			expectation: string().optional(),
-			next: string(),
-			label: string().optional()
-		});
-		/** DAG 循环控制。 */
+		/** DAG 循环控制（挂在分支上的可选属性：该分支 next 指向更早节点 = 回边）。 */
 		const DagLoopSchema = object({
 			breakCondition: CommandConfigSchema.optional(),
 			breakExpectation: string().optional(),
 			next: string().optional(),
 			maxIterations: number(),
 			exitTo: string().optional()
+		});
+		/**
+		* DAG 分支：分支是唯一出边单元，统一 `{ next, condition?, loop? }` 三并列字段。
+		* - 无 `condition` = 并行分支（始终纳入下一批，多条并发）；
+		* - 有 `condition` = 条件分支（布尔判定：AI 输出 true/false，shell 走
+		*   `matchesExpectation(breakExpectation)`，true 才走）；
+		* - 有 `loop` = 循环分支（该分支 `next` 为回边，`loop` 控制迭代/跳出/exitTo）。
+		*/
+		const DagBranchSchema = object({
+			next: string(),
+			label: string().optional(),
+			condition: CommandConfigSchema.optional(),
+			loop: DagLoopSchema.optional()
 		});
 		/** 门控配置（Workflow/Stage/Step 三级合并）。 */
 		const GatesSchema = object({
@@ -12535,30 +23937,24 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			id: string(),
 			name: string().optional(),
 			command: CommandConfigSchema.optional(),
-			inputFrom: array(InputFromItemSchema).optional(),
-			outputTo: array(OutputToItemSchema).optional(),
-			passThroughVars: array(PassThroughVarSchema).optional(),
+			inputFrom: array$1(InputFromItemSchema).optional(),
+			outputTo: array$1(OutputToItemSchema).optional(),
+			passThroughVars: array$1(PassThroughVarSchema).optional(),
 			timeout: number().optional(),
-			next: string().optional(),
 			defaultExpectation: string().optional(),
-			condition: CommandConfigSchema.optional(),
-			branches: array(DagBranchSchema).optional(),
-			loop: DagLoopSchema.optional(),
-			rules: array(string()).optional(),
+			branches: array$1(DagBranchSchema).optional(),
+			rules: array$1(string()).optional(),
 			gates: GatesSchema.optional()
 		});
-		/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段。 */
+		/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段（出边统一进 branches）。 */
 		const WorkflowStageSchema = object({
 			id: string(),
 			name: string(),
-			rules: array(string()).optional(),
+			rules: array$1(string()).optional(),
 			gates: GatesSchema.optional(),
-			steps: array(WorkflowStepSchema),
-			next: string().optional(),
+			steps: array$1(WorkflowStepSchema),
 			defaultExpectation: string().optional(),
-			condition: CommandConfigSchema.optional(),
-			branches: array(DagBranchSchema).optional(),
-			loop: DagLoopSchema.optional()
+			branches: array$1(DagBranchSchema).optional()
 		});
 		/** 工作流定义（V2 两级 Stage → Step）。 */
 		const WorkflowDefinitionSchema = object({
@@ -12567,14 +23963,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			version: string(),
 			description: string().optional(),
 			engine: string().optional(),
-			skills: array(string()).default([]),
-			mcps: array(string()).default([]),
-			agents: array(string()).default([]),
+			skills: array$1(string()).default([]),
+			mcps: array$1(string()).default([]),
+			agents: array$1(string()).default([]),
 			settings: WorkflowSettingsSchema.default(DEFAULT_SETTINGS),
 			rules: record(string(), string()).optional(),
 			gates: GatesSchema.optional(),
-			stages: array(WorkflowStageSchema),
-			steps: array(WorkflowStepSchema).optional()
+			stages: array$1(WorkflowStageSchema),
+			steps: array$1(WorkflowStepSchema).optional()
 		});
 		/** Step 会话合成占位元数据（替代 SDK 时代的 `{sessionId,inputJson,outputJson,partsJson}`）。 */
 		const StepSessionMetaSchema = object({
@@ -12590,11 +23986,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			hostSessionId: string().optional()
 		});
 		/** 向用户提问的载荷（对齐 DSH `ask_user_question`）。 */
-		const AskUserQuestionPayloadSchema = object({ questions: array(object({
+		const AskUserQuestionPayloadSchema = object({ questions: array$1(object({
 			id: string(),
 			question: string(),
 			header: string().optional(),
-			options: array(object({
+			options: array$1(object({
 				label: string(),
 				description: string().optional()
 			})).optional(),
@@ -12616,13 +24012,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			kind: literal("question"),
 			status: PendingInteractionStatusSchema,
 			payload: AskUserQuestionPayloadSchema,
-			answer: array(array(string())).optional(),
+			answer: array$1(array$1(string())).optional(),
 			createdAt: string()
 		});
 		/** 待回复权限条目载荷（permission/patterns/metadata/tool）。 */
 		const PendingPermissionPayloadSchema = object({
 			permission: string(),
-			patterns: array(string()).optional(),
+			patterns: array$1(string()).optional(),
 			metadata: record(string(), unknown()).optional(),
 			tool: string().optional()
 		});
@@ -12732,9 +24128,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			name: string(),
 			status: StepStatusSchema,
 			command: CommandConfigSchema.optional(),
-			inputFrom: array(InputFromItemSchema).optional(),
-			outputTo: array(OutputToItemSchema).optional(),
-			passThroughVars: array(PassThroughVarSchema).optional(),
+			inputFrom: array$1(InputFromItemSchema).optional(),
+			outputTo: array$1(OutputToItemSchema).optional(),
+			passThroughVars: array$1(PassThroughVarSchema).optional(),
 			sessionMeta: StepSessionMetaSchema.optional(),
 			finalizeMeta: FinalizeMetaSchema.optional(),
 			visitCount: number(),
@@ -12743,13 +24139,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			pausedAt: string().optional(),
 			resumedAt: string().optional(),
 			resumePrompt: string().optional(),
-			sessionMessages: array(SessionMessageSchema).optional(),
+			sessionMessages: array$1(SessionMessageSchema).optional(),
 			pauseEntryId: string().optional(),
-			loopIteration: array(number()).optional(),
+			loopIteration: array$1(number()).optional(),
 			loopMeta: BranchMetaSchema.optional(),
-			retryHistory: array(RetryRecordSchema).optional(),
+			retryHistory: array$1(RetryRecordSchema).optional(),
 			parentSessionId: string().optional(),
-			output: array(ContentBlockSchema).optional()
+			output: array$1(ContentBlockSchema).optional()
 		});
 		/** 单个 Stage 的状态快照。 */
 		const StageInfoSchema = object({
@@ -12762,14 +24158,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			stageId: string(),
 			stageName: string(),
 			status: StepStatusSchema,
-			artifacts: array(object({
+			artifacts: array$1(object({
 				stepId: string(),
 				outputToId: string(),
-				files: array(string()),
+				files: array$1(string()),
 				returnPrompt: string().optional()
 			})),
 			passThroughVars: record(string(), PassThroughVarValueSchema),
-			contractArtifacts: record(string(), array(string())),
+			contractArtifacts: record(string(), array$1(string())),
 			completedAt: string(),
 			errorDetail: string().optional()
 		});
@@ -12781,16 +24177,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			status: DagRunStatusSchema,
 			originalInput: string(),
 			currentStageId: string(),
-			executedSteps: array(ExecutedStepDefaultSchema),
-			stageInfos: array(StageInfoSchema),
-			pendingInteractions: array(union([PendingQuestionEntrySchema, PendingPermissionEntrySchema])),
-			pendingQueue: array(string()),
+			executedSteps: array$1(ExecutedStepDefaultSchema),
+			stageInfos: array$1(StageInfoSchema),
+			pendingInteractions: array$1(union([PendingQuestionEntrySchema, PendingPermissionEntrySchema])),
+			pendingQueue: array$1(string()),
 			visitCounts: record(string(), number()),
 			passThroughVars: record(string(), PassThroughVarValueSchema),
-			activeLoopIterationStack: array(number()),
+			activeLoopIterationStack: array$1(number()),
 			activeLoopNodeId: string().nullable(),
-			activeLoopStack: array(string()),
-			pausedChildIds: array(string()),
+			activeLoopStack: array$1(string()),
+			pausedChildIds: array$1(string()),
 			stageContracts: record(string(), StageContractSchema),
 			createdAt: string(),
 			updatedAt: string()
@@ -12866,8 +24262,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		/**
 		* 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`：同一 Scenario 内相邻 Task 依次接
-		* `next`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个 Step（指向下一
-		* Scenario 的首个 Task）。显式 `next` 不被覆盖。
+		* `branches: [{ next }]`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个
+		* Step（指向下一 Scenario 的首个 Task）。显式 `branches` 不被覆盖。
 		*/
 		function convertStage(stage) {
 			const scenarios = stage.scenarios;
@@ -12881,7 +24277,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					const current = converted[index];
 					const following = converted[index + 1];
 					if (current === void 0 || following === void 0) continue;
-					if (current.next === void 0) current.next = following.id;
+					if (current.branches === void 0) current.branches = [{ next: following.id }];
 				}
 				scenarioSteps.set(String(scenario.id), converted);
 				steps.push(...converted);
@@ -12895,7 +24291,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				if (own === void 0 || own.length === 0 || target === void 0 || target.length === 0) continue;
 				const last = own[own.length - 1];
 				const firstTarget = target[0];
-				if (isRecord$1(last) && isRecord$1(firstTarget) && last.next === void 0) last.next = firstTarget.id;
+				if (isRecord$1(last) && isRecord$1(firstTarget) && last.branches === void 0) last.branches = [{ next: firstTarget.id }];
 			}
 			return {
 				...Object.fromEntries(Object.entries(stage).filter(([key]) => key !== "scenarios")),
@@ -12927,8 +24323,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		/**
 		* 校验节点 ID 引用完整性：
-		* - `next`（含 `branches[].next`、`loop.next`、`loop.exitTo`）引用的节点 ID 均存在；
-		* - `stage.next` 必须指向 Stage 节点（Step 节点会被 DAG 导航静默跳过）；
+		* - `branches[].next`、`branches[].loop.next`、`branches[].loop.exitTo` 引用的节点 ID 均存在；
 		* - `inputFrom[].path` 的 `stageId[.stepId[.outputToId]]` 前两段（Stage/Step 节点 ID）存在。
 		* 不满足时抛 `WorkflowYamlError('DEFINITION_INVALID')`。
 		*/
@@ -12957,16 +24352,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				if (target !== void 0 && !nodeIds.has(target)) throw new WorkflowYamlError(`${where} references missing node '${target}'`, "DEFINITION_INVALID");
 			};
 			const checkNode = (node, kind) => {
-				checkTarget(node.next, `${kind} '${node.id}'.next`);
-				for (const branch of node.branches ?? []) checkTarget(branch.next, `${kind} '${node.id}'.branches.next`);
-				if (node.loop !== void 0) {
-					checkTarget(node.loop.next, `${kind} '${node.id}'.loop.next`);
-					checkTarget(node.loop.exitTo, `${kind} '${node.id}'.loop.exitTo`);
+				for (const branch of node.branches ?? []) {
+					checkTarget(branch.next, `${kind} '${node.id}'.branches.next`);
+					if (branch.loop !== void 0) {
+						checkTarget(branch.loop.next, `${kind} '${node.id}'.branches.loop.next`);
+						checkTarget(branch.loop.exitTo, `${kind} '${node.id}'.branches.loop.exitTo`);
+					}
 				}
 			};
 			for (const stage of definition.stages) {
 				checkNode(stage, "stage");
-				if (stage.next !== void 0 && !stageIds.has(stage.next)) throw new WorkflowYamlError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, "DEFINITION_INVALID");
 				for (const step of stage.steps) checkNode(step, "step");
 			}
 			for (const step of definition.steps ?? []) checkNode(step, "step");
@@ -13010,7 +24405,3179 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			return (0, import_dist.stringify)(definition);
 		}
 		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/graph.js
+		var require_graph = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var DEFAULT_EDGE_NAME = "\0";
+			var GRAPH_NODE = "\0";
+			var EDGE_KEY_DELIM = "";
+			var Graph = class {
+				_isDirected = true;
+				_isMultigraph = false;
+				_isCompound = false;
+				_label;
+				_defaultNodeLabelFn = () => void 0;
+				_defaultEdgeLabelFn = () => void 0;
+				_nodes = {};
+				_in = {};
+				_preds = {};
+				_out = {};
+				_sucs = {};
+				_edgeObjs = {};
+				_edgeLabels = {};
+				_nodeCount = 0;
+				_edgeCount = 0;
+				_parent;
+				_children;
+				constructor(opts) {
+					if (opts) {
+						this._isDirected = Object.hasOwn(opts, "directed") ? opts.directed : true;
+						this._isMultigraph = Object.hasOwn(opts, "multigraph") ? opts.multigraph : false;
+						this._isCompound = Object.hasOwn(opts, "compound") ? opts.compound : false;
+					}
+					if (this._isCompound) {
+						this._parent = {};
+						this._children = {};
+						this._children[GRAPH_NODE] = {};
+					}
+				}
+				/**
+				* Whether graph was created with 'directed' flag set to true or not.
+				*/
+				isDirected() {
+					return this._isDirected;
+				}
+				/**
+				* Whether graph was created with 'multigraph' flag set to true or not.
+				*/
+				isMultigraph() {
+					return this._isMultigraph;
+				}
+				/**
+				* Whether graph was created with 'compound' flag set to true or not.
+				*/
+				isCompound() {
+					return this._isCompound;
+				}
+				/**
+				* Sets the label of the graph.
+				*/
+				setGraph(label) {
+					this._label = label;
+					return this;
+				}
+				/**
+				* Gets the graph label.
+				*/
+				graph() {
+					return this._label;
+				}
+				/**
+				* Sets the default node label. If newDefault is a function, it will be
+				* invoked ach time when setting a label for a node. Otherwise, this label
+				* will be assigned as default label in case if no label was specified while
+				* setting a node.
+				* Complexity: O(1).
+				*/
+				setDefaultNodeLabel(newDefault) {
+					this._defaultNodeLabelFn = newDefault;
+					if (typeof newDefault !== "function") this._defaultNodeLabelFn = () => newDefault;
+					return this;
+				}
+				/**
+				* Gets the number of nodes in the graph.
+				* Complexity: O(1).
+				*/
+				nodeCount() {
+					return this._nodeCount;
+				}
+				/**
+				* Gets all nodes of the graph. Note, the in case of compound graph subnodes are
+				* not included in list.
+				* Complexity: O(1).
+				*/
+				nodes() {
+					return Object.keys(this._nodes);
+				}
+				/**
+				* Gets list of nodes without in-edges.
+				* Complexity: O(|V|).
+				*/
+				sources() {
+					var self = this;
+					return this.nodes().filter((v) => Object.keys(self._in[v]).length === 0);
+				}
+				/**
+				* Gets list of nodes without out-edges.
+				* Complexity: O(|V|).
+				*/
+				sinks() {
+					var self = this;
+					return this.nodes().filter((v) => Object.keys(self._out[v]).length === 0);
+				}
+				/**
+				* Invokes setNode method for each node in names list.
+				* Complexity: O(|names|).
+				*/
+				setNodes(vs, value) {
+					var args = arguments;
+					var self = this;
+					vs.forEach(function(v) {
+						if (args.length > 1) self.setNode(v, value);
+						else self.setNode(v);
+					});
+					return this;
+				}
+				/**
+				* Creates or updates the value for the node v in the graph. If label is supplied
+				* it is set as the value for the node. If label is not supplied and the node was
+				* created by this call then the default node label will be assigned.
+				* Complexity: O(1).
+				*/
+				setNode(v, value) {
+					if (Object.hasOwn(this._nodes, v)) {
+						if (arguments.length > 1) this._nodes[v] = value;
+						return this;
+					}
+					this._nodes[v] = arguments.length > 1 ? value : this._defaultNodeLabelFn(v);
+					if (this._isCompound) {
+						this._parent[v] = GRAPH_NODE;
+						this._children[v] = {};
+						this._children[GRAPH_NODE][v] = true;
+					}
+					this._in[v] = {};
+					this._preds[v] = {};
+					this._out[v] = {};
+					this._sucs[v] = {};
+					++this._nodeCount;
+					return this;
+				}
+				/**
+				* Gets the label of node with specified name.
+				* Complexity: O(|V|).
+				*/
+				node(v) {
+					return this._nodes[v];
+				}
+				/**
+				* Detects whether graph has a node with specified name or not.
+				*/
+				hasNode(v) {
+					return Object.hasOwn(this._nodes, v);
+				}
+				/**
+				* Remove the node with the name from the graph or do nothing if the node is not in
+				* the graph. If the node was removed this function also removes any incident
+				* edges.
+				* Complexity: O(1).
+				*/
+				removeNode(v) {
+					var self = this;
+					if (Object.hasOwn(this._nodes, v)) {
+						var removeEdge = (e) => self.removeEdge(self._edgeObjs[e]);
+						delete this._nodes[v];
+						if (this._isCompound) {
+							this._removeFromParentsChildList(v);
+							delete this._parent[v];
+							this.children(v).forEach(function(child) {
+								self.setParent(child);
+							});
+							delete this._children[v];
+						}
+						Object.keys(this._in[v]).forEach(removeEdge);
+						delete this._in[v];
+						delete this._preds[v];
+						Object.keys(this._out[v]).forEach(removeEdge);
+						delete this._out[v];
+						delete this._sucs[v];
+						--this._nodeCount;
+					}
+					return this;
+				}
+				/**
+				* Sets node p as a parent for node v if it is defined, or removes the
+				* parent for v if p is undefined. Method throws an exception in case of
+				* invoking it in context of noncompound graph.
+				* Average-case complexity: O(1).
+				*/
+				setParent(v, parent) {
+					if (!this._isCompound) throw new Error("Cannot set parent in a non-compound graph");
+					if (parent === void 0) parent = GRAPH_NODE;
+					else {
+						parent += "";
+						for (var ancestor = parent; ancestor !== void 0; ancestor = this.parent(ancestor)) if (ancestor === v) throw new Error("Setting " + parent + " as parent of " + v + " would create a cycle");
+						this.setNode(parent);
+					}
+					this.setNode(v);
+					this._removeFromParentsChildList(v);
+					this._parent[v] = parent;
+					this._children[parent][v] = true;
+					return this;
+				}
+				_removeFromParentsChildList(v) {
+					delete this._children[this._parent[v]][v];
+				}
+				/**
+				* Gets parent node for node v.
+				* Complexity: O(1).
+				*/
+				parent(v) {
+					if (this._isCompound) {
+						var parent = this._parent[v];
+						if (parent !== GRAPH_NODE) return parent;
+					}
+				}
+				/**
+				* Gets list of direct children of node v.
+				* Complexity: O(1).
+				*/
+				children(v = GRAPH_NODE) {
+					if (this._isCompound) {
+						var children = this._children[v];
+						if (children) return Object.keys(children);
+					} else if (v === GRAPH_NODE) return this.nodes();
+					else if (this.hasNode(v)) return [];
+				}
+				/**
+				* Return all nodes that are predecessors of the specified node or undefined if node v is not in
+				* the graph. Behavior is undefined for undirected graphs - use neighbors instead.
+				* Complexity: O(|V|).
+				*/
+				predecessors(v) {
+					var predsV = this._preds[v];
+					if (predsV) return Object.keys(predsV);
+				}
+				/**
+				* Return all nodes that are successors of the specified node or undefined if node v is not in
+				* the graph. Behavior is undefined for undirected graphs - use neighbors instead.
+				* Complexity: O(|V|).
+				*/
+				successors(v) {
+					var sucsV = this._sucs[v];
+					if (sucsV) return Object.keys(sucsV);
+				}
+				/**
+				* Return all nodes that are predecessors or successors of the specified node or undefined if
+				* node v is not in the graph.
+				* Complexity: O(|V|).
+				*/
+				neighbors(v) {
+					var preds = this.predecessors(v);
+					if (preds) {
+						const union = new Set(preds);
+						for (var succ of this.successors(v)) union.add(succ);
+						return Array.from(union.values());
+					}
+				}
+				isLeaf(v) {
+					var neighbors;
+					if (this.isDirected()) neighbors = this.successors(v);
+					else neighbors = this.neighbors(v);
+					return neighbors.length === 0;
+				}
+				/**
+				* Creates new graph with nodes filtered via filter. Edges incident to rejected node
+				* are also removed. In case of compound graph, if parent is rejected by filter,
+				* than all its children are rejected too.
+				* Average-case complexity: O(|E|+|V|).
+				*/
+				filterNodes(filter) {
+					var copy = new this.constructor({
+						directed: this._isDirected,
+						multigraph: this._isMultigraph,
+						compound: this._isCompound
+					});
+					copy.setGraph(this.graph());
+					var self = this;
+					Object.entries(this._nodes).forEach(function([v, value]) {
+						if (filter(v)) copy.setNode(v, value);
+					});
+					Object.values(this._edgeObjs).forEach(function(e) {
+						if (copy.hasNode(e.v) && copy.hasNode(e.w)) copy.setEdge(e, self.edge(e));
+					});
+					var parents = {};
+					function findParent(v) {
+						var parent = self.parent(v);
+						if (parent === void 0 || copy.hasNode(parent)) {
+							parents[v] = parent;
+							return parent;
+						} else if (parent in parents) return parents[parent];
+						else return findParent(parent);
+					}
+					if (this._isCompound) copy.nodes().forEach((v) => copy.setParent(v, findParent(v)));
+					return copy;
+				}
+				/**
+				* Sets the default edge label or factory function. This label will be
+				* assigned as default label in case if no label was specified while setting
+				* an edge or this function will be invoked each time when setting an edge
+				* with no label specified and returned value * will be used as a label for edge.
+				* Complexity: O(1).
+				*/
+				setDefaultEdgeLabel(newDefault) {
+					this._defaultEdgeLabelFn = newDefault;
+					if (typeof newDefault !== "function") this._defaultEdgeLabelFn = () => newDefault;
+					return this;
+				}
+				/**
+				* Gets the number of edges in the graph.
+				* Complexity: O(1).
+				*/
+				edgeCount() {
+					return this._edgeCount;
+				}
+				/**
+				* Gets edges of the graph. In case of compound graph subgraphs are not considered.
+				* Complexity: O(|E|).
+				*/
+				edges() {
+					return Object.values(this._edgeObjs);
+				}
+				/**
+				* Establish an edges path over the nodes in nodes list. If some edge is already
+				* exists, it will update its label, otherwise it will create an edge between pair
+				* of nodes with label provided or default label if no label provided.
+				* Complexity: O(|nodes|).
+				*/
+				setPath(vs, value) {
+					var self = this;
+					var args = arguments;
+					vs.reduce(function(v, w) {
+						if (args.length > 1) self.setEdge(v, w, value);
+						else self.setEdge(v, w);
+						return w;
+					});
+					return this;
+				}
+				/**
+				* Creates or updates the label for the edge (v, w) with the optionally supplied
+				* name. If label is supplied it is set as the value for the edge. If label is not
+				* supplied and the edge was created by this call then the default edge label will
+				* be assigned. The name parameter is only useful with multigraphs.
+				*/
+				setEdge() {
+					var v, w, name, value;
+					var valueSpecified = false;
+					var arg0 = arguments[0];
+					if (typeof arg0 === "object" && arg0 !== null && "v" in arg0) {
+						v = arg0.v;
+						w = arg0.w;
+						name = arg0.name;
+						if (arguments.length === 2) {
+							value = arguments[1];
+							valueSpecified = true;
+						}
+					} else {
+						v = arg0;
+						w = arguments[1];
+						name = arguments[3];
+						if (arguments.length > 2) {
+							value = arguments[2];
+							valueSpecified = true;
+						}
+					}
+					v = "" + v;
+					w = "" + w;
+					if (name !== void 0) name = "" + name;
+					var e = edgeArgsToId(this._isDirected, v, w, name);
+					if (Object.hasOwn(this._edgeLabels, e)) {
+						if (valueSpecified) this._edgeLabels[e] = value;
+						return this;
+					}
+					if (name !== void 0 && !this._isMultigraph) throw new Error("Cannot set a named edge when isMultigraph = false");
+					this.setNode(v);
+					this.setNode(w);
+					this._edgeLabels[e] = valueSpecified ? value : this._defaultEdgeLabelFn(v, w, name);
+					var edgeObj = edgeArgsToObj(this._isDirected, v, w, name);
+					v = edgeObj.v;
+					w = edgeObj.w;
+					Object.freeze(edgeObj);
+					this._edgeObjs[e] = edgeObj;
+					incrementOrInitEntry(this._preds[w], v);
+					incrementOrInitEntry(this._sucs[v], w);
+					this._in[w][e] = edgeObj;
+					this._out[v][e] = edgeObj;
+					this._edgeCount++;
+					return this;
+				}
+				/**
+				* Gets the label for the specified edge.
+				* Complexity: O(1).
+				*/
+				edge(v, w, name) {
+					var e = arguments.length === 1 ? edgeObjToId(this._isDirected, arguments[0]) : edgeArgsToId(this._isDirected, v, w, name);
+					return this._edgeLabels[e];
+				}
+				/**
+				* Gets the label for the specified edge and converts it to an object.
+				* Complexity: O(1)
+				*/
+				edgeAsObj() {
+					const edge = this.edge(...arguments);
+					if (typeof edge !== "object") return { label: edge };
+					return edge;
+				}
+				/**
+				* Detects whether the graph contains specified edge or not. No subgraphs are considered.
+				* Complexity: O(1).
+				*/
+				hasEdge(v, w, name) {
+					var e = arguments.length === 1 ? edgeObjToId(this._isDirected, arguments[0]) : edgeArgsToId(this._isDirected, v, w, name);
+					return Object.hasOwn(this._edgeLabels, e);
+				}
+				/**
+				* Removes the specified edge from the graph. No subgraphs are considered.
+				* Complexity: O(1).
+				*/
+				removeEdge(v, w, name) {
+					var e = arguments.length === 1 ? edgeObjToId(this._isDirected, arguments[0]) : edgeArgsToId(this._isDirected, v, w, name);
+					var edge = this._edgeObjs[e];
+					if (edge) {
+						v = edge.v;
+						w = edge.w;
+						delete this._edgeLabels[e];
+						delete this._edgeObjs[e];
+						decrementOrRemoveEntry(this._preds[w], v);
+						decrementOrRemoveEntry(this._sucs[v], w);
+						delete this._in[w][e];
+						delete this._out[v][e];
+						this._edgeCount--;
+					}
+					return this;
+				}
+				/**
+				* Return all edges that point to the node v. Optionally filters those edges down to just those
+				* coming from node u. Behavior is undefined for undirected graphs - use nodeEdges instead.
+				* Complexity: O(|E|).
+				*/
+				inEdges(v, u) {
+					var inV = this._in[v];
+					if (inV) {
+						var edges = Object.values(inV);
+						if (!u) return edges;
+						return edges.filter((edge) => edge.v === u);
+					}
+				}
+				/**
+				* Return all edges that are pointed at by node v. Optionally filters those edges down to just
+				* those point to w. Behavior is undefined for undirected graphs - use nodeEdges instead.
+				* Complexity: O(|E|).
+				*/
+				outEdges(v, w) {
+					var outV = this._out[v];
+					if (outV) {
+						var edges = Object.values(outV);
+						if (!w) return edges;
+						return edges.filter((edge) => edge.w === w);
+					}
+				}
+				/**
+				* Returns all edges to or from node v regardless of direction. Optionally filters those edges
+				* down to just those between nodes v and w regardless of direction.
+				* Complexity: O(|E|).
+				*/
+				nodeEdges(v, w) {
+					var inEdges = this.inEdges(v, w);
+					if (inEdges) return inEdges.concat(this.outEdges(v, w));
+				}
+			};
+			function incrementOrInitEntry(map, k) {
+				if (map[k]) map[k]++;
+				else map[k] = 1;
+			}
+			function decrementOrRemoveEntry(map, k) {
+				if (!--map[k]) delete map[k];
+			}
+			function edgeArgsToId(isDirected, v_, w_, name) {
+				var v = "" + v_;
+				var w = "" + w_;
+				if (!isDirected && v > w) {
+					var tmp = v;
+					v = w;
+					w = tmp;
+				}
+				return v + EDGE_KEY_DELIM + w + EDGE_KEY_DELIM + (name === void 0 ? DEFAULT_EDGE_NAME : name);
+			}
+			function edgeArgsToObj(isDirected, v_, w_, name) {
+				var v = "" + v_;
+				var w = "" + w_;
+				if (!isDirected && v > w) {
+					var tmp = v;
+					v = w;
+					w = tmp;
+				}
+				var edgeObj = {
+					v,
+					w
+				};
+				if (name) edgeObj.name = name;
+				return edgeObj;
+			}
+			function edgeObjToId(isDirected, edgeObj) {
+				return edgeArgsToId(isDirected, edgeObj.v, edgeObj.w, edgeObj.name);
+			}
+			module.exports = Graph;
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/version.js
+		var require_version$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = "2.2.4";
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/index.js
+		var require_lib = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = {
+				Graph: require_graph(),
+				version: require_version$1()
+			};
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/json.js
+		var require_json = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var Graph = require_graph();
+			module.exports = {
+				write,
+				read
+			};
+			/**
+			* Creates a JSON representation of the graph that can be serialized to a string with
+			* JSON.stringify. The graph can later be restored using json.read.
+			*/
+			function write(g) {
+				var json = {
+					options: {
+						directed: g.isDirected(),
+						multigraph: g.isMultigraph(),
+						compound: g.isCompound()
+					},
+					nodes: writeNodes(g),
+					edges: writeEdges(g)
+				};
+				if (g.graph() !== void 0) json.value = structuredClone(g.graph());
+				return json;
+			}
+			function writeNodes(g) {
+				return g.nodes().map(function(v) {
+					var nodeValue = g.node(v);
+					var parent = g.parent(v);
+					var node = { v };
+					if (nodeValue !== void 0) node.value = nodeValue;
+					if (parent !== void 0) node.parent = parent;
+					return node;
+				});
+			}
+			function writeEdges(g) {
+				return g.edges().map(function(e) {
+					var edgeValue = g.edge(e);
+					var edge = {
+						v: e.v,
+						w: e.w
+					};
+					if (e.name !== void 0) edge.name = e.name;
+					if (edgeValue !== void 0) edge.value = edgeValue;
+					return edge;
+				});
+			}
+			/**
+			* Takes JSON as input and returns the graph representation.
+			*
+			* @example
+			* var g2 = graphlib.json.read(JSON.parse(str));
+			* g2.nodes();
+			* // ['a', 'b']
+			* g2.edges()
+			* // [ { v: 'a', w: 'b' } ]
+			*/
+			function read(json) {
+				var g = new Graph(json.options).setGraph(json.value);
+				json.nodes.forEach(function(entry) {
+					g.setNode(entry.v, entry.value);
+					if (entry.parent) g.setParent(entry.v, entry.parent);
+				});
+				json.edges.forEach(function(entry) {
+					g.setEdge({
+						v: entry.v,
+						w: entry.w,
+						name: entry.name
+					}, entry.value);
+				});
+				return g;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/components.js
+		var require_components = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = components;
+			function components(g) {
+				var visited = {};
+				var cmpts = [];
+				var cmpt;
+				function dfs(v) {
+					if (Object.hasOwn(visited, v)) return;
+					visited[v] = true;
+					cmpt.push(v);
+					g.successors(v).forEach(dfs);
+					g.predecessors(v).forEach(dfs);
+				}
+				g.nodes().forEach(function(v) {
+					cmpt = [];
+					dfs(v);
+					if (cmpt.length) cmpts.push(cmpt);
+				});
+				return cmpts;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/data/priority-queue.js
+		var require_priority_queue = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			/**
+			* A min-priority queue data structure. This algorithm is derived from Cormen,
+			* et al., "Introduction to Algorithms". The basic idea of a min-priority
+			* queue is that you can efficiently (in O(1) time) get the smallest key in
+			* the queue. Adding and removing elements takes O(log n) time. A key can
+			* have its priority decreased in O(log n) time.
+			*/
+			var PriorityQueue = class {
+				_arr = [];
+				_keyIndices = {};
+				/**
+				* Returns the number of elements in the queue. Takes `O(1)` time.
+				*/
+				size() {
+					return this._arr.length;
+				}
+				/**
+				* Returns the keys that are in the queue. Takes `O(n)` time.
+				*/
+				keys() {
+					return this._arr.map(function(x) {
+						return x.key;
+					});
+				}
+				/**
+				* Returns `true` if **key** is in the queue and `false` if not.
+				*/
+				has(key) {
+					return Object.hasOwn(this._keyIndices, key);
+				}
+				/**
+				* Returns the priority for **key**. If **key** is not present in the queue
+				* then this function returns `undefined`. Takes `O(1)` time.
+				*
+				* @param {Object} key
+				*/
+				priority(key) {
+					var index = this._keyIndices[key];
+					if (index !== void 0) return this._arr[index].priority;
+				}
+				/**
+				* Returns the key for the minimum element in this queue. If the queue is
+				* empty this function throws an Error. Takes `O(1)` time.
+				*/
+				min() {
+					if (this.size() === 0) throw new Error("Queue underflow");
+					return this._arr[0].key;
+				}
+				/**
+				* Inserts a new key into the priority queue. If the key already exists in
+				* the queue this function returns `false`; otherwise it will return `true`.
+				* Takes `O(n)` time.
+				*
+				* @param {Object} key the key to add
+				* @param {Number} priority the initial priority for the key
+				*/
+				add(key, priority) {
+					var keyIndices = this._keyIndices;
+					key = String(key);
+					if (!Object.hasOwn(keyIndices, key)) {
+						var arr = this._arr;
+						var index = arr.length;
+						keyIndices[key] = index;
+						arr.push({
+							key,
+							priority
+						});
+						this._decrease(index);
+						return true;
+					}
+					return false;
+				}
+				/**
+				* Removes and returns the smallest key in the queue. Takes `O(log n)` time.
+				*/
+				removeMin() {
+					this._swap(0, this._arr.length - 1);
+					var min = this._arr.pop();
+					delete this._keyIndices[min.key];
+					this._heapify(0);
+					return min.key;
+				}
+				/**
+				* Decreases the priority for **key** to **priority**. If the new priority is
+				* greater than the previous priority, this function will throw an Error.
+				*
+				* @param {Object} key the key for which to raise priority
+				* @param {Number} priority the new priority for the key
+				*/
+				decrease(key, priority) {
+					var index = this._keyIndices[key];
+					if (priority > this._arr[index].priority) throw new Error("New priority is greater than current priority. Key: " + key + " Old: " + this._arr[index].priority + " New: " + priority);
+					this._arr[index].priority = priority;
+					this._decrease(index);
+				}
+				_heapify(i) {
+					var arr = this._arr;
+					var l = 2 * i;
+					var r = l + 1;
+					var largest = i;
+					if (l < arr.length) {
+						largest = arr[l].priority < arr[largest].priority ? l : largest;
+						if (r < arr.length) largest = arr[r].priority < arr[largest].priority ? r : largest;
+						if (largest !== i) {
+							this._swap(i, largest);
+							this._heapify(largest);
+						}
+					}
+				}
+				_decrease(index) {
+					var arr = this._arr;
+					var priority = arr[index].priority;
+					var parent;
+					while (index !== 0) {
+						parent = index >> 1;
+						if (arr[parent].priority < priority) break;
+						this._swap(index, parent);
+						index = parent;
+					}
+				}
+				_swap(i, j) {
+					var arr = this._arr;
+					var keyIndices = this._keyIndices;
+					var origArrI = arr[i];
+					var origArrJ = arr[j];
+					arr[i] = origArrJ;
+					arr[j] = origArrI;
+					keyIndices[origArrJ.key] = i;
+					keyIndices[origArrI.key] = j;
+				}
+			};
+			module.exports = PriorityQueue;
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/dijkstra.js
+		var require_dijkstra = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var PriorityQueue = require_priority_queue();
+			module.exports = dijkstra;
+			var DEFAULT_WEIGHT_FUNC = () => 1;
+			function dijkstra(g, source, weightFn, edgeFn) {
+				return runDijkstra(g, String(source), weightFn || DEFAULT_WEIGHT_FUNC, edgeFn || function(v) {
+					return g.outEdges(v);
+				});
+			}
+			function runDijkstra(g, source, weightFn, edgeFn) {
+				var results = {};
+				var pq = new PriorityQueue();
+				var v, vEntry;
+				var updateNeighbors = function(edge) {
+					var w = edge.v !== v ? edge.v : edge.w;
+					var wEntry = results[w];
+					var weight = weightFn(edge);
+					var distance = vEntry.distance + weight;
+					if (weight < 0) throw new Error("dijkstra does not allow negative edge weights. Bad edge: " + edge + " Weight: " + weight);
+					if (distance < wEntry.distance) {
+						wEntry.distance = distance;
+						wEntry.predecessor = v;
+						pq.decrease(w, distance);
+					}
+				};
+				g.nodes().forEach(function(v) {
+					var distance = v === source ? 0 : Number.POSITIVE_INFINITY;
+					results[v] = { distance };
+					pq.add(v, distance);
+				});
+				while (pq.size() > 0) {
+					v = pq.removeMin();
+					vEntry = results[v];
+					if (vEntry.distance === Number.POSITIVE_INFINITY) break;
+					edgeFn(v).forEach(updateNeighbors);
+				}
+				return results;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/dijkstra-all.js
+		var require_dijkstra_all = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var dijkstra = require_dijkstra();
+			module.exports = dijkstraAll;
+			function dijkstraAll(g, weightFunc, edgeFunc) {
+				return g.nodes().reduce(function(acc, v) {
+					acc[v] = dijkstra(g, v, weightFunc, edgeFunc);
+					return acc;
+				}, {});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/tarjan.js
+		var require_tarjan = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = tarjan;
+			function tarjan(g) {
+				var index = 0;
+				var stack = [];
+				var visited = {};
+				var results = [];
+				function dfs(v) {
+					var entry = visited[v] = {
+						onStack: true,
+						lowlink: index,
+						index: index++
+					};
+					stack.push(v);
+					g.successors(v).forEach(function(w) {
+						if (!Object.hasOwn(visited, w)) {
+							dfs(w);
+							entry.lowlink = Math.min(entry.lowlink, visited[w].lowlink);
+						} else if (visited[w].onStack) entry.lowlink = Math.min(entry.lowlink, visited[w].index);
+					});
+					if (entry.lowlink === entry.index) {
+						var cmpt = [];
+						var w;
+						do {
+							w = stack.pop();
+							visited[w].onStack = false;
+							cmpt.push(w);
+						} while (v !== w);
+						results.push(cmpt);
+					}
+				}
+				g.nodes().forEach(function(v) {
+					if (!Object.hasOwn(visited, v)) dfs(v);
+				});
+				return results;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/find-cycles.js
+		var require_find_cycles = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var tarjan = require_tarjan();
+			module.exports = findCycles;
+			function findCycles(g) {
+				return tarjan(g).filter(function(cmpt) {
+					return cmpt.length > 1 || cmpt.length === 1 && g.hasEdge(cmpt[0], cmpt[0]);
+				});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/floyd-warshall.js
+		var require_floyd_warshall = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = floydWarshall;
+			var DEFAULT_WEIGHT_FUNC = () => 1;
+			function floydWarshall(g, weightFn, edgeFn) {
+				return runFloydWarshall(g, weightFn || DEFAULT_WEIGHT_FUNC, edgeFn || function(v) {
+					return g.outEdges(v);
+				});
+			}
+			function runFloydWarshall(g, weightFn, edgeFn) {
+				var results = {};
+				var nodes = g.nodes();
+				nodes.forEach(function(v) {
+					results[v] = {};
+					results[v][v] = { distance: 0 };
+					nodes.forEach(function(w) {
+						if (v !== w) results[v][w] = { distance: Number.POSITIVE_INFINITY };
+					});
+					edgeFn(v).forEach(function(edge) {
+						var w = edge.v === v ? edge.w : edge.v;
+						var d = weightFn(edge);
+						results[v][w] = {
+							distance: d,
+							predecessor: v
+						};
+					});
+				});
+				nodes.forEach(function(k) {
+					var rowK = results[k];
+					nodes.forEach(function(i) {
+						var rowI = results[i];
+						nodes.forEach(function(j) {
+							var ik = rowI[k];
+							var kj = rowK[j];
+							var ij = rowI[j];
+							var altDistance = ik.distance + kj.distance;
+							if (altDistance < ij.distance) {
+								ij.distance = altDistance;
+								ij.predecessor = kj.predecessor;
+							}
+						});
+					});
+				});
+				return results;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/topsort.js
+		var require_topsort = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			function topsort(g) {
+				var visited = {};
+				var stack = {};
+				var results = [];
+				function visit(node) {
+					if (Object.hasOwn(stack, node)) throw new CycleException();
+					if (!Object.hasOwn(visited, node)) {
+						stack[node] = true;
+						visited[node] = true;
+						g.predecessors(node).forEach(visit);
+						delete stack[node];
+						results.push(node);
+					}
+				}
+				g.sinks().forEach(visit);
+				if (Object.keys(visited).length !== g.nodeCount()) throw new CycleException();
+				return results;
+			}
+			var CycleException = class extends Error {
+				constructor() {
+					super(...arguments);
+				}
+			};
+			module.exports = topsort;
+			topsort.CycleException = CycleException;
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/is-acyclic.js
+		var require_is_acyclic = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var topsort = require_topsort();
+			module.exports = isAcyclic;
+			function isAcyclic(g) {
+				try {
+					topsort(g);
+				} catch (e) {
+					if (e instanceof topsort.CycleException) return false;
+					throw e;
+				}
+				return true;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/dfs.js
+		var require_dfs = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = dfs;
+			function dfs(g, vs, order) {
+				if (!Array.isArray(vs)) vs = [vs];
+				var navigation = g.isDirected() ? (v) => g.successors(v) : (v) => g.neighbors(v);
+				var orderFunc = order === "post" ? postOrderDfs : preOrderDfs;
+				var acc = [];
+				var visited = {};
+				vs.forEach((v) => {
+					if (!g.hasNode(v)) throw new Error("Graph does not have node: " + v);
+					orderFunc(v, navigation, visited, acc);
+				});
+				return acc;
+			}
+			function postOrderDfs(v, navigation, visited, acc) {
+				var stack = [[v, false]];
+				while (stack.length > 0) {
+					var curr = stack.pop();
+					if (curr[1]) acc.push(curr[0]);
+					else if (!Object.hasOwn(visited, curr[0])) {
+						visited[curr[0]] = true;
+						stack.push([curr[0], true]);
+						forEachRight(navigation(curr[0]), (w) => stack.push([w, false]));
+					}
+				}
+			}
+			function preOrderDfs(v, navigation, visited, acc) {
+				var stack = [v];
+				while (stack.length > 0) {
+					var curr = stack.pop();
+					if (!Object.hasOwn(visited, curr)) {
+						visited[curr] = true;
+						acc.push(curr);
+						forEachRight(navigation(curr), (w) => stack.push(w));
+					}
+				}
+			}
+			function forEachRight(array, iteratee) {
+				var length = array.length;
+				while (length--) iteratee(array[length], length, array);
+				return array;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/postorder.js
+		var require_postorder = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var dfs = require_dfs();
+			module.exports = postorder;
+			function postorder(g, vs) {
+				return dfs(g, vs, "post");
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/preorder.js
+		var require_preorder = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var dfs = require_dfs();
+			module.exports = preorder;
+			function preorder(g, vs) {
+				return dfs(g, vs, "pre");
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/prim.js
+		var require_prim = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var Graph = require_graph();
+			var PriorityQueue = require_priority_queue();
+			module.exports = prim;
+			function prim(g, weightFunc) {
+				var result = new Graph();
+				var parents = {};
+				var pq = new PriorityQueue();
+				var v;
+				function updateNeighbors(edge) {
+					var w = edge.v === v ? edge.w : edge.v;
+					var pri = pq.priority(w);
+					if (pri !== void 0) {
+						var edgeWeight = weightFunc(edge);
+						if (edgeWeight < pri) {
+							parents[w] = v;
+							pq.decrease(w, edgeWeight);
+						}
+					}
+				}
+				if (g.nodeCount() === 0) return result;
+				g.nodes().forEach(function(v) {
+					pq.add(v, Number.POSITIVE_INFINITY);
+					result.setNode(v);
+				});
+				pq.decrease(g.nodes()[0], 0);
+				var init = false;
+				while (pq.size() > 0) {
+					v = pq.removeMin();
+					if (Object.hasOwn(parents, v)) result.setEdge(v, parents[v]);
+					else if (init) throw new Error("Input graph is not connected: " + g);
+					else init = true;
+					g.nodeEdges(v).forEach(updateNeighbors);
+				}
+				return result;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/lib/alg/index.js
+		var require_alg = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = {
+				components: require_components(),
+				dijkstra: require_dijkstra(),
+				dijkstraAll: require_dijkstra_all(),
+				findCycles: require_find_cycles(),
+				floydWarshall: require_floyd_warshall(),
+				isAcyclic: require_is_acyclic(),
+				postorder: require_postorder(),
+				preorder: require_preorder(),
+				prim: require_prim(),
+				tarjan: require_tarjan(),
+				topsort: require_topsort()
+			};
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+graphlib@2.2.4/node_modules/@dagrejs/graphlib/index.js
+		var require_graphlib = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			/**
+			* Copyright (c) 2014, Chris Pettitt
+			* All rights reserved.
+			*
+			* Redistribution and use in source and binary forms, with or without
+			* modification, are permitted provided that the following conditions are met:
+			*
+			* 1. Redistributions of source code must retain the above copyright notice, this
+			* list of conditions and the following disclaimer.
+			*
+			* 2. Redistributions in binary form must reproduce the above copyright notice,
+			* this list of conditions and the following disclaimer in the documentation
+			* and/or other materials provided with the distribution.
+			*
+			* 3. Neither the name of the copyright holder nor the names of its contributors
+			* may be used to endorse or promote products derived from this software without
+			* specific prior written permission.
+			*
+			* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+			* ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+			* WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+			* DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+			* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+			* DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+			* SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+			* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+			* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+			* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+			*/
+			var lib = require_lib();
+			module.exports = {
+				Graph: lib.Graph,
+				json: require_json(),
+				alg: require_alg(),
+				version: lib.version
+			};
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/data/list.js
+		var require_list = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var List = class {
+				constructor() {
+					let sentinel = {};
+					sentinel._next = sentinel._prev = sentinel;
+					this._sentinel = sentinel;
+				}
+				dequeue() {
+					let sentinel = this._sentinel;
+					let entry = sentinel._prev;
+					if (entry !== sentinel) {
+						unlink(entry);
+						return entry;
+					}
+				}
+				enqueue(entry) {
+					let sentinel = this._sentinel;
+					if (entry._prev && entry._next) unlink(entry);
+					entry._next = sentinel._next;
+					sentinel._next._prev = entry;
+					sentinel._next = entry;
+					entry._prev = sentinel;
+				}
+				toString() {
+					let strs = [];
+					let sentinel = this._sentinel;
+					let curr = sentinel._prev;
+					while (curr !== sentinel) {
+						strs.push(JSON.stringify(curr, filterOutLinks));
+						curr = curr._prev;
+					}
+					return "[" + strs.join(", ") + "]";
+				}
+			};
+			function unlink(entry) {
+				entry._prev._next = entry._next;
+				entry._next._prev = entry._prev;
+				delete entry._next;
+				delete entry._prev;
+			}
+			function filterOutLinks(k, v) {
+				if (k !== "_next" && k !== "_prev") return v;
+			}
+			module.exports = List;
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/greedy-fas.js
+		var require_greedy_fas = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let Graph = require_graphlib().Graph;
+			let List = require_list();
+			module.exports = greedyFAS;
+			let DEFAULT_WEIGHT_FN = () => 1;
+			function greedyFAS(g, weightFn) {
+				if (g.nodeCount() <= 1) return [];
+				let state = buildState(g, weightFn || DEFAULT_WEIGHT_FN);
+				return doGreedyFAS(state.graph, state.buckets, state.zeroIdx).flatMap((e) => g.outEdges(e.v, e.w));
+			}
+			function doGreedyFAS(g, buckets, zeroIdx) {
+				let results = [];
+				let sources = buckets[buckets.length - 1];
+				let sinks = buckets[0];
+				let entry;
+				while (g.nodeCount()) {
+					while (entry = sinks.dequeue()) removeNode(g, buckets, zeroIdx, entry);
+					while (entry = sources.dequeue()) removeNode(g, buckets, zeroIdx, entry);
+					if (g.nodeCount()) for (let i = buckets.length - 2; i > 0; --i) {
+						entry = buckets[i].dequeue();
+						if (entry) {
+							results = results.concat(removeNode(g, buckets, zeroIdx, entry, true));
+							break;
+						}
+					}
+				}
+				return results;
+			}
+			function removeNode(g, buckets, zeroIdx, entry, collectPredecessors) {
+				let results = collectPredecessors ? [] : void 0;
+				g.inEdges(entry.v).forEach((edge) => {
+					let weight = g.edge(edge);
+					let uEntry = g.node(edge.v);
+					if (collectPredecessors) results.push({
+						v: edge.v,
+						w: edge.w
+					});
+					uEntry.out -= weight;
+					assignBucket(buckets, zeroIdx, uEntry);
+				});
+				g.outEdges(entry.v).forEach((edge) => {
+					let weight = g.edge(edge);
+					let w = edge.w;
+					let wEntry = g.node(w);
+					wEntry["in"] -= weight;
+					assignBucket(buckets, zeroIdx, wEntry);
+				});
+				g.removeNode(entry.v);
+				return results;
+			}
+			function buildState(g, weightFn) {
+				let fasGraph = new Graph();
+				let maxIn = 0;
+				let maxOut = 0;
+				g.nodes().forEach((v) => {
+					fasGraph.setNode(v, {
+						v,
+						"in": 0,
+						out: 0
+					});
+				});
+				g.edges().forEach((e) => {
+					let prevWeight = fasGraph.edge(e.v, e.w) || 0;
+					let weight = weightFn(e);
+					let edgeWeight = prevWeight + weight;
+					fasGraph.setEdge(e.v, e.w, edgeWeight);
+					maxOut = Math.max(maxOut, fasGraph.node(e.v).out += weight);
+					maxIn = Math.max(maxIn, fasGraph.node(e.w)["in"] += weight);
+				});
+				let buckets = range(maxOut + maxIn + 3).map(() => new List());
+				let zeroIdx = maxIn + 1;
+				fasGraph.nodes().forEach((v) => {
+					assignBucket(buckets, zeroIdx, fasGraph.node(v));
+				});
+				return {
+					graph: fasGraph,
+					buckets,
+					zeroIdx
+				};
+			}
+			function assignBucket(buckets, zeroIdx, entry) {
+				if (!entry.out) buckets[0].enqueue(entry);
+				else if (!entry["in"]) buckets[buckets.length - 1].enqueue(entry);
+				else buckets[entry.out - entry["in"] + zeroIdx].enqueue(entry);
+			}
+			function range(limit) {
+				const range = [];
+				for (let i = 0; i < limit; i++) range.push(i);
+				return range;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/util.js
+		var require_util$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let Graph = require_graphlib().Graph;
+			module.exports = {
+				addBorderNode,
+				addDummyNode,
+				applyWithChunking,
+				asNonCompoundGraph,
+				buildLayerMatrix,
+				intersectRect,
+				mapValues,
+				maxRank,
+				normalizeRanks,
+				notime,
+				partition,
+				pick,
+				predecessorWeights,
+				range,
+				removeEmptyRanks,
+				simplify,
+				successorWeights,
+				time,
+				uniqueId,
+				zipObject
+			};
+			function addDummyNode(g, type, attrs, name) {
+				var v = name;
+				while (g.hasNode(v)) v = uniqueId(name);
+				attrs.dummy = type;
+				g.setNode(v, attrs);
+				return v;
+			}
+			function simplify(g) {
+				let simplified = new Graph().setGraph(g.graph());
+				g.nodes().forEach((v) => simplified.setNode(v, g.node(v)));
+				g.edges().forEach((e) => {
+					let simpleLabel = simplified.edge(e.v, e.w) || {
+						weight: 0,
+						minlen: 1
+					};
+					let label = g.edge(e);
+					simplified.setEdge(e.v, e.w, {
+						weight: simpleLabel.weight + label.weight,
+						minlen: Math.max(simpleLabel.minlen, label.minlen)
+					});
+				});
+				return simplified;
+			}
+			function asNonCompoundGraph(g) {
+				let simplified = new Graph({ multigraph: g.isMultigraph() }).setGraph(g.graph());
+				g.nodes().forEach((v) => {
+					if (!g.children(v).length) simplified.setNode(v, g.node(v));
+				});
+				g.edges().forEach((e) => {
+					simplified.setEdge(e, g.edge(e));
+				});
+				return simplified;
+			}
+			function successorWeights(g) {
+				let weightMap = g.nodes().map((v) => {
+					let sucs = {};
+					g.outEdges(v).forEach((e) => {
+						sucs[e.w] = (sucs[e.w] || 0) + g.edge(e).weight;
+					});
+					return sucs;
+				});
+				return zipObject(g.nodes(), weightMap);
+			}
+			function predecessorWeights(g) {
+				let weightMap = g.nodes().map((v) => {
+					let preds = {};
+					g.inEdges(v).forEach((e) => {
+						preds[e.v] = (preds[e.v] || 0) + g.edge(e).weight;
+					});
+					return preds;
+				});
+				return zipObject(g.nodes(), weightMap);
+			}
+			function intersectRect(rect, point) {
+				let x = rect.x;
+				let y = rect.y;
+				let dx = point.x - x;
+				let dy = point.y - y;
+				let w = rect.width / 2;
+				let h = rect.height / 2;
+				if (!dx && !dy) throw new Error("Not possible to find intersection inside of the rectangle");
+				let sx, sy;
+				if (Math.abs(dy) * w > Math.abs(dx) * h) {
+					if (dy < 0) h = -h;
+					sx = h * dx / dy;
+					sy = h;
+				} else {
+					if (dx < 0) w = -w;
+					sx = w;
+					sy = w * dy / dx;
+				}
+				return {
+					x: x + sx,
+					y: y + sy
+				};
+			}
+			function buildLayerMatrix(g) {
+				let layering = range(maxRank(g) + 1).map(() => []);
+				g.nodes().forEach((v) => {
+					let node = g.node(v);
+					let rank = node.rank;
+					if (rank !== void 0) layering[rank][node.order] = v;
+				});
+				return layering;
+			}
+			function normalizeRanks(g) {
+				let nodeRanks = g.nodes().map((v) => {
+					let rank = g.node(v).rank;
+					if (rank === void 0) return Number.MAX_VALUE;
+					return rank;
+				});
+				let min = applyWithChunking(Math.min, nodeRanks);
+				g.nodes().forEach((v) => {
+					let node = g.node(v);
+					if (Object.hasOwn(node, "rank")) node.rank -= min;
+				});
+			}
+			function removeEmptyRanks(g) {
+				let nodeRanks = g.nodes().map((v) => g.node(v).rank);
+				let offset = applyWithChunking(Math.min, nodeRanks);
+				let layers = [];
+				g.nodes().forEach((v) => {
+					let rank = g.node(v).rank - offset;
+					if (!layers[rank]) layers[rank] = [];
+					layers[rank].push(v);
+				});
+				let delta = 0;
+				let nodeRankFactor = g.graph().nodeRankFactor;
+				Array.from(layers).forEach((vs, i) => {
+					if (vs === void 0 && i % nodeRankFactor !== 0) --delta;
+					else if (vs !== void 0 && delta) vs.forEach((v) => g.node(v).rank += delta);
+				});
+			}
+			function addBorderNode(g, prefix, rank, order) {
+				let node = {
+					width: 0,
+					height: 0
+				};
+				if (arguments.length >= 4) {
+					node.rank = rank;
+					node.order = order;
+				}
+				return addDummyNode(g, "border", node, prefix);
+			}
+			function splitToChunks(array, chunkSize = CHUNKING_THRESHOLD) {
+				const chunks = [];
+				for (let i = 0; i < array.length; i += chunkSize) {
+					const chunk = array.slice(i, i + chunkSize);
+					chunks.push(chunk);
+				}
+				return chunks;
+			}
+			const CHUNKING_THRESHOLD = 65535;
+			function applyWithChunking(fn, argsArray) {
+				if (argsArray.length > CHUNKING_THRESHOLD) {
+					const chunks = splitToChunks(argsArray);
+					return fn.apply(null, chunks.map((chunk) => fn.apply(null, chunk)));
+				} else return fn.apply(null, argsArray);
+			}
+			function maxRank(g) {
+				const nodeRanks = g.nodes().map((v) => {
+					let rank = g.node(v).rank;
+					if (rank === void 0) return Number.MIN_VALUE;
+					return rank;
+				});
+				return applyWithChunking(Math.max, nodeRanks);
+			}
+			function partition(collection, fn) {
+				let result = {
+					lhs: [],
+					rhs: []
+				};
+				collection.forEach((value) => {
+					if (fn(value)) result.lhs.push(value);
+					else result.rhs.push(value);
+				});
+				return result;
+			}
+			function time(name, fn) {
+				let start = Date.now();
+				try {
+					return fn();
+				} finally {
+					console.log(name + " time: " + (Date.now() - start) + "ms");
+				}
+			}
+			function notime(name, fn) {
+				return fn();
+			}
+			let idCounter = 0;
+			function uniqueId(prefix) {
+				return prefix + ("" + ++idCounter);
+			}
+			function range(start, limit, step = 1) {
+				if (limit == null) {
+					limit = start;
+					start = 0;
+				}
+				let endCon = (i) => i < limit;
+				if (step < 0) endCon = (i) => limit < i;
+				const range = [];
+				for (let i = start; endCon(i); i += step) range.push(i);
+				return range;
+			}
+			function pick(source, keys) {
+				const dest = {};
+				for (const key of keys) if (source[key] !== void 0) dest[key] = source[key];
+				return dest;
+			}
+			function mapValues(obj, funcOrProp) {
+				let func = funcOrProp;
+				if (typeof funcOrProp === "string") func = (val) => val[funcOrProp];
+				return Object.entries(obj).reduce((acc, [k, v]) => {
+					acc[k] = func(v, k);
+					return acc;
+				}, {});
+			}
+			function zipObject(props, values) {
+				return props.reduce((acc, key, i) => {
+					acc[key] = values[i];
+					return acc;
+				}, {});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/acyclic.js
+		var require_acyclic = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let greedyFAS = require_greedy_fas();
+			let uniqueId = require_util$1().uniqueId;
+			module.exports = {
+				run,
+				undo
+			};
+			function run(g) {
+				(g.graph().acyclicer === "greedy" ? greedyFAS(g, weightFn(g)) : dfsFAS(g)).forEach((e) => {
+					let label = g.edge(e);
+					g.removeEdge(e);
+					label.forwardName = e.name;
+					label.reversed = true;
+					g.setEdge(e.w, e.v, label, uniqueId("rev"));
+				});
+				function weightFn(g) {
+					return (e) => {
+						return g.edge(e).weight;
+					};
+				}
+			}
+			function dfsFAS(g) {
+				let fas = [];
+				let stack = {};
+				let visited = {};
+				function dfs(v) {
+					if (Object.hasOwn(visited, v)) return;
+					visited[v] = true;
+					stack[v] = true;
+					g.outEdges(v).forEach((e) => {
+						if (Object.hasOwn(stack, e.w)) fas.push(e);
+						else dfs(e.w);
+					});
+					delete stack[v];
+				}
+				g.nodes().forEach(dfs);
+				return fas;
+			}
+			function undo(g) {
+				g.edges().forEach((e) => {
+					let label = g.edge(e);
+					if (label.reversed) {
+						g.removeEdge(e);
+						let forwardName = label.forwardName;
+						delete label.reversed;
+						delete label.forwardName;
+						g.setEdge(e.w, e.v, label, forwardName);
+					}
+				});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/normalize.js
+		var require_normalize = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			module.exports = {
+				run,
+				undo
+			};
+			function run(g) {
+				g.graph().dummyChains = [];
+				g.edges().forEach((edge) => normalizeEdge(g, edge));
+			}
+			function normalizeEdge(g, e) {
+				let v = e.v;
+				let vRank = g.node(v).rank;
+				let w = e.w;
+				let wRank = g.node(w).rank;
+				let name = e.name;
+				let edgeLabel = g.edge(e);
+				let labelRank = edgeLabel.labelRank;
+				if (wRank === vRank + 1) return;
+				g.removeEdge(e);
+				let dummy, attrs, i;
+				for (i = 0, ++vRank; vRank < wRank; ++i, ++vRank) {
+					edgeLabel.points = [];
+					attrs = {
+						width: 0,
+						height: 0,
+						edgeLabel,
+						edgeObj: e,
+						rank: vRank
+					};
+					dummy = util.addDummyNode(g, "edge", attrs, "_d");
+					if (vRank === labelRank) {
+						attrs.width = edgeLabel.width;
+						attrs.height = edgeLabel.height;
+						attrs.dummy = "edge-label";
+						attrs.labelpos = edgeLabel.labelpos;
+					}
+					g.setEdge(v, dummy, { weight: edgeLabel.weight }, name);
+					if (i === 0) g.graph().dummyChains.push(dummy);
+					v = dummy;
+				}
+				g.setEdge(v, w, { weight: edgeLabel.weight }, name);
+			}
+			function undo(g) {
+				g.graph().dummyChains.forEach((v) => {
+					let node = g.node(v);
+					let origLabel = node.edgeLabel;
+					let w;
+					g.setEdge(node.edgeObj, origLabel);
+					while (node.dummy) {
+						w = g.successors(v)[0];
+						g.removeNode(v);
+						origLabel.points.push({
+							x: node.x,
+							y: node.y
+						});
+						if (node.dummy === "edge-label") {
+							origLabel.x = node.x;
+							origLabel.y = node.y;
+							origLabel.width = node.width;
+							origLabel.height = node.height;
+						}
+						v = w;
+						node = g.node(v);
+					}
+				});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/rank/util.js
+		var require_util = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			const { applyWithChunking } = require_util$1();
+			module.exports = {
+				longestPath,
+				slack
+			};
+			function longestPath(g) {
+				var visited = {};
+				function dfs(v) {
+					var label = g.node(v);
+					if (Object.hasOwn(visited, v)) return label.rank;
+					visited[v] = true;
+					let outEdgesMinLens = g.outEdges(v).map((e) => {
+						if (e == null) return Number.POSITIVE_INFINITY;
+						return dfs(e.w) - g.edge(e).minlen;
+					});
+					var rank = applyWithChunking(Math.min, outEdgesMinLens);
+					if (rank === Number.POSITIVE_INFINITY) rank = 0;
+					return label.rank = rank;
+				}
+				g.sources().forEach(dfs);
+			}
+			function slack(g, e) {
+				return g.node(e.w).rank - g.node(e.v).rank - g.edge(e).minlen;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/rank/feasible-tree.js
+		var require_feasible_tree = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var Graph = require_graphlib().Graph;
+			var slack = require_util().slack;
+			module.exports = feasibleTree;
+			function feasibleTree(g) {
+				var t = new Graph({ directed: false });
+				var start = g.nodes()[0];
+				var size = g.nodeCount();
+				t.setNode(start, {});
+				var edge, delta;
+				while (tightTree(t, g) < size) {
+					edge = findMinSlackEdge(t, g);
+					delta = t.hasNode(edge.v) ? slack(g, edge) : -slack(g, edge);
+					shiftRanks(t, g, delta);
+				}
+				return t;
+			}
+			function tightTree(t, g) {
+				function dfs(v) {
+					g.nodeEdges(v).forEach((e) => {
+						var edgeV = e.v, w = v === edgeV ? e.w : edgeV;
+						if (!t.hasNode(w) && !slack(g, e)) {
+							t.setNode(w, {});
+							t.setEdge(v, w, {});
+							dfs(w);
+						}
+					});
+				}
+				t.nodes().forEach(dfs);
+				return t.nodeCount();
+			}
+			function findMinSlackEdge(t, g) {
+				return g.edges().reduce((acc, edge) => {
+					let edgeSlack = Number.POSITIVE_INFINITY;
+					if (t.hasNode(edge.v) !== t.hasNode(edge.w)) edgeSlack = slack(g, edge);
+					if (edgeSlack < acc[0]) return [edgeSlack, edge];
+					return acc;
+				}, [Number.POSITIVE_INFINITY, null])[1];
+			}
+			function shiftRanks(t, g, delta) {
+				t.nodes().forEach((v) => g.node(v).rank += delta);
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/rank/network-simplex.js
+		var require_network_simplex = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var feasibleTree = require_feasible_tree();
+			var slack = require_util().slack;
+			var initRank = require_util().longestPath;
+			var preorder = require_graphlib().alg.preorder;
+			var postorder = require_graphlib().alg.postorder;
+			var simplify = require_util$1().simplify;
+			module.exports = networkSimplex;
+			networkSimplex.initLowLimValues = initLowLimValues;
+			networkSimplex.initCutValues = initCutValues;
+			networkSimplex.calcCutValue = calcCutValue;
+			networkSimplex.leaveEdge = leaveEdge;
+			networkSimplex.enterEdge = enterEdge;
+			networkSimplex.exchangeEdges = exchangeEdges;
+			function networkSimplex(g) {
+				g = simplify(g);
+				initRank(g);
+				var t = feasibleTree(g);
+				initLowLimValues(t);
+				initCutValues(t, g);
+				var e, f;
+				while (e = leaveEdge(t)) {
+					f = enterEdge(t, g, e);
+					exchangeEdges(t, g, e, f);
+				}
+			}
+			function initCutValues(t, g) {
+				var vs = postorder(t, t.nodes());
+				vs = vs.slice(0, vs.length - 1);
+				vs.forEach((v) => assignCutValue(t, g, v));
+			}
+			function assignCutValue(t, g, child) {
+				var parent = t.node(child).parent;
+				t.edge(child, parent).cutvalue = calcCutValue(t, g, child);
+			}
+			function calcCutValue(t, g, child) {
+				var parent = t.node(child).parent;
+				var childIsTail = true;
+				var graphEdge = g.edge(child, parent);
+				var cutValue = 0;
+				if (!graphEdge) {
+					childIsTail = false;
+					graphEdge = g.edge(parent, child);
+				}
+				cutValue = graphEdge.weight;
+				g.nodeEdges(child).forEach((e) => {
+					var isOutEdge = e.v === child, other = isOutEdge ? e.w : e.v;
+					if (other !== parent) {
+						var pointsToHead = isOutEdge === childIsTail, otherWeight = g.edge(e).weight;
+						cutValue += pointsToHead ? otherWeight : -otherWeight;
+						if (isTreeEdge(t, child, other)) {
+							var otherCutValue = t.edge(child, other).cutvalue;
+							cutValue += pointsToHead ? -otherCutValue : otherCutValue;
+						}
+					}
+				});
+				return cutValue;
+			}
+			function initLowLimValues(tree, root) {
+				if (arguments.length < 2) root = tree.nodes()[0];
+				dfsAssignLowLim(tree, {}, 1, root);
+			}
+			function dfsAssignLowLim(tree, visited, nextLim, v, parent) {
+				var low = nextLim;
+				var label = tree.node(v);
+				visited[v] = true;
+				tree.neighbors(v).forEach((w) => {
+					if (!Object.hasOwn(visited, w)) nextLim = dfsAssignLowLim(tree, visited, nextLim, w, v);
+				});
+				label.low = low;
+				label.lim = nextLim++;
+				if (parent) label.parent = parent;
+				else delete label.parent;
+				return nextLim;
+			}
+			function leaveEdge(tree) {
+				return tree.edges().find((e) => tree.edge(e).cutvalue < 0);
+			}
+			function enterEdge(t, g, edge) {
+				var v = edge.v;
+				var w = edge.w;
+				if (!g.hasEdge(v, w)) {
+					v = edge.w;
+					w = edge.v;
+				}
+				var vLabel = t.node(v);
+				var wLabel = t.node(w);
+				var tailLabel = vLabel;
+				var flip = false;
+				if (vLabel.lim > wLabel.lim) {
+					tailLabel = wLabel;
+					flip = true;
+				}
+				return g.edges().filter((edge) => {
+					return flip === isDescendant(t, t.node(edge.v), tailLabel) && flip !== isDescendant(t, t.node(edge.w), tailLabel);
+				}).reduce((acc, edge) => {
+					if (slack(g, edge) < slack(g, acc)) return edge;
+					return acc;
+				});
+			}
+			function exchangeEdges(t, g, e, f) {
+				var v = e.v;
+				var w = e.w;
+				t.removeEdge(v, w);
+				t.setEdge(f.v, f.w, {});
+				initLowLimValues(t);
+				initCutValues(t, g);
+				updateRanks(t, g);
+			}
+			function updateRanks(t, g) {
+				var vs = preorder(t, t.nodes().find((v) => !g.node(v).parent));
+				vs = vs.slice(1);
+				vs.forEach((v) => {
+					var parent = t.node(v).parent, edge = g.edge(v, parent), flipped = false;
+					if (!edge) {
+						edge = g.edge(parent, v);
+						flipped = true;
+					}
+					g.node(v).rank = g.node(parent).rank + (flipped ? edge.minlen : -edge.minlen);
+				});
+			}
+			function isTreeEdge(tree, u, v) {
+				return tree.hasEdge(u, v);
+			}
+			function isDescendant(tree, vLabel, rootLabel) {
+				return rootLabel.low <= vLabel.lim && vLabel.lim <= rootLabel.lim;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/rank/index.js
+		var require_rank = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			var longestPath = require_util().longestPath;
+			var feasibleTree = require_feasible_tree();
+			var networkSimplex = require_network_simplex();
+			module.exports = rank;
+			function rank(g) {
+				var ranker = g.graph().ranker;
+				if (ranker instanceof Function) return ranker(g);
+				switch (g.graph().ranker) {
+					case "network-simplex":
+						networkSimplexRanker(g);
+						break;
+					case "tight-tree":
+						tightTreeRanker(g);
+						break;
+					case "longest-path":
+						longestPathRanker(g);
+						break;
+					case "none": break;
+					default: networkSimplexRanker(g);
+				}
+			}
+			var longestPathRanker = longestPath;
+			function tightTreeRanker(g) {
+				longestPath(g);
+				feasibleTree(g);
+			}
+			function networkSimplexRanker(g) {
+				networkSimplex(g);
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/parent-dummy-chains.js
+		var require_parent_dummy_chains = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = parentDummyChains;
+			function parentDummyChains(g) {
+				let postorderNums = postorder(g);
+				g.graph().dummyChains.forEach((v) => {
+					let node = g.node(v);
+					let edgeObj = node.edgeObj;
+					let pathData = findPath(g, postorderNums, edgeObj.v, edgeObj.w);
+					let path = pathData.path;
+					let lca = pathData.lca;
+					let pathIdx = 0;
+					let pathV = path[pathIdx];
+					let ascending = true;
+					while (v !== edgeObj.w) {
+						node = g.node(v);
+						if (ascending) {
+							while ((pathV = path[pathIdx]) !== lca && g.node(pathV).maxRank < node.rank) pathIdx++;
+							if (pathV === lca) ascending = false;
+						}
+						if (!ascending) {
+							while (pathIdx < path.length - 1 && g.node(pathV = path[pathIdx + 1]).minRank <= node.rank) pathIdx++;
+							pathV = path[pathIdx];
+						}
+						g.setParent(v, pathV);
+						v = g.successors(v)[0];
+					}
+				});
+			}
+			function findPath(g, postorderNums, v, w) {
+				let vPath = [];
+				let wPath = [];
+				let low = Math.min(postorderNums[v].low, postorderNums[w].low);
+				let lim = Math.max(postorderNums[v].lim, postorderNums[w].lim);
+				let parent;
+				let lca;
+				parent = v;
+				do {
+					parent = g.parent(parent);
+					vPath.push(parent);
+				} while (parent && (postorderNums[parent].low > low || lim > postorderNums[parent].lim));
+				lca = parent;
+				parent = w;
+				while ((parent = g.parent(parent)) !== lca) wPath.push(parent);
+				return {
+					path: vPath.concat(wPath.reverse()),
+					lca
+				};
+			}
+			function postorder(g) {
+				let result = {};
+				let lim = 0;
+				function dfs(v) {
+					let low = lim;
+					g.children(v).forEach(dfs);
+					result[v] = {
+						low,
+						lim: lim++
+					};
+				}
+				g.children().forEach(dfs);
+				return result;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/nesting-graph.js
+		var require_nesting_graph = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			module.exports = {
+				run,
+				cleanup
+			};
+			function run(g) {
+				let root = util.addDummyNode(g, "root", {}, "_root");
+				let depths = treeDepths(g);
+				let depthsArr = Object.values(depths);
+				let height = util.applyWithChunking(Math.max, depthsArr) - 1;
+				let nodeSep = 2 * height + 1;
+				g.graph().nestingRoot = root;
+				g.edges().forEach((e) => g.edge(e).minlen *= nodeSep);
+				let weight = sumWeights(g) + 1;
+				g.children().forEach((child) => dfs(g, root, nodeSep, weight, height, depths, child));
+				g.graph().nodeRankFactor = nodeSep;
+			}
+			function dfs(g, root, nodeSep, weight, height, depths, v) {
+				let children = g.children(v);
+				if (!children.length) {
+					if (v !== root) g.setEdge(root, v, {
+						weight: 0,
+						minlen: nodeSep
+					});
+					return;
+				}
+				let top = util.addBorderNode(g, "_bt");
+				let bottom = util.addBorderNode(g, "_bb");
+				let label = g.node(v);
+				g.setParent(top, v);
+				label.borderTop = top;
+				g.setParent(bottom, v);
+				label.borderBottom = bottom;
+				children.forEach((child) => {
+					dfs(g, root, nodeSep, weight, height, depths, child);
+					let childNode = g.node(child);
+					let childTop = childNode.borderTop ? childNode.borderTop : child;
+					let childBottom = childNode.borderBottom ? childNode.borderBottom : child;
+					let thisWeight = childNode.borderTop ? weight : 2 * weight;
+					let minlen = childTop !== childBottom ? 1 : height - depths[v] + 1;
+					g.setEdge(top, childTop, {
+						weight: thisWeight,
+						minlen,
+						nestingEdge: true
+					});
+					g.setEdge(childBottom, bottom, {
+						weight: thisWeight,
+						minlen,
+						nestingEdge: true
+					});
+				});
+				if (!g.parent(v)) g.setEdge(root, top, {
+					weight: 0,
+					minlen: height + depths[v]
+				});
+			}
+			function treeDepths(g) {
+				var depths = {};
+				function dfs(v, depth) {
+					var children = g.children(v);
+					if (children && children.length) children.forEach((child) => dfs(child, depth + 1));
+					depths[v] = depth;
+				}
+				g.children().forEach((v) => dfs(v, 1));
+				return depths;
+			}
+			function sumWeights(g) {
+				return g.edges().reduce((acc, e) => acc + g.edge(e).weight, 0);
+			}
+			function cleanup(g) {
+				var graphLabel = g.graph();
+				g.removeNode(graphLabel.nestingRoot);
+				delete graphLabel.nestingRoot;
+				g.edges().forEach((e) => {
+					if (g.edge(e).nestingEdge) g.removeEdge(e);
+				});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/add-border-segments.js
+		var require_add_border_segments = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			module.exports = addBorderSegments;
+			function addBorderSegments(g) {
+				function dfs(v) {
+					let children = g.children(v);
+					let node = g.node(v);
+					if (children.length) children.forEach(dfs);
+					if (Object.hasOwn(node, "minRank")) {
+						node.borderLeft = [];
+						node.borderRight = [];
+						for (let rank = node.minRank, maxRank = node.maxRank + 1; rank < maxRank; ++rank) {
+							addBorderNode(g, "borderLeft", "_bl", v, node, rank);
+							addBorderNode(g, "borderRight", "_br", v, node, rank);
+						}
+					}
+				}
+				g.children().forEach(dfs);
+			}
+			function addBorderNode(g, prop, prefix, sg, sgNode, rank) {
+				let label = {
+					width: 0,
+					height: 0,
+					rank,
+					borderType: prop
+				};
+				let prev = sgNode[prop][rank - 1];
+				let curr = util.addDummyNode(g, "border", label, prefix);
+				sgNode[prop][rank] = curr;
+				g.setParent(curr, sg);
+				if (prev) g.setEdge(prev, curr, { weight: 1 });
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/coordinate-system.js
+		var require_coordinate_system = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = {
+				adjust,
+				undo
+			};
+			function adjust(g) {
+				let rankDir = g.graph().rankdir.toLowerCase();
+				if (rankDir === "lr" || rankDir === "rl") swapWidthHeight(g);
+			}
+			function undo(g) {
+				let rankDir = g.graph().rankdir.toLowerCase();
+				if (rankDir === "bt" || rankDir === "rl") reverseY(g);
+				if (rankDir === "lr" || rankDir === "rl") {
+					swapXY(g);
+					swapWidthHeight(g);
+				}
+			}
+			function swapWidthHeight(g) {
+				g.nodes().forEach((v) => swapWidthHeightOne(g.node(v)));
+				g.edges().forEach((e) => swapWidthHeightOne(g.edge(e)));
+			}
+			function swapWidthHeightOne(attrs) {
+				let w = attrs.width;
+				attrs.width = attrs.height;
+				attrs.height = w;
+			}
+			function reverseY(g) {
+				g.nodes().forEach((v) => reverseYOne(g.node(v)));
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					edge.points.forEach(reverseYOne);
+					if (Object.hasOwn(edge, "y")) reverseYOne(edge);
+				});
+			}
+			function reverseYOne(attrs) {
+				attrs.y = -attrs.y;
+			}
+			function swapXY(g) {
+				g.nodes().forEach((v) => swapXYOne(g.node(v)));
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					edge.points.forEach(swapXYOne);
+					if (Object.hasOwn(edge, "x")) swapXYOne(edge);
+				});
+			}
+			function swapXYOne(attrs) {
+				let x = attrs.x;
+				attrs.x = attrs.y;
+				attrs.y = x;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/init-order.js
+		var require_init_order = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			module.exports = initOrder;
+			function initOrder(g) {
+				let visited = {};
+				let simpleNodes = g.nodes().filter((v) => !g.children(v).length);
+				let simpleNodesRanks = simpleNodes.map((v) => g.node(v).rank);
+				let maxRank = util.applyWithChunking(Math.max, simpleNodesRanks);
+				let layers = util.range(maxRank + 1).map(() => []);
+				function dfs(v) {
+					if (visited[v]) return;
+					visited[v] = true;
+					let node = g.node(v);
+					layers[node.rank].push(v);
+					g.successors(v).forEach(dfs);
+				}
+				simpleNodes.sort((a, b) => g.node(a).rank - g.node(b).rank).forEach(dfs);
+				return layers;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/cross-count.js
+		var require_cross_count = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let zipObject = require_util$1().zipObject;
+			module.exports = crossCount;
+			function crossCount(g, layering) {
+				let cc = 0;
+				for (let i = 1; i < layering.length; ++i) cc += twoLayerCrossCount(g, layering[i - 1], layering[i]);
+				return cc;
+			}
+			function twoLayerCrossCount(g, northLayer, southLayer) {
+				let southPos = zipObject(southLayer, southLayer.map((v, i) => i));
+				let southEntries = northLayer.flatMap((v) => {
+					return g.outEdges(v).map((e) => {
+						return {
+							pos: southPos[e.w],
+							weight: g.edge(e).weight
+						};
+					}).sort((a, b) => a.pos - b.pos);
+				});
+				let firstIndex = 1;
+				while (firstIndex < southLayer.length) firstIndex <<= 1;
+				let treeSize = 2 * firstIndex - 1;
+				firstIndex -= 1;
+				let tree = new Array(treeSize).fill(0);
+				let cc = 0;
+				southEntries.forEach((entry) => {
+					let index = entry.pos + firstIndex;
+					tree[index] += entry.weight;
+					let weightSum = 0;
+					while (index > 0) {
+						if (index % 2) weightSum += tree[index + 1];
+						index = index - 1 >> 1;
+						tree[index] += entry.weight;
+					}
+					cc += entry.weight * weightSum;
+				});
+				return cc;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/barycenter.js
+		var require_barycenter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = barycenter;
+			function barycenter(g, movable = []) {
+				return movable.map((v) => {
+					let inV = g.inEdges(v);
+					if (!inV.length) return { v };
+					else {
+						let result = inV.reduce((acc, e) => {
+							let edge = g.edge(e), nodeU = g.node(e.v);
+							return {
+								sum: acc.sum + edge.weight * nodeU.order,
+								weight: acc.weight + edge.weight
+							};
+						}, {
+							sum: 0,
+							weight: 0
+						});
+						return {
+							v,
+							barycenter: result.sum / result.weight,
+							weight: result.weight
+						};
+					}
+				});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/resolve-conflicts.js
+		var require_resolve_conflicts = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			module.exports = resolveConflicts;
+			function resolveConflicts(entries, cg) {
+				let mappedEntries = {};
+				entries.forEach((entry, i) => {
+					let tmp = mappedEntries[entry.v] = {
+						indegree: 0,
+						"in": [],
+						out: [],
+						vs: [entry.v],
+						i
+					};
+					if (entry.barycenter !== void 0) {
+						tmp.barycenter = entry.barycenter;
+						tmp.weight = entry.weight;
+					}
+				});
+				cg.edges().forEach((e) => {
+					let entryV = mappedEntries[e.v];
+					let entryW = mappedEntries[e.w];
+					if (entryV !== void 0 && entryW !== void 0) {
+						entryW.indegree++;
+						entryV.out.push(mappedEntries[e.w]);
+					}
+				});
+				return doResolveConflicts(Object.values(mappedEntries).filter((entry) => !entry.indegree));
+			}
+			function doResolveConflicts(sourceSet) {
+				let entries = [];
+				function handleIn(vEntry) {
+					return (uEntry) => {
+						if (uEntry.merged) return;
+						if (uEntry.barycenter === void 0 || vEntry.barycenter === void 0 || uEntry.barycenter >= vEntry.barycenter) mergeEntries(vEntry, uEntry);
+					};
+				}
+				function handleOut(vEntry) {
+					return (wEntry) => {
+						wEntry["in"].push(vEntry);
+						if (--wEntry.indegree === 0) sourceSet.push(wEntry);
+					};
+				}
+				while (sourceSet.length) {
+					let entry = sourceSet.pop();
+					entries.push(entry);
+					entry["in"].reverse().forEach(handleIn(entry));
+					entry.out.forEach(handleOut(entry));
+				}
+				return entries.filter((entry) => !entry.merged).map((entry) => {
+					return util.pick(entry, [
+						"vs",
+						"i",
+						"barycenter",
+						"weight"
+					]);
+				});
+			}
+			function mergeEntries(target, source) {
+				let sum = 0;
+				let weight = 0;
+				if (target.weight) {
+					sum += target.barycenter * target.weight;
+					weight += target.weight;
+				}
+				if (source.weight) {
+					sum += source.barycenter * source.weight;
+					weight += source.weight;
+				}
+				target.vs = source.vs.concat(target.vs);
+				target.barycenter = sum / weight;
+				target.weight = weight;
+				target.i = Math.min(source.i, target.i);
+				source.merged = true;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/sort.js
+		var require_sort = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			module.exports = sort;
+			function sort(entries, biasRight) {
+				let parts = util.partition(entries, (entry) => {
+					return Object.hasOwn(entry, "barycenter");
+				});
+				let sortable = parts.lhs, unsortable = parts.rhs.sort((a, b) => b.i - a.i), vs = [], sum = 0, weight = 0, vsIndex = 0;
+				sortable.sort(compareWithBias(!!biasRight));
+				vsIndex = consumeUnsortable(vs, unsortable, vsIndex);
+				sortable.forEach((entry) => {
+					vsIndex += entry.vs.length;
+					vs.push(entry.vs);
+					sum += entry.barycenter * entry.weight;
+					weight += entry.weight;
+					vsIndex = consumeUnsortable(vs, unsortable, vsIndex);
+				});
+				let result = { vs: vs.flat(true) };
+				if (weight) {
+					result.barycenter = sum / weight;
+					result.weight = weight;
+				}
+				return result;
+			}
+			function consumeUnsortable(vs, unsortable, index) {
+				let last;
+				while (unsortable.length && (last = unsortable[unsortable.length - 1]).i <= index) {
+					unsortable.pop();
+					vs.push(last.vs);
+					index++;
+				}
+				return index;
+			}
+			function compareWithBias(bias) {
+				return (entryV, entryW) => {
+					if (entryV.barycenter < entryW.barycenter) return -1;
+					else if (entryV.barycenter > entryW.barycenter) return 1;
+					return !bias ? entryV.i - entryW.i : entryW.i - entryV.i;
+				};
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/sort-subgraph.js
+		var require_sort_subgraph = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let barycenter = require_barycenter();
+			let resolveConflicts = require_resolve_conflicts();
+			let sort = require_sort();
+			module.exports = sortSubgraph;
+			function sortSubgraph(g, v, cg, biasRight) {
+				let movable = g.children(v);
+				let node = g.node(v);
+				let bl = node ? node.borderLeft : void 0;
+				let br = node ? node.borderRight : void 0;
+				let subgraphs = {};
+				if (bl) movable = movable.filter((w) => w !== bl && w !== br);
+				let barycenters = barycenter(g, movable);
+				barycenters.forEach((entry) => {
+					if (g.children(entry.v).length) {
+						let subgraphResult = sortSubgraph(g, entry.v, cg, biasRight);
+						subgraphs[entry.v] = subgraphResult;
+						if (Object.hasOwn(subgraphResult, "barycenter")) mergeBarycenters(entry, subgraphResult);
+					}
+				});
+				let entries = resolveConflicts(barycenters, cg);
+				expandSubgraphs(entries, subgraphs);
+				let result = sort(entries, biasRight);
+				if (bl) {
+					result.vs = [
+						bl,
+						result.vs,
+						br
+					].flat(true);
+					if (g.predecessors(bl).length) {
+						let blPred = g.node(g.predecessors(bl)[0]), brPred = g.node(g.predecessors(br)[0]);
+						if (!Object.hasOwn(result, "barycenter")) {
+							result.barycenter = 0;
+							result.weight = 0;
+						}
+						result.barycenter = (result.barycenter * result.weight + blPred.order + brPred.order) / (result.weight + 2);
+						result.weight += 2;
+					}
+				}
+				return result;
+			}
+			function expandSubgraphs(entries, subgraphs) {
+				entries.forEach((entry) => {
+					entry.vs = entry.vs.flatMap((v) => {
+						if (subgraphs[v]) return subgraphs[v].vs;
+						return v;
+					});
+				});
+			}
+			function mergeBarycenters(target, other) {
+				if (target.barycenter !== void 0) {
+					target.barycenter = (target.barycenter * target.weight + other.barycenter * other.weight) / (target.weight + other.weight);
+					target.weight += other.weight;
+				} else {
+					target.barycenter = other.barycenter;
+					target.weight = other.weight;
+				}
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/build-layer-graph.js
+		var require_build_layer_graph = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let Graph = require_graphlib().Graph;
+			let util = require_util$1();
+			module.exports = buildLayerGraph;
+			function buildLayerGraph(g, rank, relationship, nodesWithRank) {
+				if (!nodesWithRank) nodesWithRank = g.nodes();
+				let root = createRootNode(g), result = new Graph({ compound: true }).setGraph({ root }).setDefaultNodeLabel((v) => g.node(v));
+				nodesWithRank.forEach((v) => {
+					let node = g.node(v), parent = g.parent(v);
+					if (node.rank === rank || node.minRank <= rank && rank <= node.maxRank) {
+						result.setNode(v);
+						result.setParent(v, parent || root);
+						g[relationship](v).forEach((e) => {
+							let u = e.v === v ? e.w : e.v, edge = result.edge(u, v), weight = edge !== void 0 ? edge.weight : 0;
+							result.setEdge(u, v, { weight: g.edge(e).weight + weight });
+						});
+						if (Object.hasOwn(node, "minRank")) result.setNode(v, {
+							borderLeft: node.borderLeft[rank],
+							borderRight: node.borderRight[rank]
+						});
+					}
+				});
+				return result;
+			}
+			function createRootNode(g) {
+				var v;
+				while (g.hasNode(v = util.uniqueId("_root")));
+				return v;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/add-subgraph-constraints.js
+		var require_add_subgraph_constraints = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = addSubgraphConstraints;
+			function addSubgraphConstraints(g, cg, vs) {
+				let prev = {}, rootPrev;
+				vs.forEach((v) => {
+					let child = g.parent(v), parent, prevChild;
+					while (child) {
+						parent = g.parent(child);
+						if (parent) {
+							prevChild = prev[parent];
+							prev[parent] = child;
+						} else {
+							prevChild = rootPrev;
+							rootPrev = child;
+						}
+						if (prevChild && prevChild !== child) {
+							cg.setEdge(prevChild, child);
+							return;
+						}
+						child = parent;
+					}
+				});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/order/index.js
+		var require_order = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let initOrder = require_init_order();
+			let crossCount = require_cross_count();
+			let sortSubgraph = require_sort_subgraph();
+			let buildLayerGraph = require_build_layer_graph();
+			let addSubgraphConstraints = require_add_subgraph_constraints();
+			let Graph = require_graphlib().Graph;
+			let util = require_util$1();
+			module.exports = order;
+			function order(g, opts) {
+				if (opts && typeof opts.customOrder === "function") {
+					opts.customOrder(g, order);
+					return;
+				}
+				let maxRank = util.maxRank(g), downLayerGraphs = buildLayerGraphs(g, util.range(1, maxRank + 1), "inEdges"), upLayerGraphs = buildLayerGraphs(g, util.range(maxRank - 1, -1, -1), "outEdges");
+				let layering = initOrder(g);
+				assignOrder(g, layering);
+				if (opts && opts.disableOptimalOrderHeuristic) return;
+				let bestCC = Number.POSITIVE_INFINITY, best;
+				for (let i = 0, lastBest = 0; lastBest < 4; ++i, ++lastBest) {
+					sweepLayerGraphs(i % 2 ? downLayerGraphs : upLayerGraphs, i % 4 >= 2);
+					layering = util.buildLayerMatrix(g);
+					let cc = crossCount(g, layering);
+					if (cc < bestCC) {
+						lastBest = 0;
+						best = Object.assign({}, layering);
+						bestCC = cc;
+					}
+				}
+				assignOrder(g, best);
+			}
+			function buildLayerGraphs(g, ranks, relationship) {
+				const nodesByRank = /* @__PURE__ */ new Map();
+				const addNodeToRank = (rank, node) => {
+					if (!nodesByRank.has(rank)) nodesByRank.set(rank, []);
+					nodesByRank.get(rank).push(node);
+				};
+				for (const v of g.nodes()) {
+					const node = g.node(v);
+					if (typeof node.rank === "number") addNodeToRank(node.rank, v);
+					if (typeof node.minRank === "number" && typeof node.maxRank === "number") {
+						for (let r = node.minRank; r <= node.maxRank; r++) if (r !== node.rank) addNodeToRank(r, v);
+					}
+				}
+				return ranks.map(function(rank) {
+					return buildLayerGraph(g, rank, relationship, nodesByRank.get(rank) || []);
+				});
+			}
+			function sweepLayerGraphs(layerGraphs, biasRight) {
+				let cg = new Graph();
+				layerGraphs.forEach(function(lg) {
+					let root = lg.graph().root;
+					let sorted = sortSubgraph(lg, root, cg, biasRight);
+					sorted.vs.forEach((v, i) => lg.node(v).order = i);
+					addSubgraphConstraints(lg, cg, sorted.vs);
+				});
+			}
+			function assignOrder(g, layering) {
+				Object.values(layering).forEach((layer) => layer.forEach((v, i) => g.node(v).order = i));
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/position/bk.js
+		var require_bk = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let Graph = require_graphlib().Graph;
+			let util = require_util$1();
+			module.exports = {
+				positionX,
+				findType1Conflicts,
+				findType2Conflicts,
+				addConflict,
+				hasConflict,
+				verticalAlignment,
+				horizontalCompaction,
+				alignCoordinates,
+				findSmallestWidthAlignment,
+				balance
+			};
+			function findType1Conflicts(g, layering) {
+				let conflicts = {};
+				function visitLayer(prevLayer, layer) {
+					let k0 = 0, scanPos = 0, prevLayerLength = prevLayer.length, lastNode = layer[layer.length - 1];
+					layer.forEach((v, i) => {
+						let w = findOtherInnerSegmentNode(g, v), k1 = w ? g.node(w).order : prevLayerLength;
+						if (w || v === lastNode) {
+							layer.slice(scanPos, i + 1).forEach((scanNode) => {
+								g.predecessors(scanNode).forEach((u) => {
+									let uLabel = g.node(u), uPos = uLabel.order;
+									if ((uPos < k0 || k1 < uPos) && !(uLabel.dummy && g.node(scanNode).dummy)) addConflict(conflicts, u, scanNode);
+								});
+							});
+							scanPos = i + 1;
+							k0 = k1;
+						}
+					});
+					return layer;
+				}
+				layering.length && layering.reduce(visitLayer);
+				return conflicts;
+			}
+			function findType2Conflicts(g, layering) {
+				let conflicts = {};
+				function scan(south, southPos, southEnd, prevNorthBorder, nextNorthBorder) {
+					let v;
+					util.range(southPos, southEnd).forEach((i) => {
+						v = south[i];
+						if (g.node(v).dummy) g.predecessors(v).forEach((u) => {
+							let uNode = g.node(u);
+							if (uNode.dummy && (uNode.order < prevNorthBorder || uNode.order > nextNorthBorder)) addConflict(conflicts, u, v);
+						});
+					});
+				}
+				function visitLayer(north, south) {
+					let prevNorthPos = -1, nextNorthPos, southPos = 0;
+					south.forEach((v, southLookahead) => {
+						if (g.node(v).dummy === "border") {
+							let predecessors = g.predecessors(v);
+							if (predecessors.length) {
+								nextNorthPos = g.node(predecessors[0]).order;
+								scan(south, southPos, southLookahead, prevNorthPos, nextNorthPos);
+								southPos = southLookahead;
+								prevNorthPos = nextNorthPos;
+							}
+						}
+						scan(south, southPos, south.length, nextNorthPos, north.length);
+					});
+					return south;
+				}
+				layering.length && layering.reduce(visitLayer);
+				return conflicts;
+			}
+			function findOtherInnerSegmentNode(g, v) {
+				if (g.node(v).dummy) return g.predecessors(v).find((u) => g.node(u).dummy);
+			}
+			function addConflict(conflicts, v, w) {
+				if (v > w) {
+					let tmp = v;
+					v = w;
+					w = tmp;
+				}
+				let conflictsV = conflicts[v];
+				if (!conflictsV) conflicts[v] = conflictsV = {};
+				conflictsV[w] = true;
+			}
+			function hasConflict(conflicts, v, w) {
+				if (v > w) {
+					let tmp = v;
+					v = w;
+					w = tmp;
+				}
+				return !!conflicts[v] && Object.hasOwn(conflicts[v], w);
+			}
+			function verticalAlignment(g, layering, conflicts, neighborFn) {
+				let root = {}, align = {}, pos = {};
+				layering.forEach((layer) => {
+					layer.forEach((v, order) => {
+						root[v] = v;
+						align[v] = v;
+						pos[v] = order;
+					});
+				});
+				layering.forEach((layer) => {
+					let prevIdx = -1;
+					layer.forEach((v) => {
+						let ws = neighborFn(v);
+						if (ws.length) {
+							ws = ws.sort((a, b) => pos[a] - pos[b]);
+							let mp = (ws.length - 1) / 2;
+							for (let i = Math.floor(mp), il = Math.ceil(mp); i <= il; ++i) {
+								let w = ws[i];
+								if (align[v] === v && prevIdx < pos[w] && !hasConflict(conflicts, v, w)) {
+									align[w] = v;
+									align[v] = root[v] = root[w];
+									prevIdx = pos[w];
+								}
+							}
+						}
+					});
+				});
+				return {
+					root,
+					align
+				};
+			}
+			function horizontalCompaction(g, layering, root, align, reverseSep) {
+				let xs = {}, blockG = buildBlockGraph(g, layering, root, reverseSep), borderType = reverseSep ? "borderLeft" : "borderRight";
+				function iterate(setXsFunc, nextNodesFunc) {
+					let stack = blockG.nodes();
+					let elem = stack.pop();
+					let visited = {};
+					while (elem) {
+						if (visited[elem]) setXsFunc(elem);
+						else {
+							visited[elem] = true;
+							stack.push(elem);
+							stack = stack.concat(nextNodesFunc(elem));
+						}
+						elem = stack.pop();
+					}
+				}
+				function pass1(elem) {
+					xs[elem] = blockG.inEdges(elem).reduce((acc, e) => {
+						return Math.max(acc, xs[e.v] + blockG.edge(e));
+					}, 0);
+				}
+				function pass2(elem) {
+					let min = blockG.outEdges(elem).reduce((acc, e) => {
+						return Math.min(acc, xs[e.w] - blockG.edge(e));
+					}, Number.POSITIVE_INFINITY);
+					let node = g.node(elem);
+					if (min !== Number.POSITIVE_INFINITY && node.borderType !== borderType) xs[elem] = Math.max(xs[elem], min);
+				}
+				iterate(pass1, blockG.predecessors.bind(blockG));
+				iterate(pass2, blockG.successors.bind(blockG));
+				Object.keys(align).forEach((v) => xs[v] = xs[root[v]]);
+				return xs;
+			}
+			function buildBlockGraph(g, layering, root, reverseSep) {
+				let blockGraph = new Graph(), graphLabel = g.graph(), sepFn = sep(graphLabel.nodesep, graphLabel.edgesep, reverseSep);
+				layering.forEach((layer) => {
+					let u;
+					layer.forEach((v) => {
+						let vRoot = root[v];
+						blockGraph.setNode(vRoot);
+						if (u) {
+							var uRoot = root[u], prevMax = blockGraph.edge(uRoot, vRoot);
+							blockGraph.setEdge(uRoot, vRoot, Math.max(sepFn(g, v, u), prevMax || 0));
+						}
+						u = v;
+					});
+				});
+				return blockGraph;
+			}
+			function findSmallestWidthAlignment(g, xss) {
+				return Object.values(xss).reduce((currentMinAndXs, xs) => {
+					let max = Number.NEGATIVE_INFINITY;
+					let min = Number.POSITIVE_INFINITY;
+					Object.entries(xs).forEach(([v, x]) => {
+						let halfWidth = width(g, v) / 2;
+						max = Math.max(x + halfWidth, max);
+						min = Math.min(x - halfWidth, min);
+					});
+					const newMin = max - min;
+					if (newMin < currentMinAndXs[0]) currentMinAndXs = [newMin, xs];
+					return currentMinAndXs;
+				}, [Number.POSITIVE_INFINITY, null])[1];
+			}
+			function alignCoordinates(xss, alignTo) {
+				let alignToVals = Object.values(alignTo), alignToMin = util.applyWithChunking(Math.min, alignToVals), alignToMax = util.applyWithChunking(Math.max, alignToVals);
+				["u", "d"].forEach((vert) => {
+					["l", "r"].forEach((horiz) => {
+						let alignment = vert + horiz, xs = xss[alignment];
+						if (xs === alignTo) return;
+						let xsVals = Object.values(xs);
+						let delta = alignToMin - util.applyWithChunking(Math.min, xsVals);
+						if (horiz !== "l") delta = alignToMax - util.applyWithChunking(Math.max, xsVals);
+						if (delta) xss[alignment] = util.mapValues(xs, (x) => x + delta);
+					});
+				});
+			}
+			function balance(xss, align) {
+				return util.mapValues(xss.ul, (num, v) => {
+					if (align) return xss[align.toLowerCase()][v];
+					else {
+						let xs = Object.values(xss).map((xs) => xs[v]).sort((a, b) => a - b);
+						return (xs[1] + xs[2]) / 2;
+					}
+				});
+			}
+			function positionX(g) {
+				let layering = util.buildLayerMatrix(g);
+				let conflicts = Object.assign(findType1Conflicts(g, layering), findType2Conflicts(g, layering));
+				let xss = {};
+				let adjustedLayering;
+				["u", "d"].forEach((vert) => {
+					adjustedLayering = vert === "u" ? layering : Object.values(layering).reverse();
+					["l", "r"].forEach((horiz) => {
+						if (horiz === "r") adjustedLayering = adjustedLayering.map((inner) => {
+							return Object.values(inner).reverse();
+						});
+						let neighborFn = (vert === "u" ? g.predecessors : g.successors).bind(g);
+						let align = verticalAlignment(g, adjustedLayering, conflicts, neighborFn);
+						let xs = horizontalCompaction(g, adjustedLayering, align.root, align.align, horiz === "r");
+						if (horiz === "r") xs = util.mapValues(xs, (x) => -x);
+						xss[vert + horiz] = xs;
+					});
+				});
+				alignCoordinates(xss, findSmallestWidthAlignment(g, xss));
+				return balance(xss, g.graph().align);
+			}
+			function sep(nodeSep, edgeSep, reverseSep) {
+				return (g, v, w) => {
+					let vLabel = g.node(v);
+					let wLabel = g.node(w);
+					let sum = 0;
+					let delta;
+					sum += vLabel.width / 2;
+					if (Object.hasOwn(vLabel, "labelpos")) switch (vLabel.labelpos.toLowerCase()) {
+						case "l":
+							delta = -vLabel.width / 2;
+							break;
+						case "r": delta = vLabel.width / 2;
+					}
+					if (delta) sum += reverseSep ? delta : -delta;
+					delta = 0;
+					sum += (vLabel.dummy ? edgeSep : nodeSep) / 2;
+					sum += (wLabel.dummy ? edgeSep : nodeSep) / 2;
+					sum += wLabel.width / 2;
+					if (Object.hasOwn(wLabel, "labelpos")) switch (wLabel.labelpos.toLowerCase()) {
+						case "l":
+							delta = wLabel.width / 2;
+							break;
+						case "r": delta = -wLabel.width / 2;
+					}
+					if (delta) sum += reverseSep ? delta : -delta;
+					delta = 0;
+					return sum;
+				};
+			}
+			function width(g, v) {
+				return g.node(v).width;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/position/index.js
+		var require_position = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			let positionX = require_bk().positionX;
+			module.exports = position;
+			function position(g) {
+				g = util.asNonCompoundGraph(g);
+				positionY(g);
+				Object.entries(positionX(g)).forEach(([v, x]) => g.node(v).x = x);
+			}
+			function positionY(g) {
+				let layering = util.buildLayerMatrix(g);
+				let rankSep = g.graph().ranksep;
+				let prevY = 0;
+				layering.forEach((layer) => {
+					const maxHeight = layer.reduce((acc, v) => {
+						const height = g.node(v).height;
+						if (acc > height) return acc;
+						else return height;
+					}, 0);
+					layer.forEach((v) => g.node(v).y = prevY + maxHeight / 2);
+					prevY += maxHeight + rankSep;
+				});
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/layout.js
+		var require_layout = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let acyclic = require_acyclic();
+			let normalize = require_normalize();
+			let rank = require_rank();
+			let normalizeRanks = require_util$1().normalizeRanks;
+			let parentDummyChains = require_parent_dummy_chains();
+			let removeEmptyRanks = require_util$1().removeEmptyRanks;
+			let nestingGraph = require_nesting_graph();
+			let addBorderSegments = require_add_border_segments();
+			let coordinateSystem = require_coordinate_system();
+			let order = require_order();
+			let position = require_position();
+			let util = require_util$1();
+			let Graph = require_graphlib().Graph;
+			module.exports = layout;
+			function layout(g, opts) {
+				let time = opts && opts.debugTiming ? util.time : util.notime;
+				time("layout", () => {
+					let layoutGraph = time("  buildLayoutGraph", () => buildLayoutGraph(g));
+					time("  runLayout", () => runLayout(layoutGraph, time, opts));
+					time("  updateInputGraph", () => updateInputGraph(g, layoutGraph));
+				});
+			}
+			function runLayout(g, time, opts) {
+				time("    makeSpaceForEdgeLabels", () => makeSpaceForEdgeLabels(g));
+				time("    removeSelfEdges", () => removeSelfEdges(g));
+				time("    acyclic", () => acyclic.run(g));
+				time("    nestingGraph.run", () => nestingGraph.run(g));
+				time("    rank", () => rank(util.asNonCompoundGraph(g)));
+				time("    injectEdgeLabelProxies", () => injectEdgeLabelProxies(g));
+				time("    removeEmptyRanks", () => removeEmptyRanks(g));
+				time("    nestingGraph.cleanup", () => nestingGraph.cleanup(g));
+				time("    normalizeRanks", () => normalizeRanks(g));
+				time("    assignRankMinMax", () => assignRankMinMax(g));
+				time("    removeEdgeLabelProxies", () => removeEdgeLabelProxies(g));
+				time("    normalize.run", () => normalize.run(g));
+				time("    parentDummyChains", () => parentDummyChains(g));
+				time("    addBorderSegments", () => addBorderSegments(g));
+				time("    order", () => order(g, opts));
+				time("    insertSelfEdges", () => insertSelfEdges(g));
+				time("    adjustCoordinateSystem", () => coordinateSystem.adjust(g));
+				time("    position", () => position(g));
+				time("    positionSelfEdges", () => positionSelfEdges(g));
+				time("    removeBorderNodes", () => removeBorderNodes(g));
+				time("    normalize.undo", () => normalize.undo(g));
+				time("    fixupEdgeLabelCoords", () => fixupEdgeLabelCoords(g));
+				time("    undoCoordinateSystem", () => coordinateSystem.undo(g));
+				time("    translateGraph", () => translateGraph(g));
+				time("    assignNodeIntersects", () => assignNodeIntersects(g));
+				time("    reversePoints", () => reversePointsForReversedEdges(g));
+				time("    acyclic.undo", () => acyclic.undo(g));
+			}
+			function updateInputGraph(inputGraph, layoutGraph) {
+				inputGraph.nodes().forEach((v) => {
+					let inputLabel = inputGraph.node(v);
+					let layoutLabel = layoutGraph.node(v);
+					if (inputLabel) {
+						inputLabel.x = layoutLabel.x;
+						inputLabel.y = layoutLabel.y;
+						inputLabel.rank = layoutLabel.rank;
+						if (layoutGraph.children(v).length) {
+							inputLabel.width = layoutLabel.width;
+							inputLabel.height = layoutLabel.height;
+						}
+					}
+				});
+				inputGraph.edges().forEach((e) => {
+					let inputLabel = inputGraph.edge(e);
+					let layoutLabel = layoutGraph.edge(e);
+					inputLabel.points = layoutLabel.points;
+					if (Object.hasOwn(layoutLabel, "x")) {
+						inputLabel.x = layoutLabel.x;
+						inputLabel.y = layoutLabel.y;
+					}
+				});
+				inputGraph.graph().width = layoutGraph.graph().width;
+				inputGraph.graph().height = layoutGraph.graph().height;
+			}
+			let graphNumAttrs = [
+				"nodesep",
+				"edgesep",
+				"ranksep",
+				"marginx",
+				"marginy"
+			];
+			let graphDefaults = {
+				ranksep: 50,
+				edgesep: 20,
+				nodesep: 50,
+				rankdir: "tb"
+			};
+			let graphAttrs = [
+				"acyclicer",
+				"ranker",
+				"rankdir",
+				"align"
+			];
+			let nodeNumAttrs = [
+				"width",
+				"height",
+				"rank"
+			];
+			let nodeDefaults = {
+				width: 0,
+				height: 0
+			};
+			let edgeNumAttrs = [
+				"minlen",
+				"weight",
+				"width",
+				"height",
+				"labeloffset"
+			];
+			let edgeDefaults = {
+				minlen: 1,
+				weight: 1,
+				width: 0,
+				height: 0,
+				labeloffset: 10,
+				labelpos: "r"
+			};
+			let edgeAttrs = ["labelpos"];
+			function buildLayoutGraph(inputGraph) {
+				let g = new Graph({
+					multigraph: true,
+					compound: true
+				});
+				let graph = canonicalize(inputGraph.graph());
+				g.setGraph(Object.assign({}, graphDefaults, selectNumberAttrs(graph, graphNumAttrs), util.pick(graph, graphAttrs)));
+				inputGraph.nodes().forEach((v) => {
+					const newNode = selectNumberAttrs(canonicalize(inputGraph.node(v)), nodeNumAttrs);
+					Object.keys(nodeDefaults).forEach((k) => {
+						if (newNode[k] === void 0) newNode[k] = nodeDefaults[k];
+					});
+					g.setNode(v, newNode);
+					g.setParent(v, inputGraph.parent(v));
+				});
+				inputGraph.edges().forEach((e) => {
+					let edge = canonicalize(inputGraph.edge(e));
+					g.setEdge(e, Object.assign({}, edgeDefaults, selectNumberAttrs(edge, edgeNumAttrs), util.pick(edge, edgeAttrs)));
+				});
+				return g;
+			}
+			function makeSpaceForEdgeLabels(g) {
+				let graph = g.graph();
+				graph.ranksep /= 2;
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					edge.minlen *= 2;
+					if (edge.labelpos.toLowerCase() !== "c") {
+						if (graph.rankdir === "TB" || graph.rankdir === "BT") edge.width += edge.labeloffset;
+						else edge.height += edge.labeloffset;
+					}
+				});
+			}
+			function injectEdgeLabelProxies(g) {
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					if (edge.width && edge.height) {
+						let v = g.node(e.v);
+						let label = {
+							rank: (g.node(e.w).rank - v.rank) / 2 + v.rank,
+							e
+						};
+						util.addDummyNode(g, "edge-proxy", label, "_ep");
+					}
+				});
+			}
+			function assignRankMinMax(g) {
+				let maxRank = 0;
+				g.nodes().forEach((v) => {
+					let node = g.node(v);
+					if (node.borderTop) {
+						node.minRank = g.node(node.borderTop).rank;
+						node.maxRank = g.node(node.borderBottom).rank;
+						maxRank = Math.max(maxRank, node.maxRank);
+					}
+				});
+				g.graph().maxRank = maxRank;
+			}
+			function removeEdgeLabelProxies(g) {
+				g.nodes().forEach((v) => {
+					let node = g.node(v);
+					if (node.dummy === "edge-proxy") {
+						g.edge(node.e).labelRank = node.rank;
+						g.removeNode(v);
+					}
+				});
+			}
+			function translateGraph(g) {
+				let minX = Number.POSITIVE_INFINITY;
+				let maxX = 0;
+				let minY = Number.POSITIVE_INFINITY;
+				let maxY = 0;
+				let graphLabel = g.graph();
+				let marginX = graphLabel.marginx || 0;
+				let marginY = graphLabel.marginy || 0;
+				function getExtremes(attrs) {
+					let x = attrs.x;
+					let y = attrs.y;
+					let w = attrs.width;
+					let h = attrs.height;
+					minX = Math.min(minX, x - w / 2);
+					maxX = Math.max(maxX, x + w / 2);
+					minY = Math.min(minY, y - h / 2);
+					maxY = Math.max(maxY, y + h / 2);
+				}
+				g.nodes().forEach((v) => getExtremes(g.node(v)));
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					if (Object.hasOwn(edge, "x")) getExtremes(edge);
+				});
+				minX -= marginX;
+				minY -= marginY;
+				g.nodes().forEach((v) => {
+					let node = g.node(v);
+					node.x -= minX;
+					node.y -= minY;
+				});
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					edge.points.forEach((p) => {
+						p.x -= minX;
+						p.y -= minY;
+					});
+					if (Object.hasOwn(edge, "x")) edge.x -= minX;
+					if (Object.hasOwn(edge, "y")) edge.y -= minY;
+				});
+				graphLabel.width = maxX - minX + marginX;
+				graphLabel.height = maxY - minY + marginY;
+			}
+			function assignNodeIntersects(g) {
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					let nodeV = g.node(e.v);
+					let nodeW = g.node(e.w);
+					let p1, p2;
+					if (!edge.points) {
+						edge.points = [];
+						p1 = nodeW;
+						p2 = nodeV;
+					} else {
+						p1 = edge.points[0];
+						p2 = edge.points[edge.points.length - 1];
+					}
+					edge.points.unshift(util.intersectRect(nodeV, p1));
+					edge.points.push(util.intersectRect(nodeW, p2));
+				});
+			}
+			function fixupEdgeLabelCoords(g) {
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					if (Object.hasOwn(edge, "x")) {
+						if (edge.labelpos === "l" || edge.labelpos === "r") edge.width -= edge.labeloffset;
+						switch (edge.labelpos) {
+							case "l":
+								edge.x -= edge.width / 2 + edge.labeloffset;
+								break;
+							case "r": edge.x += edge.width / 2 + edge.labeloffset;
+						}
+					}
+				});
+			}
+			function reversePointsForReversedEdges(g) {
+				g.edges().forEach((e) => {
+					let edge = g.edge(e);
+					if (edge.reversed) edge.points.reverse();
+				});
+			}
+			function removeBorderNodes(g) {
+				g.nodes().forEach((v) => {
+					if (g.children(v).length) {
+						let node = g.node(v);
+						let t = g.node(node.borderTop);
+						let b = g.node(node.borderBottom);
+						let l = g.node(node.borderLeft[node.borderLeft.length - 1]);
+						let r = g.node(node.borderRight[node.borderRight.length - 1]);
+						node.width = Math.abs(r.x - l.x);
+						node.height = Math.abs(b.y - t.y);
+						node.x = l.x + node.width / 2;
+						node.y = t.y + node.height / 2;
+					}
+				});
+				g.nodes().forEach((v) => {
+					if (g.node(v).dummy === "border") g.removeNode(v);
+				});
+			}
+			function removeSelfEdges(g) {
+				g.edges().forEach((e) => {
+					if (e.v === e.w) {
+						var node = g.node(e.v);
+						if (!node.selfEdges) node.selfEdges = [];
+						node.selfEdges.push({
+							e,
+							label: g.edge(e)
+						});
+						g.removeEdge(e);
+					}
+				});
+			}
+			function insertSelfEdges(g) {
+				util.buildLayerMatrix(g).forEach((layer) => {
+					var orderShift = 0;
+					layer.forEach((v, i) => {
+						var node = g.node(v);
+						node.order = i + orderShift;
+						(node.selfEdges || []).forEach((selfEdge) => {
+							util.addDummyNode(g, "selfedge", {
+								width: selfEdge.label.width,
+								height: selfEdge.label.height,
+								rank: node.rank,
+								order: i + ++orderShift,
+								e: selfEdge.e,
+								label: selfEdge.label
+							}, "_se");
+						});
+						delete node.selfEdges;
+					});
+				});
+			}
+			function positionSelfEdges(g) {
+				g.nodes().forEach((v) => {
+					var node = g.node(v);
+					if (node.dummy === "selfedge") {
+						var selfNode = g.node(node.e.v);
+						var x = selfNode.x + selfNode.width / 2;
+						var y = selfNode.y;
+						var dx = node.x - x;
+						var dy = selfNode.height / 2;
+						g.setEdge(node.e, node.label);
+						g.removeNode(v);
+						node.label.points = [
+							{
+								x: x + 2 * dx / 3,
+								y: y - dy
+							},
+							{
+								x: x + 5 * dx / 6,
+								y: y - dy
+							},
+							{
+								x: x + dx,
+								y
+							},
+							{
+								x: x + 5 * dx / 6,
+								y: y + dy
+							},
+							{
+								x: x + 2 * dx / 3,
+								y: y + dy
+							}
+						];
+						node.label.x = node.x;
+						node.label.y = node.y;
+					}
+				});
+			}
+			function selectNumberAttrs(obj, attrs) {
+				return util.mapValues(util.pick(obj, attrs), Number);
+			}
+			function canonicalize(attrs) {
+				var newAttrs = {};
+				if (attrs) Object.entries(attrs).forEach(([k, v]) => {
+					if (typeof k === "string") k = k.toLowerCase();
+					newAttrs[k] = v;
+				});
+				return newAttrs;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/debug.js
+		var require_debug = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			let util = require_util$1();
+			let Graph = require_graphlib().Graph;
+			module.exports = { debugOrdering };
+			/* istanbul ignore next */
+			function debugOrdering(g) {
+				let layerMatrix = util.buildLayerMatrix(g);
+				let h = new Graph({
+					compound: true,
+					multigraph: true
+				}).setGraph({});
+				g.nodes().forEach((v) => {
+					h.setNode(v, { label: v });
+					h.setParent(v, "layer" + g.node(v).rank);
+				});
+				g.edges().forEach((e) => h.setEdge(e.v, e.w, {}, e.name));
+				layerMatrix.forEach((layer, i) => {
+					let layerV = "layer" + i;
+					h.setNode(layerV, { rank: "same" });
+					layer.reduce((u, v) => {
+						h.setEdge(u, v, { style: "invis" });
+						return v;
+					});
+				});
+				return h;
+			}
+		}));
+		//#endregion
+		//#region ../../../node_modules/.pnpm/@dagrejs+dagre@1.1.8/node_modules/@dagrejs/dagre/lib/version.js
+		var require_version = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = "1.1.8";
+		}));
+		//#endregion
 		//#region lib/types/client/dag-editor-model.js
+		var import_dagre = /* @__PURE__ */ __toESM((/* @__PURE__ */ __commonJSMin(((exports, module) => {
+			module.exports = {
+				graphlib: require_graphlib(),
+				layout: require_layout(),
+				debug: require_debug(),
+				util: {
+					time: require_util$1().time,
+					notime: require_util$1().notime
+				},
+				version: require_version()
+			};
+		})))(), 1);
 		/** 全部五类型命令判别字段（编辑表单下拉项）。 */
 		const COMMAND_TYPES = [
 			"shell",
@@ -13046,10 +27613,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				value: "",
 				description: ""
 			};
-		}
-		/** 构造一个空的分支项（`next` 待填）。 */
-		function createBranch() {
-			return { next: "" };
 		}
 		/** 去掉首尾空白，空串归 `undefined`（用于可选字段清除）。 */
 		function trimToUndefined(value) {
@@ -13216,93 +27779,170 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				}]
 			};
 		}
-		//#endregion
-		//#region lib/types/client/sandore-save.js
 		/**
-		* 构造 save 回调：`id === undefined` 走 `createDefinition`，否则走 `updateYaml`，
-		* 返回持久化后的 id。新建首次 `createDefinition`、后续 `updateYaml` 的行为在此成可执行路径。
-		* @param remote - `ctx.remote.sandore` 的最小 RPC 面。
-		* @returns 供 DagEditor `save` prop 直接使用的回调。
+		* 分支是否为条件分支：有 `condition`（布尔判定命令）才算。无 `condition` = 并行分支
+		* （始终纳入下一批）；有 `loop` 的分支是循环回边（其 `next` 指向更早节点）。
 		*/
-		function createSandoreSave(remote) {
-			return async (id, yaml) => {
-				if (id === void 0) return unwrap(await remote.createDefinition({ yaml })).id;
-				return unwrap(await remote.updateYaml(id, yaml)).id;
-			};
-		}
-		/** 收窄任意值为 `Record<string, unknown>`。 */
-		function isRecord(value) {
-			return typeof value === "object" && value !== null && !Array.isArray(value);
-		}
-		/** 收窄携带 zod `issues` 数组的错误载体（`ZodError` 及挂在其 `cause` 上的实例）。 */
-		function isZodIssueCarrier(value) {
-			return isRecord(value) && Array.isArray(value.issues);
-		}
-		/** 渲染单个 zod issue 为 `path: message`（无 path 时仅 message）。 */
-		function describeZodIssue(issue) {
-			if (!isRecord(issue)) return String(issue);
-			const path = Array.isArray(issue.path) ? issue.path.map((value) => String(value)).join(".") : "";
-			const message = typeof issue.message === "string" ? issue.message : String(issue.message ?? "");
-			return path === "" ? message : `${path}: ${message}`;
-		}
-		/** 渲染 zod issues 数组为分号分隔的摘要。 */
-		function describeZodIssues(issues) {
-			return issues.map(describeZodIssue).join("; ");
-		}
-		/** 渲染 `WorkflowYamlError` 的校验详情：有 zod cause 取 issues 摘要，否则回落稳定 code。 */
-		function describeWorkflowYamlError(error) {
-			if (isZodIssueCarrier(error.cause)) return describeZodIssues(error.cause.issues);
-			return error.code;
+		function isConditionalBranch(branch) {
+			return branch.condition !== void 0;
 		}
 		/**
-		* 把保存流程抛出的任意错误归一化为含校验详情的 `SaveErrorInfo`：
-		* `SandoreRemoteError` 取 `.details`、`WorkflowYamlError` 取 `.code`/`.cause`、
-		* zod 错误取 issues 摘要，其余回落 message。
-		* @param error - 保存流程 catch 到的未知抛错值。
-		* @returns 含统一 message 与可选校验详情的归一化结果。
+		* 判断在 Stage 间新增连线 `source → target` 是否会形成回环（Stage DAG 不允许循环）。
+		* 从 target 出发沿既有出边（branches[].next + branches[].loop.next）做可达性搜索：
+		* 若可回到 source，则新增这条边会构成环。自环（source === target）也视为回环。
+		* @param stages - 当前 Stage 列表（不含待加边）。
+		* @param source - 连线起点。
+		* @param target - 连线终点。
+		* @returns 是否构成回环。
 		*/
-		function describeSaveError(error) {
-			if (error instanceof SandoreRemoteError) return {
-				message: error.message,
-				details: JSON.stringify(error.details)
+		function wouldCreateStageCycle(stages, source, target) {
+			if (source === target) return true;
+			const outgoing = /* @__PURE__ */ new Map();
+			for (const stage of stages) {
+				const targets = [];
+				for (const branch of stage.branches ?? []) {
+					if (branch.next !== void 0 && branch.next !== "") targets.push(branch.next);
+					if (branch.loop?.next !== void 0 && branch.loop.next !== "") targets.push(branch.loop.next);
+				}
+				outgoing.set(stage.id, targets);
+			}
+			const visited = /* @__PURE__ */ new Set([target]);
+			const queue = [target];
+			while (queue.length > 0) {
+				const current = queue.shift();
+				for (const next of outgoing.get(current) ?? []) {
+					if (next === source) return true;
+					if (!visited.has(next)) {
+						visited.add(next);
+						queue.push(next);
+					}
+				}
+			}
+			return false;
+		}
+		/**
+		* Stage 层流控边（branches 是唯一出边单元，**无循环**）：有 `condition` 的条件分支
+		* 琥珀虚线（带 label），无 `condition` 的并行分支默认灰实线。未声明流控的孤立 Stage
+		* 按定义顺序串行兜底（画布不画边，仅引擎推进）。
+		* @param stages - 定义内的 Stage 列表。
+		* @returns 去重后的流控边。
+		*/
+		function stageFlowEdges(stages) {
+			const edges = [];
+			const emitted = /* @__PURE__ */ new Set();
+			const push = (edge) => {
+				const key = `${edge.source}->${edge.target}:${edge.kind}`;
+				if (emitted.has(key)) return;
+				emitted.add(key);
+				edges.push(edge);
 			};
-			if (error instanceof WorkflowYamlError) return {
-				message: error.message,
-				details: describeWorkflowYamlError(error)
+			for (const stage of stages) for (const branch of stage.branches ?? []) {
+				if (branch.next === void 0 || branch.next === "") continue;
+				const conditional = isConditionalBranch(branch);
+				push({
+					source: stage.id,
+					target: branch.next,
+					kind: conditional ? "conditional" : "parallel",
+					...branch.label !== void 0 ? { label: branch.label } : {}
+				});
+			}
+			return edges;
+		}
+		/**
+		* Step 层流控边（微流程：并行/条件 branches + **循环回边分支 loop**）。
+		* 条件分支（有 condition）琥珀虚线带 label；循环分支（有 loop）`loop.next` 红色虚线
+		* 回边；无 condition/loop 的并行分支默认灰实线。
+		* @param steps - 某 Stage 内的 Step 列表。
+		* @returns 去重后的流控边。
+		*/
+		function stepFlowEdges(steps) {
+			const byId = new Set(steps.map((step) => step.id));
+			const edges = [];
+			const emitted = /* @__PURE__ */ new Set();
+			const push = (edge) => {
+				const key = `${edge.source}->${edge.target}:${edge.kind}`;
+				if (emitted.has(key)) return;
+				emitted.add(key);
+				edges.push(edge);
 			};
-			if (isZodIssueCarrier(error)) return {
-				message: describeError$1(error),
-				details: describeZodIssues(error.issues)
-			};
-			return {
-				message: describeError$1(error),
-				details: void 0
-			};
+			for (const step of steps) for (const branch of step.branches ?? []) {
+				if (branch.next === void 0 || branch.next === "" || !byId.has(branch.next)) continue;
+				const conditional = isConditionalBranch(branch);
+				push({
+					source: step.id,
+					target: branch.next,
+					kind: conditional ? "conditional" : "parallel",
+					...branch.label !== void 0 ? { label: branch.label } : {}
+				});
+				if (branch.loop?.next !== void 0 && branch.loop.next !== "") {
+					if (byId.has(branch.loop.next)) push({
+						source: step.id,
+						target: branch.loop.next,
+						kind: "loop",
+						...branch.loop.next === step.id ? { label: "loop" } : {}
+					});
+				}
+			}
+			return edges;
+		}
+		/**
+		* 用 Dagre 计算分层布局（TB = 自上而下垂直流，官方 dagre 示例默认方向）。
+		* 返回节点 id → 左上角坐标（React Flow 的 position 语义，dagre 输出的是中心点，
+		* 需减半宽/高）。
+		* @param nodes - 参与布局的节点。
+		* @param edges - 有向边（自动去重）。
+		* @returns 节点 id → 左上角坐标。
+		*/
+		function dagreLayout(nodes, edges) {
+			const graph = new import_dagre.default.graphlib.Graph();
+			graph.setDefaultEdgeLabel(() => ({}));
+			graph.setGraph({
+				rankdir: "TB",
+				nodesep: 56,
+				ranksep: 110,
+				marginx: 24,
+				marginy: 24
+			});
+			for (const node of nodes) graph.setNode(node.id, {
+				width: node.width,
+				height: node.height
+			});
+			const seen = /* @__PURE__ */ new Set();
+			for (const edge of edges) {
+				const key = `${edge.source}->${edge.target}`;
+				if (seen.has(key)) continue;
+				seen.add(key);
+				graph.setEdge(edge.source, edge.target);
+			}
+			import_dagre.default.layout(graph);
+			const positions = {};
+			for (const node of nodes) {
+				const meta = graph.node(node.id);
+				positions[node.id] = {
+					x: meta.x - node.width / 2,
+					y: meta.y - node.height / 2
+				};
+			}
+			return positions;
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\DagEditor.module.css.mjs
-		const css$3 = "/* DagEditor 编排器：Stage DAG 节点列表 + Step 编辑 + YAML 预览。 */\n\n.editor {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.title {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.body {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  padding: 12px;\n  overflow-y: auto;\n  box-sizing: border-box;\n}\n\n.dag {\n  display: flex;\n  flex-direction: column;\n  gap: 0;\n}\n\n.nodeWrap {\n  display: flex;\n  flex-direction: column;\n}\n\n.stageHeader {\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.stepCount {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  height: 20px;\n  padding: 0 6px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill);\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.connector {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: 100%;\n  height: 20px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.steps {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 8px 8px 8px 24px;\n}\n\n.empty {\n  padding: 8px 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.stepActions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.step {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.stepHead {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.command {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.commandTypes {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px;\n}\n\n.commandValue {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.sectionLabel {\n  margin-top: 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.itemRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.gates {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.loop {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.checkbox {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.preview {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  min-height: 0;\n}\n\n.success {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));\n}\n\n.error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n";
-		const tagId$3 = "@deepseek-ai/dsh-client-ui-sandore/DagEditor.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$3) + "]") === null) {
+		const css$7 = "/* DagEditor 编排画布：节点卡 + SVG 连线 + 工具条 + 编辑侧栏 + YAML 预览折叠。 */\n\n.s1ymwp_editor {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1ymwp_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_title {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_success {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));\n}\n\n.s1ymwp_error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n/* ── 画布行：画布 + 编辑侧栏 ─────────────────────────────────────────────── */\n\n.s1ymwp_canvasRow {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n.s1ymwp_canvas {\n  flex: 1;\n  min-width: 0;\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  background-color: var(--dsw-alias-bg-sunken);\n  background-image: radial-gradient(circle, var(--dsw-alias-border-l2) 1px, transparent 1px);\n  background-size: 20px 20px;\n}\n\n.s1ymwp_canvasScroll {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  overflow: hidden;\n}\n\n.s1ymwp_canvasContent {\n  position: relative;\n}\n\n.s1ymwp_zoomWrap {\n  position: absolute;\n  top: 0;\n  left: 0;\n}\n\n.s1ymwp_edges {\n  position: absolute;\n  top: 0;\n  left: 0;\n  pointer-events: none;\n}\n\n/* 顶部覆盖控件（tabs 左上、工具条右上） */\n.s1ymwp_canvasTabs {\n  position: absolute;\n  top: 12px;\n  left: 12px;\n  z-index: 10;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  padding: 3px;\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-elevated);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_canvasTabs button {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1ymwp_canvasTabs button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1ymwp_canvasTabs button.s1ymwp_tabActive {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n/* 层级条：返回按钮 + 当前层级名。 */\n.s1ymwp_backBtn {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.s1ymwp_backBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ymwp_crumb {\n  padding: 4px 6px;\n  font-size: 11px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_canvasTabs .s1ymwp_addStageBtn {\n  margin-left: 4px;\n}\n\n.s1ymwp_canvasToolbar {\n  position: absolute;\n  top: 12px;\n  right: 12px;\n  z-index: 10;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  padding: 4px;\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-elevated);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 14px;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1ymwp_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 节点卡（官方默认节点风格：白底由 wrapper 提供，内部只做居中内容布局） ── */\n\n.s1ymwp_node {\n  width: 100%;\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  gap: 2px;\n}\n\n.s1ymwp_nodeTitle {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--xy-node-color-default);\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeSub {\n  font-size: 10px;\n  font-weight: 400;\n  color: #a1a1aa;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeSelected {\n  /* 外框高亮由 React Flow wrapper 的 .s1ymwp_react-flow__node.s1ymwp_selected 提供。 */\n}\n\n.s1ymwp_nodeHeader {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  padding: 9px 11px;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n  overflow: hidden;\n}\n\n.s1ymwp_nodeIcon {\n  flex: none;\n  width: 22px;\n  height: 22px;\n  border-radius: 6px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 12px;\n}\n\n.s1ymwp_nodeType {\n  flex: none;\n  margin-left: auto;\n  font-size: 9px;\n  font-weight: 600;\n  padding: 2px 6px;\n  border-radius: 4px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  text-transform: uppercase;\n  letter-spacing: 0.03em;\n}\n\n.s1ymwp_nodeTitle {\n  min-width: 0;\n  flex: 1;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeBody {\n  padding: 7px 11px 8px;\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1ymwp_nodeEmpty {\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1ymwp_nodeStepRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 11px;\n  color: var(--dsw-alias-label-secondary);\n  min-width: 0;\n}\n\n.s1ymwp_nodeDot {\n  flex: none;\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: var(--dsw-alias-label-disabled);\n}\n\n.s1ymwp_nodeStepName {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  flex: 1;\n}\n\n.s1ymwp_nodeStepType {\n  flex: none;\n  font-size: 9px;\n  font-weight: 600;\n  padding: 0 4px;\n  border-radius: 3px;\n  background: var(--dsw-alias-bg-active);\n  color: var(--dsw-alias-label-caption);\n}\n\n/* Stage 卡页脚：下钻提示 + Step 数徽章。 */\n.s1ymwp_nodeFooter {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 11px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_nodeDrillHint {\n  font-size: 10px;\n  font-weight: 500;\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ymwp_nodeCount {\n  font-size: 10px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-caption);\n  padding: 0 6px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-active);\n}\n\n/* Step 节点（Step DAG） */\n.s1ymwp_stepNode {\n  width: 100%;\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  gap: 2px;\n}\n\n.s1ymwp_stepIcon {\n  flex: none;\n  width: 18px;\n  height: 18px;\n  border-radius: 5px;\n  background: var(--dsw-alias-bg-active);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 11px;\n}\n\n.s1ymwp_stepNode .s1ymwp_nodeDot {\n  background: var(--dsw-alias-label-caption);\n}\n\n/* React Flow 连接端口（Handle）：放大到易命中，白底灰边由 theme css 提供；hover 高亮。 */\n.s1ymwp_handle {\n  width: 11px;\n  height: 11px;\n  transition: border-color 0.12s, background 0.12s;\n}\n\n.s1ymwp_handle:hover {\n  border-color: var(--xy-theme-selected);\n  background: var(--xy-theme-selected);\n}\n\n/* ── 右侧编辑侧栏 ────────────────────────────────────────────────────────── */\n\n.s1ymwp_panel {\n  flex: none;\n  width: 420px;\n  min-width: 320px;\n  display: flex;\n  flex-direction: column;\n  border-left: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1ymwp_panelHeader {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-height: 44px;\n  padding: 8px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_panelTitle {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_panelBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 10px 12px 16px;\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_panelEmpty {\n  padding: 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n/* ── 流控编辑器（FlowEditor） ─────────────────────────────────────────────── */\n\n.s1ymwp_flow {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_branchRow {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n/* 分支行头部：类型下拉 + 目标只读框 + 删除按钮一行。 */\n.s1ymwp_branchHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 分支类型下拉（并行分支 / 条件分支）。 */\n.s1ymwp_branchKindSelect {\n  flex: none;\n  width: 108px;\n  padding: 5px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  font-size: 12px;\n  font-family: inherit;\n  outline: none;\n  box-sizing: border-box;\n}\n\n.s1ymwp_branchKindSelect:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n/* 目标节点只读框（视觉与下拉一致：同边框/圆角/高度，弹性占满剩余宽度）。 */\n.s1ymwp_branchTarget {\n  flex: 1;\n  min-width: 0;\n  height: 30px;\n  padding: 5px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-primary);\n  line-height: 18px;\n  box-sizing: border-box;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* 分支类型说明小字。 */\n.s1ymwp_branchHint {\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n/* 判断条件命令卡片：shell/提示词 Pill 与输入框放进带边框的卡片。 */\n.s1ymwp_conditionCard {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_select {\n  width: 100%;\n  padding: 6px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  font-size: 12px;\n  font-family: inherit;\n  outline: none;\n  box-sizing: border-box;\n}\n\n.s1ymwp_select:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n/* ── YAML 预览折叠 ───────────────────────────────────────────────────────── */\n\n.s1ymwp_previewHeader {\n  flex: none;\n  min-height: 36px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1ymwp_previewBody {\n  flex: none;\n  max-height: 220px;\n  overflow-y: auto;\n  padding: 8px 12px 12px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n/* ── Step 字段编辑（沿用既有表单样式） ───────────────────────────────────── */\n\n.s1ymwp_stageHeader {\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_step {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_stepHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 标题输入框：占满 stepHead 剩余宽度（删除按钮固定，输入框 flex 撑开）。 */\n.s1ymwp_titleInput {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1ymwp_titleInput input {\n  width: 100%;\n  box-sizing: border-box;\n}\n\n.s1ymwp_command {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_commandTypes {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px;\n}\n\n.s1ymwp_commandValue {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_sectionLabel {\n  margin-top: 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.s1ymwp_itemRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 透传变量条目：纵向堆叠（名称+删除一行，值/描述各占一行），输入框占满详情区。 */\n.s1ymwp_varRow {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_varRowHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 名称输入框 wrapper 占满剩余宽度（删除按钮固定）：wrapper 去左右 padding 保证三元素等距，\n   内部 input 补回与 DSH 默认一致的 8px 左右 padding，使文字缩进与其他输入框相同。 */\n.s1ymwp_varNameInput {\n  flex: 1;\n  min-width: 0;\n  padding: 0;\n}\n\n.s1ymwp_varNameInput input {\n  width: 100%;\n  box-sizing: border-box;\n  padding: 1px 8px;\n}\n\n.s1ymwp_gates {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_loop {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_checkbox {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n";
+		const tagId$7 = "@deepseek-ai/dsh-client-ui-sandore/DagEditor.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$7) + "]") === null) {
 			const tag = document.createElement("style");
 			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
-			tag.dataset.pluginCss = tagId$3;
-			tag.textContent = css$3;
+			tag.dataset.pluginCss = tagId$7;
+			tag.textContent = css$7;
 			document.head.appendChild(tag);
 		}
-		var DagEditor_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? prop : void 0 });
+		var DagEditor_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1ymwp_" + prop : void 0 });
 		//#endregion
-		//#region lib/types/client/DagEditor.js
+		//#region lib/types/client/CommandEditor.js
 		/**
-		* DagEditor：Stage DAG 简化可视化 + Step 编辑 + YAML 预览/保存。
-		*
-		* 以 ui-primitives 的节点列表 + 缩进层级呈现 Stage DAG（Stage 间以竖线 + 箭头示意
-		* 串行推进，不引入 React Flow/Dagre）。原始 yaml 经浏览器安全子路径
-		* `@deepseek-ai/dsh-sandore-workflow/yaml` 解析为编辑态模型（`WorkflowDefinition`），
-		* Step 字段（name / command 五类型 / inputFrom / outputTo / passThroughVars / gates /
-		* branches / loop）编辑即改模型，YAML 预览随模型同步序列化；保存经 `save` 回调
-		* （新建走 `createDefinition`、后续走 `updateYaml`），失败呈现校验错误并保留未保存内容。
-		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DagEditor
+		* CommandEditor：五类型命令（shell/prompt/agent/skill/mcp）编辑，供 Step command 与
+		* 分支 condition / 循环 breakCondition 复用。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/CommandEditor
 		*/
 		/** 命令类型的本地化标签键。 */
 		const COMMAND_LABEL_KEYS = {
@@ -13312,8 +27952,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			skill: "editor.command.skill",
 			mcp: "editor.command.mcp"
 		};
-		/** 渲染 Step 命令类型选择与 value 字段编辑。 */
-		function CommandEditor({ command, onChange, t }) {
+		/** 渲染命令编辑（类型选择 + 对应 value 字段）。`types` 可限定可选类型（如条件判断仅 bash/prompt）。 */
+		function CommandEditor({ command, onChange, t, types }) {
+			const available = types ?? COMMAND_TYPES;
 			const update = (field) => (value) => {
 				onChange(updateCommandText(command, field, value));
 			};
@@ -13323,7 +27964,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					className: DagEditor_module_css_default.commandTypes,
 					role: "group",
 					"aria-label": t("editor.step.command"),
-					children: COMMAND_TYPES.map((type) => (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
+					children: available.map((type) => (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
 						active: command.type === type,
 						onClick: () => {
 							onChange(createCommand(type));
@@ -13417,6 +28058,728 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				})]
 			});
 		}
+		//#endregion
+		//#region lib/types/client/FlowEditor.js
+		/**
+		* FlowEditor：Stage/Step 通用流控编辑器（分支是唯一出边单元）。
+		*
+		* 统一结构：`branches: [{ next, condition?, loop? }]`。
+		* - 无 `condition` = 并行分支（始终走）；
+		* - 有 `condition` = 条件分支（布尔判定命令，true 才走）；
+		* - 有 `loop` = 循环回边分支（该分支 `next` 指向更早节点，`loop` 控制迭代/跳出）。
+		* 每条分支独立编辑：目标 + 并行/条件切换 + 判断条件命令 + 循环参数（折叠）。
+		* Stage 层不允许循环（回环连线被拒绝，分支不会带 loop）；Stage 层判断条件仅
+		* shell/prompt（`conditionTypes` 限定）。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/FlowEditor
+		*/
+		/** 折叠小节标题（复用 DagEditor 的样式）。 */
+		function SectionLabel$1({ children }) {
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: DagEditor_module_css_default.sectionLabel,
+				children
+			});
+		}
+		/** 目标节点下拉（分支 next）。 */
+		function TargetSelect({ value, targets, t, onChange }) {
+			return (0, react_jsx_runtime.jsxs)("select", {
+				className: DagEditor_module_css_default.select,
+				value,
+				onChange: (event) => {
+					onChange(event.target.value);
+				},
+				children: [(0, react_jsx_runtime.jsx)("option", {
+					value: "",
+					children: t("flow.none")
+				}), targets.map((target) => (0, react_jsx_runtime.jsx)("option", {
+					value: target.id,
+					children: target.name
+				}, target.id))]
+			});
+		}
+		/**
+		* 渲染 Stage/Step 流控编辑器（分支列表：每条 = 类型下拉 + 只读目标 + 判断条件 + 循环）。
+		* 循环由画布回环连线自动产生（loop 必填），详情不做手动添加。
+		* @param conditionTypes - 判断条件命令可选类型（缺省 = 全部五类型；Stage 层 shell/prompt）。
+		*/
+		function FlowEditor({ t, flow, targets, onChange, conditionTypes }) {
+			const branches = flow.branches ?? [];
+			const setBranch = (index, next) => {
+				onChange({
+					...flow,
+					branches: branches.map((b, i) => i === index ? next : b)
+				});
+			};
+			/** 目标节点名（读 targets 表；未知 id 显示原 id）。 */
+			const targetName = (id) => targets.find((target) => target.id === id)?.name ?? id;
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: DagEditor_module_css_default.flow,
+				children: [
+					(0, react_jsx_runtime.jsx)(SectionLabel$1, { children: t("flow.branches") }),
+					branches.map((branch, index) => {
+						const conditional = isConditionalBranch(branch);
+						return (0, react_jsx_runtime.jsxs)("div", {
+							className: DagEditor_module_css_default.branchRow,
+							children: [
+								(0, react_jsx_runtime.jsxs)("div", {
+									className: DagEditor_module_css_default.branchHead,
+									children: [
+										(0, react_jsx_runtime.jsxs)("select", {
+											className: DagEditor_module_css_default.branchKindSelect,
+											value: conditional ? "conditional" : "parallel",
+											onChange: (event) => {
+												if (event.target.value === "conditional") setBranch(index, {
+													...branch,
+													condition: branch.condition ?? createCommand("shell")
+												});
+												else setBranch(index, {
+													...branch,
+													condition: void 0
+												});
+											},
+											children: [(0, react_jsx_runtime.jsx)("option", {
+												value: "parallel",
+												children: t("flow.parallelBranch")
+											}), (0, react_jsx_runtime.jsx)("option", {
+												value: "conditional",
+												children: t("flow.conditionalBranch")
+											})]
+										}),
+										(0, react_jsx_runtime.jsx)("span", {
+											className: DagEditor_module_css_default.branchTarget,
+											title: branch.next === "" ? t("flow.none") : targetName(branch.next),
+											children: branch.next === "" ? t("flow.none") : targetName(branch.next)
+										}),
+										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											variant: "ghost",
+											size: "sm",
+											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {}),
+											"aria-label": t("editor.remove.item"),
+											onClick: () => {
+												onChange({
+													...flow,
+													branches: branches.filter((_, i) => i !== index)
+												});
+											}
+										})
+									]
+								}),
+								(0, react_jsx_runtime.jsx)("span", {
+									className: DagEditor_module_css_default.branchHint,
+									children: conditional ? t("flow.conditionalHint") : t("flow.parallelHint")
+								}),
+								conditional && (0, react_jsx_runtime.jsxs)("div", {
+									className: DagEditor_module_css_default.command,
+									children: [(0, react_jsx_runtime.jsx)(SectionLabel$1, { children: t("flow.condition") }), (0, react_jsx_runtime.jsx)("div", {
+										className: DagEditor_module_css_default.conditionCard,
+										children: (0, react_jsx_runtime.jsx)(CommandEditor, {
+											command: branch.condition,
+											onChange: (condition) => {
+												setBranch(index, {
+													...branch,
+													condition
+												});
+											},
+											t,
+											types: conditionTypes
+										})
+									})]
+								}),
+								branch.loop !== void 0 && (0, react_jsx_runtime.jsxs)("div", {
+									className: DagEditor_module_css_default.loop,
+									children: [
+										(0, react_jsx_runtime.jsx)(SectionLabel$1, { children: t("flow.loop") }),
+										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+											type: "number",
+											value: String(branch.loop.maxIterations ?? 1),
+											onChange: (event) => {
+												setBranch(index, {
+													...branch,
+													loop: {
+														...branch.loop,
+														maxIterations: parseOptionalNumber(event.target.value) ?? 1
+													}
+												});
+											},
+											placeholder: t("editor.field.maxIterations"),
+											"aria-label": t("editor.field.maxIterations")
+										}),
+										(0, react_jsx_runtime.jsx)(TargetSelect, {
+											value: branch.loop.next ?? "",
+											targets,
+											t,
+											onChange: (next) => {
+												setBranch(index, {
+													...branch,
+													loop: {
+														...branch.loop,
+														next: next === "" ? void 0 : next
+													}
+												});
+											}
+										}),
+										(0, react_jsx_runtime.jsx)(SectionLabel$1, { children: t("editor.field.exitTo") }),
+										(0, react_jsx_runtime.jsxs)("select", {
+											className: DagEditor_module_css_default.select,
+											value: branch.loop.exitTo ?? "__end__",
+											onChange: (event) => {
+												const value = event.target.value;
+												setBranch(index, {
+													...branch,
+													loop: {
+														...branch.loop,
+														exitTo: value === "__end__" ? void 0 : value
+													}
+												});
+											},
+											children: [(0, react_jsx_runtime.jsx)("option", {
+												value: "__end__",
+												children: t("flow.end")
+											}), targets.map((target) => (0, react_jsx_runtime.jsx)("option", {
+												value: target.id,
+												children: target.name
+											}, target.id))]
+										}),
+										(0, react_jsx_runtime.jsx)(SectionLabel$1, { children: t("flow.breakCondition") }),
+										branch.loop.breakCondition === void 0 ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											variant: "outline",
+											size: "sm",
+											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
+											onClick: () => {
+												setBranch(index, {
+													...branch,
+													loop: {
+														...branch.loop,
+														breakCondition: createCommand("prompt")
+													}
+												});
+											},
+											children: t("flow.addCondition")
+										}) : (0, react_jsx_runtime.jsx)(CommandEditor, {
+											command: branch.loop.breakCondition,
+											onChange: (breakCondition) => {
+												setBranch(index, {
+													...branch,
+													loop: {
+														...branch.loop,
+														breakCondition
+													}
+												});
+											},
+											t
+										})
+									]
+								})
+							]
+						}, index);
+					}),
+					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+						variant: "ghost",
+						size: "sm",
+						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
+						onClick: () => {
+							onChange({
+								...flow,
+								branches: [...branches, { next: "" }]
+							});
+						},
+						children: t("flow.addBranch")
+					})
+				]
+			});
+		}
+		//#endregion
+		//#region lib/types/client/sandore-save.js
+		/**
+		* 构造 save 回调：`id === undefined` 走 `createDefinition`，否则走 `updateYaml`，
+		* 返回持久化后的 id。新建首次 `createDefinition`、后续 `updateYaml` 的行为在此成可执行路径。
+		* @param remote - `ctx.remote.sandore` 的最小 RPC 面。
+		* @returns 供 DagEditor `save` prop 直接使用的回调。
+		*/
+		function createSandoreSave(remote) {
+			return async (id, yaml) => {
+				if (id === void 0) return unwrap(await remote.createDefinition({ yaml })).id;
+				return unwrap(await remote.updateYaml(id, yaml)).id;
+			};
+		}
+		/** 收窄任意值为 `Record<string, unknown>`。 */
+		function isRecord(value) {
+			return typeof value === "object" && value !== null && !Array.isArray(value);
+		}
+		/** 收窄携带 zod `issues` 数组的错误载体（`ZodError` 及挂在其 `cause` 上的实例）。 */
+		function isZodIssueCarrier(value) {
+			return isRecord(value) && Array.isArray(value.issues);
+		}
+		/** 渲染单个 zod issue 为 `path: message`（无 path 时仅 message）。 */
+		function describeZodIssue(issue) {
+			if (!isRecord(issue)) return String(issue);
+			const path = Array.isArray(issue.path) ? issue.path.map((value) => String(value)).join(".") : "";
+			const message = typeof issue.message === "string" ? issue.message : String(issue.message ?? "");
+			return path === "" ? message : `${path}: ${message}`;
+		}
+		/** 渲染 zod issues 数组为分号分隔的摘要。 */
+		function describeZodIssues(issues) {
+			return issues.map(describeZodIssue).join("; ");
+		}
+		/** 渲染 `WorkflowYamlError` 的校验详情：有 zod cause 取 issues 摘要，否则回落稳定 code。 */
+		function describeWorkflowYamlError(error) {
+			if (isZodIssueCarrier(error.cause)) return describeZodIssues(error.cause.issues);
+			return error.code;
+		}
+		/**
+		* 把保存流程抛出的任意错误归一化为含校验详情的 `SaveErrorInfo`：
+		* `SandoreRemoteError` 取 `.details`、`WorkflowYamlError` 取 `.code`/`.cause`、
+		* zod 错误取 issues 摘要，其余回落 message。
+		* @param error - 保存流程 catch 到的未知抛错值。
+		* @returns 含统一 message 与可选校验详情的归一化结果。
+		*/
+		function describeSaveError(error) {
+			if (error instanceof SandoreRemoteError) return {
+				message: error.message,
+				details: JSON.stringify(error.details)
+			};
+			if (error instanceof WorkflowYamlError) return {
+				message: error.message,
+				details: describeWorkflowYamlError(error)
+			};
+			if (isZodIssueCarrier(error)) return {
+				message: describeError$1(error),
+				details: describeZodIssues(error.issues)
+			};
+			return {
+				message: describeError$1(error),
+				details: void 0
+			};
+		}
+		//#endregion
+		//#region lib/types/client/DagEditor.js
+		/**
+		* DagEditor：两层 DAG 编排画布（React Flow + Dagre）。
+		*
+		* **第一层 Stage DAG**（dynamic-workflow-engine.md：仅串行 next + 并行/条件
+		* branches，**无循环**）：节点 = 全部 Stage；边 = Stage 级流控（并行分支绿色、
+		* 条件分支琥珀色带 expectation 标签）。点击 Stage 卡片**下钻**到该 Stage 的
+		* Step DAG（面包屑返回）。
+		* **第二层 Step DAG（微流程）**：节点 = 该 Stage 内的 Step；边 = 完整流控
+		* （next 串行 / branches 并行+条件 / **loop.next 循环回边虚线**）。
+		* 节点可拖拽、点击选中 → 右侧字段编辑面板；工具条 自动布局（dagre 分层）/缩放/适应；
+		* 底部折叠 YAML 预览；保存走 `save` 回调（新建 `createDefinition`、后续 `updateYaml`）。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DagEditor
+		*/
+		/** Stage 节点卡尺寸（对齐官方 dagre 示例 nodeWidth 172）。 */
+		const STAGE_FLOW_WIDTH = 172;
+		/** Step 节点卡尺寸（与 Stage 一致，官方示例统一 172×36）。 */
+		const STEP_FLOW_WIDTH = 172;
+		const STEP_FLOW_HEIGHT = 36;
+		/** Stage 节点卡（官方默认节点风格：白底居中，单行名称；垂直布局 target 上 / source 下）。 */
+		function StageNode({ data }) {
+			const { stage } = data;
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: DagEditor_module_css_default.node,
+				children: [
+					(0, react_jsx_runtime.jsx)(Handle, {
+						type: "target",
+						position: Position.Top,
+						className: DagEditor_module_css_default.handle
+					}),
+					(0, react_jsx_runtime.jsx)("span", {
+						className: DagEditor_module_css_default.nodeTitle,
+						children: stage.name
+					}),
+					(0, react_jsx_runtime.jsx)(Handle, {
+						type: "source",
+						position: Position.Bottom,
+						className: DagEditor_module_css_default.handle
+					})
+				]
+			});
+		}
+		/** Step 节点卡（官方默认节点风格：白底居中，单行名称；垂直布局 target 上 / source 下）。 */
+		function StepNode({ data }) {
+			const { step } = data;
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: DagEditor_module_css_default.stepNode,
+				children: [
+					(0, react_jsx_runtime.jsx)(Handle, {
+						type: "target",
+						position: Position.Top,
+						className: DagEditor_module_css_default.handle
+					}),
+					(0, react_jsx_runtime.jsx)("span", {
+						className: DagEditor_module_css_default.nodeTitle,
+						children: step.name ?? step.id
+					}),
+					(0, react_jsx_runtime.jsx)(Handle, {
+						type: "source",
+						position: Position.Bottom,
+						className: DagEditor_module_css_default.handle
+					})
+				]
+			});
+		}
+		/** 节点类型表（模块级常量，避免每次渲染重建导致 React Flow 重挂载）。 */
+		const nodeTypes = {
+			stage: StageNode,
+			step: StepNode
+		};
+		/** 流控边类型 → 描边样式（串行/并行分支用默认灰色实线，条件分支琥珀色虚线+期望值，循环红色虚线）。 */
+		function edgeStyleOf(kind) {
+			switch (kind) {
+				case "parallel": return {
+					stroke: "var(--xy-edge-stroke-default)",
+					strokeWidth: 2
+				};
+				case "conditional": return {
+					stroke: "#f59e0b",
+					strokeWidth: 2,
+					strokeDasharray: "6 4"
+				};
+				case "loop": return {
+					stroke: "#ef4444",
+					strokeWidth: 2,
+					strokeDasharray: "6 4"
+				};
+				default: return {
+					stroke: "var(--xy-edge-stroke-default)",
+					strokeWidth: 2
+				};
+			}
+		}
+		/** 跟随线（拖拽连接时的预览线）：smoothstep 路径 + 末端箭头，与边风格一致。 */
+		function ConnectionLineWithArrow({ fromX, fromY, toX, toY, fromPosition, toPosition, connectionLineStyle }) {
+			const [path] = getSmoothStepPath({
+				sourceX: fromX,
+				sourceY: fromY,
+				sourcePosition: fromPosition,
+				targetX: toX,
+				targetY: toY,
+				targetPosition: toPosition
+			});
+			const markerId = "sandore-conn-arrow";
+			return (0, react_jsx_runtime.jsxs)("g", { children: [(0, react_jsx_runtime.jsx)("defs", { children: (0, react_jsx_runtime.jsx)("marker", {
+				id: markerId,
+				viewBox: "0 0 10 10",
+				refX: "9",
+				refY: "5",
+				markerWidth: "7",
+				markerHeight: "7",
+				orient: "auto-start-reverse",
+				children: (0, react_jsx_runtime.jsx)("path", {
+					d: "M 0 0 L 10 5 L 0 10 z",
+					fill: "#b1b1b7"
+				})
+			}) }), (0, react_jsx_runtime.jsx)("path", {
+				d: path,
+				fill: "none",
+				style: connectionLineStyle,
+				markerEnd: `url(#${markerId})`
+			})] });
+		}
+		/** 渲染 React Flow 画布（必须在 ReactFlowProvider 内，工具条经 useReactFlow 控制缩放）。 */
+		function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, onDrillStage, onSelectStep, onSelectStage, onConnectStage, onConnectStep, onDeleteNodes, onDeleteEdges, t }) {
+			const [nodes, setNodes, onNodesChange] = useNodesState([]);
+			const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+			const { zoomIn, zoomOut, fitView, screenToFlowPosition } = useReactFlow();
+			const canvasRef = (0, react.useRef)(null);
+			const prevLayerRef = (0, react.useRef)(void 0);
+			const drilledStage = drillStageId === void 0 ? void 0 : definition.stages.find((stage) => stage.id === drillStageId);
+			const flow = (0, react.useMemo)(() => {
+				if (drillStageId === void 0) return {
+					nodes: definition.stages.map((stage) => ({
+						id: stage.id,
+						type: "stage",
+						position: {
+							x: 0,
+							y: 0
+						},
+						width: STAGE_FLOW_WIDTH,
+						height: STEP_FLOW_HEIGHT,
+						data: {
+							stage,
+							t
+						}
+					})),
+					edges: stageFlowEdges(definition.stages).map((edge, index) => ({
+						id: `e${index}-${edge.source}-${edge.target}`,
+						source: edge.source,
+						target: edge.target,
+						type: "smoothstep",
+						style: edgeStyleOf(edge.kind),
+						animated: edge.kind === "conditional" || edge.kind === "loop",
+						markerEnd: {
+							type: MarkerType.ArrowClosed,
+							color: edgeStyleOf(edge.kind).stroke,
+							width: 18,
+							height: 18
+						},
+						...edge.label === void 0 ? {} : {
+							label: edge.label,
+							labelStyle: {
+								fill: "var(--dsw-alias-label-caption)",
+								fontSize: 10,
+								fontWeight: 500
+							},
+							labelShowBg: false
+						}
+					}))
+				};
+				const steps = drilledStage?.steps ?? [];
+				return {
+					nodes: steps.map((step) => ({
+						id: step.id,
+						type: "step",
+						position: {
+							x: 0,
+							y: 0
+						},
+						width: STEP_FLOW_WIDTH,
+						height: STEP_FLOW_HEIGHT,
+						data: {
+							step,
+							t
+						}
+					})),
+					edges: stepFlowEdges(steps).map((edge, index) => ({
+						id: `e${index}-${edge.source}-${edge.target}`,
+						source: edge.source,
+						target: edge.target,
+						type: "smoothstep",
+						style: edgeStyleOf(edge.kind),
+						animated: edge.kind === "conditional" || edge.kind === "loop",
+						markerEnd: {
+							type: MarkerType.ArrowClosed,
+							color: edgeStyleOf(edge.kind).stroke,
+							width: 18,
+							height: 18
+						},
+						...edge.label === void 0 ? {} : {
+							label: edge.label,
+							labelStyle: {
+								fill: "var(--dsw-alias-label-caption)",
+								fontSize: 10,
+								fontWeight: 500
+							},
+							labelShowBg: false
+						}
+					}))
+				};
+			}, [
+				definition,
+				drillStageId,
+				drilledStage,
+				t
+			]);
+			/** 把「视口中心」换算成画布坐标，作为同层新增节点的默认落点。 */
+			const centerFlowPosition = () => {
+				const el = canvasRef.current;
+				if (el === null) return {
+					x: 0,
+					y: 0
+				};
+				const rect = el.getBoundingClientRect();
+				return screenToFlowPosition({
+					x: rect.left + rect.width / 2,
+					y: rect.top + rect.height / 2
+				});
+			};
+			/** 在视口中心附近找一个不与现有节点重叠的空白落点（节点中心对齐视口中心）。 */
+			const blankNear = (center, width, height, occupied) => {
+				const overlaps = (left, top) => occupied.some((node) => {
+					const nw = node.width ?? STEP_FLOW_WIDTH;
+					const nh = node.height ?? STEP_FLOW_HEIGHT;
+					return left < node.position.x + nw && left + width > node.position.x && top < node.position.y + nh && top + height > node.position.y;
+				});
+				const at = (x, y) => ({
+					x: x - width / 2,
+					y: y - height / 2
+				});
+				if (!overlaps(center.x - width / 2, center.y - height / 2)) return at(center.x, center.y);
+				for (let ring = 1; ring <= 12; ring += 1) {
+					const r = ring * 60;
+					const candidates = [
+						at(center.x + r, center.y),
+						at(center.x - r, center.y),
+						at(center.x, center.y + r),
+						at(center.x, center.y - r),
+						at(center.x + r, center.y + r),
+						at(center.x + r, center.y - r),
+						at(center.x - r, center.y + r),
+						at(center.x - r, center.y - r)
+					];
+					for (const candidate of candidates) if (!overlaps(candidate.x, candidate.y)) return candidate;
+				}
+				return at(center.x, center.y + 80);
+			};
+			(0, react.useEffect)(() => {
+				const positions = dagreLayout(flow.nodes.map((node) => ({
+					id: node.id,
+					width: node.type === "stage" ? STAGE_FLOW_WIDTH : STEP_FLOW_WIDTH,
+					height: STEP_FLOW_HEIGHT
+				})), flow.edges.map((edge) => ({
+					source: edge.source,
+					target: edge.target
+				})));
+				const layerChanged = prevLayerRef.current !== drillStageId;
+				prevLayerRef.current = drillStageId;
+				const center = centerFlowPosition();
+				setNodes((current) => {
+					const byId = new Map(current.map((node) => [node.id, node]));
+					const isFirst = current.length === 0;
+					return flow.nodes.map((node) => {
+						const existing = byId.get(node.id);
+						const selected = drillStageId === void 0 ? node.id === selectedStageId : node.id === selectedStepId;
+						if (existing !== void 0) return {
+							...existing,
+							data: node.data,
+							selected
+						};
+						const position = isFirst || layerChanged ? positions[node.id] ?? {
+							x: 0,
+							y: 0
+						} : blankNear(center, node.width ?? STEP_FLOW_WIDTH, node.height ?? STEP_FLOW_HEIGHT, current);
+						return {
+							...node,
+							position,
+							selected
+						};
+					});
+				});
+				setEdges(flow.edges);
+			}, [
+				flow,
+				drillStageId,
+				selectedStageId,
+				selectedStepId,
+				setNodes,
+				setEdges
+			]);
+			/** 自动布局：dagre 分层重排所有节点（清空拖拽覆盖）。 */
+			const autoLayout = () => {
+				const positions = dagreLayout(flow.nodes.map((node) => ({
+					id: node.id,
+					width: node.type === "stage" ? STAGE_FLOW_WIDTH : STEP_FLOW_WIDTH,
+					height: STEP_FLOW_HEIGHT
+				})), flow.edges.map((edge) => ({
+					source: edge.source,
+					target: edge.target
+				})));
+				setNodes((current) => current.map((node) => ({
+					...node,
+					position: positions[node.id] ?? node.position
+				})));
+			};
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: DagEditor_module_css_default.canvasScroll,
+				"data-sandore-dag-canvas": true,
+				ref: canvasRef,
+				children: (0, react_jsx_runtime.jsxs)(index, {
+					nodes,
+					edges,
+					onNodesChange,
+					onEdgesChange,
+					nodeTypes,
+					fitView: true,
+					fitViewOptions: {
+						padding: .1,
+						minZoom: .5
+					},
+					minZoom: .2,
+					maxZoom: 2,
+					proOptions: { hideAttribution: true },
+					colorMode: "system",
+					connectOnClick: false,
+					connectionLineType: ConnectionLineType.SmoothStep,
+					connectionRadius: 30,
+					connectionLineStyle: {
+						stroke: "#b1b1b7",
+						strokeWidth: 2
+					},
+					connectionLineComponent: ConnectionLineWithArrow,
+					isValidConnection: (connection) => connection.source !== connection.target && connection.source !== null && connection.target !== null,
+					onConnect: (connection) => {
+						if (connection.source === null || connection.target === null) return;
+						if (drillStageId === void 0) onConnectStage(connection.source, connection.target);
+						else onConnectStep(connection.source, connection.target);
+					},
+					deleteKeyCode: ["Backspace", "Delete"],
+					onNodesDelete: (deleted) => {
+						onDeleteNodes(deleted.map((node) => node.id));
+					},
+					onEdgesDelete: (deleted) => {
+						onDeleteEdges(deleted.map((edge) => ({
+							source: edge.source,
+							target: edge.target
+						})));
+					},
+					onNodeClick: (_event, node) => {
+						if (node.type === "stage") onSelectStage(node.id);
+						else if (node.type === "step") onSelectStep(node.id);
+					},
+					onNodeDoubleClick: (_event, node) => {
+						if (drillStageId === void 0 && node.type === "stage") onDrillStage(node.id);
+						else if (node.type === "step") onSelectStep(node.id);
+					},
+					children: [
+						(0, react_jsx_runtime.jsx)(Background, {
+							gap: 20,
+							color: "var(--dsw-alias-border-l2)"
+						}),
+						(0, react_jsx_runtime.jsx)(MiniMap, {
+							pannable: true,
+							zoomable: true,
+							maskColor: "rgba(0, 0, 0, 0.05)",
+							nodeColor: (node) => node.type === "stage" ? "var(--dsw-alias-accent-primary)" : "var(--dsw-alias-label-caption)"
+						}),
+						(0, react_jsx_runtime.jsxs)(Panel, {
+							position: "top-right",
+							className: DagEditor_module_css_default.canvasToolbar,
+							children: [
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: DagEditor_module_css_default.iconBtn,
+									title: t("editor.autoLayout"),
+									"aria-label": t("editor.autoLayout"),
+									onClick: autoLayout,
+									children: "🎯"
+								}),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: DagEditor_module_css_default.iconBtn,
+									title: t("editor.zoomIn"),
+									"aria-label": t("editor.zoomIn"),
+									onClick: () => {
+										zoomIn({ duration: 200 });
+									},
+									children: "＋"
+								}),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: DagEditor_module_css_default.iconBtn,
+									title: t("editor.zoomOut"),
+									"aria-label": t("editor.zoomOut"),
+									onClick: () => {
+										zoomOut({ duration: 200 });
+									},
+									children: "－"
+								}),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: DagEditor_module_css_default.iconBtn,
+									title: t("editor.fit"),
+									"aria-label": t("editor.fit"),
+									onClick: () => {
+										fitView({
+											padding: .25,
+											duration: 250
+										});
+									},
+									children: "⤢"
+								})
+							]
+						})
+					]
+				})
+			});
+		}
 		/** 折叠小节标题。 */
 		function SectionLabel({ children }) {
 			return (0, react_jsx_runtime.jsx)("div", {
@@ -13469,18 +28832,18 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				]
 			});
 		}
-		/** Step 完整字段编辑器。 */
-		function StepEditor({ step, onChange, onRemove, t }) {
+		/** Step 完整字段编辑器（名称 + 执行 command + 流控 FlowEditor + 映射 + gates）。 */
+		function StepEditor({ step, targets, onChange, onRemove, t }) {
 			const inputFrom = step.inputFrom ?? [];
 			const outputTo = step.outputTo ?? [];
 			const passThroughVars = step.passThroughVars ?? [];
-			const branches = step.branches ?? [];
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: DagEditor_module_css_default.step,
 				children: [
 					(0, react_jsx_runtime.jsxs)("div", {
 						className: DagEditor_module_css_default.stepHead,
 						children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							className: DagEditor_module_css_default.titleInput ?? "",
 							value: step.name ?? "",
 							onChange: (event) => {
 								onChange({
@@ -13488,7 +28851,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 									name: trimToUndefined(event.target.value)
 								});
 							},
-							placeholder: t("editor.step.name"),
+							placeholder: t("editor.step.placeholder"),
 							"aria-label": t("editor.step.name")
 						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 							variant: "ghost",
@@ -13498,19 +28861,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							"aria-label": t("editor.remove.item")
 						})]
 					}),
-					step.command === void 0 ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-						variant: "outline",
-						size: "sm",
-						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
-						onClick: () => {
-							onChange({
-								...step,
-								command: createCommand("shell")
-							});
-						},
-						children: t("editor.step.command")
-					}) : (0, react_jsx_runtime.jsx)(CommandEditor, {
-						command: step.command,
+					(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.step.command") }),
+					(0, react_jsx_runtime.jsx)(CommandEditor, {
+						command: step.command ?? createCommand("shell"),
 						onChange: (command) => {
 							onChange({
 								...step,
@@ -13518,6 +28871,18 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							});
 						},
 						t
+					}),
+					(0, react_jsx_runtime.jsx)(FlowEditor, {
+						t,
+						targets,
+						conditionTypes: ["shell", "prompt"],
+						flow: { branches: step.branches },
+						onChange: (flow) => {
+							onChange({
+								...step,
+								branches: flow.branches
+							});
+						}
 					}),
 					(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.section.inputFrom") }),
 					inputFrom.map((item, index) => (0, react_jsx_runtime.jsx)(MappingRow, {
@@ -13579,20 +28944,52 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					}),
 					(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.section.passThroughVars") }),
 					passThroughVars.map((variable, index) => (0, react_jsx_runtime.jsxs)("div", {
-						className: DagEditor_module_css_default.itemRow,
+						className: DagEditor_module_css_default.varRow,
 						children: [
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-								value: variable.name,
-								onChange: (event) => {
-									onChange({
-										...step,
-										passThroughVars: passThroughVars.map((v, i) => i === index ? {
-											...v,
-											name: event.target.value
-										} : v)
-									});
-								},
-								placeholder: t("editor.field.name")
+							(0, react_jsx_runtime.jsxs)("div", {
+								className: DagEditor_module_css_default.varRowHead,
+								children: [
+									(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+										className: DagEditor_module_css_default.varNameInput ?? "",
+										value: variable.name,
+										onChange: (event) => {
+											onChange({
+												...step,
+												passThroughVars: passThroughVars.map((v, i) => i === index ? {
+													...v,
+													name: event.target.value
+												} : v)
+											});
+										},
+										placeholder: t("editor.field.name")
+									}),
+									(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										size: "sm",
+										variant: variable.refresh === true ? "primary" : "outline",
+										onClick: () => {
+											onChange({
+												...step,
+												passThroughVars: passThroughVars.map((v, i) => i === index ? {
+													...v,
+													refresh: variable.refresh === true ? void 0 : true
+												} : v)
+											});
+										},
+										children: t("editor.field.refresh")
+									}),
+									(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										variant: "ghost",
+										size: "sm",
+										icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {}),
+										onClick: () => {
+											onChange({
+												...step,
+												passThroughVars: passThroughVars.filter((_, i) => i !== index)
+											});
+										},
+										"aria-label": t("editor.remove.item")
+									})
+								]
 							}),
 							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
 								value: variable.value,
@@ -13619,18 +29016,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 									});
 								},
 								placeholder: t("editor.field.description")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: "ghost",
-								size: "sm",
-								icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {}),
-								onClick: () => {
-									onChange({
-										...step,
-										passThroughVars: passThroughVars.filter((_, i) => i !== index)
-									});
-								},
-								"aria-label": t("editor.remove.item")
 							})
 						]
 					}, index)),
@@ -13656,245 +29041,97 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							});
 						},
 						t
-					}),
-					(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.section.branches") }),
-					branches.map((branch, index) => (0, react_jsx_runtime.jsxs)("div", {
-						className: DagEditor_module_css_default.itemRow,
-						children: [
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-								value: branch.expectation ?? "",
-								onChange: (event) => {
-									onChange({
-										...step,
-										branches: branches.map((b, i) => i === index ? {
-											...b,
-											expectation: trimToUndefined(event.target.value)
-										} : b)
-									});
-								},
-								placeholder: t("editor.field.expectation")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-								value: branch.next,
-								onChange: (event) => {
-									onChange({
-										...step,
-										branches: branches.map((b, i) => i === index ? {
-											...b,
-											next: event.target.value
-										} : b)
-									});
-								},
-								placeholder: t("editor.field.next")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-								value: branch.label ?? "",
-								onChange: (event) => {
-									onChange({
-										...step,
-										branches: branches.map((b, i) => i === index ? {
-											...b,
-											label: trimToUndefined(event.target.value)
-										} : b)
-									});
-								},
-								placeholder: t("editor.field.label")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: "ghost",
-								size: "sm",
-								icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {}),
-								onClick: () => {
-									onChange({
-										...step,
-										branches: branches.filter((_, i) => i !== index)
-									});
-								},
-								"aria-label": t("editor.remove.item")
-							})
-						]
-					}, index)),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+					})
+				]
+			});
+		}
+		/** Stage 编辑器（名称 + 连接节点流控；Stage 层不展示 Step 简表，下钻走画布双击）。 */
+		function StageEditor({ stage, targets, onChange, onRemove, t }) {
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: DagEditor_module_css_default.step,
+				children: [(0, react_jsx_runtime.jsxs)("div", {
+					className: DagEditor_module_css_default.stepHead,
+					children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+						className: DagEditor_module_css_default.titleInput ?? "",
+						value: stage.name,
+						onChange: (event) => {
+							onChange({
+								...stage,
+								name: event.target.value
+							});
+						},
+						placeholder: t("editor.stage.placeholder"),
+						"aria-label": t("editor.stage.placeholder")
+					}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 						variant: "ghost",
 						size: "sm",
-						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
-						onClick: () => {
-							onChange({
-								...step,
-								branches: [...branches, createBranch()]
-							});
-						},
-						children: t("editor.add.item")
-					}),
-					(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.section.loop") }),
-					(0, react_jsx_runtime.jsx)(LoopEditor, {
-						loop: step.loop,
-						onChange: (loop) => {
-							onChange({
-								...step,
-								loop
-							});
-						},
-						t
-					})
-				]
+						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {}),
+						onClick: onRemove,
+						"aria-label": t("editor.remove.item")
+					})]
+				}), (0, react_jsx_runtime.jsx)(FlowEditor, {
+					t,
+					targets,
+					conditionTypes: ["shell", "prompt"],
+					flow: { branches: stage.branches },
+					onChange: (flow) => {
+						onChange({
+							...stage,
+							branches: flow.branches
+						});
+					}
+				})]
 			});
 		}
-		/** gates 编辑（maxRetries/maxTokens/need_confirm）。 */
+		/**
+		* gates 编辑：引擎（finalize-manager）只消费 `primary`/`secondary` 的 enabled/prompt，
+		* 且 `primary` 属工作流级（详情页配置），Step/Stage 级这里仅编辑 `secondary` 门禁
+		* （enabled + prompt 审查提示词）。
+		*/
 		function GatesEditor({ gates, onChange, t }) {
 			const current = gates ?? {};
+			const secondary = current.secondary;
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: DagEditor_module_css_default.gates,
-				children: [
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-						type: "number",
-						value: current.maxRetries ?? "",
+				children: [(0, react_jsx_runtime.jsxs)("label", {
+					className: DagEditor_module_css_default.checkbox,
+					children: [(0, react_jsx_runtime.jsx)("input", {
+						type: "checkbox",
+						checked: secondary?.enabled ?? false,
 						onChange: (event) => {
 							onChange({
 								...current,
-								maxRetries: parseOptionalNumber(event.target.value)
+								secondary: {
+									enabled: event.target.checked,
+									...event.target.checked ? { prompt: secondary?.prompt ?? "" } : {}
+								}
 							});
-						},
-						placeholder: t("editor.field.maxRetries")
-					}),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-						type: "number",
-						value: current.maxTokens ?? "",
-						onChange: (event) => {
-							onChange({
-								...current,
-								maxTokens: parseOptionalNumber(event.target.value)
-							});
-						},
-						placeholder: t("editor.field.maxTokens")
-					}),
-					(0, react_jsx_runtime.jsxs)("label", {
-						className: DagEditor_module_css_default.checkbox,
-						children: [(0, react_jsx_runtime.jsx)("input", {
-							type: "checkbox",
-							checked: current.need_confirm ?? false,
-							onChange: (event) => {
-								onChange({
-									...current,
-									need_confirm: event.target.checked
-								});
+						}
+					}), (0, react_jsx_runtime.jsx)("span", { children: t("editor.field.secondaryGate") })]
+				}), secondary?.enabled === true && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+					value: secondary.prompt ?? "",
+					onChange: (event) => {
+						onChange({
+							...current,
+							secondary: {
+								...secondary,
+								prompt: trimToUndefined(event.target.value)
 							}
-						}), (0, react_jsx_runtime.jsx)("span", { children: t("editor.field.needConfirm") })]
-					})
-				]
+						});
+					},
+					placeholder: t("editor.field.secondaryPrompt")
+				})]
 			});
 		}
-		/** loop 编辑（maxIterations/breakExpectation/next/exitTo）。 */
-		function LoopEditor({ loop, onChange, t }) {
-			const current = loop ?? { maxIterations: 1 };
-			return (0, react_jsx_runtime.jsxs)("div", {
-				className: DagEditor_module_css_default.loop,
-				children: [
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-						type: "number",
-						value: String(current.maxIterations),
-						onChange: (event) => {
-							onChange({
-								...current,
-								maxIterations: parseOptionalNumber(event.target.value) ?? 1
-							});
-						},
-						placeholder: t("editor.field.maxIterations"),
-						"aria-label": t("editor.field.maxIterations")
-					}),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-						value: current.breakExpectation ?? "",
-						onChange: (event) => {
-							onChange({
-								...current,
-								breakExpectation: trimToUndefined(event.target.value)
-							});
-						},
-						placeholder: t("editor.field.breakExpectation")
-					}),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-						value: current.next ?? "",
-						onChange: (event) => {
-							onChange({
-								...current,
-								next: trimToUndefined(event.target.value)
-							});
-						},
-						placeholder: t("editor.field.next")
-					}),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-						value: current.exitTo ?? "",
-						onChange: (event) => {
-							onChange({
-								...current,
-								exitTo: trimToUndefined(event.target.value)
-							});
-						},
-						placeholder: t("editor.field.exitTo")
-					})
-				]
-			});
-		}
-		/** Stage 节点：DisclosureRow 折叠（名称 + Step 数）+ 展开 Step 列表。 */
-		function StageNode({ stage, expanded, onToggle, onAddStep, onUpdateStage, onRemoveStage, t }) {
-			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.DisclosureRow, {
-				icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {}),
-				title: stage.name,
-				open: expanded,
-				expandable: true,
-				onToggle,
-				expandOnRowClick: true,
-				previewChevron: false,
-				rowClassName: DagEditor_module_css_default.stageHeader,
-				collapsedContent: (0, react_jsx_runtime.jsx)("span", {
-					className: DagEditor_module_css_default.stepCount,
-					children: t("editor.steps.count", { count: stage.steps.length })
-				}),
-				children: (0, react_jsx_runtime.jsxs)("div", {
-					className: DagEditor_module_css_default.steps,
-					children: [stage.steps.length === 0 ? (0, react_jsx_runtime.jsx)("span", {
-						className: DagEditor_module_css_default.empty,
-						children: t("editor.steps.empty")
-					}) : stage.steps.map((step) => (0, react_jsx_runtime.jsx)(StepEditor, {
-						step,
-						onChange: (next) => {
-							onUpdateStage({
-								...stage,
-								steps: stage.steps.map((s) => s.id === step.id ? next : s)
-							});
-						},
-						onRemove: () => {
-							onUpdateStage({
-								...stage,
-								steps: stage.steps.filter((s) => s.id !== step.id)
-							});
-						},
-						t
-					}, step.id)), (0, react_jsx_runtime.jsxs)("div", {
-						className: DagEditor_module_css_default.stepActions,
-						children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "ghost",
-							size: "sm",
-							icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
-							onClick: onAddStep,
-							children: t("editor.step.add")
-						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							variant: "ghost",
-							size: "sm",
-							icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {}),
-							onClick: onRemoveStage,
-							children: t("editor.remove.item")
-						})]
-					})]
-				})
-			});
-		}
-		/** 渲染 DagEditor。 */
+		/** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
 		function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
 			const [definition, setDefinition] = (0, react.useState)(() => initialYaml === void 0 ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
 			const [id, setId] = (0, react.useState)(initialId);
-			const [expandedStageId, setExpandedStageId] = (0, react.useState)(void 0);
 			const [saveState, setSaveState] = (0, react.useState)({ kind: "idle" });
+			const [drillStageId, setDrillStageId] = (0, react.useState)(void 0);
+			const [selectedStageId, setSelectedStageId] = (0, react.useState)(definition.stages[0]?.id);
+			const [selectedStepId, setSelectedStepId] = (0, react.useState)(void 0);
+			const [previewOpen, setPreviewOpen] = (0, react.useState)(false);
 			const preview = (0, react.useMemo)(() => serializeWorkflowYaml(definition), [definition]);
 			const patchStages = (patch) => {
 				setDefinition((current) => ({
@@ -13905,23 +29142,177 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const updateStage = (stageId, next) => {
 				patchStages((stages) => stages.map((stage) => stage.id === stageId ? next : stage));
 			};
-			const toggleStage = (stageId) => {
-				setExpandedStageId((current) => current === stageId ? void 0 : stageId);
+			const updateStep = (stageId, stepId, next) => {
+				patchStages((stages) => stages.map((stage) => stage.id === stageId ? {
+					...stage,
+					steps: stage.steps.map((step) => step.id === stepId ? next : step)
+				} : stage));
 			};
-			const addStage = () => {
-				patchStages((stages) => {
-					const count = stages.length;
-					return [...stages, createStage(`阶段 ${count + 1}`)];
-				});
-			};
-			const addStep = (stageId) => {
+			/** 删除 Step（面板移除按钮 / 画布键盘删除共用）：清理其余 Step 指向它的流控引用。 */
+			const removeSteps = (stageId, ids) => {
+				const removed = new Set(ids);
 				patchStages((stages) => stages.map((stage) => stage.id !== stageId ? stage : {
 					...stage,
-					steps: [...stage.steps, { id: newId("step") }]
+					steps: stage.steps.filter((step) => !removed.has(step.id)).map((step) => ({
+						...step,
+						branches: (step.branches ?? []).filter((branch) => branch.next === void 0 || !removed.has(branch.next)).map((branch) => branch.loop !== void 0 && branch.loop.next !== void 0 && removed.has(branch.loop.next) ? {
+							...branch,
+							loop: {
+								...branch.loop,
+								next: void 0
+							}
+						} : branch)
+					}))
 				}));
+				if (selectedStepId !== void 0 && removed.has(selectedStepId)) setSelectedStepId(void 0);
+			};
+			const removeStep = (stageId, stepId) => {
+				removeSteps(stageId, [stepId]);
+			};
+			const addStep = (stageId) => {
+				const stepId = newId("step");
+				patchStages((stages) => stages.map((stage) => {
+					if (stage.id !== stageId) return stage;
+					const count = stage.steps.length;
+					return {
+						...stage,
+						steps: [...stage.steps, {
+							id: stepId,
+							name: `${t("editor.step.placeholder")} ${count + 1}`,
+							command: createCommand("shell")
+						}]
+					};
+				}));
+				if (drillStageId === stageId) setSelectedStepId(stepId);
+			};
+			const addStage = () => {
+				const count = definition.stages.length;
+				const stage = createStage(`${t("editor.stage.placeholder")} ${count + 1}`);
+				patchStages((stages) => [...stages, stage]);
+				setSelectedStageId(stage.id);
+				setDrillStageId(void 0);
+			};
+			/** 删除 Stage（面板移除按钮 / 画布键盘删除共用）：清理其余 Stage 指向它的流控引用。 */
+			const removeStages = (ids) => {
+				const removed = new Set(ids);
+				patchStages((stages) => stages.filter((stage) => !removed.has(stage.id)).map((stage) => ({
+					...stage,
+					branches: (stage.branches ?? []).filter((branch) => branch.next === void 0 || !removed.has(branch.next)).map((branch) => branch.loop !== void 0 && branch.loop.next !== void 0 && removed.has(branch.loop.next) ? {
+						...branch,
+						loop: {
+							...branch.loop,
+							next: void 0
+						}
+					} : branch)
+				})));
+				if (drillStageId !== void 0 && removed.has(drillStageId)) setDrillStageId(void 0);
+				if (selectedStageId !== void 0 && removed.has(selectedStageId)) {
+					const remaining = definition.stages.filter((stage) => !removed.has(stage.id));
+					setSelectedStageId(remaining[0]?.id);
+				}
 			};
 			const removeStage = (stageId) => {
-				patchStages((stages) => stages.filter((stage) => stage.id !== stageId));
+				removeStages([stageId]);
+			};
+			/** 下钻：点 Stage 节点 → 进入该 Stage 的 Step DAG（微流程），默认选中首个 Step。 */
+			const drillStage = (stageId) => {
+				setDrillStageId(stageId);
+				setSelectedStageId(stageId);
+				setSelectedStepId(definition.stages.find((stage) => stage.id === stageId)?.steps[0]?.id);
+			};
+			/** 单击选中 Stage（右侧面板同步显示该 Stage 的配置）。 */
+			const selectStage = (stageId) => {
+				setSelectedStageId(stageId);
+				setSelectedStepId(void 0);
+			};
+			const backToStages = () => {
+				setDrillStageId(void 0);
+				setSelectedStepId(void 0);
+			};
+			/** 连线落点：统一并入 branches。Step 层回环连线（target 为更早 step）自动附加 loop。 */
+			const connectTargets = (flow, target, isBackEdge) => {
+				const branches = flow.branches ?? [];
+				if (new Set(branches.map((branch) => branch.next).filter((id) => id !== void 0 && id !== "")).has(target)) return { ...flow };
+				if (isBackEdge) return {
+					...flow,
+					branches: [...branches, {
+						next: target,
+						loop: {
+							maxIterations: 3,
+							next: target
+						}
+					}]
+				};
+				return {
+					...flow,
+					branches: [...branches, { next: target }]
+				};
+			};
+			/** 拖拽连线：Stage 层 source → target（统一并入并行 branches）。Stage DAG 不允许循环：回环连线被拒绝。 */
+			const connectStage = (source, target) => {
+				if (wouldCreateStageCycle(definition.stages, source, target)) return;
+				patchStages((stages) => stages.map((stage) => stage.id === source ? {
+					...stage,
+					...connectTargets(stage, target, false)
+				} : stage));
+			};
+			/** 拖拽连线：Step 层 source → target。若 target 是该 Stage 内更早的 step（数组顺序），
+			*  视为回环连线：自动附加 loop（循环必填），画布以红色虚线回边展示。 */
+			const connectStep = (source, target) => {
+				if (drillStageId === void 0) return;
+				patchStages((stages) => stages.map((stage) => {
+					if (stage.id !== drillStageId) return stage;
+					const sourceIndex = stage.steps.findIndex((step) => step.id === source);
+					const targetIndex = stage.steps.findIndex((step) => step.id === target);
+					const isBackEdge = sourceIndex >= 0 && targetIndex >= 0 && targetIndex < sourceIndex;
+					return {
+						...stage,
+						steps: stage.steps.map((step) => step.id === source ? {
+							...step,
+							...connectTargets(step, target, isBackEdge)
+						} : step)
+					};
+				}));
+			};
+			/** 画布键盘删除节点（Delete/Backspace）：按层级批量删除并同步模型。 */
+			const deleteNodes = (nodeIds) => {
+				if (drillStageId === void 0) removeStages(nodeIds);
+				else removeSteps(drillStageId, nodeIds);
+			};
+			/** 画布键盘删除边：清掉 source 指向 target 的流控引用（branches[].next / branches[].loop.next）。 */
+			const deleteEdges = (edges) => {
+				if (edges.length === 0) return;
+				if (drillStageId === void 0) patchStages((stages) => stages.map((stage) => {
+					const targets = new Set(edges.filter((edge) => edge.source === stage.id).map((edge) => edge.target));
+					if (targets.size === 0) return stage;
+					return {
+						...stage,
+						branches: (stage.branches ?? []).filter((branch) => branch.next === void 0 || !targets.has(branch.next)).map((branch) => branch.loop !== void 0 && branch.loop.next !== void 0 && targets.has(branch.loop.next) ? {
+							...branch,
+							loop: {
+								...branch.loop,
+								next: void 0
+							}
+						} : branch)
+					};
+				}));
+				else patchStages((stages) => stages.map((stage) => stage.id !== drillStageId ? stage : {
+					...stage,
+					steps: stage.steps.map((step) => {
+						const targets = new Set(edges.filter((edge) => edge.source === step.id).map((edge) => edge.target));
+						if (targets.size === 0) return step;
+						return {
+							...step,
+							branches: (step.branches ?? []).filter((branch) => branch.next === void 0 || !targets.has(branch.next)).map((branch) => branch.loop !== void 0 && branch.loop.next !== void 0 && targets.has(branch.loop.next) ? {
+								...branch,
+								loop: {
+									...branch.loop,
+									next: void 0
+								}
+							} : branch)
+						};
+					})
+				}));
 			};
 			const runSave = async () => {
 				setSaveState({ kind: "pending" });
@@ -13940,6 +29331,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					});
 				}
 			};
+			const selectedStage = definition.stages.find((stage) => stage.id === selectedStageId) ?? definition.stages[0];
+			const drilledStage = drillStageId === void 0 ? void 0 : definition.stages.find((stage) => stage.id === drillStageId);
 			return (0, react_jsx_runtime.jsxs)("section", {
 				className: DagEditor_module_css_default.editor,
 				"aria-label": t("editor.title"),
@@ -13971,55 +29364,803 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						children: saveState.details === void 0 ? t("editor.save.failed", { message: saveState.message }) : t("editor.save.failed", { message: `${saveState.message} — ${saveState.details}` })
 					}),
 					(0, react_jsx_runtime.jsxs)("div", {
-						className: DagEditor_module_css_default.body,
+						className: DagEditor_module_css_default.canvasRow,
 						children: [(0, react_jsx_runtime.jsxs)("div", {
-							className: DagEditor_module_css_default.dag,
-							children: [definition.stages.map((stage, index) => (0, react_jsx_runtime.jsxs)("div", {
-								className: DagEditor_module_css_default.nodeWrap,
-								children: [(0, react_jsx_runtime.jsx)(StageNode, {
-									stage,
-									expanded: expandedStageId === stage.id,
-									onToggle: () => {
-										toggleStage(stage.id);
+							className: DagEditor_module_css_default.canvas,
+							children: [(0, react_jsx_runtime.jsxs)("div", {
+								className: DagEditor_module_css_default.canvasTabs,
+								children: [
+									drillStageId !== void 0 && (0, react_jsx_runtime.jsxs)("button", {
+										type: "button",
+										className: DagEditor_module_css_default.backBtn,
+										onClick: backToStages,
+										children: ["← ", t("editor.stageDag")]
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: DagEditor_module_css_default.crumb,
+										children: drillStageId === void 0 ? t("editor.stageDag") : drilledStage?.name ?? drillStageId
+									}),
+									drillStageId === void 0 ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										size: "sm",
+										variant: "outline",
+										icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
+										onClick: addStage,
+										children: t("editor.stage.add")
+									}) : drilledStage !== void 0 ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+										size: "sm",
+										variant: "outline",
+										icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
+										onClick: () => {
+											addStep(drilledStage.id);
+										},
+										children: t("editor.step.add")
+									}) : null
+								]
+							}), (0, react_jsx_runtime.jsx)(ReactFlowProvider, { children: (0, react_jsx_runtime.jsx)(DagCanvas, {
+								definition,
+								drillStageId,
+								selectedStageId,
+								selectedStepId,
+								onDrillStage: drillStage,
+								onSelectStep: setSelectedStepId,
+								onSelectStage: selectStage,
+								onConnectStage: connectStage,
+								onConnectStep: connectStep,
+								onDeleteNodes: deleteNodes,
+								onDeleteEdges: deleteEdges,
+								t
+							}) })]
+						}), (0, react_jsx_runtime.jsx)("aside", {
+							className: DagEditor_module_css_default.panel,
+							"data-sandore-dag-panel": true,
+							children: drillStageId === void 0 ? selectedStage === void 0 ? (0, react_jsx_runtime.jsx)("span", {
+								className: DagEditor_module_css_default.panelEmpty,
+								children: t("editor.steps.empty")
+							}) : (0, react_jsx_runtime.jsx)("div", {
+								className: DagEditor_module_css_default.panelBody,
+								children: (0, react_jsx_runtime.jsx)(StageEditor, {
+									stage: selectedStage,
+									targets: definition.stages.filter((stage) => stage.id !== selectedStage.id).filter((stage) => !wouldCreateStageCycle(definition.stages, selectedStage.id, stage.id)).map((stage) => ({
+										id: stage.id,
+										name: stage.name
+									})),
+									onChange: (next) => {
+										updateStage(selectedStage.id, next);
 									},
-									onAddStep: () => {
-										addStep(stage.id);
-									},
-									onUpdateStage: (next) => {
-										updateStage(stage.id, next);
-									},
-									onRemoveStage: () => {
-										removeStage(stage.id);
+									onRemove: () => {
+										removeStage(selectedStage.id);
 									},
 									t
-								}), index < definition.stages.length - 1 && (0, react_jsx_runtime.jsx)("div", {
-									className: DagEditor_module_css_default.connector,
-									"aria-hidden": true,
-									children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
-								})]
-							}, stage.id)), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: "outline",
-								size: "sm",
-								icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
-								onClick: addStage,
-								children: t("editor.stage.add")
-							})]
-						}), (0, react_jsx_runtime.jsxs)("div", {
-							className: DagEditor_module_css_default.preview,
-							children: [(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.preview") }), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.CodeBlock, {
+								})
+							}) : selectedStepId === void 0 || drilledStage === void 0 ? (0, react_jsx_runtime.jsx)("span", {
+								className: DagEditor_module_css_default.panelEmpty,
+								children: t("editor.steps.empty")
+							}) : (() => {
+								const step = drilledStage.steps.find((candidate) => candidate.id === selectedStepId);
+								if (step === void 0) return (0, react_jsx_runtime.jsx)("span", {
+									className: DagEditor_module_css_default.panelEmpty,
+									children: t("editor.steps.empty")
+								});
+								return (0, react_jsx_runtime.jsx)("div", {
+									className: DagEditor_module_css_default.panelBody,
+									children: (0, react_jsx_runtime.jsx)(StepEditor, {
+										step,
+										targets: drilledStage.steps.filter((candidate) => candidate.id !== step.id).map((candidate) => ({
+											id: candidate.id,
+											name: candidate.name ?? candidate.id
+										})),
+										onChange: (next) => {
+											updateStep(drilledStage.id, step.id, next);
+										},
+										onRemove: () => {
+											removeStep(drilledStage.id, step.id);
+										},
+										t
+									})
+								});
+							})()
+						})]
+					}),
+					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.DisclosureRow, {
+						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {}),
+						title: t("editor.preview"),
+						open: previewOpen,
+						expandable: true,
+						onToggle: () => {
+							setPreviewOpen((current) => !current);
+						},
+						previewChevron: false,
+						rowClassName: DagEditor_module_css_default.previewHeader,
+						children: (0, react_jsx_runtime.jsx)("div", {
+							className: DagEditor_module_css_default.previewBody,
+							children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.CodeBlock, {
 								code: preview,
 								lang: "yaml",
 								copyLabel: t("editor.preview")
+							})
+						})
+					})
+				]
+			});
+		}
+		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\DefinitionDetail.module.css.mjs
+		const css$6 = "/* DefinitionDetail：工作流定义详情。 */\n\n.s1gbb7_detail {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1gbb7_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1gbb7_title {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1gbb7_spacer {\n  flex: 1;\n}\n\n.s1gbb7_success {\n  margin: 0;\n  padding: 8px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));\n}\n\n.s1gbb7_error {\n  margin: 0;\n  padding: 8px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1gbb7_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 16px;\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  max-width: 560px;\n}\n\n.s1gbb7_field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1gbb7_label {\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1gbb7_sectionTitle {\n  margin-top: 8px;\n  font-size: 11px;\n  font-weight: 600;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n/* 复选框行（工作流级 primary 门禁开关）。 */\n.s1gbb7_checkbox {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n";
+		const tagId$6 = "@deepseek-ai/dsh-client-ui-sandore/DefinitionDetail.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$6) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$6;
+			tag.textContent = css$6;
+			document.head.appendChild(tag);
+		}
+		var DefinitionDetail_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1gbb7_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/DefinitionDetail.js
+		/**
+		* DefinitionDetail：工作流定义详情（点击定义后右侧默认显示）。
+		*
+		* 编辑 name / version / description / settings（defaultTimeout / maxConcurrentAgents），
+		* 保存走 `save`（新建 `createDefinition`、后续 `updateYaml`），保存后回填 id 与最新
+		* YAML（供「进入编排」的 DagEditor 重新解析）。「进入编排」经 `onEnterEdit` 切两层 DAG。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DefinitionDetail
+		*/
+		/** 渲染定义详情。 */
+		function DefinitionDetail({ t, initialYaml, initialId, save, onSaved, onEnterEdit }) {
+			const [definition, setDefinition] = (0, react.useState)(() => initialYaml === void 0 ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
+			const [id, setId] = (0, react.useState)(initialId);
+			const [saveState, setSaveState] = (0, react.useState)({ kind: "idle" });
+			const runSave = async () => {
+				setSaveState({ kind: "pending" });
+				try {
+					const savedId = await save(id, serializeWorkflowYaml(definition));
+					setId(savedId);
+					const saved = withDefinitionId(definition, savedId);
+					setDefinition(saved);
+					onSaved?.(serializeWorkflowYaml(saved));
+					setSaveState({ kind: "ok" });
+				} catch (error) {
+					const { message, details } = describeSaveError(error);
+					setSaveState({
+						kind: "error",
+						message,
+						details
+					});
+				}
+			};
+			return (0, react_jsx_runtime.jsxs)("section", {
+				className: DefinitionDetail_module_css_default.detail,
+				"aria-label": t("detail.title"),
+				"data-sandore-definition-detail": true,
+				children: [
+					(0, react_jsx_runtime.jsxs)("header", {
+						className: DefinitionDetail_module_css_default.header,
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: DefinitionDetail_module_css_default.title,
+								children: t("detail.title")
+							}),
+							(0, react_jsx_runtime.jsx)("span", { className: DefinitionDetail_module_css_default.spacer }),
+							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								size: "sm",
+								variant: "outline",
+								onClick: onEnterEdit,
+								children: t("detail.edit")
+							}),
+							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								size: "sm",
+								variant: "primary",
+								disabled: saveState.kind === "pending",
+								onClick: () => {
+									runSave();
+								},
+								children: saveState.kind === "pending" ? t("editor.saving") : t("editor.save")
+							})
+						]
+					}),
+					saveState.kind === "ok" && (0, react_jsx_runtime.jsx)("p", {
+						className: DefinitionDetail_module_css_default.success,
+						role: "status",
+						children: t("editor.save.success")
+					}),
+					saveState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
+						className: DefinitionDetail_module_css_default.error,
+						role: "alert",
+						children: saveState.details === void 0 ? t("editor.save.failed", { message: saveState.message }) : t("editor.save.failed", { message: `${saveState.message} — ${saveState.details}` })
+					}),
+					(0, react_jsx_runtime.jsxs)("div", {
+						className: DefinitionDetail_module_css_default.body,
+						children: [
+							(0, react_jsx_runtime.jsxs)("label", {
+								className: DefinitionDetail_module_css_default.field,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: DefinitionDetail_module_css_default.label,
+									children: t("detail.name")
+								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+									value: definition.name,
+									onChange: (event) => {
+										setDefinition((current) => ({
+											...current,
+											name: event.target.value
+										}));
+									},
+									placeholder: t("detail.name")
+								})]
+							}),
+							(0, react_jsx_runtime.jsxs)("label", {
+								className: DefinitionDetail_module_css_default.field,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: DefinitionDetail_module_css_default.label,
+									children: t("detail.version")
+								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+									value: definition.version,
+									onChange: (event) => {
+										setDefinition((current) => ({
+											...current,
+											version: event.target.value
+										}));
+									},
+									placeholder: t("detail.version")
+								})]
+							}),
+							(0, react_jsx_runtime.jsxs)("label", {
+								className: DefinitionDetail_module_css_default.field,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: DefinitionDetail_module_css_default.label,
+									children: t("detail.description")
+								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+									value: definition.description ?? "",
+									onChange: (event) => {
+										setDefinition((current) => ({
+											...current,
+											description: trimToUndefined(event.target.value)
+										}));
+									},
+									placeholder: t("detail.description")
+								})]
+							}),
+							(0, react_jsx_runtime.jsx)("div", {
+								className: DefinitionDetail_module_css_default.sectionTitle,
+								children: t("detail.settings")
+							}),
+							(0, react_jsx_runtime.jsxs)("label", {
+								className: DefinitionDetail_module_css_default.field,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: DefinitionDetail_module_css_default.label,
+									children: t("detail.defaultTimeout")
+								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+									type: "number",
+									value: String(definition.settings.defaultTimeout),
+									onChange: (event) => {
+										setDefinition((current) => ({
+											...current,
+											settings: {
+												...current.settings,
+												defaultTimeout: parseOptionalNumber(event.target.value) ?? 120
+											}
+										}));
+									}
+								})]
+							}),
+							(0, react_jsx_runtime.jsxs)("label", {
+								className: DefinitionDetail_module_css_default.field,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: DefinitionDetail_module_css_default.label,
+									children: t("detail.maxConcurrentAgents")
+								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+									type: "number",
+									value: String(definition.settings.maxConcurrentAgents),
+									onChange: (event) => {
+										setDefinition((current) => ({
+											...current,
+											settings: {
+												...current.settings,
+												maxConcurrentAgents: parseOptionalNumber(event.target.value) ?? 4
+											}
+										}));
+									}
+								})]
+							}),
+							(0, react_jsx_runtime.jsxs)("label", {
+								className: DefinitionDetail_module_css_default.field,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: DefinitionDetail_module_css_default.label,
+									children: t("detail.primaryGate")
+								}), (0, react_jsx_runtime.jsxs)("label", {
+									className: DefinitionDetail_module_css_default.checkbox,
+									children: [(0, react_jsx_runtime.jsx)("input", {
+										type: "checkbox",
+										checked: definition.gates?.primary?.enabled ?? false,
+										onChange: (event) => {
+											const next = {
+												...definition.gates ?? {},
+												primary: { enabled: event.target.checked }
+											};
+											setDefinition((current) => ({
+												...current,
+												gates: next
+											}));
+										}
+									}), (0, react_jsx_runtime.jsx)("span", { children: t("detail.primaryGate.enabled") })]
+								})]
+							})
+						]
+					})
+				]
+			});
+		}
+		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\tree-nav.module.css.mjs
+		const css$5 = "/* TreeNav 执行态左栏树形导航（DSH DisclosureRow 风格）。 */\n\n.s1pefx_root {\n  display: flex;\n  flex-direction: column;\n  min-height: 0;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1pefx_header {\n  flex: none;\n  padding: 10px 12px;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1pefx_title {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1pefx_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 4px 6px 12px;\n  box-sizing: border-box;\n}\n\n.s1pefx_node {\n  display: flex;\n  flex-direction: column;\n}\n\n.s1pefx_row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 4px 8px;\n  border-radius: 6px;\n  cursor: pointer;\n  font-size: 12px;\n  user-select: none;\n}\n\n.s1pefx_row:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1pefx_chevron {\n  flex: none;\n  width: 12px;\n  text-align: center;\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n  transition: transform 0.15s;\n}\n\n.s1pefx_nodeCollapsed > .s1pefx_row .s1pefx_chevron {\n  transform: rotate(-90deg);\n}\n\n.s1pefx_label {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1pefx_row:hover .s1pefx_label {\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1pefx_jump {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 20px;\n  height: 20px;\n  padding: 0;\n  border: none;\n  border-radius: 4px;\n  background: transparent;\n  font-size: 12px;\n  color: var(--dsw-alias-accent-primary);\n  opacity: 0;\n  cursor: pointer;\n}\n\n.s1pefx_row:hover .s1pefx_jump {\n  opacity: 1;\n}\n\n.s1pefx_jump:hover {\n  background: var(--dsw-alias-accent-bg);\n}\n\n.s1pefx_children {\n  display: flex;\n  flex-direction: column;\n}\n\n.s1pefx_leaf {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 4px 8px;\n  border-radius: 6px;\n  cursor: pointer;\n  font-size: 11px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1pefx_leaf:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1pefx_leafActive {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1pefx_leafIcon {\n  flex: none;\n  font-size: 12px;\n}\n\n.s1pefx_leafLabel {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1pefx_leafMeta {\n  flex: none;\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n}\n";
+		const tagId$5 = "@deepseek-ai/dsh-client-ui-sandore/tree-nav.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$5) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$5;
+			tag.textContent = css$5;
+			document.head.appendChild(tag);
+		}
+		var tree_nav_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1pefx_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/TreeNav.js
+		/**
+		* TreeNav：执行态左栏树形导航（workflow → stage → step → result/artifact 叶子）。
+		*
+		* DSH DisclosureRow 风格：chevron + 状态点 + 缩进 + 折叠。todo 态 Stage/Step 默认
+		* 折叠；result/artifact 叶子点击 → `onSelectLeaf` 打开右栏预览；Step 行有子代理
+		* 会话时 hover 显示 ↗ 跳转按钮。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/TreeNav
+		*/
+		/** 状态 → StateDotState（DagRun/Step 7+7 态统一折入四态；缺省折入 warning）。 */
+		function treeDotState(status) {
+			switch (status) {
+				case "completed": return "done";
+				case "failed": return "error";
+				case "running":
+				case "interacting": return "ongoing";
+				case void 0:
+				case "pending":
+				case "aborted":
+				case "paused":
+				case "blocked":
+				case "ready": return "warning";
+			}
+		}
+		/** 单行渲染（含子节点递归）。 */
+		function TreeRow({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t }) {
+			const children = node.children ?? [];
+			const hasChildren = children.length > 0;
+			const [collapsed, setCollapsed] = (0, react.useState)(node.type === "stage" || node.type === "step" ? node.status !== "running" && node.status !== "interacting" && node.status !== "failed" && node.status !== "paused" : false);
+			if (node.type === "result" || node.type === "artifact") {
+				const active = activePreviewId === node.id;
+				return (0, react_jsx_runtime.jsxs)("div", {
+					className: `${tree_nav_module_css_default.leaf} ${active ? tree_nav_module_css_default.leafActive : ""}`,
+					style: { paddingLeft: 8 + depth * 16 + 16 },
+					"data-tree-leaf": true,
+					onClick: () => {
+						onSelectLeaf({
+							leafId: node.id,
+							kind: node.type === "result" ? "result" : "artifact",
+							stepId: node.stepId ?? "",
+							name: node.name === "" ? t("run.result") : node.name,
+							meta: node.meta,
+							text: node.text
+						});
+					},
+					children: [
+						(0, react_jsx_runtime.jsx)("span", {
+							className: tree_nav_module_css_default.leafIcon,
+							children: node.type === "result" ? "📝" : "📄"
+						}),
+						(0, react_jsx_runtime.jsx)("span", {
+							className: tree_nav_module_css_default.leafLabel,
+							children: node.name === "" ? t("run.result") : node.name
+						}),
+						node.meta !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+							className: tree_nav_module_css_default.leafMeta,
+							children: node.meta
+						})
+					]
+				});
+			}
+			const status = node.type === "workflow" || node.type === "stage" || node.type === "step" ? node.status : void 0;
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: `${tree_nav_module_css_default.node} ${collapsed ? tree_nav_module_css_default.nodeCollapsed : ""}`,
+				children: [(0, react_jsx_runtime.jsxs)("div", {
+					className: tree_nav_module_css_default.row,
+					style: { paddingLeft: 8 + depth * 16 },
+					"data-tree-row": true,
+					onClick: () => {
+						if (hasChildren) setCollapsed((value) => !value);
+					},
+					children: [
+						(0, react_jsx_runtime.jsx)("span", {
+							className: tree_nav_module_css_default.chevron,
+							children: hasChildren ? "▼" : ""
+						}),
+						(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: treeDotState(status) }),
+						(0, react_jsx_runtime.jsx)("span", {
+							className: tree_nav_module_css_default.label,
+							children: node.name
+						}),
+						node.type === "step" && node.childId !== void 0 && (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: tree_nav_module_css_default.jump,
+							title: t("step.open", { name: node.name }),
+							"aria-label": t("step.open", { name: node.name }),
+							onClick: (event) => {
+								event.stopPropagation();
+								onOpenChild(node.childId);
+							},
+							children: "↗"
+						})
+					]
+				}), hasChildren && !collapsed && (0, react_jsx_runtime.jsx)("div", {
+					className: tree_nav_module_css_default.children,
+					children: children.map((child) => (0, react_jsx_runtime.jsx)(TreeRow, {
+						node: child,
+						depth: depth + 1,
+						activePreviewId,
+						onSelectLeaf,
+						onOpenChild,
+						t
+					}, child.id))
+				})]
+			});
+		}
+		/** 渲染树形导航。 */
+		function TreeNav({ t, tree, activePreviewId, onSelectLeaf, onOpenChild }) {
+			return (0, react_jsx_runtime.jsxs)("nav", {
+				className: tree_nav_module_css_default.root,
+				"aria-label": t("run.nav"),
+				"data-sandore-tree-nav": true,
+				children: [(0, react_jsx_runtime.jsx)("div", {
+					className: tree_nav_module_css_default.header,
+					children: (0, react_jsx_runtime.jsx)("span", {
+						className: tree_nav_module_css_default.title,
+						children: t("run.nav")
+					})
+				}), (0, react_jsx_runtime.jsx)("div", {
+					className: tree_nav_module_css_default.body,
+					children: tree.map((node) => (0, react_jsx_runtime.jsx)(TreeRow, {
+						node,
+						depth: 0,
+						activePreviewId,
+						onSelectLeaf,
+						onOpenChild,
+						t
+					}, node.id))
+				})]
+			});
+		}
+		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\timeline.module.css.mjs
+		const css$4 = "/* UnifiedTimeline：step 卡片 + user 气泡（GitHub comment-card 风格，DSH token）。 */\n\n.s1j7pg_scroll {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n}\n\n.s1j7pg_timeline {\n  padding: 8px 12px 16px;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1j7pg_empty {\n  margin: 0;\n  padding: 16px;\n  font-size: 12px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n\n/* ── Step 卡片 ───────────────────────────────────────────────────────────── */\n\n.s1j7pg_stepCard {\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1j7pg_stepHeader {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 8px 12px;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1j7pg_avatar {\n  flex: none;\n  width: 24px;\n  height: 24px;\n  border-radius: 6px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.s1j7pg_avatarDone {\n  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));\n  color: var(--dsw-alias-state-success);\n}\n\n.s1j7pg_avatarRun {\n  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));\n  color: var(--dsw-alias-state-info);\n  animation: pulse 1.5s infinite;\n}\n\n.s1j7pg_avatarFail {\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  color: var(--dsw-alias-state-error);\n}\n\n.s1j7pg_avatarPaused {\n  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));\n  color: var(--dsw-alias-state-warning);\n}\n\n.s1j7pg_avatarTodo {\n  background: var(--dsw-alias-bg-active);\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_stepName {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n  cursor: pointer;\n}\n\n.s1j7pg_stepName:hover {\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1j7pg_loopLabel {\n  margin-left: 4px;\n  font-size: 10px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_badge {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  padding: 1px 6px;\n  border-radius: 99px;\n  font-size: 10px;\n  font-weight: 500;\n}\n\n.s1j7pg_badgeRun {\n  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));\n  color: var(--dsw-alias-state-info);\n}\n\n.s1j7pg_badgeDone {\n  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));\n  color: var(--dsw-alias-state-success);\n}\n\n.s1j7pg_badgeFail {\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  color: var(--dsw-alias-state-error);\n}\n\n.s1j7pg_badgePaused {\n  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));\n  color: var(--dsw-alias-state-warning);\n}\n\n.s1j7pg_badgeDot {\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: currentColor;\n}\n\n.s1j7pg_badgeRun .s1j7pg_badgeDot {\n  animation: pulse 1.5s infinite;\n}\n\n.s1j7pg_visitCount {\n  margin-left: auto;\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_stepBody {\n  padding: 8px 12px 8px 44px;\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1j7pg_stepReturn {\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n  line-height: 1.6;\n}\n\n.s1j7pg_stepError {\n  font-size: 12px;\n  color: var(--dsw-alias-state-error);\n  line-height: 1.6;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1j7pg_stepPaused {\n  font-size: 12px;\n  color: var(--dsw-alias-state-warning);\n}\n\n.s1j7pg_stepRunning {\n  font-size: 12px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_expandBtn {\n  align-self: flex-start;\n  border: none;\n  background: transparent;\n  padding: 0;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-accent-primary);\n  cursor: pointer;\n  display: inline-flex;\n  align-items: center;\n  gap: 2px;\n}\n\n.s1j7pg_expandBtn:hover {\n  text-decoration: underline;\n}\n\n/* ── 用户气泡 ────────────────────────────────────────────────────────────── */\n\n.s1j7pg_userBubble {\n  display: flex;\n  gap: 8px;\n  justify-content: flex-end;\n  align-items: center;\n  padding: 4px 12px;\n}\n\n.s1j7pg_userContent {\n  max-width: 85%;\n  padding: 8px 12px;\n  border-radius: 8px;\n  border-bottom-right-radius: 4px;\n  background: var(--dsw-alias-bg-sunken);\n  font-size: 12px;\n  color: var(--dsw-alias-label-primary);\n  line-height: 1.5;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1j7pg_userAvatar {\n  flex: none;\n  width: 24px;\n  height: 24px;\n  border-radius: 6px;\n  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));\n  color: var(--dsw-alias-state-success);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n@keyframes pulse {\n  0%,\n  100% {\n    opacity: 1;\n  }\n  50% {\n    opacity: 0.4;\n  }\n}\n";
+		const tagId$4 = "@deepseek-ai/dsh-client-ui-sandore/timeline.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$4) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$4;
+			tag.textContent = css$4;
+			document.head.appendChild(tag);
+		}
+		var timeline_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1j7pg_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/UnifiedTimeline.js
+		/**
+		* UnifiedTimeline：执行态中栏统一时间线（step 卡片 + user 气泡交错）。
+		*
+		* 数据由 `buildTimeline` 从实例状态派生（轮询驱动，无实时消息流）。Step 卡片按
+		* 状态展示：completed → 输出文本（MessageText）+「查看详情」跳子会话；running →
+		* 运行中占位；failed → 错误详情；paused → 暂停提示。滑动窗口：初始可见 N 条，
+		* 滚动到顶部加载更多。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/UnifiedTimeline
+		*/
+		/** 初始可见消息数 / 每次滚动加载的增量。 */
+		const VISIBLE_COUNT = 50;
+		const VISIBLE_STEP = 50;
+		/** Step 执行状态 → 本地化标签键（7 态）。 */
+		const STEP_STATUS_KEYS = {
+			blocked: "run.step.status.blocked",
+			ready: "run.step.status.ready",
+			interacting: "run.step.status.interacting",
+			running: "run.step.status.running",
+			completed: "run.step.status.completed",
+			failed: "run.step.status.failed",
+			paused: "run.step.status.paused"
+		};
+		/** Step 卡片头像字符与语义类。 */
+		function stepAvatar(status) {
+			switch (status) {
+				case "completed": return {
+					glyph: "✓",
+					className: timeline_module_css_default.avatarDone ?? ""
+				};
+				case "running":
+				case "interacting": return {
+					glyph: "●",
+					className: timeline_module_css_default.avatarRun ?? ""
+				};
+				case "failed": return {
+					glyph: "✕",
+					className: timeline_module_css_default.avatarFail ?? ""
+				};
+				case "paused": return {
+					glyph: "⏸",
+					className: timeline_module_css_default.avatarPaused ?? ""
+				};
+				default: return {
+					glyph: "○",
+					className: timeline_module_css_default.avatarTodo ?? ""
+				};
+			}
+		}
+		/** 单个 Step 卡片。 */
+		function StepCard({ item, t, openSession }) {
+			const avatar = stepAvatar(item.status);
+			const running = item.status === "running" || item.status === "interacting";
+			return (0, react_jsx_runtime.jsxs)("article", {
+				className: timeline_module_css_default.stepCard,
+				"data-tl-step": true,
+				children: [(0, react_jsx_runtime.jsxs)("header", {
+					className: timeline_module_css_default.stepHeader,
+					children: [
+						(0, react_jsx_runtime.jsx)("span", {
+							className: `${timeline_module_css_default.avatar} ${avatar.className}`,
+							"aria-hidden": true,
+							children: avatar.glyph
+						}),
+						(0, react_jsx_runtime.jsxs)("span", {
+							className: timeline_module_css_default.stepName,
+							children: [item.name, item.loopLabel !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+								className: timeline_module_css_default.loopLabel,
+								children: item.loopLabel
 							})]
+						}),
+						(0, react_jsx_runtime.jsxs)("span", {
+							className: `${timeline_module_css_default.badge ?? ""} ${running ? timeline_module_css_default.badgeRun ?? "" : item.status === "completed" ? timeline_module_css_default.badgeDone ?? "" : item.status === "failed" ? timeline_module_css_default.badgeFail ?? "" : item.status === "paused" ? timeline_module_css_default.badgePaused ?? "" : ""}`,
+							children: [(0, react_jsx_runtime.jsx)("span", {
+								className: timeline_module_css_default.badgeDot ?? "",
+								"aria-hidden": true
+							}), t(STEP_STATUS_KEYS[item.status])]
+						}),
+						item.visitCount > 1 && (0, react_jsx_runtime.jsx)("span", {
+							className: timeline_module_css_default.visitCount,
+							children: t("run.visitCount", { count: item.visitCount })
+						})
+					]
+				}), (0, react_jsx_runtime.jsxs)("div", {
+					className: timeline_module_css_default.stepBody,
+					children: [
+						item.status === "completed" && item.outputText !== void 0 && (0, react_jsx_runtime.jsx)("div", {
+							className: timeline_module_css_default.stepReturn,
+							children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MessageText, { text: item.outputText })
+						}),
+						item.status === "failed" && item.error !== void 0 && (0, react_jsx_runtime.jsx)("div", {
+							className: timeline_module_css_default.stepError,
+							role: "alert",
+							children: item.error
+						}),
+						item.status === "paused" && (0, react_jsx_runtime.jsx)("div", {
+							className: timeline_module_css_default.stepPaused,
+							children: t("step.paused.hint")
+						}),
+						running && (0, react_jsx_runtime.jsxs)("div", {
+							className: timeline_module_css_default.stepRunning,
+							children: [t("run.step.status.running"), "…"]
+						}),
+						item.childId !== void 0 && (0, react_jsx_runtime.jsxs)("button", {
+							type: "button",
+							className: timeline_module_css_default.expandBtn,
+							onClick: () => {
+								openSession(item.childId);
+							},
+							children: ["▶ ", t("run.discuss")]
+						})
+					]
+				})]
+			});
+		}
+		/** 用户气泡。 */
+		function UserBubble({ content }) {
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: timeline_module_css_default.userBubble,
+				"data-tl-user": true,
+				children: [(0, react_jsx_runtime.jsx)("div", {
+					className: timeline_module_css_default.userContent,
+					children: content
+				}), (0, react_jsx_runtime.jsx)("div", {
+					className: timeline_module_css_default.userAvatar,
+					children: "你"
+				})]
+			});
+		}
+		/** 渲染统一时间线。 */
+		function UnifiedTimeline({ t, items, openSession }) {
+			const [visibleCount, setVisibleCount] = (0, react.useState)(VISIBLE_COUNT);
+			const scrollRef = (0, react.useRef)(null);
+			const visibleItems = (0, react.useMemo)(() => items.slice(-visibleCount), [items, visibleCount]);
+			const handleScroll = (event) => {
+				if (event.currentTarget.scrollTop === 0 && visibleCount < items.length) setVisibleCount((count) => Math.min(count + VISIBLE_STEP, items.length));
+			};
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: timeline_module_css_default.scroll,
+				ref: scrollRef,
+				onScroll: handleScroll,
+				"data-sandore-timeline": true,
+				children: (0, react_jsx_runtime.jsxs)("div", {
+					className: timeline_module_css_default.timeline,
+					children: [visibleItems.length === 0 && (0, react_jsx_runtime.jsx)("p", {
+						className: timeline_module_css_default.empty,
+						children: t("run.trajectory.empty")
+					}), visibleItems.map((item, index) => item.kind === "user" ? (0, react_jsx_runtime.jsx)(UserBubble, { content: item.content }, `user-${index}`) : (0, react_jsx_runtime.jsx)(StepCard, {
+						item,
+						t,
+						openSession
+					}, `${item.stepId}-${index}`))]
+				})
+			});
+		}
+		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\input.module.css.mjs
+		const css$3 = "/* DiscussionInput 状态驱动输入区。 */\n\n.s1ydxi_root {\n  flex: none;\n  border-top: 1px solid var(--dsw-alias-border-l1);\n  padding: 10px 16px;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  background: var(--dsw-alias-bg-elevated);\n  position: relative;\n}\n\n.s1ydxi_mentionBar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  position: relative;\n}\n\n.s1ydxi_targetBtn {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  font-size: 11px;\n  font-weight: 500;\n  font-family: inherit;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  cursor: pointer;\n}\n\n.s1ydxi_targetBtn:hover:not(:disabled) {\n  background: rgba(74, 126, 255, 0.15);\n}\n\n.s1ydxi_targetBtn:disabled {\n  opacity: 0.5;\n  cursor: default;\n}\n\n.s1ydxi_mentionHint {\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1ydxi_picker {\n  position: absolute;\n  top: calc(100% + 4px);\n  left: 0;\n  z-index: 20;\n  min-width: 180px;\n  max-height: 220px;\n  overflow-y: auto;\n  padding: 4px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-elevated);\n  border: 1px solid var(--dsw-alias-border-l1);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.s1ydxi_picker button {\n  padding: 5px 8px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-secondary);\n  text-align: left;\n  cursor: pointer;\n}\n\n.s1ydxi_picker button:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1ydxi_picker button.s1ydxi_pickerActive {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ydxi_textarea {\n  width: 100%;\n  min-height: 36px;\n  max-height: 120px;\n  padding: 8px 10px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  border: 1px solid var(--dsw-alias-border-l1);\n  font-size: 12px;\n  font-family: inherit;\n  line-height: 1.5;\n  color: var(--dsw-alias-label-primary);\n  outline: none;\n  resize: vertical;\n  box-sizing: border-box;\n}\n\n.s1ydxi_textarea:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n.s1ydxi_textarea:disabled {\n  opacity: 0.5;\n  cursor: not-allowed;\n}\n\n.s1ydxi_retryRow {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.s1ydxi_retryLabel {\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n  margin-right: 4px;\n}\n\n.s1ydxi_retryBtn {\n  padding: 2px 8px;\n  border-radius: 6px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.s1ydxi_retryBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1ydxi_retryBtnActive {\n  background: var(--dsw-alias-accent-primary);\n  color: #fff;\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n.s1ydxi_actions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.s1ydxi_spacer {\n  flex: 1;\n}\n\n.s1ydxi_pauseBtn {\n  width: 32px;\n  height: 32px;\n  border-radius: 50%;\n  border: none;\n  background: var(--dsw-alias-state-warning);\n  color: #fff;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 14px;\n  cursor: pointer;\n  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);\n}\n\n.s1ydxi_pauseBtn:hover {\n  background: #d97d04;\n}\n\n.s1ydxi_pauseBtn:disabled {\n  opacity: 0.5;\n  cursor: default;\n  box-shadow: none;\n}\n\n.s1ydxi_sendBtn {\n  width: 32px;\n  height: 32px;\n  border-radius: 50%;\n  border: none;\n  background: var(--dsw-alias-accent-primary);\n  color: #fff;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 14px;\n  cursor: pointer;\n  box-shadow: 0 4px 12px rgba(74, 126, 255, 0.3);\n}\n\n.s1ydxi_sendBtn:hover:not(:disabled) {\n  opacity: 0.9;\n}\n\n.s1ydxi_sendBtn:disabled {\n  opacity: 0.3;\n  cursor: default;\n  box-shadow: none;\n}\n";
+		const tagId$3 = "@deepseek-ai/dsh-client-ui-sandore/input.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$3) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$3;
+			tag.textContent = css$3;
+			document.head.appendChild(tag);
+		}
+		var input_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1ydxi_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/DiscussionInput.js
+		/**
+		* DiscussionInput：执行态中栏底部输入区（状态驱动）。
+		*
+		* - running/interacting：textarea 禁用 + ⏸ 暂停按钮（pauseAll）。
+		* - paused：可输入，发送 → 定点 `resumeStep`（@Step 目标）或广播 `resumeAll`（文本作 resumePrompt）。
+		* - failed：可输入 + 重试三模式（continue/revert/fork），发送 → `retryStep`（@Step 目标缺省首个失败 Step）。
+		* - 终态：禁用（无可用操作）。
+		* @Step 选择器列出 paused/failed Step，不选 = 广播。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DiscussionInput
+		*/
+		/** 运行中/终态判定（决定输入区可用性）。 */
+		function isRunning(status) {
+			return status === "running" || status === "interacting";
+		}
+		function isTerminal(status) {
+			return status === "completed" || status === "failed" || status === "aborted";
+		}
+		/** 渲染状态驱动输入区。 */
+		function DiscussionInput({ t, status, steps, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep }) {
+			const [text, setText] = (0, react.useState)("");
+			const [targetStepId, setTargetStepId] = (0, react.useState)(void 0);
+			const [retryMode, setRetryMode] = (0, react.useState)("continue");
+			const [pickerOpen, setPickerOpen] = (0, react.useState)(false);
+			const running = isRunning(status);
+			const failed = status === "failed";
+			const paused = status === "paused";
+			const terminal = isTerminal(status);
+			const targetSteps = (0, react.useMemo)(() => steps.filter((step) => step.status === "paused" || step.status === "failed"), [steps]);
+			const firstFailedStepId = steps.find((step) => step.status === "failed");
+			const effectiveTarget = targetStepId ?? (failed && firstFailedStepId !== void 0 ? stepIdOf(firstFailedStepId) : void 0);
+			const targetName = targetStepId === void 0 ? t("input.target.broadcast") : steps.find((step) => stepIdOf(step) === targetStepId)?.name ?? targetStepId;
+			const placeholder = running ? t("input.placeholder.running") : paused ? t("input.placeholder.paused") : failed ? t("input.placeholder.failed") : "";
+			const canSend = !terminal && !running && !isBlank(text);
+			const send = () => {
+				if (!canSend || pending) return;
+				if (failed) {
+					if (effectiveTarget !== void 0) {
+						onRetryStep(effectiveTarget, retryMode, text);
+						setText("");
+					}
+					return;
+				}
+				if (paused) {
+					if (effectiveTarget !== void 0) onResumeStep(effectiveTarget, text);
+					else onResumeAll(text);
+					setText("");
+				}
+			};
+			const disabled = terminal || running || pending;
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: input_module_css_default.root,
+				"data-sandore-disc-input": true,
+				children: [
+					(0, react_jsx_runtime.jsxs)("div", {
+						className: input_module_css_default.mentionBar,
+						children: [
+							(0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								className: input_module_css_default.targetBtn,
+								onClick: () => {
+									setPickerOpen((current) => !current);
+								},
+								disabled,
+								children: [targetStepId === void 0 && !failed ? t("input.target.broadcast") : `@${targetName}`, " ▾"]
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: input_module_css_default.mentionHint,
+								children: t("input.resume.hint")
+							}),
+							pickerOpen && targetSteps.length > 0 && (0, react_jsx_runtime.jsxs)("div", {
+								className: input_module_css_default.picker,
+								"data-sandore-step-picker": true,
+								children: [(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: targetStepId === void 0 ? input_module_css_default.pickerActive : "",
+									onClick: () => {
+										setTargetStepId(void 0);
+										setPickerOpen(false);
+									},
+									children: t("input.target.broadcast")
+								}), targetSteps.map((step) => {
+									const id = stepIdOf(step);
+									return (0, react_jsx_runtime.jsxs)("button", {
+										type: "button",
+										className: targetStepId === id ? input_module_css_default.pickerActive : "",
+										onClick: () => {
+											setTargetStepId(id);
+											setPickerOpen(false);
+										},
+										children: ["@", step.name]
+									}, id);
+								})]
+							})
+						]
+					}),
+					(0, react_jsx_runtime.jsx)("textarea", {
+						className: input_module_css_default.textarea,
+						value: text,
+						onChange: (event) => {
+							setText(event.target.value);
+						},
+						placeholder,
+						disabled,
+						rows: 1
+					}),
+					failed && (0, react_jsx_runtime.jsxs)("div", {
+						className: input_module_css_default.retryRow,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: input_module_css_default.retryLabel,
+							children: t("input.retry.label")
+						}), RETRY_MODES.map((mode) => (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: `${input_module_css_default.retryBtn} ${retryMode === mode ? input_module_css_default.retryBtnActive : ""}`,
+							onClick: () => {
+								setRetryMode(mode);
+							},
+							children: mode === "continue" ? t("run.retry.mode.continue") : mode === "revert" ? t("run.retry.mode.revert") : t("run.retry.mode.fork")
+						}, mode))]
+					}),
+					(0, react_jsx_runtime.jsxs)("div", {
+						className: input_module_css_default.actions,
+						children: [(0, react_jsx_runtime.jsx)("span", { className: input_module_css_default.spacer }), running ? (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: input_module_css_default.pauseBtn,
+							title: t("input.pause"),
+							"aria-label": t("input.pause"),
+							disabled: pending,
+							onClick: onPauseAll,
+							children: "⏸"
+						}) : (0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: input_module_css_default.sendBtn,
+							title: t("input.send"),
+							"aria-label": t("input.send"),
+							disabled: !canSend || pending,
+							onClick: send,
+							children: "➤"
 						})]
 					})
 				]
 			});
 		}
 		//#endregion
-		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\RunView.module.css.mjs
-		const css$2 = "/* RunView 执行详情：头部状态 + 执行轨迹 + 待处理交互 + 产物面板。 */\n\n.runView {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.title {\n  flex: none;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.statusBadge {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  height: 20px;\n  padding: 0 8px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill);\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.spacer {\n  flex: 1;\n}\n\n.loading {\n  margin: 0;\n  padding: 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.body {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  padding: 12px;\n  overflow-y: auto;\n  box-sizing: border-box;\n}\n\n.section {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.sectionTitle {\n  margin: 0;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.trajectory {\n  display: flex;\n  flex-direction: column;\n}\n\n.stageWrap {\n  display: flex;\n  flex-direction: column;\n}\n\n.stageHeader {\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.stepCount {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  height: 20px;\n  padding: 0 6px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill);\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.connector {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: 100%;\n  height: 20px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.steps {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 8px 8px 8px 24px;\n}\n\n.empty {\n  margin: 0;\n  padding: 8px 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.step {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.stepHead {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-width: 0;\n}\n\n.stepName {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.visitBadge {\n  flex: none;\n}\n\n.stepStatus {\n  flex: none;\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.stepActions {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.stepError {\n  padding: 6px 8px;\n  border-radius: 8px;\n  background: var(--dsw-alias-state-error-secondary, var(--dsw-alias-bg-base));\n  font-family: var(--dsh-font-mono, monospace);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.cards {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.card {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.cardHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.cardTitle {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  overflow-wrap: anywhere;\n}\n\n.question {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.questionHeader {\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.questionText {\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.options {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n}\n\n.option {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.optionLabel {\n  flex: none;\n}\n\n.optionDesc {\n  color: var(--dsw-alias-label-caption);\n}\n\n.metaRow {\n  display: flex;\n  align-items: baseline;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  overflow-wrap: anywhere;\n}\n\n.metaLabel {\n  flex: none;\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.permissionActions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.artifacts {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.artifactStage {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.artifactStageName {\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 18px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.artifactStep {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  padding: 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.artifactStepName {\n  font-family: var(--dsh-font-mono, monospace);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.artifactBlock {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.fileList {\n  margin: 0;\n  padding-left: 16px;\n  font-family: var(--dsh-font-mono, monospace);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.file {\n  overflow-wrap: anywhere;\n}\n\n.returnText {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.retryForm {\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n}\n\n.retryModes {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px;\n}\n";
-		const tagId$2 = "@deepseek-ai/dsh-client-ui-sandore/RunView.module.css";
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\preview.module.css.mjs
+		const css$2 = "/* PreviewPanel 右栏文件/结果预览。 */\n\n.seay3q_root {\n  flex: none;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-elevated);\n  border-left: 1px solid var(--dsw-alias-border-l1);\n  overflow: hidden;\n}\n\n.seay3q_header {\n  flex: none;\n  min-height: 40px;\n  padding: 0 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.seay3q_title {\n  min-width: 0;\n  flex: 1;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.seay3q_spacer {\n  flex: none;\n}\n\n.seay3q_close {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 12px;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.seay3q_close:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n.seay3q_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 12px 14px;\n  box-sizing: border-box;\n}\n\n.seay3q_meta {\n  display: flex;\n  gap: 12px;\n  margin-bottom: 10px;\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.seay3q_text {\n  font-size: 12px;\n  line-height: 1.6;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.seay3q_file {\n  margin: 0;\n  font-family: var(--dsw-font-mono, 'SF Mono', 'Cascadia Code', Consolas, monospace);\n  font-size: 11px;\n  background: var(--dsw-alias-bg-sunken);\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  padding: 10px 12px;\n  white-space: pre-wrap;\n  line-height: 1.6;\n  color: var(--dsw-alias-label-secondary);\n  overflow-x: auto;\n  box-sizing: border-box;\n}\n";
+		const tagId$2 = "@deepseek-ai/dsh-client-ui-sandore/preview.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$2) + "]") === null) {
 			const tag = document.createElement("style");
 			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
@@ -14027,20 +30168,162 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			tag.textContent = css$2;
 			document.head.appendChild(tag);
 		}
-		var RunView_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? prop : void 0 });
+		var preview_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "seay3q_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/PreviewPanel.js
+		/**
+		* PreviewPanel：执行态右栏文件/结果预览（默认隐藏，树形导航叶子点击后出现）。
+		*
+		* result 叶子显示 Step 输出文本（MessageText 渲染）；artifact 叶子显示文件路径
+		* 元信息（产物无内容读取 RPC，正文即路径集合）。关闭按钮隐藏右栏并清选中态。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/PreviewPanel
+		*/
+		/** 渲染右栏预览。 */
+		function PreviewPanel({ t, target, onClose }) {
+			if (target === null) return null;
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: preview_module_css_default.root,
+				"data-sandore-preview": true,
+				children: [(0, react_jsx_runtime.jsxs)("header", {
+					className: preview_module_css_default.header,
+					children: [
+						(0, react_jsx_runtime.jsx)("span", {
+							className: preview_module_css_default.title,
+							children: target.name
+						}),
+						(0, react_jsx_runtime.jsx)("span", { className: preview_module_css_default.spacer }),
+						(0, react_jsx_runtime.jsx)("button", {
+							type: "button",
+							className: preview_module_css_default.close,
+							"aria-label": t("run.preview.close"),
+							title: t("run.preview.close"),
+							onClick: onClose,
+							children: "✕"
+						})
+					]
+				}), (0, react_jsx_runtime.jsxs)("div", {
+					className: preview_module_css_default.body,
+					children: [(0, react_jsx_runtime.jsxs)("div", {
+						className: preview_module_css_default.meta,
+						children: [(0, react_jsx_runtime.jsxs)("span", { children: [
+							target.kind === "result" ? "📝" : "📄",
+							" ",
+							target.kind === "result" ? t("run.result") : t("run.artifact")
+						] }), target.meta !== void 0 && (0, react_jsx_runtime.jsx)("span", { children: target.meta })]
+					}), target.text !== void 0 && (target.kind === "result" ? (0, react_jsx_runtime.jsx)("div", {
+						className: preview_module_css_default.text,
+						children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MessageText, { text: target.text })
+					}) : (0, react_jsx_runtime.jsx)("pre", {
+						className: preview_module_css_default.file,
+						children: target.text
+					}))]
+				})]
+			});
+		}
+		//#endregion
+		//#region lib/types/client/DragHandle.js
+		/**
+		* 拖拽分隔条（照搬 DSH AppFrame 的 DragHandle 模式：pointer capture + rAF 节流）。
+		*
+		* `onDrag(dx)` 在每次指针移动的下一帧回调一次累计位移；pointerup/pointercancel
+		* 释放捕获并做最后一次回调。拖动期间给元素加 `dragging` class 供样式高亮。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DragHandle
+		*/
+		/**
+		* 为元素挂接拖拽监听（约 40 行，同 AppFrame.makeDragHandle 语义）。
+		* @param el - 分隔条元素。
+		* @param onDrag - 位移回调（px，正值向右）。
+		* @returns 移除监听的 disposer。
+		*/
+		function attachDragHandle(el, onDrag) {
+			let frame = null;
+			let latest = 0;
+			let last = 0;
+			const move = (e) => {
+				if (!el.hasPointerCapture(e.pointerId)) return;
+				latest = e.clientX;
+				if (frame === null) frame = requestAnimationFrame(() => {
+					frame = null;
+					onDrag(latest - last);
+					last = latest;
+				});
+			};
+			const end = (e) => {
+				if (!el.hasPointerCapture(e.pointerId)) return;
+				el.releasePointerCapture(e.pointerId);
+				if (frame !== null) {
+					cancelAnimationFrame(frame);
+					frame = null;
+				}
+				if (latest !== last) {
+					onDrag(latest - last);
+					last = latest;
+				}
+				el.classList.remove("dragging");
+			};
+			const down = (e) => {
+				e.preventDefault();
+				el.setPointerCapture(e.pointerId);
+				latest = e.clientX;
+				last = e.clientX;
+				el.classList.add("dragging");
+			};
+			el.addEventListener("pointerdown", down);
+			el.addEventListener("pointermove", move);
+			el.addEventListener("pointerup", end);
+			el.addEventListener("pointercancel", end);
+			return () => {
+				el.removeEventListener("pointerdown", down);
+				el.removeEventListener("pointermove", move);
+				el.removeEventListener("pointerup", end);
+				el.removeEventListener("pointercancel", end);
+			};
+		}
+		/** React 拖拽分隔条组件：渲染 7px 分隔条并挂接拖拽。 */
+		function DragHandle({ onDrag, side, className }) {
+			const ref = (0, react.useRef)(null);
+			const onDragRef = (0, react.useRef)(onDrag);
+			onDragRef.current = onDrag;
+			(0, react.useEffect)(() => {
+				const el = ref.current;
+				if (el === null) return;
+				return attachDragHandle(el, (dx) => {
+					onDragRef.current(dx);
+				});
+			}, []);
+			const handlePointerDown = (e) => {
+				e.preventDefault();
+			};
+			return (0, react_jsx_runtime.jsx)("div", {
+				ref,
+				className,
+				"data-drag-handle": true,
+				"data-side": side,
+				onPointerDown: handlePointerDown,
+				"aria-hidden": true
+			});
+		}
+		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\RunView.module.css.mjs
+		const css$1 = "/* RunView 执行态三栏：树形导航 + 时间线/输入区 + 文件预览。 */\n\n.s1lh5j_runView {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1lh5j_columns {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1lh5j_drag-handle 观感）。 */\n.s1lh5j_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1lh5j_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1lh5j_dragHandle:hover::after,\n.s1lh5j_dragHandle.s1lh5j_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n.s1lh5j_treeCol {\n  flex: none;\n  min-width: 180px;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  background: var(--dsw-alias-bg-elevated);\n  border-right: 1px solid var(--dsw-alias-border-l1);\n}\n\n.s1lh5j_treeCol > * {\n  flex: 1;\n  min-height: 0;\n}\n\n.s1lh5j_mainCol {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.s1lh5j_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1lh5j_title {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1lh5j_statusBadge {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  height: 20px;\n  padding: 0 8px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill, var(--dsw-alias-bg-active));\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1lh5j_spacer {\n  flex: 1;\n}\n\n.s1lh5j_loading {\n  margin: 0;\n  padding: 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n/* ── 待处理交互（时间线下方、输入区上方） ───────────────────────────────── */\n\n.s1lh5j_interactions {\n  flex: none;\n  max-height: 40%;\n  overflow-y: auto;\n  padding: 8px 16px;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1lh5j_card {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px 12px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1lh5j_cardHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1lh5j_cardTitle {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1lh5j_question {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n}\n\n.s1lh5j_questionHeader {\n  font-size: 11px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_questionText {\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1lh5j_options {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n}\n\n.s1lh5j_option {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.s1lh5j_optionLabel {\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1lh5j_optionDesc {\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_metaRow {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1lh5j_metaLabel {\n  flex: none;\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_permissionActions {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1lh5j_previewCol {\n  flex: none;\n  min-width: 280px;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.s1lh5j_previewCol > * {\n  flex: 1;\n  min-height: 0;\n}\n";
+		const tagId$1 = "@deepseek-ai/dsh-client-ui-sandore/RunView.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$1) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$1;
+			tag.textContent = css$1;
+			document.head.appendChild(tag);
+		}
+		var RunView_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1lh5j_" + prop : void 0 });
 		//#endregion
 		//#region lib/types/client/RunView.js
 		/**
-		* RunView：工作流实例执行详情（执行轨迹只读视图 + 产物面板 + 交互控件 + 打开讨论）。
+		* RunView：执行态三栏视图（树形导航 + 统一时间线/输入区 + 文件预览）。
 		*
-		* 经 `remote.getInstanceState(instanceId)` 拉取 `WorkflowTaskState`，按 `stageInfos`
-		* 分组只读渲染 `executedSteps`（每 Step：7 态状态图标、名称、`visitCount` 徽章、
-		* 错误信息）；产物面板经 `remote.getArtifacts(instanceId)` 分层显示（Stage → Step →
-		* 文件/回答）。实例运行中（running/interacting）时每 5s 轮询状态与产物，终态或卸载
-		* 停止；交互控件（实例级 pauseAll/resumeAll/abort，Step 级 pauseStep/resumeStep/
-		* retryStep，问答 replyQuestion、权限 replyPermission）调用后立即手动刷新。头部
-		* 「打开讨论」经 `openDiscussion` 回调跳宿主会话。以普通 props 提供（非 slot 子组件），
-		* 供 WorkflowPanel 下钻承载。
+		* 数据源 = `getInstanceState` 轮询（运行中 5s，终态停）+ `getArtifacts` 初始化；
+		* 树与时间线由纯函数从状态派生。交互：header（暂停全部/恢复全部/中止/刷新/打开讨论）、
+		* 树叶子 → 右栏预览、输入区状态驱动（running 暂停 / paused 恢复 / failed 重试）、
+		* 待处理问答/权限卡片在时间线下方。Step「查看详情」/树行 ↗ 跳子代理会话。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/RunView
 		*/
 		/** 轮询间隔（毫秒）。 */
@@ -14055,116 +30338,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			aborted: "run.status.aborted",
 			paused: "run.status.paused"
 		};
-		/** Step 执行状态 → 本地化标签键。 */
-		const STEP_STATUS_KEYS = {
-			blocked: "run.step.status.blocked",
-			ready: "run.step.status.ready",
-			interacting: "run.step.status.interacting",
-			running: "run.step.status.running",
-			completed: "run.step.status.completed",
-			failed: "run.step.status.failed",
-			paused: "run.step.status.paused"
-		};
-		/** 重试模式 → 本地化标签键。 */
-		const RETRY_MODE_KEYS$1 = {
-			continue: "run.retry.mode.continue",
-			revert: "run.retry.mode.revert",
-			fork: "run.retry.mode.fork"
-		};
-		/** 单个执行 Step 的只读行：状态图标 + 名称 + visitCount 徽章 + 状态文本 + 错误 + Step 级控件。 */
-		function StepRow({ step, t, pending, onPause, onResume, onRetry }) {
-			const stepId = stepIdOf(step);
-			const controllable = isSubagentStep(step);
-			return (0, react_jsx_runtime.jsxs)("div", {
-				className: RunView_module_css_default.step,
-				children: [(0, react_jsx_runtime.jsxs)("div", {
-					className: RunView_module_css_default.stepHead,
-					children: [
-						(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: stepDotState(step.status) }),
-						(0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.stepName,
-							children: step.name
-						}),
-						(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
-							className: RunView_module_css_default.visitBadge,
-							"aria-label": t("run.visitCount", { count: step.visitCount }),
-							children: step.visitCount
-						}),
-						(0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.stepStatus,
-							children: t(STEP_STATUS_KEYS[step.status])
-						}),
-						(0, react_jsx_runtime.jsxs)("span", {
-							className: RunView_module_css_default.stepActions,
-							children: [
-								controllable && (step.status === "running" || step.status === "interacting") && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									size: "sm",
-									variant: "ghost",
-									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPauseOutline16, {}),
-									disabled: pending,
-									"aria-label": t("run.step.pause"),
-									onClick: () => {
-										onPause(stepId);
-									}
-								}),
-								controllable && step.status === "paused" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									size: "sm",
-									variant: "ghost",
-									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlayOutline16, {}),
-									disabled: pending,
-									"aria-label": t("run.step.resume"),
-									onClick: () => {
-										onResume(stepId);
-									}
-								}),
-								controllable && step.status === "failed" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									size: "sm",
-									variant: "outline",
-									disabled: pending,
-									onClick: () => {
-										onRetry(stepId);
-									},
-									children: t("run.step.retry")
-								})
-							]
-						})
-					]
-				}), step.error !== void 0 && (0, react_jsx_runtime.jsx)("div", {
-					className: RunView_module_css_default.stepError,
-					children: step.error
-				})]
-			});
-		}
-		/** Stage 分组：DisclosureRow 折叠（名称 + Step 数）+ 展开 Step 只读列表。 */
-		function StageGroup({ stage, steps, expanded, onToggle, t, pending, onPause, onResume, onRetry }) {
-			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.DisclosureRow, {
-				icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {}),
-				title: stage.name,
-				open: expanded,
-				expandable: true,
-				onToggle,
-				expandOnRowClick: true,
-				rowClassName: RunView_module_css_default.stageHeader,
-				collapsedContent: (0, react_jsx_runtime.jsx)("span", {
-					className: RunView_module_css_default.stepCount,
-					children: steps.length
-				}),
-				children: (0, react_jsx_runtime.jsx)("div", {
-					className: RunView_module_css_default.steps,
-					children: steps.length === 0 ? (0, react_jsx_runtime.jsx)("span", {
-						className: RunView_module_css_default.empty,
-						children: t("run.trajectory.empty")
-					}) : steps.map((step) => (0, react_jsx_runtime.jsx)(StepRow, {
-						step,
-						t,
-						pending,
-						onPause,
-						onResume,
-						onRetry
-					}, step.id))
-				})
-			});
-		}
 		/** 单个待答问题条目：渲染各问题的选项（单选/多选）或自由文本输入，提交经 onReply。 */
 		function QuestionCard({ entry, t, pending, onReply }) {
 			const questions = entry.payload.questions;
@@ -14264,12 +30437,19 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: RunView_module_css_default.card,
 				children: [
-					(0, react_jsx_runtime.jsxs)("div", {
+					(0, react_jsx_runtime.jsx)("div", {
 						className: RunView_module_css_default.cardHead,
-						children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}), (0, react_jsx_runtime.jsx)("span", {
+						children: (0, react_jsx_runtime.jsx)("span", {
 							className: RunView_module_css_default.cardTitle,
-							children: entry.payload.permission
-						})]
+							children: t("run.permission.title")
+						})
+					}),
+					(0, react_jsx_runtime.jsxs)("div", {
+						className: RunView_module_css_default.metaRow,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: RunView_module_css_default.metaLabel,
+							children: t("run.permission.patterns")
+						}), (0, react_jsx_runtime.jsx)("span", { children: entry.payload.permission })]
 					}),
 					entry.payload.tool !== void 0 && (0, react_jsx_runtime.jsxs)("div", {
 						className: RunView_module_css_default.metaRow,
@@ -14320,196 +30500,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				]
 			});
 		}
-		/** 产物面板：按 Stage → Step → 文件/回答 分层只读显示。 */
-		function ArtifactPanel({ artifacts, stages, t }) {
-			if (artifacts.length === 0) return (0, react_jsx_runtime.jsx)("p", {
-				className: RunView_module_css_default.empty,
-				children: t("run.artifacts.empty")
-			});
-			const byStage = /* @__PURE__ */ new Map();
-			for (const entry of artifacts) {
-				const list = byStage.get(entry.stageId);
-				if (list === void 0) byStage.set(entry.stageId, [entry]);
-				else list.push(entry);
-			}
-			return (0, react_jsx_runtime.jsx)("div", {
-				className: RunView_module_css_default.artifacts,
-				children: [...byStage.entries()].map(([stageId, entries]) => (0, react_jsx_runtime.jsxs)("div", {
-					className: RunView_module_css_default.artifactStage,
-					children: [(0, react_jsx_runtime.jsx)("div", {
-						className: RunView_module_css_default.artifactStageName,
-						children: stages.find((stage) => stage.id === stageId)?.name ?? stageId
-					}), entries.map((entry) => (0, react_jsx_runtime.jsxs)("div", {
-						className: RunView_module_css_default.artifactStep,
-						children: [
-							(0, react_jsx_runtime.jsx)("div", {
-								className: RunView_module_css_default.artifactStepName,
-								children: entry.stepId
-							}),
-							entry.files.length > 0 && (0, react_jsx_runtime.jsxs)("div", {
-								className: RunView_module_css_default.artifactBlock,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: RunView_module_css_default.metaLabel,
-									children: t("run.artifacts.files")
-								}), (0, react_jsx_runtime.jsx)("ul", {
-									className: RunView_module_css_default.fileList,
-									children: entry.files.map((file) => (0, react_jsx_runtime.jsx)("li", {
-										className: RunView_module_css_default.file,
-										children: file
-									}, file))
-								})]
-							}),
-							entry.returnPrompt !== void 0 && (0, react_jsx_runtime.jsxs)("div", {
-								className: RunView_module_css_default.artifactBlock,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: RunView_module_css_default.metaLabel,
-									children: t("run.artifacts.returnPrompt")
-								}), (0, react_jsx_runtime.jsx)("p", {
-									className: RunView_module_css_default.returnText,
-									children: entry.returnPrompt
-								})]
-							})
-						]
-					}, `${entry.stepId}-${entry.outputToId ?? ""}`))]
-				}, stageId))
-			});
-		}
-		/** 重试表单对话框：模式选择（continue/revert/fork）+ 说明输入 + 提交。 */
-		function RetryModal({ t, mode, message, messageError, pending, onClose, onChangeMode, onChangeMessage, onSubmit }) {
-			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
-				open: true,
-				onClose,
-				title: t("run.retry.title"),
-				closeLabel: t("run.retry.cancel"),
-				footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-					variant: "ghost",
-					size: "sm",
-					onClick: onClose,
-					children: t("run.retry.cancel")
-				}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-					variant: "primary",
-					size: "sm",
-					disabled: pending,
-					onClick: onSubmit,
-					children: t("run.retry.submit")
-				})] }),
-				children: (0, react_jsx_runtime.jsxs)("div", {
-					className: RunView_module_css_default.retryForm,
-					children: [
-						(0, react_jsx_runtime.jsx)("div", {
-							className: RunView_module_css_default.retryModes,
-							role: "group",
-							"aria-label": t("run.retry.mode"),
-							children: RETRY_MODES.map((candidate) => (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
-								active: candidate === mode,
-								onClick: () => {
-									onChangeMode(candidate);
-								},
-								children: t(RETRY_MODE_KEYS$1[candidate])
-							}, candidate))
-						}),
-						(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-							value: message,
-							onChange: (event) => {
-								onChangeMessage(event.target.value);
-							},
-							placeholder: t("run.retry.message")
-						}),
-						messageError && (0, react_jsx_runtime.jsx)("p", {
-							className: RunView_module_css_default.error,
-							role: "alert",
-							children: t("run.retry.message.required")
-						})
-					]
-				})
-			});
-		}
-		/** RunView 就绪态主体：轨迹 + 待处理交互 + 产物。 */
-		function RunBody({ state, artifacts, t, pending, onPause, onResume, onRetry, onReplyQuestion, onReplyPermission }) {
-			const [collapsedStageIds, setCollapsedStageIds] = (0, react.useState)(() => /* @__PURE__ */ new Set());
-			const { questions, permissions } = partitionInteractions(state.pendingInteractions);
-			const toggleStage = (stageId) => {
-				setCollapsedStageIds((current) => {
-					const next = new Set(current);
-					if (next.has(stageId)) next.delete(stageId);
-					else next.add(stageId);
-					return next;
-				});
-			};
-			return (0, react_jsx_runtime.jsxs)("div", {
-				className: RunView_module_css_default.body,
-				children: [
-					(0, react_jsx_runtime.jsxs)("section", {
-						className: RunView_module_css_default.section,
-						children: [(0, react_jsx_runtime.jsx)("h3", {
-							className: RunView_module_css_default.sectionTitle,
-							children: t("run.trajectory.title")
-						}), (0, react_jsx_runtime.jsx)("div", {
-							className: RunView_module_css_default.trajectory,
-							children: state.stageInfos.map((stage, index) => {
-								const steps = state.executedSteps.filter((step) => step.stageId === stage.id);
-								return (0, react_jsx_runtime.jsxs)("div", {
-									className: RunView_module_css_default.stageWrap,
-									children: [(0, react_jsx_runtime.jsx)(StageGroup, {
-										stage,
-										steps,
-										expanded: !collapsedStageIds.has(stage.id),
-										onToggle: () => {
-											toggleStage(stage.id);
-										},
-										t,
-										pending,
-										onPause,
-										onResume,
-										onRetry
-									}), index < state.stageInfos.length - 1 && (0, react_jsx_runtime.jsx)("div", {
-										className: RunView_module_css_default.connector,
-										"aria-hidden": true,
-										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
-									})]
-								}, stage.id);
-							})
-						})]
-					}),
-					(questions.length > 0 || permissions.length > 0) && (0, react_jsx_runtime.jsxs)("section", {
-						className: RunView_module_css_default.section,
-						children: [(0, react_jsx_runtime.jsx)("h3", {
-							className: RunView_module_css_default.sectionTitle,
-							children: t("run.interactions.title")
-						}), (0, react_jsx_runtime.jsxs)("div", {
-							className: RunView_module_css_default.cards,
-							children: [questions.map((entry) => (0, react_jsx_runtime.jsx)(QuestionCard, {
-								entry,
-								t,
-								pending,
-								onReply: onReplyQuestion
-							}, entry.id)), permissions.map((entry) => (0, react_jsx_runtime.jsx)(PermissionCard, {
-								entry,
-								t,
-								pending,
-								onReply: onReplyPermission
-							}, entry.id))]
-						})]
-					}),
-					(0, react_jsx_runtime.jsxs)("section", {
-						className: RunView_module_css_default.section,
-						children: [(0, react_jsx_runtime.jsx)("h3", {
-							className: RunView_module_css_default.sectionTitle,
-							children: t("run.artifacts.title")
-						}), (0, react_jsx_runtime.jsx)(ArtifactPanel, {
-							artifacts,
-							stages: state.stageInfos,
-							t
-						})]
-					})
-				]
-			});
-		}
-		/** 渲染 RunView。 */
-		function RunView({ t, instanceId, openDiscussion, remote }) {
+		/** 渲染 RunView（三栏）。 */
+		function RunView({ t, instanceId, openSession, remote }) {
 			const [loadState, setLoadState] = (0, react.useState)({ kind: "loading" });
 			const [actionState, setActionState] = (0, react.useState)({ kind: "idle" });
-			const [retryState, setRetryState] = (0, react.useState)({ kind: "closed" });
+			const treeWidth = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().treeWidth);
+			const previewWidth = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().previewWidth);
+			const preview = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().preview);
 			const refresh = (0, react.useCallback)(async () => {
 				try {
 					const [stateResult, artifactsResult] = await Promise.all([remote.getInstanceState(instanceId), remote.getArtifacts(instanceId)]);
@@ -14570,9 +30567,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					unwrap(await remote.pauseAll({ instanceId }));
 				});
 			};
-			const resumeAll = () => {
+			const resumeAll = (resumePrompt) => {
 				runAction(async () => {
-					unwrap(await remote.resumeAll({ instanceId }));
+					unwrap(await remote.resumeAll({
+						instanceId,
+						resumePrompt
+					}));
 				});
 			};
 			const abort = () => {
@@ -14580,19 +30580,22 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					unwrap(await remote.abortInstance(instanceId));
 				});
 			};
-			const pauseStep = (stepId) => {
-				runAction(async () => {
-					unwrap(await remote.pauseStep({
-						instanceId,
-						stepId
-					}));
-				});
-			};
-			const resumeStep = (stepId) => {
+			const resumeStep = (stepId, resumePrompt) => {
 				runAction(async () => {
 					unwrap(await remote.resumeStep({
 						instanceId,
-						stepId
+						stepId,
+						resumePrompt
+					}));
+				});
+			};
+			const retryStep = (stepId, mode, message) => {
+				runAction(async () => {
+					unwrap(await remote.retryStep({
+						instanceId,
+						stepId,
+						mode,
+						message
 					}));
 				});
 			};
@@ -14614,357 +30617,411 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					}));
 				});
 			};
-			const beginRetry = (stepId) => {
-				setRetryState({
-					kind: "open",
-					stepId,
-					mode: "revert",
-					message: "",
-					messageError: false
-				});
+			const state = loadState.kind === "ready" ? loadState.state : void 0;
+			const tree = (0, react.useMemo)(() => state === void 0 ? [] : buildRunTree(state), [state]);
+			const timeline = (0, react.useMemo)(() => state === void 0 ? [] : buildTimeline(state), [state]);
+			const { questions, permissions } = state === void 0 ? {
+				questions: [],
+				permissions: []
+			} : partitionInteractions(state.pendingInteractions);
+			const selectLeaf = (selection) => {
+				setWorkflowState({ preview: selection });
 			};
-			const submitRetry = () => {
-				if (retryState.kind !== "open") return;
-				if (isBlank(retryState.message)) {
-					setRetryState({
-						...retryState,
-						messageError: true
-					});
-					return;
-				}
-				const { stepId, mode, message } = retryState;
-				runAction(async () => {
-					unwrap(await remote.retryStep({
-						instanceId,
-						stepId,
-						mode,
-						message
-					}));
-				});
-				setRetryState({ kind: "closed" });
+			const closePreview = () => {
+				setWorkflowState({ preview: null });
 			};
-			return (0, react_jsx_runtime.jsxs)("section", {
+			const pending = actionState.kind === "pending";
+			return (0, react_jsx_runtime.jsx)("section", {
 				className: RunView_module_css_default.runView,
 				"aria-label": t("run.title"),
 				"data-sandore-run-view": true,
+				children: (0, react_jsx_runtime.jsxs)("div", {
+					className: RunView_module_css_default.columns,
+					children: [
+						(0, react_jsx_runtime.jsx)("aside", {
+							style: { width: treeWidth },
+							className: RunView_module_css_default.treeCol,
+							children: (0, react_jsx_runtime.jsx)(TreeNav, {
+								t,
+								tree,
+								activePreviewId: preview?.leafId ?? null,
+								onSelectLeaf: selectLeaf,
+								onOpenChild: openSession
+							})
+						}),
+						(0, react_jsx_runtime.jsx)(DragHandle, {
+							side: "tree",
+							className: RunView_module_css_default.dragHandle,
+							onDrag: resizeTreeWidth
+						}),
+						(0, react_jsx_runtime.jsxs)("div", {
+							className: RunView_module_css_default.mainCol,
+							children: [
+								(0, react_jsx_runtime.jsxs)("header", {
+									className: RunView_module_css_default.header,
+									children: [
+										(0, react_jsx_runtime.jsx)("span", {
+											className: RunView_module_css_default.title,
+											children: t("run.title")
+										}),
+										state !== void 0 && (0, react_jsx_runtime.jsxs)("span", {
+											className: RunView_module_css_default.statusBadge,
+											children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: runDotState(state.status) }), (0, react_jsx_runtime.jsx)("span", { children: t(RUN_STATUS_KEYS[state.status]) })]
+										}),
+										(0, react_jsx_runtime.jsx)("span", { className: RunView_module_css_default.spacer }),
+										state !== void 0 && isRunningStatus(state.status) && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											size: "sm",
+											variant: "ghost",
+											disabled: pending,
+											onClick: pauseAll,
+											children: t("run.pauseAll")
+										}),
+										state !== void 0 && state.status === "paused" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											size: "sm",
+											variant: "ghost",
+											disabled: pending,
+											onClick: () => {
+												resumeAll("");
+											},
+											children: t("run.resumeAll")
+										}),
+										state !== void 0 && !isTerminalStatus(state.status) && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											size: "sm",
+											variant: "ghost",
+											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconStopFill16, {}),
+											disabled: pending,
+											onClick: abort,
+											"aria-label": t("run.abort")
+										}),
+										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											size: "sm",
+											variant: "ghost",
+											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {}),
+											onClick: () => {
+												refreshAndSchedule();
+											},
+											"aria-label": t("run.refresh")
+										}),
+										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											size: "sm",
+											variant: "outline",
+											onClick: () => {
+												openSession(instanceId);
+											},
+											children: t("run.discuss")
+										})
+									]
+								}),
+								loadState.kind === "loading" && (0, react_jsx_runtime.jsx)("p", {
+									className: RunView_module_css_default.loading,
+									children: t("run.loading")
+								}),
+								loadState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
+									className: RunView_module_css_default.error,
+									role: "alert",
+									children: t("run.error", { message: loadState.message })
+								}),
+								actionState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
+									className: RunView_module_css_default.error,
+									role: "alert",
+									children: actionState.message
+								}),
+								loadState.kind === "ready" && state !== void 0 && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+									(0, react_jsx_runtime.jsx)(UnifiedTimeline, {
+										t,
+										items: timeline,
+										openSession
+									}),
+									(questions.length > 0 || permissions.length > 0) && (0, react_jsx_runtime.jsxs)("div", {
+										className: RunView_module_css_default.interactions,
+										children: [questions.map((entry) => (0, react_jsx_runtime.jsx)(QuestionCard, {
+											entry,
+											t,
+											pending,
+											onReply: replyQuestion
+										}, entry.id)), permissions.map((entry) => (0, react_jsx_runtime.jsx)(PermissionCard, {
+											entry,
+											t,
+											pending,
+											onReply: replyPermission
+										}, entry.id))]
+									}),
+									(0, react_jsx_runtime.jsx)(DiscussionInput, {
+										t,
+										status: state.status,
+										steps: state.executedSteps,
+										pending,
+										onPauseAll: pauseAll,
+										onResumeAll: resumeAll,
+										onResumeStep: resumeStep,
+										onRetryStep: retryStep
+									})
+								] })
+							]
+						}),
+						preview !== null && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(DragHandle, {
+							side: "preview",
+							className: RunView_module_css_default.dragHandle,
+							onDrag: resizePreviewWidth
+						}), (0, react_jsx_runtime.jsx)("div", {
+							style: { width: previewWidth },
+							className: RunView_module_css_default.previewCol,
+							children: (0, react_jsx_runtime.jsx)(PreviewPanel, {
+								t,
+								target: preview,
+								onClose: closePreview
+							})
+						})] })
+					]
+				})
+			});
+		}
+		//#endregion
+		//#region lib/types/client/EditorPane.js
+		/**
+		* EditorPane：工作流 overlay 右栏编辑区（模式条 + 编排态 DagEditor / 执行态 RunView）。
+		*
+		* 模式与选中态走 `workflow-store`；模式条提供 编排/执行 toggle 与「▶ 测试运行」
+		* （对当前定义找/建 Job 后 `startInstance`，成功后自动切执行态并选中新实例）。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/EditorPane
+		*/
+		/** 渲染右栏编辑区。 */
+		function EditorPane({ t, face, onSaved }) {
+			const mode = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().mode);
+			const definitionView = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().definitionView);
+			const selectedInstanceId = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId);
+			const selectedDefinition = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedDefinition);
+			const [running, setRunning] = (0, react.useState)(false);
+			const [runError, setRunError] = (0, react.useState)(void 0);
+			const title = mode === "dag" ? selectedDefinition?.id === void 0 ? t("editor.newDefinition") : t("editor.title") : selectedInstanceId ?? t("panel.title");
+			/** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态选中新实例。 */
+			const runTest = async () => {
+				const definitionId = selectedDefinition?.id;
+				if (definitionId === void 0) return;
+				setRunning(true);
+				setRunError(void 0);
+				try {
+					const job = (await face.listJobs(definitionId))[0] ?? await face.createJob({
+						name: `测试-${definitionId.slice(0, 8)}`,
+						workflowId: definitionId
+					});
+					selectInstance((await face.startInstance({
+						jobId: job.id,
+						originalInput: t("editor.testRun")
+					})).instanceId);
+				} catch (error) {
+					setRunError(describeError$1(error));
+				} finally {
+					setRunning(false);
+				}
+			};
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: WorkflowOverlay_module_css_default.editorCol,
+				"data-sandore-wf-editor": true,
 				children: [
-					(0, react_jsx_runtime.jsxs)("header", {
-						className: RunView_module_css_default.header,
+					(0, react_jsx_runtime.jsxs)("div", {
+						className: WorkflowOverlay_module_css_default.modeBar,
 						children: [
 							(0, react_jsx_runtime.jsx)("span", {
-								className: RunView_module_css_default.title,
-								children: t("run.title")
+								className: WorkflowOverlay_module_css_default.editorTitle,
+								children: title
 							}),
-							loadState.kind === "ready" && (0, react_jsx_runtime.jsxs)("span", {
-								className: RunView_module_css_default.statusBadge,
-								children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: runDotState(loadState.state.status) }), (0, react_jsx_runtime.jsx)("span", { children: t(RUN_STATUS_KEYS[loadState.state.status]) })]
+							(0, react_jsx_runtime.jsx)("span", { className: WorkflowOverlay_module_css_default.spacer }),
+							(0, react_jsx_runtime.jsxs)("div", {
+								className: WorkflowOverlay_module_css_default.modeSwitch,
+								role: "tablist",
+								"aria-label": t("panel.title"),
+								children: [(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									role: "tab",
+									"aria-selected": mode === "dag",
+									className: mode === "dag" ? WorkflowOverlay_module_css_default.modeActive : "",
+									onClick: () => {
+										setWorkflowState({ mode: "dag" });
+									},
+									children: t("editor.mode.dag")
+								}), (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									role: "tab",
+									"aria-selected": mode === "run",
+									className: mode === "run" ? WorkflowOverlay_module_css_default.modeActive : "",
+									onClick: () => {
+										setWorkflowState({ mode: "run" });
+									},
+									children: t("editor.mode.run")
+								})]
 							}),
-							(0, react_jsx_runtime.jsx)("span", { className: RunView_module_css_default.spacer }),
-							loadState.kind === "ready" && isRunningStatus(loadState.state.status) && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+							mode === "dag" && selectedDefinition?.id !== void 0 && (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Button, {
 								size: "sm",
-								variant: "ghost",
-								disabled: actionState.kind === "pending",
-								onClick: pauseAll,
-								children: t("run.pauseAll")
-							}),
-							loadState.kind === "ready" && loadState.state.status === "paused" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "ghost",
-								disabled: actionState.kind === "pending",
-								onClick: resumeAll,
-								children: t("run.resumeAll")
-							}),
-							loadState.kind === "ready" && !isTerminalStatus(loadState.state.status) && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "ghost",
-								icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconStopFill16, {}),
-								disabled: actionState.kind === "pending",
-								onClick: abort,
-								"aria-label": t("run.abort")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "ghost",
-								icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {}),
+								variant: "primary",
+								disabled: running,
 								onClick: () => {
-									refreshAndSchedule();
+									runTest();
 								},
-								"aria-label": t("run.refresh")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "outline",
-								onClick: openDiscussion,
-								children: t("run.discuss")
+								children: ["▶ ", t("editor.testRun")]
 							})
 						]
 					}),
-					loadState.kind === "loading" && (0, react_jsx_runtime.jsx)("p", {
-						className: RunView_module_css_default.loading,
-						children: t("run.loading")
-					}),
-					loadState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
-						className: RunView_module_css_default.error,
+					runError !== void 0 && (0, react_jsx_runtime.jsx)("p", {
+						className: WorkflowOverlay_module_css_default.runError,
 						role: "alert",
-						children: t("run.error", { message: loadState.message })
+						children: t("panel.error", { message: runError })
 					}),
-					actionState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
-						className: RunView_module_css_default.error,
-						role: "alert",
-						children: actionState.message
-					}),
-					loadState.kind === "ready" && (0, react_jsx_runtime.jsx)(RunBody, {
-						state: loadState.state,
-						artifacts: loadState.artifacts,
-						t,
-						pending: actionState.kind === "pending",
-						onPause: pauseStep,
-						onResume: resumeStep,
-						onRetry: beginRetry,
-						onReplyQuestion: replyQuestion,
-						onReplyPermission: replyPermission
-					}),
-					retryState.kind === "open" && (0, react_jsx_runtime.jsx)(RetryModal, {
-						t,
-						mode: retryState.mode,
-						message: retryState.message,
-						messageError: retryState.messageError,
-						pending: actionState.kind === "pending",
-						onClose: () => {
-							setRetryState({ kind: "closed" });
-						},
-						onChangeMode: (mode) => {
-							setRetryState((current) => current.kind === "open" ? {
-								...current,
-								mode
-							} : current);
-						},
-						onChangeMessage: (message) => {
-							setRetryState((current) => current.kind === "open" ? {
-								...current,
-								message,
-								messageError: false
-							} : current);
-						},
-						onSubmit: submitRetry
+					(0, react_jsx_runtime.jsx)("div", {
+						className: WorkflowOverlay_module_css_default.editorBody,
+						children: mode === "dag" ? selectedDefinition !== void 0 && definitionView === "detail" ? (0, react_jsx_runtime.jsx)(DefinitionDetail, {
+							t,
+							initialYaml: selectedDefinition.initialYaml,
+							initialId: selectedDefinition.id,
+							save: face.save,
+							onSaved: (yaml) => {
+								setWorkflowState({ selectedDefinition: {
+									id: selectedDefinition.id,
+									initialYaml: yaml
+								} });
+								onSaved(selectedDefinition.id ?? "");
+							},
+							onEnterEdit: () => {
+								setWorkflowState({ definitionView: "edit" });
+							}
+						}, selectedDefinition.id ?? "new") : (0, react_jsx_runtime.jsx)(DagEditor, {
+							t,
+							initialYaml: selectedDefinition?.initialYaml,
+							initialId: selectedDefinition?.id,
+							save: face.save,
+							onSaved
+						}, selectedDefinition?.id ?? "new") : selectedInstanceId === void 0 ? (0, react_jsx_runtime.jsx)("div", {
+							className: WorkflowOverlay_module_css_default.editorPlaceholder,
+							children: t("view.placeholder")
+						}) : (0, react_jsx_runtime.jsx)(RunView, {
+							t,
+							instanceId: selectedInstanceId,
+							remote: face.remote,
+							openSession: face.openSession
+						}, selectedInstanceId)
 					})
 				]
 			});
 		}
 		//#endregion
-		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowView.module.css.mjs
-		const css$1 = "/* WorkflowView 双栏工作区：左侧工作流列表侧边栏 + 右侧编辑区 + 底部 composer 预留条。 */\n\n.root {\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n}\n\n.workspace {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n}\n\n.sidebar {\n  flex: none;\n  width: 264px;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  border-right: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.sidebarHeader {\n  flex: none;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.sidebarTitleRow {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.sidebarTitle {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.sidebarToolbar {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.search {\n  flex: 1;\n  min-width: 0;\n}\n\n.search input {\n  width: 100%;\n}\n\n.sidebarBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 8px 12px 12px;\n  box-sizing: border-box;\n}\n\n.editor {\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  display: flex;\n  background: var(--dsw-alias-bg-base);\n}\n\n.placeholder {\n  flex: 1;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 24px;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n\n.loading {\n  margin: 0;\n  padding: 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.errorText {\n  margin: 0;\n  padding: 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n/* 底部预留条：data-conversation-composer-overlay 生效时 composer 悬浮于此，\n   避免遮挡工作区底部内容（高度对齐默认 composer 行高）。 */\n.composerReserve {\n  flex: none;\n  height: 132px;\n}\n";
-		const tagId$1 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowView.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$1) + "]") === null) {
-			const tag = document.createElement("style");
-			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
-			tag.dataset.pluginCss = tagId$1;
-			tag.textContent = css$1;
-			document.head.appendChild(tag);
-		}
-		var WorkflowView_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? prop : void 0 });
-		//#endregion
-		//#region lib/types/client/WorkflowView.js
+		//#region lib/types/client/WorkflowOverlay.js
 		/**
-		* WorkflowView：conversation.view「工作流」tab 主体 —— VSCode 式双栏工作区。
+		* WorkflowOverlay：shell.overlay 全局工作流 UI（root scope，不挂会话）。
 		*
-		* 左侧为工作流列表侧边栏（默认态实例列表 / 编排态定义列表，搜索 + toggle + 新增），
-		* 右侧为编辑区：选择实例渲染 RunView（执行详情），选择定义渲染 DagEditor（编排器），
-		* 未选择渲染占位提示。根节点带 `data-conversation-composer-overlay`（对齐
-		* ui-trajectory）：composer 悬浮于底部预留条之上，工作区占满主区其余高度。
-		* 选中态放在模块级 snapshot store（`createSnapshotStore`），跨会话/视图切换保留。
-		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowView
+		* 覆盖 conversation/details 列（sidebar 保持可见可点）：header（标题/刷新/关闭）+
+		* 双栏工作台（左 WorkflowList + 分隔条 + 右 EditorPane）。sidebar 实测宽经
+		* ResizeObserver 同步到 `--wf-left`，overlay 内容永远从 sidebar 右缘开始。
+		* 打开/关闭/选中态全部在 `workflow-store`。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowOverlay
 		*/
-		/**
-		* 模块级选中态：跨会话/视图切换保留（避免每次打开 tab 重置）。
-		* 自实现 getSnapshot/subscribe（DSH bundle 的 ModuleLoader 格式无法被 bundler
-		* 静态分析出 `createSnapshotStore` 具名导出，故不依赖 dsh-client-runtime）。
-		*/
-		let selection = null;
-		const selectionListeners = /* @__PURE__ */ new Set();
-		function getSelection() {
-			return selection;
-		}
-		function setSelection(next) {
-			selection = next;
-			for (const listener of selectionListeners) listener();
-		}
-		function subscribeSelection(listener) {
-			selectionListeners.add(listener);
-			return () => {
-				selectionListeners.delete(listener);
-			};
-		}
-		/** 定义加载壳：拉取 YAML 后渲染 DagEditor（id 变化时重拉并重挂载）。 */
-		function DefinitionLoader({ t, definitionId, getYaml, save, onSaved }) {
-			const [state, setState] = (0, react.useState)({ kind: "loading" });
-			(0, react.useEffect)(() => {
-				let alive = true;
-				setState({ kind: "loading" });
-				getYaml(definitionId).then((yaml) => {
-					if (alive) setState({
-						kind: "ready",
-						yaml
-					});
-				}).catch((error) => {
-					if (alive) setState({
-						kind: "error",
-						message: describeError$1(error)
-					});
-				});
-				return () => {
-					alive = false;
-				};
-			}, [definitionId, getYaml]);
-			if (state.kind === "loading") return (0, react_jsx_runtime.jsx)("p", {
-				className: WorkflowView_module_css_default.loading,
-				children: t("panel.loading")
-			});
-			if (state.kind === "error") return (0, react_jsx_runtime.jsx)("p", {
-				className: WorkflowView_module_css_default.errorText,
-				role: "alert",
-				children: t("view.editor.error", { message: state.message })
-			});
-			return (0, react_jsx_runtime.jsx)(DagEditor, {
-				t,
-				initialYaml: state.yaml,
-				initialId: definitionId,
-				save,
-				onSaved
-			}, definitionId);
-		}
-		/** 渲染 WorkflowView（双栏工作区）。 */
-		function WorkflowView({ useWorkspaces, listInstances, listDefinitions, deleteDefinition, getYaml, save, remote, openSession, t }) {
+		/** 渲染 shell.overlay 全局工作流 UI（关闭时渲染 null）。 */
+		function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions, listJobs, createJob, startInstance, deleteDefinition, getYaml, save, remote, openSession, t }) {
+			const open = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().open);
+			const listWidth = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().listWidth);
 			const workspaces = useWorkspaces((state) => state.items);
-			const selection = (0, react.useSyncExternalStore)(subscribeSelection, getSelection);
-			const [orchestrating, setOrchestrating] = (0, react.useState)(false);
-			const [query, setQuery] = (0, react.useState)("");
-			const [listKey, setListKey] = (0, react.useState)(0);
-			const refreshList = () => {
-				setListKey((key) => key + 1);
+			const [refreshKey, setRefreshKey] = (0, react.useState)(0);
+			const layerRef = (0, react.useRef)(null);
+			(0, react.useEffect)(() => {
+				const layer = layerRef.current;
+				if (layer === null) return;
+				let observed = null;
+				const measure = () => {
+					let el = document.querySelector("[data-slot=\"sidebar\"]");
+					let width = 0;
+					while (el !== null && width <= 0) {
+						width = el.getBoundingClientRect().width;
+						if (width <= 0) el = el.parentElement;
+					}
+					observed = el;
+					layer.style.setProperty("--wf-left", `${width > 0 ? width : 248}px`);
+				};
+				measure();
+				if (observed !== null) {
+					const observer = new ResizeObserver(measure);
+					observer.observe(observed);
+					return () => {
+						observer.disconnect();
+					};
+				}
+			}, [open]);
+			if (!open) return null;
+			const face = {
+				listInstances,
+				listDefinitions,
+				listJobs,
+				createJob,
+				startInstance,
+				deleteDefinition,
+				getYaml,
+				save,
+				remote,
+				openSession
 			};
-			const selectInstance = (instanceId) => {
-				setSelection({
-					kind: "instance",
-					id: instanceId
-				});
-				refreshList();
-			};
-			const selectDefinition = (definitionId, initialYaml) => {
-				setSelection({
-					kind: "definition",
-					id: definitionId,
-					initialYaml
-				});
-				refreshList();
-			};
-			const selectNewDefinition = () => {
-				setSelection({ kind: "definition" });
-				refreshList();
-			};
-			const renderEditor = () => {
-				if (selection === null) return (0, react_jsx_runtime.jsx)("div", {
-					className: WorkflowView_module_css_default.placeholder,
-					children: t("view.placeholder")
-				});
-				if (selection.kind === "instance") return (0, react_jsx_runtime.jsx)(RunView, {
-					t,
-					instanceId: selection.id,
-					openDiscussion: () => {
-						openSession(selection.id);
-					},
-					remote
-				}, selection.id);
-				if (selection.id !== void 0 && selection.initialYaml === void 0) return (0, react_jsx_runtime.jsx)(DefinitionLoader, {
-					t,
-					definitionId: selection.id,
-					getYaml,
-					save,
-					onSaved: refreshList
-				}, selection.id);
-				return (0, react_jsx_runtime.jsx)(DagEditor, {
-					t,
-					initialYaml: selection.initialYaml,
-					initialId: selection.id,
-					save,
-					onSaved: refreshList
-				}, selection.id ?? "new");
-			};
-			return (0, react_jsx_runtime.jsxs)("div", {
-				className: WorkflowView_module_css_default.root,
-				"data-sandore-view": true,
-				"data-conversation-composer-overlay": true,
-				children: [(0, react_jsx_runtime.jsxs)("div", {
-					className: WorkflowView_module_css_default.workspace,
-					children: [(0, react_jsx_runtime.jsxs)("aside", {
-						className: WorkflowView_module_css_default.sidebar,
-						"data-sandore-view-sidebar": true,
-						children: [(0, react_jsx_runtime.jsxs)("header", {
-							className: WorkflowView_module_css_default.sidebarHeader,
-							children: [(0, react_jsx_runtime.jsxs)("div", {
-								className: WorkflowView_module_css_default.sidebarTitleRow,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: WorkflowView_module_css_default.sidebarTitle,
-									children: t("panel.title")
-								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Pill, {
-									active: orchestrating,
-									onClick: () => {
-										setOrchestrating((value) => !value);
-									},
-									children: t("panel.orchestrate")
-								})]
-							}), (0, react_jsx_runtime.jsxs)("div", {
-								className: WorkflowView_module_css_default.sidebarToolbar,
-								children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-									className: WorkflowView_module_css_default.search ?? "",
-									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, {}),
-									value: query,
-									onChange: (event) => {
-										setQuery(event.target.value);
-									},
-									placeholder: t("panel.search"),
-									"aria-label": t("panel.search")
-								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-									size: "sm",
-									variant: "primary",
-									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
-									disabled: !orchestrating,
-									title: orchestrating ? void 0 : t("panel.add.instance.hint"),
-									onClick: selectNewDefinition,
-									children: orchestrating ? t("panel.add.definition") : t("panel.add.instance")
-								})]
-							})]
-						}), (0, react_jsx_runtime.jsx)("div", {
-							className: WorkflowView_module_css_default.sidebarBody,
-							"data-sandore-view-list": true,
-							children: orchestrating ? (0, react_jsx_runtime.jsx)(DefinitionList, {
-								t,
-								query,
-								listDefinitions,
-								deleteDefinition,
-								onOpen: selectDefinition
-							}, `def-${listKey}`) : (0, react_jsx_runtime.jsx)(InstanceList, {
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: WorkflowOverlay_module_css_default.layer,
+				ref: layerRef,
+				"data-sandore-overlay-layer": true,
+				children: (0, react_jsx_runtime.jsxs)("div", {
+					className: WorkflowOverlay_module_css_default.overlay,
+					"data-sandore-overlay": true,
+					children: [(0, react_jsx_runtime.jsxs)("header", {
+						className: WorkflowOverlay_module_css_default.header,
+						children: [
+							(0, react_jsx_runtime.jsxs)("span", {
+								className: WorkflowOverlay_module_css_default.headerTitle,
+								children: ["🔀 ", t("panel.title")]
+							}),
+							(0, react_jsx_runtime.jsx)("span", { className: WorkflowOverlay_module_css_default.spacer }),
+							(0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: WorkflowOverlay_module_css_default.iconBtn,
+								"aria-label": t("overlay.refresh"),
+								title: t("overlay.refresh"),
+								onClick: () => {
+									setRefreshKey((key) => key + 1);
+								},
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {})
+							}),
+							(0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: WorkflowOverlay_module_css_default.iconBtn,
+								"aria-label": t("overlay.close"),
+								title: t("overlay.close"),
+								"data-sandore-overlay-close": true,
+								onClick: closeWorkflowOverlay,
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCloseOutline16, {})
+							})
+						]
+					}), (0, react_jsx_runtime.jsxs)("div", {
+						className: WorkflowOverlay_module_css_default.body,
+						children: [
+							(0, react_jsx_runtime.jsx)(WorkflowList, {
 								t,
 								workspaces,
-								query,
-								listInstances,
-								onOpen: selectInstance
-							}, `inst-${listKey}`)
-						})]
-					}), (0, react_jsx_runtime.jsx)("main", {
-						className: WorkflowView_module_css_default.editor,
-						"data-sandore-view-editor": true,
-						children: renderEditor()
+								face,
+								refreshKey,
+								width: listWidth
+							}),
+							(0, react_jsx_runtime.jsx)(DragHandle, {
+								side: "list",
+								className: WorkflowOverlay_module_css_default.dragHandle,
+								onDrag: resizeListWidth
+							}),
+							(0, react_jsx_runtime.jsx)(EditorPane, {
+								t,
+								face,
+								onSaved: () => {
+									setRefreshKey((key) => key + 1);
+								}
+							})
+						]
 					})]
-				}), (0, react_jsx_runtime.jsx)("div", {
-					className: WorkflowView_module_css_default.composerReserve,
-					"aria-hidden": true
-				})]
+				})
 			});
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\DagStepNodeView.module.css.mjs
-		const css = "/* DagStepNodeView：sandore-step 讨论节点（状态徽章 + 名称 + 循环标签 + 内联结果/错误/暂停 + 重试控件）。 */\n\n.root {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  width: 100%;\n  min-width: 0;\n  padding: 6px 0;\n}\n\n.header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-width: 0;\n  min-height: 24px;\n}\n\n.name {\n  overflow: hidden;\n  flex: none;\n  max-width: 60%;\n  border: 0;\n  padding: 0;\n  background: transparent;\n  color: var(--dsw-alias-state-business-primary);\n  font: inherit;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  text-align: left;\n  text-decoration: underline;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.name:focus-visible {\n  outline: 2px solid var(--dsw-alias-state-business-primary);\n  outline-offset: 1px;\n  border-radius: 4px;\n}\n\n.loopLabel {\n  flex: none;\n  font-family: var(--dsh-font-mono, monospace);\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.status {\n  overflow: hidden;\n  flex: 1;\n  min-width: 0;\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-align: right;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.output {\n  padding: 4px 0 0 22px;\n}\n\n.error {\n  margin: 0;\n  padding: 6px 8px;\n  border: 1px solid var(--dsw-alias-state-error-secondary);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-base);\n  font-family: var(--dsh-font-mono, monospace);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.paused {\n  margin: 0;\n  padding: 6px 8px;\n  border: 1px solid var(--dsw-alias-state-warn-primary);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-warn-primary);\n}\n\n.actions {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding-left: 22px;\n}\n\n.retryForm {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.retryModes {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px;\n}\n\n.retryError {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n.retryActions {\n  display: flex;\n  align-items: center;\n  justify-content: flex-end;\n  gap: 8px;\n}\n";
+		const css = "/* DagStepNodeView：sandore-step 讨论节点（状态徽章 + 名称 + 循环标签 + 内联结果/错误/暂停 + 重试控件）。 */\n\n.s1gwh5_root {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  width: 100%;\n  min-width: 0;\n  padding: 6px 0;\n}\n\n.s1gwh5_header {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-width: 0;\n  min-height: 24px;\n}\n\n.s1gwh5_name {\n  overflow: hidden;\n  flex: none;\n  max-width: 60%;\n  border: 0;\n  padding: 0;\n  background: transparent;\n  color: var(--dsw-alias-state-business-primary);\n  font: inherit;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  text-align: left;\n  text-decoration: underline;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  cursor: pointer;\n}\n\n.s1gwh5_name:focus-visible {\n  outline: 2px solid var(--dsw-alias-state-business-primary);\n  outline-offset: 1px;\n  border-radius: 4px;\n}\n\n.s1gwh5_loopLabel {\n  flex: none;\n  font-family: var(--dsh-font-mono, monospace);\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1gwh5_status {\n  overflow: hidden;\n  flex: 1;\n  min-width: 0;\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-align: right;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1gwh5_output {\n  padding: 4px 0 0 22px;\n}\n\n.s1gwh5_error {\n  margin: 0;\n  padding: 6px 8px;\n  border: 1px solid var(--dsw-alias-state-error-secondary);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-base);\n  font-family: var(--dsh-font-mono, monospace);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1gwh5_paused {\n  margin: 0;\n  padding: 6px 8px;\n  border: 1px solid var(--dsw-alias-state-warn-primary);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-warn-primary);\n}\n\n.s1gwh5_actions {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding-left: 22px;\n}\n\n.s1gwh5_retryForm {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1gwh5_retryModes {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px;\n}\n\n.s1gwh5_retryError {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n.s1gwh5_retryActions {\n  display: flex;\n  align-items: center;\n  justify-content: flex-end;\n  gap: 8px;\n}\n";
 		const tagId = "@deepseek-ai/dsh-client-ui-sandore/DagStepNodeView.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -14973,7 +31030,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			tag.textContent = css;
 			document.head.appendChild(tag);
 		}
-		var DagStepNodeView_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? prop : void 0 });
+		var DagStepNodeView_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1gwh5_" + prop : void 0 });
 		//#endregion
 		//#region lib/types/client/DagStepNodeView.js
 		/**
@@ -15237,7 +31294,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		};
 		//#endregion
 		//#region lib/types/client/index.js
-		/** sandore Client UI 入口：挂载 sandore Remote 命名空间、注册 sidebar 工作流入口与「工作流」视图 tab。 */
+		/** sandore Client UI 入口：挂载 sandore Remote 命名空间、注册 sidebar 工作流入口与 shell.overlay 全局工作流 UI。 */
 		/** Client 插件依赖的 cordis 服务键。 */
 		const inject = [
 			"conversationEvents",
@@ -15247,60 +31304,34 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"sessions",
 			"workspaces"
 		];
-		/**
-		* 等待会话 header 渲染出目标 tab 后点击。DSH 未向插件暴露外部 setView API
-		* （chat store 的 `actions.setView` 只在 ui-conversation 内部可达），对 tab
-		* 按钮的 DOM 点击是等价于用户点击的用户级交互，走真实 store 更新路径。
-		* @param label - tab 的本地化标签文本。
-		*/
-		async function activateViewTab(label) {
-			for (let attempt = 0; attempt < 50; attempt += 1) {
-				const target = Array.from(document.querySelectorAll("[role=\"tab\"]")).find((tab) => tab.textContent?.trim() === label);
-				if (target !== void 0) {
-					target.click();
-					return;
-				}
-				await new Promise((resolve) => setTimeout(resolve, 100));
-			}
-		}
-		/** 挂载 sandore 远程命名空间、注册 locale 字典与工作流入口/视图。 */
+		/** 挂载 sandore 远程命名空间、注册 locale 字典与工作流入口/overlay。 */
 		async function apply(ctx) {
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
 				en
 			}), "ui-sandore: dictionaries");
-			const t = ctx.locale.bind(NS);
 			const disposeRemote = await ctx.remote.$mount(TYPERT_REMOTE);
 			ctx.effect(() => disposeRemote, "ui-sandore: remote");
 			ctx.conversationEvents.register(sandoreStepDefinition);
+			ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
+				name: "sidebar.footer.action",
+				id: "sandore-btn",
+				locale: NS,
+				inject: () => ({ onOpenWorkflow: openWorkflowOverlay })
+			}, WorkflowButton));
 			await ctx.inject(["remote.sandore"], (remoteCtx) => {
 				const sandore = remoteCtx.remote.sandore;
-				const onOpenWorkflow = async () => {
-					if (remoteCtx.sessions.list.getSnapshot().current === void 0) {
-						const ws = remoteCtx.workspaces.list.getSnapshot();
-						const target = ws.recentWorkspaceId ?? ws.items[0]?.workspaceId;
-						if (target !== void 0) {
-							const id = await remoteCtx.workspaces.connectWorkspace(target);
-							remoteCtx.sessions.open(id);
-						} else remoteCtx.workspaces.startSession();
-					}
-					await activateViewTab(t("view.workflow"));
-				};
-				remoteCtx.slots.inject("sidebar.footer.action", () => remoteCtx.slots.register({
-					name: "sidebar.footer.action",
-					id: "sandore-btn",
+				remoteCtx.slots.inject("shell.overlay", () => remoteCtx.slots.register({
+					name: "shell.overlay",
+					id: "sandore-overlay",
+					order: 0,
 					locale: NS,
-					inject: () => ({ onOpenWorkflow })
-				}, WorkflowButton));
-				remoteCtx.slots.inject("conversation.view", () => remoteCtx.slots.register({
-					name: "conversation.view",
-					id: "workflow",
-					order: 20,
-					locale: NS,
-					label: () => t("view.workflow"),
 					inject: () => ({
 						listInstances: async () => unwrap(await sandore.listInstances()),
 						listDefinitions: async () => unwrap(await sandore.listDefinitions()),
+						listJobs: async (workflowId) => unwrap(await sandore.listJobs(workflowId)),
+						createJob: async (input) => unwrap(await sandore.createJob(input)),
+						startInstance: async (input) => unwrap(await sandore.startInstance(input)),
 						deleteDefinition: async (id) => unwrap(await sandore.deleteDefinition(id)),
 						getYaml: async (id) => unwrap(await sandore.getYaml(id)),
 						save: createSandoreSave(sandore),
@@ -15309,7 +31340,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							remoteCtx.sessions.open(id);
 						}
 					})
-				}, WorkflowView));
+				}, WorkflowOverlay));
 				remoteCtx.slots.inject("conversation.chat.node", () => remoteCtx.slots.register({
 					name: "conversation.chat.node",
 					key: "sandore-step",

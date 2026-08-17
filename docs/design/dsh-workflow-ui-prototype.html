@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DSH workflow-run UI — 对话流里的嵌套折叠卡片</title>
+    <style>
+        :root {
+            --dsw-alias-bg-base: #ffffff;
+            --dsw-alias-bg-elevated: #fafafa;
+            --dsw-alias-bg-sunken: #f4f4f5;
+            --dsw-alias-bg-hover: #f4f4f5;
+            --dsw-alias-bg-active: #ececee;
+            --dsw-alias-border-l1: #e4e4e7;
+            --dsw-alias-border-l2: #ececef;
+            --dsw-alias-label-primary: #18181b;
+            --dsw-alias-label-secondary: #52525b;
+            --dsw-alias-label-caption: #a1a1aa;
+            --dsw-alias-label-disabled: #d4d4d8;
+            --dsw-alias-accent-primary: #4a7eff;
+            --dsw-alias-accent-bg: rgba(74, 126, 255, 0.08);
+            --dsw-alias-state-success: #22c55e;
+            --dsw-alias-state-success-bg: rgba(34, 197, 94, 0.10);
+            --dsw-alias-state-error: #ef4444;
+            --dsw-alias-state-error-bg: rgba(239, 68, 68, 0.10);
+            --dsw-alias-state-warning: #f59e0b;
+            --dsw-alias-state-warning-bg: rgba(245, 158, 11, 0.10);
+            --dsw-alias-state-info: #3b82f6;
+            --dsw-alias-state-info-bg: rgba(59, 130, 246, 0.10);
+            --dsw-radius-sm: 6px;
+            --dsw-radius-md: 8px;
+            --dsw-radius-lg: 12px;
+            --dsw-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+            --dsw-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+            --dsw-font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+            --sidebar-w: 248px;
+        }
+
+        [data-theme="dark"] {
+            --dsw-alias-bg-base: #09090b;
+            --dsw-alias-bg-elevated: #18181b;
+            --dsw-alias-bg-sunken: #131316;
+            --dsw-alias-bg-hover: #27272a;
+            --dsw-alias-bg-active: #2a2a2e;
+            --dsw-alias-border-l1: #27272a;
+            --dsw-alias-border-l2: #1f1f23;
+            --dsw-alias-label-primary: #fafafa;
+            --dsw-alias-label-secondary: #a1a1aa;
+            --dsw-alias-label-caption: #71717a;
+            --dsw-alias-label-disabled: #3f3f46;
+            --dsw-alias-accent-primary: #6090ff;
+            --dsw-alias-accent-bg: rgba(96, 144, 255, 0.10);
+            --dsw-alias-state-success-bg: rgba(34, 197, 94, 0.14);
+            --dsw-alias-state-error-bg: rgba(239, 68, 68, 0.14);
+            --dsw-alias-state-warning-bg: rgba(245, 158, 11, 0.14);
+            --dsw-alias-state-info-bg: rgba(59, 130, 246, 0.14);
+            --dsw-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+            --dsw-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 13px;
+            line-height: 1.5;
+            background: var(--dsw-alias-bg-base);
+            color: var(--dsw-alias-label-primary);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        button {
+            font-family: inherit;
+            cursor: pointer;
+            border: none;
+            background: none;
+            color: inherit;
+        }
+
+        /* AppFrame 三栏 */
+        .app-frame {
+            display: grid;
+            grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+            height: 100vh;
+        }
+
+        /* 左栏 sidebar */
+        .sidebar-col {
+            display: flex;
+            flex-direction: column;
+            background: var(--dsw-alias-bg-elevated);
+            border-right: 1px solid var(--dsw-alias-border-l1);
+            overflow: hidden;
+        }
+
+        .sidebar-header {
+            flex: none;
+            padding: 12px 12px 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-logo {
+            width: 22px;
+            height: 22px;
+            border-radius: var(--dsw-radius-sm);
+            background: linear-gradient(135deg, #4a7eff, #7c3aed);
+            flex: none;
+        }
+
+        .sidebar-logo-text {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--dsw-alias-label-secondary);
+        }
+
+        .sidebar-search {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 8px;
+            border-radius: var(--dsw-radius-sm);
+            background: var(--dsw-alias-bg-sunken);
+        }
+
+        .sidebar-search input {
+            flex: 1;
+            min-width: 0;
+            border: none;
+            background: none;
+            outline: none;
+            font-size: 12px;
+            color: var(--dsw-alias-label-primary);
+        }
+
+        .sidebar-search .icon {
+            color: var(--dsw-alias-label-caption);
+            font-size: 13px;
+        }
+
+        .sidebar-body {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 4px 6px;
+        }
+
+        .ws-group-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--dsw-alias-label-caption);
+            padding: 8px 8px 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .ws-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: var(--dsw-radius-sm);
+            cursor: pointer;
+            font-size: 12px;
+            color: var(--dsw-alias-label-secondary);
+        }
+
+        .ws-item:hover {
+            background: var(--dsw-alias-bg-hover);
+        }
+
+        .ws-item.active {
+            background: var(--dsw-alias-accent-bg);
+            color: var(--dsw-alias-accent-primary);
+        }
+
+        .ws-item .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--dsw-alias-label-disabled);
+            flex: none;
+        }
+
+        .ws-item.active .dot {
+            background: var(--dsw-alias-accent-primary);
+        }
+
+        .ws-item .name {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .sidebar-footer {
+            flex: none;
+            border-top: 1px solid var(--dsw-alias-border-l2);
+            padding: 6px 6px 8px;
+        }
+
+        .footer-settings {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 10px;
+            border-radius: var(--dsw-radius-sm);
+            font-size: 12px;
+            color: var(--dsw-alias-label-secondary);
+        }
+
+        .footer-settings:hover {
+            background: var(--dsw-alias-bg-hover);
+        }
+
+        /* 中栏 conversation */
+        .conversation-col {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: var(--dsw-alias-bg-base);
+        }
+
+        .conv-header {
+            flex: none;
+            border-bottom: 1px solid var(--dsw-alias-border-l1);
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .conv-header .crumb {
+            font-size: 12px;
+            color: var(--dsw-alias-label-caption);
+        }
+
+        .conv-header .crumb-current {
+            color: var(--dsw-alias-label-secondary);
+            font-weight: 500;
+        }
+
+        .conv-header .spacer {
+            flex: 1;
+        }
+
+        .conv-header .tab {
+            font-size: 12px;
+            color: var(--dsw-alias-label-caption);
+            padding: 4px 10px;
+            border-radius: var(--dsw-radius-sm);
+            border-bottom: 2px solid transparent;
+        }
+
+        .conv-header .tab.active {
+            color: var(--dsw-alias-accent-primary);
+            border-bottom-color: var(--dsw-alias-accent-primary);
+            font-weight: 500;
+        }
+
+        /* 对话流 */
+        .chat-messages {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .chat-msg {
+            display: flex;
+            gap: 10px;
+            max-width: 85%;
+        }
+
+        .chat-msg.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .chat-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: var(--dsw-radius-sm);
+            flex: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .chat-avatar.ai {
+            background: var(--dsw-alias-accent-bg);
+            color: var(--dsw-alias-accent-primary);
+        }
+
+        .chat-avatar.user {
+            background: var(--dsw-alias-state-success-bg);
+            color: var(--dsw-alias-state-success);
+        }
+
+        .chat-bubble {
+            padding: 8px 12px;
+            border-radius: var(--dsw-radius-md);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .chat-msg.ai .chat-bubble {
+            background: var(--dsw-alias-bg-sunken);
+            color: var(--dsw-alias-label-primary);
+        }
+
+        .chat-msg.user .chat-bubble {
+            background: var(--dsw-alias-accent-primary);
+            color: #fff;
+        }
+
+        .chat-bubble code {
+            font-family: var(--dsw-font-mono);
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.06);
+            padding: 1px 4px;
+            border-radius: 3px;
+        }
+
+        .chat-msg.user .chat-bubble code {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* 工具调用卡片 */
+        .tool-call {
+            align-self: flex-start;
+            max-width: 85%;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .tool-call-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: var(--dsw-radius-md);
+            background: var(--dsw-alias-bg-sunken);
+            border: 1px solid var(--dsw-alias-border-l2);
+            font-size: 12px;
+            color: var(--dsw-alias-label-secondary);
+        }
+
+        .tool-call-header .icon {
+            font-size: 13px;
+        }
+
+        .tool-call-header .name {
+            font-weight: 500;
+            color: var(--dsw-alias-label-primary);
+        }
+
+        .tool-call-header .status {
+            font-size: 11px;
+            color: var(--dsw-alias-label-caption);
+        }
+
+        .tool-call-header .spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid var(--dsw-alias-border-l1);
+            border-top-color: var(--dsw-alias-accent-primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* =========================================================================
+   workflow-run 卡片（conversation.chat.node，嵌在对话流里）
+   ========================================================================= */
+        .wf-run-card {
+            align-self: flex-start;
+            max-width: 85%;
+            border: 1px solid var(--dsw-alias-border-l1);
+            border-radius: var(--dsw-radius-md);
+            background: var(--dsw-alias-bg-elevated);
+            overflow: hidden;
+            box-shadow: var(--dsw-shadow-sm);
+        }
+
+        .wf-run-card[data-run-status="running"] {
+            border-color: var(--dsw-alias-state-info);
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+
+        /* Run header（第一级折叠）*/
+        .wf-run-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            user-select: none;
+            border-bottom: 1px solid var(--dsw-alias-border-l2);
+        }
+
+        .wf-run-header:hover {
+            background: var(--dsw-alias-bg-hover);
+        }
+
+        .wf-run-header .chev {
+            font-size: 10px;
+            color: var(--dsw-alias-label-caption);
+            transition: transform 0.15s;
+            flex: none;
+        }
+
+        .wf-run-card.collapsed .wf-run-header .chev {
+            transform: rotate(-90deg);
+        }
+
+        .wf-run-header .run-icon {
+            font-size: 14px;
+            flex: none;
+        }
+
+        .wf-run-header .run-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--dsw-alias-label-primary);
+        }
+
+        .wf-run-header .separator {
+            width: 1px;
+            height: 14px;
+            background: var(--dsw-alias-border-l1);
+        }
+
+        .wf-run-header .run-summary {
+            font-size: 11px;
+            color: var(--dsw-alias-label-caption);
+        }
+
+        .wf-run-header .status-tail {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: auto;
+        }
+
+        .wf-run-header .status-tail .state-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex: none;
+        }
+
+        .wf-run-header .status-tail .state-dot.ongoing {
+            background: var(--dsw-alias-state-info);
+            animation: pulse 1.5s infinite;
+        }
+
+        .wf-run-header .status-tail .state-dot.done {
+            background: var(--dsw-alias-state-success);
+        }
+
+        .wf-run-header .status-tail .state-dot.error {
+            background: var(--dsw-alias-state-error);
+        }
+
+        .wf-run-header .status-tail .state-dot.warning {
+            background: var(--dsw-alias-state-warning);
+        }
+
+        .wf-run-header .status-tail .status-text {
+            font-size: 11px;
+            color: var(--dsw-alias-label-secondary);
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        /* Run body（展开后的 phase 列表）*/
+        .wf-run-body {
+            padding: 4px 0;
+            display: none;
+        }
+
+        .wf-run-card:not(.collapsed) .wf-run-body {
+            display: block;
+        }
+
+        /* Phase（第二级折叠）*/
+        .wf-phase {}
+
+        .wf-phase-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px 6px 24px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .wf-phase-header:hover {
+            background: var(--dsw-alias-bg-hover);
+        }
+
+        .wf-phase-header .chev {
+            font-size: 10px;
+            color: var(--dsw-alias-label-caption);
+            transition: transform 0.15s;
+            flex: none;
+        }
+
+        .wf-phase.collapsed .wf-phase-header .chev {
+            transform: rotate(-90deg);
+        }
+
+        .wf-phase-header .phase-title {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--dsw-alias-label-primary);
+        }
+
+        .wf-phase-header .separator {
+            width: 1px;
+            height: 12px;
+            background: var(--dsw-alias-border-l1);
+        }
+
+        .wf-phase-header .phase-count {
+            font-size: 11px;
+            color: var(--dsw-alias-label-caption);
+        }
+
+        .wf-phase-header .phase-status {
+            font-size: 11px;
+            color: var(--dsw-alias-label-secondary);
+            margin-left: auto;
+        }
+
+        /* Member 行 */
+        .wf-phase-body {
+            padding: 2px 0 4px;
+            display: none;
+        }
+
+        .wf-phase:not(.collapsed) .wf-phase-body {
+            display: block;
+        }
+
+        .wf-member {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px 5px 40px;
+            font-size: 12px;
+            border: none;
+            width: 100%;
+            text-align: left;
+        }
+
+        .wf-member:not(.navigable) {
+            color: var(--dsw-alias-label-secondary);
+        }
+
+        .wf-member.navigable {
+            color: var(--dsw-alias-label-primary);
+            cursor: pointer;
+        }
+
+        .wf-member.navigable:hover {
+            background: var(--dsw-alias-accent-bg);
+        }
+
+        .wf-member .dot-slot {
+            width: 8px;
+            display: flex;
+            justify-content: center;
+            flex: none;
+        }
+
+        .wf-member .state-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .wf-member .state-dot.ongoing {
+            background: var(--dsw-alias-state-info);
+            animation: pulse 1.5s infinite;
+        }
+
+        .wf-member .state-dot.done {
+            background: var(--dsw-alias-state-success);
+        }
+
+        .wf-member .state-dot.error {
+            background: var(--dsw-alias-state-error);
+        }
+
+        .wf-member .state-dot.warning {
+            background: var(--dsw-alias-state-warning);
+        }
+
+        .wf-member .member-label {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .wf-member .member-status {
+            font-size: 11px;
+            color: var(--dsw-alias-label-caption);
+        }
+
+        .wf-member.navigable .member-label {
+            font-weight: 500;
+        }
+
+        .wf-member.navigable::after {
+            content: '↗';
+            font-size: 11px;
+            color: var(--dsw-alias-accent-primary);
+            opacity: 0;
+        }
+
+        .wf-member.navigable:hover::after {
+            opacity: 1;
+        }
+
+        /* composer */
+        .composer-bar {
+            flex: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border-top: 1px solid var(--dsw-alias-border-l1);
+            background: var(--dsw-alias-bg-elevated);
+        }
+
+        .composer-input {
+            flex: 1;
+            padding: 8px 12px;
+            border-radius: var(--dsw-radius-md);
+            background: var(--dsw-alias-bg-sunken);
+            border: 1px solid var(--dsw-alias-border-l1);
+            font-size: 12px;
+            color: var(--dsw-alias-label-caption);
+        }
+
+        /* 注解 */
+        .annotation {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 999;
+            max-width: 320px;
+            padding: 14px;
+            border-radius: var(--dsw-radius-lg);
+            background: var(--dsw-alias-bg-elevated);
+            box-shadow: var(--dsw-shadow-md);
+            border: 1px solid var(--dsw-alias-border-l1);
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--dsw-alias-label-secondary);
+        }
+
+        .annotation .ann-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--dsw-alias-label-primary);
+            margin-bottom: 6px;
+        }
+
+        .annotation .ann-code {
+            font-family: var(--dsw-font-mono);
+            font-size: 11px;
+            background: var(--dsw-alias-bg-sunken);
+            padding: 2px 5px;
+            border-radius: 3px;
+            color: var(--dsw-alias-accent-primary);
+        }
+
+        .annotation ul {
+            padding-left: 16px;
+            margin: 4px 0;
+        }
+
+        .annotation li {
+            margin-bottom: 2px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-frame">
+
+        <!-- 左栏 sidebar -->
+        <div class="sidebar-col">
+            <div class="sidebar-header">
+                <div class="sidebar-logo"></div>
+                <span class="sidebar-logo-text">DSH</span>
+                <div class="sidebar-search"><span class="icon">🔍</span><input placeholder="搜索…" /></div>
+            </div>
+            <div class="sidebar-body">
+                <div class="ws-group-label">工作区</div>
+                <div class="ws-item active"><span class="dot"></span><span class="name">my-project</span></div>
+                <div class="ws-group-label">今天</div>
+                <div class="ws-item"><span class="dot"></span><span class="name">代码审查</span></div>
+                <div class="ws-group-label">子代理会话</div>
+                <div class="ws-item"><span class="dot" style="background:var(--dsw-alias-state-info)"></span><span
+                        class="name">research-1 (运行中)</span></div>
+                <div class="ws-item"><span class="dot" style="background:var(--dsw-alias-state-info)"></span><span
+                        class="name">research-2 (运行中)</span></div>
+                <div class="ws-item"><span class="dot" style="background:var(--dsw-alias-state-success)"></span><span
+                        class="name">analyze (完成)</span></div>
+            </div>
+            <div class="sidebar-footer">
+                <button class="footer-settings">⚙️ 设置</button>
+            </div>
+        </div>
+
+        <!-- 中栏 conversation -->
+        <div class="conversation-col">
+            <div class="conv-header">
+                <span class="crumb">my-project</span><span style="color:var(--dsw-alias-label-disabled)">/</span>
+                <span class="crumb-current">代码审查</span>
+                <span class="spacer"></span>
+                <button class="tab active">对话</button>
+                <button class="tab">轨迹</button>
+            </div>
+
+            <div class="chat-messages" id="messages">
+
+                <!-- 用户消息 -->
+                <div class="chat-msg user">
+                    <div class="chat-avatar user">你</div>
+                    <div class="chat-bubble">帮我审查 src/ 下的代码，分 3 个阶段：研究依赖、分析质量、生成报告</div>
+                </div>
+                <!-- AI 消息 -->
+                <div class="chat-msg ai">
+                    <div class="chat-avatar ai">AI</div>
+                    <div class="chat-bubble">好的，我用 <code>workflow</code> 工具启动一个 3 阶段的工作流。每个阶段的子代理会并行运行，你可以在下面的卡片里看到实时进度。
+                    </div>
+                </div>
+
+                <!-- workflow 工具调用 -->
+                <div class="tool-call">
+                    <div class="tool-call-header">
+                        <span class="spinner"></span>
+                        <span class="icon">⚡</span>
+                        <span class="name">workflow</span>
+                        <span class="status">运行中…</span>
+                    </div>
+                </div>
+                <!-- ★ workflow-run 卡片（conversation.chat.node，嵌在对话流里）★ -->
+                <div class="wf-run-card" id="wfRunCard" data-run-status="running">
+                    <!-- Run header（第一级折叠）-->
+                    <div class="wf-run-header" onclick="toggleRun()">
+                        <span class="chev">▼</span>
+                        <span class="run-icon">🔀</span>
+                        <span class="run-title">code-review-workflow</span>
+                        <span class="separator"></span>
+                        <span class="run-summary">5 agents</span>
+                        <span class="status-tail">
+                            <span class="state-dot ongoing"></span>
+                            <span class="status-text">运行中</span>
+                        </span>
+                    </div>
+                    <!-- Run body -->
+                    <div class="wf-run-body">
+                        <!-- Phase 1（已完成，自动折叠）-->
+                        <div class="wf-phase collapsed" id="phase1">
+                            <div class="wf-phase-header" onclick="togglePhase('phase1')">
+                                <span class="chev">▼</span>
+                                <span class="phase-title">research</span>
+                                <span class="separator"></span>
+                                <span class="phase-count">2 agents</span>
+                                <span class="phase-status">✓ 2 完成</span>
+                            </div>
+                            <div class="wf-phase-body">
+                                <div class="wf-member">
+                                    <span class="dot-slot"><span class="state-dot done"></span></span>
+                                    <span class="member-label">research dependencies</span>
+                                    <span class="member-status">完成</span>
+                                </div>
+                                <div class="wf-member">
+                                    <span class="dot-slot"><span class="state-dot done"></span></span>
+                                    <span class="member-label">research patterns</span>
+                                    <span class="member-status">完成</span>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Phase 2（运行中，自动展开）-->
+                        <div class="wf-phase" id="phase2">
+                            <div class="wf-phase-header" onclick="togglePhase('phase2')">
+                                <span class="chev">▼</span>
+                                <span class="phase-title">analyze</span>
+                                <span class="separator"></span>
+                                <span class="phase-count">2 agents</span>
+                                <span class="phase-status">● 1 运行中 · ✓ 1 完成</span>
+                            </div>
+                            <div class="wf-phase-body">
+                                <div class="wf-member">
+                                    <span class="dot-slot"><span class="state-dot done"></span></span>
+                                    <span class="member-label">analyze quality</span>
+                                    <span class="member-status">完成</span>
+                                </div>
+                                <!-- 运行中的 member 是可点击的 button（跳子代理会话）-->
+                                <button class="wf-member navigable" onclick="alert('跳转到子代理会话: analyze-security')">
+                                    <span class="dot-slot"><span class="state-dot ongoing"></span></span>
+                                    <span class="member-label">analyze security</span>
+                                    <span class="member-status">运行中</span>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Phase 3（未开始，自动折叠）-->
+                        <div class="wf-phase collapsed" id="phase3">
+                            <div class="wf-phase-header" onclick="togglePhase('phase3')">
+                                <span class="chev">▼</span>
+                                <span class="phase-title">report</span>
+                                <span class="separator"></span>
+                                <span class="phase-count">1 agent</span>
+                                <span class="phase-status">等待中</span>
+                            </div>
+                            <div class="wf-phase-body">
+                                <div class="wf-member">
+                                    <span class="dot-slot"><span class="state-dot warning"></span></span>
+                                    <span class="member-label">generate report</span>
+                                    <span class="member-status">等待</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="composer-bar">
+                <div class="composer-input">输入消息…</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 注解 -->
+    <div class="annotation">
+        <div class="ann-title">DSH <span class="ann-code">workflow-run</span> UI</div>
+        <p>这是 DSH 自己的动态工作流 UI——它不是一个独立 tab 或浮层，而是<strong>对话流里的一个 chat node 卡片</strong>。</p>
+        <ul>
+            <li><strong>两级折叠</strong>：Run → Phase → Member，都是 <span class="ann-code">DisclosureRow</span></li>
+            <li><strong>状态驱动</strong>：有未完成 member 时自动展开</li>
+            <li><strong>Member 可导航</strong>：运行中的 member 可点击，跳转到子代理会话</li>
+            <li><strong>事件驱动</strong>：<span class="ann-code">tool-workflow/agent-start/end</span> 事件实时更新</li>
+            <li><strong>无 DAG 图</strong>、<strong>无讨论面板</strong>、<strong>无产物</strong>——只有名称 + 状态 + 成员数</li>
+        </ul>
+        <p style="margin-top:6px; color:var(--dsw-alias-label-caption)">因为 DSH 的 <span class="ann-code">workflow</span>
+            工具是<strong>前台同步</strong>的——AI 调工具，工具阻塞等待完成，结果回到对话流。</p>
+    </div>
+    <script>
+        function toggleRun() { document.getElementById('wfRunCard').classList.toggle('collapsed'); }
+        function togglePhase(id) { document.getElementById(id).classList.toggle('collapsed'); }
+    </script>
+</body>
+
+</html>

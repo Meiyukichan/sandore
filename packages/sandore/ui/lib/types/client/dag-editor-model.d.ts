@@ -6,7 +6,7 @@
  * 供组件初始化与 Step 字段编辑复用，避免在 JSX 中散落结构常量。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/dag-editor-model
  */
-import type { CommandConfig, DagBranch, InputFromItem, OutputToItem, PassThroughVar, WorkflowDefinition, WorkflowStage } from '@deepseek-ai/dsh-sandore-workflow/schema';
+import type { CommandConfig, DagBranch, InputFromItem, OutputToItem, PassThroughVar, WorkflowDefinition, WorkflowStage, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/schema';
 /** 五类型命令判别字段（对齐 `CommandConfig` discriminated union）。 */
 export type CommandType = CommandConfig['type'];
 /** 全部五类型命令判别字段（编辑表单下拉项）。 */
@@ -56,4 +56,72 @@ export declare const NEW_DEFINITION_ID = "wfl-new";
  * @returns 最小合法定义。
  */
 export declare function createBlankDefinition(id?: string): WorkflowDefinition;
+/** Stage 节点高度：随 Step 行数增长（封顶 6 行）。 */
+export declare function stageNodeHeight(stepCount: number): number;
+/** 单个 Step 的流出目标（branches[].next + branches[].loop.next，去空）。 */
+export declare function stepTargetsOf(step: WorkflowStep): string[];
+/** 流控边类型：串行 / 并行分支 / 条件分支 / 循环回边。 */
+export type FlowEdgeKind = 'serial' | 'parallel' | 'conditional' | 'loop';
+/** 流控边规格（供 DAG 画布渲染与 dagre 布局）。 */
+export interface FlowEdgeSpec {
+    readonly source: string;
+    readonly target: string;
+    readonly kind: FlowEdgeKind;
+    /** 边标签（条件分支 label / 循环标识）。 */
+    readonly label?: string | undefined;
+}
+/**
+ * 分支是否为条件分支：有 `condition`（布尔判定命令）才算。无 `condition` = 并行分支
+ * （始终纳入下一批）；有 `loop` 的分支是循环回边（其 `next` 指向更早节点）。
+ */
+export declare function isConditionalBranch(branch: DagBranch): boolean;
+/**
+ * 判断在 Stage 间新增连线 `source → target` 是否会形成回环（Stage DAG 不允许循环）。
+ * 从 target 出发沿既有出边（branches[].next + branches[].loop.next）做可达性搜索：
+ * 若可回到 source，则新增这条边会构成环。自环（source === target）也视为回环。
+ * @param stages - 当前 Stage 列表（不含待加边）。
+ * @param source - 连线起点。
+ * @param target - 连线终点。
+ * @returns 是否构成回环。
+ */
+export declare function wouldCreateStageCycle(stages: readonly WorkflowStage[], source: string, target: string): boolean;
+/**
+ * Stage 层流控边（branches 是唯一出边单元，**无循环**）：有 `condition` 的条件分支
+ * 琥珀虚线（带 label），无 `condition` 的并行分支默认灰实线。未声明流控的孤立 Stage
+ * 按定义顺序串行兜底（画布不画边，仅引擎推进）。
+ * @param stages - 定义内的 Stage 列表。
+ * @returns 去重后的流控边。
+ */
+export declare function stageFlowEdges(stages: readonly WorkflowStage[]): FlowEdgeSpec[];
+/**
+ * Step 层流控边（微流程：并行/条件 branches + **循环回边分支 loop**）。
+ * 条件分支（有 condition）琥珀虚线带 label；循环分支（有 loop）`loop.next` 红色虚线
+ * 回边；无 condition/loop 的并行分支默认灰实线。
+ * @param steps - 某 Stage 内的 Step 列表。
+ * @returns 去重后的流控边。
+ */
+export declare function stepFlowEdges(steps: readonly WorkflowStep[]): FlowEdgeSpec[];
+/** 参与 dagre 布局的节点尺寸。 */
+export interface DagreNodeSpec {
+    readonly id: string;
+    readonly width: number;
+    readonly height: number;
+}
+/** dagre 有向边。 */
+export interface DagreEdgeSpec {
+    readonly source: string;
+    readonly target: string;
+}
+/**
+ * 用 Dagre 计算分层布局（TB = 自上而下垂直流，官方 dagre 示例默认方向）。
+ * 返回节点 id → 左上角坐标（React Flow 的 position 语义，dagre 输出的是中心点，
+ * 需减半宽/高）。
+ * @param nodes - 参与布局的节点。
+ * @param edges - 有向边（自动去重）。
+ * @returns 节点 id → 左上角坐标。
+ */
+export declare function dagreLayout(nodes: readonly DagreNodeSpec[], edges: readonly DagreEdgeSpec[]): Record<string, {
+    x: number;
+    y: number;
+}>;
 //# sourceMappingURL=dag-editor-model.d.ts.map

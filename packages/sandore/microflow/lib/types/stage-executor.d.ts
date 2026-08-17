@@ -105,7 +105,7 @@ export declare class StageExecutor {
     private buildContext;
     /** 主调度循环：逐批推进，遇到 ask/failed 停止（状态保留在 runState 供续跑）。 */
     private runLoop;
-    /** 路由节点：resolveNextNodes 产出下一批，分支/循环跳出时回写评估现场条目。 */
+    /** 路由节点：resolveNextNodes 产出下一批，分支/循环评估现场回写路由条目。 */
     private processRoutingNode;
     /** 命令节点：run + finalize + resolveNextNodes；ask 中断 / 失败 / 暂停时返回对应标记。 */
     private processCommandNode;

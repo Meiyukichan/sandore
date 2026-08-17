@@ -110,4 +110,113 @@ export function isSubagentStep(step) {
     const command = step.sessionMeta?.command ?? step.command?.type;
     return command === 'agent' || command === 'skill' || command === 'mcp';
 }
+/**
+ * 把 `output: ContentBlock[]` 的 text 块拼接为纯文本（无 text 块返回 undefined）。
+ * @param output - Step 执行输出块（引擎在 step-completed 事件/快照中内联）。
+ * @returns 拼接文本或 undefined。
+ */
+export function outputTextOf(output) {
+    if (output === undefined || output.length === 0)
+        return undefined;
+    const parts = [];
+    for (const block of output) {
+        if (block.type === 'text' && block.text !== undefined)
+            parts.push(block.text);
+    }
+    return parts.length === 0 ? undefined : parts.join('\n');
+}
+/** 循环迭代路径 → 展示标签（`#1.2`），非循环返回 undefined。 */
+export function loopLabelOf(loopIteration) {
+    return loopIteration === undefined || loopIteration.length === 0
+        ? undefined
+        : `#${loopIteration.join('.')}`;
+}
+/**
+ * 从 `WorkflowTaskState` 构建树形导航数据：workflow → stage → step → result/artifact 叶子。
+ * result 叶子来自 step 输出文本；artifact 叶子来自 `stageContracts` 产物契约的 files。
+ * @param state - 实例状态快照。
+ * @returns 树形导航根节点列表（单个 workflow 根）。
+ */
+export function buildRunTree(state) {
+    // 叶子按「定义 stepId」分组（artifact.stepId 为定义 id；step 用 stepIdOf 对齐）。
+    const leavesByStepId = new Map();
+    for (const step of state.executedSteps) {
+        const output = outputTextOf(step.output);
+        if (output === undefined)
+            continue;
+        const key = stepIdOf(step);
+        const current = leavesByStepId.get(key) ?? [];
+        leavesByStepId.set(key, [...current, { id: `${step.id}:result`, name: '', type: 'result', stepId: key, text: output }]);
+    }
+    for (const contract of Object.values(state.stageContracts)) {
+        for (const artifact of contract.artifacts) {
+            for (const file of artifact.files) {
+                const current = leavesByStepId.get(artifact.stepId) ?? [];
+                leavesByStepId.set(artifact.stepId, [...current, {
+                        id: `${artifact.stepId}:file:${file}`,
+                        name: file,
+                        type: 'artifact',
+                        stepId: artifact.stepId,
+                        meta: artifact.outputToId,
+                        text: file,
+                    }]);
+            }
+        }
+    }
+    const stageNodes = state.stageInfos.map(stage => {
+        const steps = state.executedSteps.filter(step => step.stageId === stage.id);
+        return {
+            id: stage.id,
+            name: stage.name,
+            type: 'stage',
+            status: stage.status,
+            children: steps.map(step => {
+                const key = stepIdOf(step);
+                return {
+                    id: step.id,
+                    name: step.name,
+                    type: 'step',
+                    status: step.status,
+                    stepId: key,
+                    childId: step.sessionMeta?.childId,
+                    children: leavesByStepId.get(key),
+                };
+            }),
+        };
+    });
+    return [{
+            id: state.workflowId,
+            name: state.workflowId,
+            type: 'workflow',
+            status: state.status,
+            children: stageNodes,
+        }];
+}
+/**
+ * 从 `WorkflowTaskState` 构建统一时间线：初始输入 user 气泡 + 各 executedStep 卡片
+ * （按执行顺序）。running 卡无实时消息流（引擎不写 sessionMessages、无 step-message
+ * 事件），body 按状态展示输出文本 / 错误 / 运行中占位。
+ * @param state - 实例状态快照。
+ * @returns 时间线条目列表。
+ */
+export function buildTimeline(state) {
+    const items = [];
+    if (state.originalInput !== '') {
+        items.push({ kind: 'user', content: state.originalInput });
+    }
+    for (const step of state.executedSteps) {
+        items.push({
+            kind: 'step',
+            stepId: stepIdOf(step),
+            name: step.name,
+            status: step.status,
+            loopLabel: loopLabelOf(step.loopIteration),
+            outputText: outputTextOf(step.output),
+            error: step.error,
+            childId: step.sessionMeta?.childId,
+            visitCount: step.visitCount,
+        });
+    }
+    return items;
+}
 //# sourceMappingURL=run-view-model.js.map

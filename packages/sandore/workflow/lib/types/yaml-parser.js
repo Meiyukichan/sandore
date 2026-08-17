@@ -126,8 +126,7 @@ export function convertLegacyToV2(raw) {
 }
 /**
  * 校验节点 ID 引用完整性：
- * - `next`（含 `branches[].next`、`loop.next`、`loop.exitTo`）引用的节点 ID 均存在；
- * - `stage.next` 必须指向 Stage 节点（Step 节点会被 DAG 导航静默跳过）；
+ * - `branches[].next`、`branches[].loop.next`、`branches[].loop.exitTo` 引用的节点 ID 均存在；
  * - `inputFrom[].path` 的 `stageId[.stepId[.outputToId]]` 前两段（Stage/Step 节点 ID）存在。
  * 不满足时抛 `WorkflowYamlError('DEFINITION_INVALID')`。
  */
@@ -171,21 +170,16 @@ function validateReferences(definition) {
         }
     };
     const checkNode = (node, kind) => {
-        checkTarget(node.next, `${kind} '${node.id}'.next`);
         for (const branch of node.branches ?? []) {
             checkTarget(branch.next, `${kind} '${node.id}'.branches.next`);
-        }
-        if (node.loop !== undefined) {
-            checkTarget(node.loop.next, `${kind} '${node.id}'.loop.next`);
-            checkTarget(node.loop.exitTo, `${kind} '${node.id}'.loop.exitTo`);
+            if (branch.loop !== undefined) {
+                checkTarget(branch.loop.next, `${kind} '${node.id}'.branches.loop.next`);
+                checkTarget(branch.loop.exitTo, `${kind} '${node.id}'.branches.loop.exitTo`);
+            }
         }
     };
     for (const stage of definition.stages) {
         checkNode(stage, 'stage');
-        // `stage.next` 只推进 Stage 级主循环，指向 Step 会导致后续 Stage 被静默跳过。
-        if (stage.next !== undefined && !stageIds.has(stage.next)) {
-            throw new WorkflowYamlError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, 'DEFINITION_INVALID');
-        }
         for (const step of stage.steps)
             checkNode(step, 'step');
     }

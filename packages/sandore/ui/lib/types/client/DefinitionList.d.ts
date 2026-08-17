@@ -6,6 +6,8 @@ export interface DefinitionListProps {
     t: TranslateNS<'sandore'>;
     /** 客户端过滤关键词（匹配 name / id）。 */
     query: string;
+    /** 当前选中定义 id（高亮行；缺省不高亮）。 */
+    activeId?: string | undefined;
     /** 拉取定义列表（RPC 已解包）。 */
     listDefinitions(): Promise<WorkflowDefinitionEntry[]>;
     /** 删除定义（RPC 已解包）。 */
@@ -14,5 +16,5 @@ export interface DefinitionListProps {
     onOpen(definitionId: string, initialYaml: string): void;
 }
 /** 渲染 DefinitionList。 */
-export declare function DefinitionList({ t, query, listDefinitions, deleteDefinition, onOpen }: DefinitionListProps): import("react").JSX.Element;
+export declare function DefinitionList({ t, query, activeId, listDefinitions, deleteDefinition, onOpen }: DefinitionListProps): import("react").JSX.Element;
 //# sourceMappingURL=DefinitionList.d.ts.map

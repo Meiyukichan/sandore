@@ -91,4 +91,72 @@ export declare function stepIdOf(step: {
  * @returns 子代理 Step（可暂停/恢复/重试）为 true。
  */
 export declare function isSubagentStep(step: ExecutedStep): boolean;
+/** 树形导航节点类型。 */
+export type RunTreeNodeType = 'workflow' | 'stage' | 'step' | 'result' | 'artifact';
+/** 树形导航节点。 */
+export interface RunTreeNode {
+    readonly id: string;
+    readonly name: string;
+    readonly type: RunTreeNodeType;
+    /** 节点状态（workflow 为实例生命周期态；stage/step 为 Step 态；叶子无）。 */
+    readonly status?: StepStatus | DagRunStatus | undefined;
+    /** 归属 Step 的稳定标识（stepIdOf；供预览/操作反查）。 */
+    readonly stepId?: string | undefined;
+    /** 子代理会话 id（sessionMeta.childId，供「跳子会话」）。 */
+    readonly childId?: string | undefined;
+    /** 副信息（artifact 的 outputToId / 文件路径）。 */
+    readonly meta?: string | undefined;
+    /** 预览正文（result 的输出文本 / artifact 的文件路径）。 */
+    readonly text?: string | undefined;
+    readonly children?: readonly RunTreeNode[] | undefined;
+}
+/** 统一时间线的 Step 卡片项。 */
+export interface TimelineStepItem {
+    readonly kind: 'step';
+    readonly stepId: string;
+    readonly name: string;
+    readonly status: StepStatus;
+    /** 循环迭代标签（如 `#1.2`）。 */
+    readonly loopLabel?: string | undefined;
+    /** completed 态输出文本（text 块拼接）。 */
+    readonly outputText?: string | undefined;
+    /** failed 态错误详情。 */
+    readonly error?: string | undefined;
+    /** 子代理会话 id（跳「查看详情」）。 */
+    readonly childId?: string | undefined;
+    readonly visitCount: number;
+}
+/** 统一时间线的用户气泡项。 */
+export interface TimelineUserItem {
+    readonly kind: 'user';
+    readonly content: string;
+}
+/** 统一时间线条目（Step 卡片 / 用户气泡，按时间顺序）。 */
+export type TimelineItem = TimelineStepItem | TimelineUserItem;
+/**
+ * 把 `output: ContentBlock[]` 的 text 块拼接为纯文本（无 text 块返回 undefined）。
+ * @param output - Step 执行输出块（引擎在 step-completed 事件/快照中内联）。
+ * @returns 拼接文本或 undefined。
+ */
+export declare function outputTextOf(output: readonly {
+    readonly type: string;
+    readonly text?: string;
+}[] | undefined): string | undefined;
+/** 循环迭代路径 → 展示标签（`#1.2`），非循环返回 undefined。 */
+export declare function loopLabelOf(loopIteration: readonly number[] | undefined): string | undefined;
+/**
+ * 从 `WorkflowTaskState` 构建树形导航数据：workflow → stage → step → result/artifact 叶子。
+ * result 叶子来自 step 输出文本；artifact 叶子来自 `stageContracts` 产物契约的 files。
+ * @param state - 实例状态快照。
+ * @returns 树形导航根节点列表（单个 workflow 根）。
+ */
+export declare function buildRunTree(state: WorkflowTaskState): RunTreeNode[];
+/**
+ * 从 `WorkflowTaskState` 构建统一时间线：初始输入 user 气泡 + 各 executedStep 卡片
+ * （按执行顺序）。running 卡无实时消息流（引擎不写 sessionMessages、无 step-message
+ * 事件），body 按状态展示输出文本 / 错误 / 运行中占位。
+ * @param state - 实例状态快照。
+ * @returns 时间线条目列表。
+ */
+export declare function buildTimeline(state: WorkflowTaskState): TimelineItem[];
 //# sourceMappingURL=run-view-model.d.ts.map

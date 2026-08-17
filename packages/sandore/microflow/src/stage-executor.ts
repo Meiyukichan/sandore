@@ -377,7 +377,7 @@ export class StageExecutor {
           // 跨阶段或 Stage 级目标：由引擎 tryAdvanceStage 承接。
           continue;
         }
-        const isRoutingNode = step.command === undefined && (step.loop !== undefined || step.branches !== undefined);
+        const isRoutingNode = step.command === undefined && step.branches !== undefined;
         if (isRoutingNode) {
           await this.processRoutingNode(nodeId, step, state);
           continue;
@@ -393,13 +393,17 @@ export class StageExecutor {
     }
   }
 
-  /** 路由节点：resolveNextNodes 产出下一批，分支/循环跳出时回写评估现场条目。 */
+  /** 路由节点：resolveNextNodes 产出下一批，分支/循环评估现场回写路由条目。 */
   private async processRoutingNode(nodeId: string, step: WorkflowStep, state: StageRunState): Promise<void> {
     const { stageDef, loopManager, resolveNextNodes, visitCounts } = this.options;
     const routed = await resolveNextNodes(nodeId, this.buildContext(state));
-    // 分支决策点产出路由条目（记录 branchMeta）；循环控制点仅在 breakCondition
-    // 评估跳出时回写 loopMeta 路由条目（循环体步骤记录迭代与 loopIteration）。
-    if (step.branches !== undefined) {
+    // 纯循环控制节点（无 command 且仅 loop 分支）平时不产生路由条目，仅在 breakCondition
+    // 评估跳出（loopMeta）时回写；带 condition/并行分支的决策节点始终记录 branchMeta。
+    const isLoopControl = step.command === undefined
+      && (step.branches ?? []).every(branch => branch.loop !== undefined);
+    const hasBranchMeta = routed.branchMeta !== undefined;
+    const hasLoopMeta = routed.loopMeta !== undefined;
+    if (!isLoopControl || hasBranchMeta || hasLoopMeta) {
       const inLoopRouting = loopManager.buildLoopIterationPath().length > 0;
       const routingChildId = inLoopRouting ? loopManager.getActualStepId(step.id) : synthesizeChildId(step.id);
       const routingEntry: ExecutedStepDefault = {
@@ -411,24 +415,10 @@ export class StageExecutor {
         status: 'completed',
         visitCount: (visitCounts[nodeId] ?? 0) + 1,
         ...(inLoopRouting ? { loopIteration: loopManager.buildLoopIterationPath() } : {}),
-        ...(routed.branchMeta === undefined ? {} : { branchMeta: routed.branchMeta }),
+        ...(hasBranchMeta ? { branchMeta: routed.branchMeta } : {}),
+        ...(hasLoopMeta ? { loopMeta: routed.loopMeta } : {}),
       };
       visitCounts[nodeId] = routingEntry.visitCount;
-      state.executedSteps.push(routingEntry);
-      await this.options.onPersist?.(routingEntry);
-    } else if (step.loop !== undefined && routed.loopMeta !== undefined) {
-      // 纯路由循环节点在 breakCondition 跳出时回写 loopMeta（checkLoopBreak 两阶段
-      // 产出的 evaluating → completed 评估现场），持久化到 executedSteps。
-      const routingEntry: ExecutedStepDefault = {
-        type: 'default',
-        id: synthesizeChildId(step.id),
-        stepId: step.id,
-        stageId: stageDef.id,
-        name: step.name ?? step.id,
-        status: 'completed',
-        visitCount: visitCounts[nodeId] ?? 0,
-        loopMeta: routed.loopMeta,
-      };
       state.executedSteps.push(routingEntry);
       await this.options.onPersist?.(routingEntry);
     }

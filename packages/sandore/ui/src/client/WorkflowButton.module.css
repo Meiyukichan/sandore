@@ -37,6 +37,13 @@
   background: var(--dsw-alias-interactive-bg-hover-solid);
 }
 
+/* overlay 打开时按钮高亮（accent 底）。 */
+.badgeActive,
+.badgeActive:hover {
+  background: var(--dsw-alias-accent-bg);
+  color: var(--dsw-alias-accent-primary);
+}
+
 .badgeLabel {
   min-width: 0;
   overflow: hidden;

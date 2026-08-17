@@ -109,16 +109,15 @@ function buildBranchPrompt(taskText: string, contextMessage: string, branches: r
   sections.push('');
   sections.push('## 候选分支');
   if (branches.length === 0) {
-    sections.push('（无显式分支，请依据任务判断返回 expectation）');
+    sections.push('（无显式分支，请依据任务判断返回 shouldExecute）');
   }
   for (const branch of branches) {
     const label = branch.label ?? branch.next;
-    const expectation = branch.expectation ?? '(并行分支，无 expectation)';
-    sections.push(`- ${label}: expectation=${expectation}`);
+    sections.push(`- ${label}`);
   }
   sections.push('');
   sections.push('## 返回格式');
-  sections.push('请仅返回 JSON，格式为：{"branchExpectation": "..."}，其中 branchExpectation 为命中分支的 expectation 值。');
+  sections.push('请仅返回 JSON，格式为：{"shouldExecute": true} 或 {"shouldExecute": false}，其中 shouldExecute 表示是否执行当前候选分支。');
   sections.push('');
   sections.push('## 红线规则');
   for (const rule of BRANCH_RED_LINES) {

@@ -7,7 +7,7 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/dag-editor-model
  */
 import type {
-  CommandConfig, DagBranch, InputFromItem, OutputToItem, PassThroughVar, WorkflowDefinition, WorkflowStage,
+  CommandConfig, DagBranch, InputFromItem, OutputToItem, PassThroughVar, WorkflowDefinition, WorkflowStage, WorkflowStep,
 } from '@deepseek-ai/dsh-sandore-workflow/schema'
 
 /** 五类型命令判别字段（对齐 `CommandConfig` discriminated union）。 */
@@ -141,4 +141,196 @@ export function createBlankDefinition(id: string = NEW_DEFINITION_ID): WorkflowD
     settings: { defaultTimeout: 120, maxConcurrentAgents: 4 },
     stages: [{ id: 'stg-1', name: '阶段 1', steps: [] }],
   }
+}
+
+// ── DAG 画布（React Flow + Dagre 布局） ─────────────────────────────────────
+
+/** Stage 节点高度：随 Step 行数增长（封顶 6 行）。 */
+export function stageNodeHeight(stepCount: number): number {
+  return 48 + Math.min(stepCount, 6) * 20 + 12
+}
+
+/** 单个 Step 的流出目标（branches[].next + branches[].loop.next，去空）。 */
+export function stepTargetsOf(step: WorkflowStep): string[] {
+  const targets: string[] = []
+  for (const branch of step.branches ?? []) {
+    if (branch.next !== undefined && branch.next !== '') targets.push(branch.next)
+    if (branch.loop?.next !== undefined && branch.loop.next !== '') targets.push(branch.loop.next)
+  }
+  return targets
+}
+
+/** 流控边类型：串行 / 并行分支 / 条件分支 / 循环回边。 */
+export type FlowEdgeKind = 'serial' | 'parallel' | 'conditional' | 'loop'
+
+/** 流控边规格（供 DAG 画布渲染与 dagre 布局）。 */
+export interface FlowEdgeSpec {
+  readonly source: string
+  readonly target: string
+  readonly kind: FlowEdgeKind
+  /** 边标签（条件分支 label / 循环标识）。 */
+  readonly label?: string | undefined
+}
+
+/**
+ * 分支是否为条件分支：有 `condition`（布尔判定命令）才算。无 `condition` = 并行分支
+ * （始终纳入下一批）；有 `loop` 的分支是循环回边（其 `next` 指向更早节点）。
+ */
+export function isConditionalBranch(branch: DagBranch): boolean {
+  return branch.condition !== undefined
+}
+
+/**
+ * 判断在 Stage 间新增连线 `source → target` 是否会形成回环（Stage DAG 不允许循环）。
+ * 从 target 出发沿既有出边（branches[].next + branches[].loop.next）做可达性搜索：
+ * 若可回到 source，则新增这条边会构成环。自环（source === target）也视为回环。
+ * @param stages - 当前 Stage 列表（不含待加边）。
+ * @param source - 连线起点。
+ * @param target - 连线终点。
+ * @returns 是否构成回环。
+ */
+export function wouldCreateStageCycle(stages: readonly WorkflowStage[], source: string, target: string): boolean {
+  if (source === target) return true
+  const outgoing = new Map<string, string[]>()
+  for (const stage of stages) {
+    const targets: string[] = []
+    for (const branch of stage.branches ?? []) {
+      if (branch.next !== undefined && branch.next !== '') targets.push(branch.next)
+      if (branch.loop?.next !== undefined && branch.loop.next !== '') targets.push(branch.loop.next)
+    }
+    outgoing.set(stage.id, targets)
+  }
+  const visited = new Set<string>([target])
+  const queue = [target]
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    for (const next of outgoing.get(current) ?? []) {
+      if (next === source) return true
+      if (!visited.has(next)) {
+        visited.add(next)
+        queue.push(next)
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * Stage 层流控边（branches 是唯一出边单元，**无循环**）：有 `condition` 的条件分支
+ * 琥珀虚线（带 label），无 `condition` 的并行分支默认灰实线。未声明流控的孤立 Stage
+ * 按定义顺序串行兜底（画布不画边，仅引擎推进）。
+ * @param stages - 定义内的 Stage 列表。
+ * @returns 去重后的流控边。
+ */
+export function stageFlowEdges(stages: readonly WorkflowStage[]): FlowEdgeSpec[] {
+  const edges: FlowEdgeSpec[] = []
+  const emitted = new Set<string>()
+  const push = (edge: FlowEdgeSpec): void => {
+    const key = `${edge.source}->${edge.target}:${edge.kind}`
+    if (emitted.has(key)) return
+    emitted.add(key)
+    edges.push(edge)
+  }
+  for (const stage of stages) {
+    for (const branch of stage.branches ?? []) {
+      if (branch.next === undefined || branch.next === '') continue
+      const conditional = isConditionalBranch(branch)
+      push({
+        source: stage.id,
+        target: branch.next,
+        kind: conditional ? 'conditional' : 'parallel',
+        ...(branch.label !== undefined ? { label: branch.label } : {}),
+      })
+    }
+  }
+  return edges
+}
+
+/**
+ * Step 层流控边（微流程：并行/条件 branches + **循环回边分支 loop**）。
+ * 条件分支（有 condition）琥珀虚线带 label；循环分支（有 loop）`loop.next` 红色虚线
+ * 回边；无 condition/loop 的并行分支默认灰实线。
+ * @param steps - 某 Stage 内的 Step 列表。
+ * @returns 去重后的流控边。
+ */
+export function stepFlowEdges(steps: readonly WorkflowStep[]): FlowEdgeSpec[] {
+  const byId = new Set(steps.map(step => step.id))
+  const edges: FlowEdgeSpec[] = []
+  const emitted = new Set<string>()
+  const push = (edge: FlowEdgeSpec): void => {
+    const key = `${edge.source}->${edge.target}:${edge.kind}`
+    if (emitted.has(key)) return
+    emitted.add(key)
+    edges.push(edge)
+  }
+  for (const step of steps) {
+    for (const branch of step.branches ?? []) {
+      if (branch.next === undefined || branch.next === '' || !byId.has(branch.next)) continue
+      const conditional = isConditionalBranch(branch)
+      push({
+        source: step.id,
+        target: branch.next,
+        kind: conditional ? 'conditional' : 'parallel',
+        ...(branch.label !== undefined ? { label: branch.label } : {}),
+      })
+      if (branch.loop?.next !== undefined && branch.loop.next !== '') {
+        if (byId.has(branch.loop.next)) {
+          push({ source: step.id, target: branch.loop.next, kind: 'loop', ...(branch.loop.next === step.id ? { label: 'loop' } : {}) })
+        }
+      }
+    }
+  }
+  return edges
+}
+
+// ── Dagre 自动布局（@dagrejs/dagre，React Flow 画布坐标） ───────────────────
+
+import dagre from '@dagrejs/dagre'
+
+/** 参与 dagre 布局的节点尺寸。 */
+export interface DagreNodeSpec {
+  readonly id: string
+  readonly width: number
+  readonly height: number
+}
+
+/** dagre 有向边。 */
+export interface DagreEdgeSpec {
+  readonly source: string
+  readonly target: string
+}
+
+/**
+ * 用 Dagre 计算分层布局（TB = 自上而下垂直流，官方 dagre 示例默认方向）。
+ * 返回节点 id → 左上角坐标（React Flow 的 position 语义，dagre 输出的是中心点，
+ * 需减半宽/高）。
+ * @param nodes - 参与布局的节点。
+ * @param edges - 有向边（自动去重）。
+ * @returns 节点 id → 左上角坐标。
+ */
+export function dagreLayout(
+  nodes: readonly DagreNodeSpec[],
+  edges: readonly DagreEdgeSpec[],
+): Record<string, { x: number; y: number }> {
+  const graph = new dagre.graphlib.Graph()
+  graph.setDefaultEdgeLabel(() => ({}))
+  // TB 垂直流：同层节点横向间距 56、层间纵向间距 110，画布留白 24（参考官方示例）。
+  graph.setGraph({ rankdir: 'TB', nodesep: 56, ranksep: 110, marginx: 24, marginy: 24 })
+  for (const node of nodes) {
+    graph.setNode(node.id, { width: node.width, height: node.height })
+  }
+  const seen = new Set<string>()
+  for (const edge of edges) {
+    const key = `${edge.source}->${edge.target}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    graph.setEdge(edge.source, edge.target)
+  }
+  dagre.layout(graph)
+  const positions: Record<string, { x: number; y: number }> = {}
+  for (const node of nodes) {
+    const meta = graph.node(node.id)
+    positions[node.id] = { x: meta.x - node.width / 2, y: meta.y - node.height / 2 }
+  }
+  return positions
 }

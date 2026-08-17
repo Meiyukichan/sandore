@@ -2,21 +2,23 @@
  * 工作流 DAG 导航器（Task 3：Step 级 DAG 调度）。
  *
  * 构建 Stage/Step 统一节点索引 `nodeIndex`，`resolveNextNodes()` 作为 Step 级调度
- * 单一入口（优先级 Loop > Branches > Next > `tryAdvanceStage`，跨阶段隔离），
- * `tryAdvanceStage()` 在当前 Stage 完成后跟随 `Stage.next`（无 `next` 时按定义数组
- * 顺序推断下一 Stage）。循环路由（loopTo / checkLoopBreak）与分支路由（匹配 /
- * 并行 / 回退）均在此收敛，`branchMeta` / `loopMeta` 保留评估现场。
+ * 单一入口。**分支是唯一出边单元**（统一 `branches: [{ next, condition?, loop? }]`）：
+ * 并行分支（无 `condition`）始终纳入下一批；条件分支（有 `condition`）逐条布尔评估
+ * （AI 输出 true/false，shell 走 `matchesExpectation(breakExpectation)`）；循环分支
+ * （有 `loop`，`next` 为回边）命中后经 `checkLoopBreak` 判定跳出（exitTo）或继续下一
+ * 迭代。无分支或无命中时按定义数组顺序线性兜底；Stage 完成由 `tryAdvanceStage`
+ * （数组顺序推断）推进。`branchMeta` / `loopMeta` 保留评估现场。
  * @module @deepseek-ai/dsh-sandore-workflow/src/dag-navigator
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { BranchEvaluatorConfig } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
 import { LoopManager } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
 import type { LoopState } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
-import type { BranchMeta, CommandConfig, DagBranch, DagLoop, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from './schema.ts';
+import type { BranchMeta, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from './schema.ts';
 import type { StageContract } from './types.ts';
 /** 已保存 Stage 契约的运行时形状（与快照 `stageContracts` 值严格一致）。 */
 type StageContractValue = WorkflowTaskState['stageContracts'][string];
-/** Stage 与 Step 在 DAG 调度层的统一节点视图。 */
+/** Stage 与 Step 在 DAG 调度层的统一节点视图（出边统一在 branches）。 */
 export interface DagNodeRef {
     readonly kind: 'stage' | 'step';
     /** 所属 Stage（始终可用）。 */
@@ -25,10 +27,7 @@ export interface DagNodeRef {
     readonly step?: WorkflowStep | undefined;
     readonly id: string;
     readonly name: string;
-    readonly next?: string | undefined;
-    readonly condition?: CommandConfig | undefined;
     readonly branches?: DagBranch[] | undefined;
-    readonly loop?: DagLoop | undefined;
 }
 /** `resolveNextNodes` 的调度上下文（由引擎注入的共享状态）。 */
 export interface ResolveNextNodesContext {
@@ -83,35 +82,28 @@ export declare class WorkflowDagNavigator {
     /**
      * 推进到下一 Stage。
      *
-     * 仅在当前 Stage 已完成（`isStageAllDone`）时推进：优先跟随当前 Stage 的 `next`，
-     * 否则按定义数组顺序推断下一 Stage。无下一 Stage 返回 false。
+     * 仅在当前 Stage 已完成（`isStageAllDone`）时推进：优先跟随当前 Stage 的
+     * `branches`（首个同 Stage 有效目标，通常为串行/并行下一 Stage），否则按定义数组
+     * 顺序推断下一 Stage。无下一 Stage 返回 false。
      */
     tryAdvanceStage(): boolean;
     /**
      * Step 级调度单一入口。
      *
-     * 按优先级解析下一批节点：① Loop（`loop.next` > 分支评估 > `node.next`，仅同阶段，
-     * 回边经 `checkLoopBreak` 判定跳出/继续）；② Branches（评估 `condition` 路由到
-     * expectation 匹配分支，无 expectation 的并行分支始终纳入，无匹配回退 `node.next`）；
-     * ③ Next（同阶段）；④ 无 Step 级目标返回空（由引擎 `tryAdvanceStage` 跨阶段推进）。
+     * 统一分支路由（branches 是唯一出边单元）：
+     * ① 并行分支（无 condition）始终纳入下一批（多条并发）；
+     * ② 条件分支（有 condition）逐条布尔评估（AI 输出 true/false；shell 走
+     *    `matchesExpectation(breakExpectation)`），true 纳入；
+     * ③ 循环分支（有 loop，next 为回边）：命中后经 `checkLoopBreak` 判定跳出
+     *    （走 `exitTo`）或继续下一迭代（回 `loop.next`）；
+     * ④ 无任何命中时按定义数组顺序线性兜底；无 Step 级目标返回空
+     *    （由引擎 `tryAdvanceStage` 跨阶段推进）。
      */
     resolveNextNodes(nodeId: string, context: ResolveNextNodesContext): Promise<ResolveNextNodesResult>;
-    /** 循环路由：首次进入压栈，回边经 checkLoopBreak 判定跳出（exitTo）或继续（loopTo）。 */
-    private resolveLoop;
-    /** 分支路由：匹配 expectation 的分支 + 并行分支（无 expectation）入下一批。 */
-    private resolveBranches;
-    /** 循环内跳转目标：`loop.next` > 分支评估 > `node.next`（均限同 Stage）。 */
-    private resolveLoopTo;
-    /** 循环节点带 condition/branches 时用分支评估结果确定 loopTo（首个匹配分支）。 */
-    private evaluateLoopBranch;
-    /** 循环跳出目标：`exitTo`（限同 Stage）否则空（由 tryAdvanceStage 推进）。 */
-    private exitLoopIds;
-    /** 无匹配时的 Step 级回退（node.next 优先，回退数组顺序下一 Step，均限同 Stage）。 */
-    private pushFallthrough;
+    /** 按 condition 类型判定条件分支是否通过。 */
+    private decideCondition;
     /** 数组顺序的下一 Step（同 Stage 内，线性兜底）。 */
     private arrayNextStep;
-    /** 匹配 expectation 的带 expectation 分支。 */
-    private matchBranches;
     /** 组装分支评估选项（候选分支 + 透传变量 + 循环上下文 + 取消信号）。 */
     private branchEvalOptions;
     /** 目标节点是否为同 Stage 内的 Step（跨阶段隔离：跨 Stage 目标返回 undefined）。 */

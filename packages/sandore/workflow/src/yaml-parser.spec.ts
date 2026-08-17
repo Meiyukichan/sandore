@@ -106,63 +106,51 @@ stages:
         enabled: false
       secondary:
         enabled: false
-    next: stg-22222222-2222-2222-2222-222222222222  # Stage 间跳转
     defaultExpectation: "需要修复"        # Stage 级默认分支期望
-    condition:                           # Stage 级分支条件
-      type: prompt
-      value:
-        promptText: "判断代码质量是否需要修复"
-        providerId: provider-xxx
-        modelId: model-yyy
-    branches:                            # Stage 级分支
-      - expectation: "需要修复"           # 条件分支
-        next: step-33333333-3333-3333-3333-333333333333
-        label: "修复分支"
-      - expectation: "质量合格"
-        next: step-55555555-5555-5555-5555-555555555555
-        label: "通过分支"
-      - next: step-55555555-5555-5555-5555-555555555555  # 无 expectation = 并行分支
-        label: "并行兜底"
-    loop:                                # Stage 级循环
-      breakCondition:
-        type: prompt
-        value:
-          promptText: "所有严重问题是否已修复"
-      breakExpectation: "已修复"
-      next: step-33333333-3333-3333-3333-333333333333  # 循环内跳转目标
-      maxIterations: 3                   # 最大迭代次数（硬上限）
-      exitTo: step-55555555-5555-5555-5555-555555555555  # 跳出后目标
-    steps:                               # Stage 内 Step（仅 ID + 流控字段）
-      - id: step-11111111-1111-1111-1111-111111111111
-        next: step-22222222-2222-2222-2222-222222222222
-      - id: step-22222222-2222-2222-2222-222222222222
-        next: step-33333333-3333-3333-3333-333333333333
-        defaultExpectation: "需要修复"
-        condition:
+    branches:                            # Stage 级分支（next/condition/loop 三并列字段）
+      - condition:                       # 条件分支
           type: prompt
           value:
             promptText: "判断代码质量是否需要修复"
+            providerId: provider-xxx
+            modelId: model-yyy
+        next: step-33333333-3333-3333-3333-333333333333
+        label: "修复分支"
+      - next: step-55555555-5555-5555-5555-555555555555  # 无 condition = 并行分支
+        label: "并行兜底"
+    steps:                               # Stage 内 Step（仅 ID + 流控字段）
+      - id: step-11111111-1111-1111-1111-111111111111
         branches:
-          - expectation: "需要修复"
+          - next: step-22222222-2222-2222-2222-222222222222
+      - id: step-22222222-2222-2222-2222-222222222222
+        defaultExpectation: "需要修复"
+        branches:
+          - condition:
+              type: prompt
+              value:
+                promptText: "判断代码质量是否需要修复"
             next: step-33333333-3333-3333-3333-333333333333
             label: "修复分支"
-          - expectation: "质量合格"
-            next: step-55555555-5555-5555-5555-555555555555
-            label: "通过分支"
           - next: step-55555555-5555-5555-5555-555555555555  # 并行分支
-        loop:
-          breakCondition:
-            type: prompt
-            value:
-              promptText: "所有严重问题是否已修复"
-          breakExpectation: "已修复"
-          next: step-33333333-3333-3333-3333-333333333333
-          maxIterations: 3
-          exitTo: step-55555555-5555-5555-5555-555555555555
+          - next: step-11111111-1111-1111-1111-111111111111  # 循环回边分支
+            loop:
+              breakCondition:
+                type: prompt
+                value:
+                  promptText: "所有严重问题是否已修复"
+              breakExpectation: "已修复"
+              maxIterations: 3
+              exitTo: step-55555555-5555-5555-5555-555555555555
       - id: step-33333333-3333-3333-3333-333333333333
-        next: step-44444444-4444-4444-4444-444444444444
+        branches:
+          - next: step-44444444-4444-4444-4444-444444444444
       - id: step-44444444-4444-4444-4444-444444444444
-        next: step-22222222-2222-2222-2222-222222222222   # 自循环（loop pattern）
+        branches:
+          - next: step-22222222-2222-2222-2222-222222222222   # 自循环（loop pattern）
+            loop:
+              maxIterations: 3
+              next: step-22222222-2222-2222-2222-222222222222
+              exitTo: step-55555555-5555-5555-5555-555555555555
       - id: step-55555555-5555-5555-5555-555555555555
 
   - id: stg-22222222-2222-2222-2222-222222222222
@@ -292,8 +280,9 @@ describe('parseWorkflowYaml', () => {
     expect(definition.stages).toHaveLength(2)
     expect(definition.steps).toHaveLength(6)
     expect(definition.gates?.maxRetries).toBe(3)
-    expect(definition.stages[0]?.branches).toHaveLength(3)
-    expect(definition.stages[0]?.loop?.maxIterations).toBe(3)
+    expect(definition.stages[0]?.branches).toHaveLength(2)
+    expect(definition.stages[0]?.branches?.[1]?.loop?.maxIterations).toBeUndefined()
+    expect(definition.stages[0]?.branches?.[0]?.condition?.type).toBe('prompt')
 
     const agent = definition.steps?.find(step => step.id === 'step-22222222-2222-2222-2222-222222222222')
     expect(agent?.command).toEqual({
@@ -328,7 +317,7 @@ describe('parseWorkflowYaml', () => {
     }
   })
 
-  it('throws DEFINITION_INVALID when a next target does not exist', () => {
+  it('throws DEFINITION_INVALID when a branch.next target does not exist', () => {
     const badYaml = `id: wfl-x
 name: demo
 version: "1.0.0"
@@ -337,7 +326,8 @@ stages:
     name: 分析
     steps:
       - id: step-1
-        next: step-missing
+        branches:
+          - next: step-missing
 steps:
   - id: step-1
     name: lint
@@ -355,36 +345,6 @@ steps:
       expect(yamlError.code).toBe('DEFINITION_INVALID')
       expect(yamlError.message).toContain('step-missing')
     }
-  })
-
-  it('throws DEFINITION_INVALID when a stage.next references a step node', () => {
-    expectDefinitionInvalid(`id: wfl-x
-name: demo
-version: "1.0.0"
-stages:
-  - id: stg-1
-    name: 分析
-    next: step-1
-    steps:
-      - id: step-1
-  - id: stg-2
-    name: 通知
-    steps:
-      - id: step-2
-steps:
-  - id: step-1
-    name: lint
-    command:
-      type: shell
-      value:
-        command: "echo hi"
-  - id: step-2
-    name: report
-    command:
-      type: prompt
-      value:
-        promptText: "report"
-`, 'must reference a stage')
   })
 
   it('throws DEFINITION_INVALID when a branch.next references a missing node', () => {
@@ -415,9 +375,11 @@ version: "1.0.0"
 stages:
   - id: stg-1
     name: 分析
-    loop:
-      maxIterations: 3
-      next: step-missing
+    branches:
+      - next: step-1
+        loop:
+          maxIterations: 3
+          next: step-missing
     steps:
       - id: step-1
 steps:
@@ -437,9 +399,11 @@ version: "1.0.0"
 stages:
   - id: stg-1
     name: 分析
-    loop:
-      maxIterations: 3
-      exitTo: step-missing
+    branches:
+      - next: step-1
+        loop:
+          maxIterations: 3
+          exitTo: step-missing
     steps:
       - id: step-1
 steps:
@@ -624,10 +588,10 @@ stages:
     const definition = parseWorkflowYaml(v1MultiYaml)
     const steps = definition.stages[0]?.steps
     expect(steps?.map(step => step.id)).toEqual(['tsk-a', 'tsk-b', 'tsk-c', 'tsk-d'])
-    expect(steps?.[0]?.next).toBe('tsk-b')
-    expect(steps?.[1]?.next).toBe('tsk-c')
-    expect(steps?.[2]?.next).toBe('tsk-d')
-    expect(steps?.[3]?.next).toBeUndefined()
+    expect(steps?.[0]?.branches?.[0]?.next).toBe('tsk-b')
+    expect(steps?.[1]?.branches?.[0]?.next).toBe('tsk-c')
+    expect(steps?.[2]?.branches?.[0]?.next).toBe('tsk-d')
+    expect(steps?.[3]?.branches).toBeUndefined()
   })
 
   it('rejects a stage that mixes steps and scenarios', () => {

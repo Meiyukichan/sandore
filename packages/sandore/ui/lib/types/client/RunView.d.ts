@@ -1,7 +1,7 @@
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots';
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol';
 import type { ArtifactEntry } from '@deepseek-ai/dsh-sandore-workflow/remote';
-import type { RetryMode } from './run-view-model.ts';
+import { type RetryMode } from './run-view-model.ts';
 /** RunView 所需的最小 `ctx.remote.sandore` 访问面。 */
 export interface RunViewRemote {
     getInstanceState(instanceId: string): Promise<RemoteResult<unknown>>;
@@ -40,17 +40,17 @@ export interface RunViewRemote {
         reply: 'once' | 'always' | 'reject';
     }): Promise<RemoteResult<void>>;
 }
-/** RunView 接收的普通业务 props（instanceId + 打开讨论回调 + remote 访问面 + locale）。 */
+/** RunView 接收的普通业务 props（instanceId + 跳会话回调 + remote 访问面 + locale）。 */
 export interface RunViewProps {
     /** 类型化的翻译函数（sandore 命名空间）。 */
     t: TranslateNS<'sandore'>;
     /** 目标工作流实例 id（宿主 Session id == instanceId）。 */
     instanceId: string;
-    /** 打开讨论回调：跳宿主会话 chat 视图（`ctx.sessions.open(instanceId)`）。 */
-    openDiscussion: () => void;
+    /** 跳会话回调（Step 详情/树行 → 子代理会话；打开讨论 → 宿主会话）。 */
+    openSession(id: string): void;
     /** `ctx.remote.sandore` 的最小 RPC 访问面（返回 `RemoteResult`，经 `unwrap` 解包）。 */
     remote: RunViewRemote;
 }
-/** 渲染 RunView。 */
-export declare function RunView({ t, instanceId, openDiscussion, remote }: RunViewProps): import("react").JSX.Element;
+/** 渲染 RunView（三栏）。 */
+export declare function RunView({ t, instanceId, openSession, remote }: RunViewProps): import("react").JSX.Element;
 //# sourceMappingURL=RunView.d.ts.map

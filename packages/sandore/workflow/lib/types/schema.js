@@ -86,19 +86,26 @@ const PassThroughVarValueSchema = z.object({
     description: z.string(),
     refresh: z.boolean().optional(),
 });
-/** DAG 分支：省略 `expectation` 表示并行分支。 */
-export const DagBranchSchema = z.object({
-    expectation: z.string().optional(),
-    next: z.string(),
-    label: z.string().optional(),
-});
-/** DAG 循环控制。 */
+/** DAG 循环控制（挂在分支上的可选属性：该分支 next 指向更早节点 = 回边）。 */
 export const DagLoopSchema = z.object({
     breakCondition: CommandConfigSchema.optional(),
     breakExpectation: z.string().optional(),
     next: z.string().optional(),
     maxIterations: z.number(),
     exitTo: z.string().optional(),
+});
+/**
+ * DAG 分支：分支是唯一出边单元，统一 `{ next, condition?, loop? }` 三并列字段。
+ * - 无 `condition` = 并行分支（始终纳入下一批，多条并发）；
+ * - 有 `condition` = 条件分支（布尔判定：AI 输出 true/false，shell 走
+ *   `matchesExpectation(breakExpectation)`，true 才走）；
+ * - 有 `loop` = 循环分支（该分支 `next` 为回边，`loop` 控制迭代/跳出/exitTo）。
+ */
+export const DagBranchSchema = z.object({
+    next: z.string(),
+    label: z.string().optional(),
+    condition: CommandConfigSchema.optional(),
+    loop: DagLoopSchema.optional(),
 });
 /** 门控配置（Workflow/Stage/Step 三级合并）。 */
 export const GatesSchema = z.object({
@@ -127,26 +134,20 @@ export const WorkflowStepSchema = z.object({
     outputTo: z.array(OutputToItemSchema).optional(),
     passThroughVars: z.array(PassThroughVarSchema).optional(),
     timeout: z.number().optional(),
-    next: z.string().optional(),
     defaultExpectation: z.string().optional(),
-    condition: CommandConfigSchema.optional(),
     branches: z.array(DagBranchSchema).optional(),
-    loop: DagLoopSchema.optional(),
     rules: z.array(z.string()).optional(),
     gates: GatesSchema.optional(),
 });
-/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段。 */
+/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段（出边统一进 branches）。 */
 export const WorkflowStageSchema = z.object({
     id: z.string(),
     name: z.string(),
     rules: z.array(z.string()).optional(),
     gates: GatesSchema.optional(),
     steps: z.array(WorkflowStepSchema),
-    next: z.string().optional(),
     defaultExpectation: z.string().optional(),
-    condition: CommandConfigSchema.optional(),
     branches: z.array(DagBranchSchema).optional(),
-    loop: DagLoopSchema.optional(),
 });
 /** 工作流定义（V2 两级 Stage → Step）。 */
 export const WorkflowDefinitionSchema = z.object({

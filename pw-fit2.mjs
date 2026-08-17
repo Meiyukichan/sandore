@@ -1,0 +1,25 @@
+﻿import { chromium } from "playwright"
+const browser = await chromium.launch()
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+page.on("pageerror", e => console.log("[pageerror]", e.message))
+await page.goto("http://127.0.0.1:3090/", { waitUntil: "domcontentloaded" })
+await page.waitForTimeout(2500)
+await page.locator("[data-sandore-btn]").click()
+await page.waitForTimeout(600)
+await page.locator("[data-sandore-wf-list] [role=tab]").nth(1).click()
+await page.waitForTimeout(600)
+await page.getByRole("button", { name: "新增定义" }).click()
+await page.waitForTimeout(800)
+// 添加 10 个阶段
+for (let i = 0; i < 10; i++) {
+  await page.getByRole("button", { name: "添加阶段" }).click()
+  await page.waitForTimeout(200)
+}
+const fitBtn = page.locator('[aria-label="适应"]')
+await fitBtn.click()
+await page.waitForTimeout(600)
+const box = await page.locator(".react-flow__node").nth(0).boundingBox()
+const vp = await page.locator(".react-flow__viewport").getAttribute("style")
+console.log("10 nodes: node box:", JSON.stringify(box))
+console.log("viewport:", vp)
+await browser.close()

@@ -2,26 +2,28 @@
  * 工作流 DAG 导航器（Task 3：Step 级 DAG 调度）。
  *
  * 构建 Stage/Step 统一节点索引 `nodeIndex`，`resolveNextNodes()` 作为 Step 级调度
- * 单一入口（优先级 Loop > Branches > Next > `tryAdvanceStage`，跨阶段隔离），
- * `tryAdvanceStage()` 在当前 Stage 完成后跟随 `Stage.next`（无 `next` 时按定义数组
- * 顺序推断下一 Stage）。循环路由（loopTo / checkLoopBreak）与分支路由（匹配 /
- * 并行 / 回退）均在此收敛，`branchMeta` / `loopMeta` 保留评估现场。
+ * 单一入口。**分支是唯一出边单元**（统一 `branches: [{ next, condition?, loop? }]`）：
+ * 并行分支（无 `condition`）始终纳入下一批；条件分支（有 `condition`）逐条布尔评估
+ * （AI 输出 true/false，shell 走 `matchesExpectation(breakExpectation)`）；循环分支
+ * （有 `loop`，`next` 为回边）命中后经 `checkLoopBreak` 判定跳出（exitTo）或继续下一
+ * 迭代。无分支或无命中时按定义数组顺序线性兜底；Stage 完成由 `tryAdvanceStage`
+ * （数组顺序推断）推进。`branchMeta` / `loopMeta` 保留评估现场。
  * @module @deepseek-ai/dsh-sandore-workflow/src/dag-navigator
  */
 import type { Context } from '@deepseek-ai/cordis';
 
-import { BranchEvaluator, extractExpectation, matchesExpectation } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
+import { BranchEvaluator, matchesExpectation } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
 import type { BranchEvalOptions, BranchEvaluatorConfig } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
 import { LoopManager } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
 import type { LoopState } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
 
-import type { BranchMeta, CommandConfig, DagBranch, DagLoop, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from './schema.ts';
+import type { BranchMeta, CommandConfig, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from './schema.ts';
 import type { StageContract } from './types.ts';
 
 /** 已保存 Stage 契约的运行时形状（与快照 `stageContracts` 值严格一致）。 */
 type StageContractValue = WorkflowTaskState['stageContracts'][string];
 
-/** Stage 与 Step 在 DAG 调度层的统一节点视图。 */
+/** Stage 与 Step 在 DAG 调度层的统一节点视图（出边统一在 branches）。 */
 export interface DagNodeRef {
   readonly kind: 'stage' | 'step';
   /** 所属 Stage（始终可用）。 */
@@ -30,10 +32,7 @@ export interface DagNodeRef {
   readonly step?: WorkflowStep | undefined;
   readonly id: string;
   readonly name: string;
-  readonly next?: string | undefined;
-  readonly condition?: CommandConfig | undefined;
   readonly branches?: DagBranch[] | undefined;
-  readonly loop?: DagLoop | undefined;
 }
 
 /** `resolveNextNodes` 的调度上下文（由引擎注入的共享状态）。 */
@@ -143,8 +142,9 @@ export class WorkflowDagNavigator {
   /**
    * 推进到下一 Stage。
    *
-   * 仅在当前 Stage 已完成（`isStageAllDone`）时推进：优先跟随当前 Stage 的 `next`，
-   * 否则按定义数组顺序推断下一 Stage。无下一 Stage 返回 false。
+   * 仅在当前 Stage 已完成（`isStageAllDone`）时推进：优先跟随当前 Stage 的
+   * `branches`（首个同 Stage 有效目标，通常为串行/并行下一 Stage），否则按定义数组
+   * 顺序推断下一 Stage。无下一 Stage 返回 false。
    */
   tryAdvanceStage(): boolean {
     if (!this.isStageAllDone(this.currentStageId)) {
@@ -154,7 +154,13 @@ export class WorkflowDagNavigator {
     if (current === undefined || current.kind !== 'stage') {
       return false;
     }
-    let nextId: string | undefined = current.next;
+    let nextId: string | undefined;
+    for (const branch of current.branches ?? []) {
+      if (this.nodeIndex.get(branch.next)?.kind === 'stage') {
+        nextId = branch.next;
+        break;
+      }
+    }
     if (nextId === undefined) {
       const index = this.stageOrder.indexOf(current.id);
       nextId = index >= 0 ? this.stageOrder[index + 1] : undefined;
@@ -170,165 +176,123 @@ export class WorkflowDagNavigator {
   /**
    * Step 级调度单一入口。
    *
-   * 按优先级解析下一批节点：① Loop（`loop.next` > 分支评估 > `node.next`，仅同阶段，
-   * 回边经 `checkLoopBreak` 判定跳出/继续）；② Branches（评估 `condition` 路由到
-   * expectation 匹配分支，无 expectation 的并行分支始终纳入，无匹配回退 `node.next`）；
-   * ③ Next（同阶段）；④ 无 Step 级目标返回空（由引擎 `tryAdvanceStage` 跨阶段推进）。
+   * 统一分支路由（branches 是唯一出边单元）：
+   * ① 并行分支（无 condition）始终纳入下一批（多条并发）；
+   * ② 条件分支（有 condition）逐条布尔评估（AI 输出 true/false；shell 走
+   *    `matchesExpectation(breakExpectation)`），true 纳入；
+   * ③ 循环分支（有 loop，next 为回边）：命中后经 `checkLoopBreak` 判定跳出
+   *    （走 `exitTo`）或继续下一迭代（回 `loop.next`）；
+   * ④ 无任何命中时按定义数组顺序线性兜底；无 Step 级目标返回空
+   *    （由引擎 `tryAdvanceStage` 跨阶段推进）。
    */
   async resolveNextNodes(nodeId: string, context: ResolveNextNodesContext): Promise<ResolveNextNodesResult> {
     const node = this.nodeIndex.get(nodeId);
     if (node === undefined || node.kind !== 'step') {
       return { nextNodeIds: [] };
     }
-    if (node.loop !== undefined) {
-      return this.resolveLoop(node, context);
-    }
-    if (node.branches !== undefined && node.branches.length > 0) {
-      return this.resolveBranches(node, context);
-    }
-    if (node.next !== undefined && this.sameStageStep(node, node.next) !== undefined) {
-      return { nextNodeIds: [node.next] };
-    }
-    const arrayNext = this.arrayNextStep(node);
-    if (arrayNext !== undefined) {
-      return { nextNodeIds: [arrayNext] };
-    }
-    return { nextNodeIds: [] };
-  }
-
-  /** 循环路由：首次进入压栈，回边经 checkLoopBreak 判定跳出（exitTo）或继续（loopTo）。 */
-  private async resolveLoop(node: DagNodeRef, context: ResolveNextNodesContext): Promise<ResolveNextNodesResult> {
-    const loop = node.loop!;
-    if (this.loopManager.activeLoopNodeId !== node.id) {
-      // 首次进入（或嵌套新循环）：重置本循环节点的访问计数（嵌套循环外层下一轮重新
-      // 进入内层时清零，否则内层 visitCount 停在 maxIterations 会在首次回边即提前跳出），
-      // 压循环栈（迭代计数初始 1），直接进入 loopTo。
-      context.visitCounts[node.id] = 0;
-      this.loopManager.pushActiveLoop(node.id, loop.maxIterations);
-      const loopTo = await this.resolveLoopTo(node, context);
-      if (loopTo === undefined) {
-        this.loopManager.popActiveLoop();
-        return { nextNodeIds: this.exitLoopIds(node) };
-      }
-      return { nextNodeIds: [loopTo] };
-    }
-
-    // 回边：累计循环节点访问计数（回边次数），判定跳出或继续下一迭代。
-    const visitCount = (context.visitCounts[node.id] ?? 0) + 1;
-    context.visitCounts[node.id] = visitCount;
-    const outcome = await this.loopManager.checkLoopBreak(
-      { id: node.id, loop },
-      visitCount,
-      { input: '', output: '', passThroughVars: context.passThroughVars },
-    );
-    if (outcome.shouldBreak) {
-      this.loopManager.popActiveLoop();
-      return {
-        nextNodeIds: this.exitLoopIds(node),
-        ...(outcome.loopMeta === undefined ? {} : { loopMeta: outcome.loopMeta }),
-      };
-    }
-    this.loopManager.incrementLoopIteration();
-    const loopTo = await this.resolveLoopTo(node, context);
-    if (loopTo === undefined) {
-      this.loopManager.popActiveLoop();
-      return { nextNodeIds: this.exitLoopIds(node) };
-    }
-    return { nextNodeIds: [loopTo] };
-  }
-
-  /** 分支路由：匹配 expectation 的分支 + 并行分支（无 expectation）入下一批。 */
-  private async resolveBranches(node: DagNodeRef, context: ResolveNextNodesContext): Promise<ResolveNextNodesResult> {
     const branches = node.branches ?? [];
-    const parallel = branches.filter(branch => branch.expectation === undefined);
-    const expected = branches.filter(branch => branch.expectation !== undefined);
+    if (branches.length === 0) {
+      const arrayNext = this.arrayNextStep(node);
+      return arrayNext === undefined ? { nextNodeIds: [] } : { nextNodeIds: [arrayNext] };
+    }
+
+    const parallel = branches.filter(branch => branch.condition === undefined && branch.loop === undefined);
+    const conditional = branches.filter(branch => branch.condition !== undefined && branch.loop === undefined);
+    const loopBranches = branches.filter(branch => branch.loop !== undefined);
 
     const nextNodeIds: string[] = [];
+    let branchMeta: BranchMeta | undefined;
     for (const branch of parallel) {
       if (this.sameStageStep(node, branch.next) !== undefined) {
         nextNodeIds.push(branch.next);
       }
     }
 
-    if (node.condition !== undefined && expected.length > 0) {
-      const result = await this.evaluator.evaluate(node.condition, '', this.branchEvalOptions(node, context));
-      const expectation = extractExpectation(result.output);
-      const branchMeta: BranchMeta = {
+    // 条件分支：逐条布尔评估（AI true/false，shell 匹配 breakExpectation）。
+    for (const branch of conditional) {
+      const result = await this.evaluator.evaluate(branch.condition!, '', this.branchEvalOptions(node, context));
+      branchMeta = {
         status: 'completed',
         result: result.output,
         ...(result.sessionHandle === null ? {} : { sessionId: result.sessionHandle }),
-        expectation,
       };
-      const matched = this.matchBranches(expectation, expected);
-      for (const branch of matched) {
-        if (this.sameStageStep(node, branch.next) !== undefined) {
-          nextNodeIds.push(branch.next);
+      const passed = this.decideCondition(branch.condition!, result.output, branch.label);
+      if (passed && this.sameStageStep(node, branch.next) !== undefined) {
+        nextNodeIds.push(branch.next);
+      }
+    }
+
+    // 循环分支：优先处理（命中回边分支 → 循环；否则回边分支不作为前进目标）。
+    let loopResult: ResolveNextNodesResult | undefined;
+    for (const branch of loopBranches) {
+      const loop = branch.loop!;
+      if (this.loopManager.activeLoopNodeId === node.id) {
+        // 回边：累计访问计数，判定跳出或继续下一迭代。
+        const visitCount = (context.visitCounts[node.id] ?? 0) + 1;
+        context.visitCounts[node.id] = visitCount;
+        const outcome = await this.loopManager.checkLoopBreak(
+          { id: node.id, loop },
+          visitCount,
+          { input: '', output: '', passThroughVars: context.passThroughVars },
+        );
+        if (outcome.shouldBreak) {
+          this.loopManager.popActiveLoop();
+          const exitTo = loop.exitTo;
+          loopResult = {
+            nextNodeIds: exitTo !== undefined && this.sameStageStep(node, exitTo) !== undefined ? [exitTo] : [],
+            ...(outcome.loopMeta === undefined ? {} : { loopMeta: outcome.loopMeta }),
+          };
+          break;
         }
+        this.loopManager.incrementLoopIteration();
+        const loopTo = loop.next;
+        if (loopTo !== undefined && this.sameStageStep(node, loopTo) !== undefined) {
+          loopResult = { nextNodeIds: [loopTo] };
+          break;
+        }
+        loopResult = { nextNodeIds: [] };
+        break;
       }
-      if (matched.length > 0) {
-        return { nextNodeIds: dedupe(nextNodeIds), branchMeta };
+      // 首次进入循环：压栈，直接进入回边目标（迭代 1）。
+      context.visitCounts[node.id] = 0;
+      this.loopManager.pushActiveLoop(node.id, loop.maxIterations);
+      const loopTo = loop.next;
+      if (loopTo !== undefined && this.sameStageStep(node, loopTo) !== undefined) {
+        loopResult = { nextNodeIds: [loopTo] };
+        break;
       }
-      // 无匹配：回退 node.next（保留原始评估现场 branchMeta）。
-      this.pushFallthrough(node, nextNodeIds);
-      return { nextNodeIds: dedupe(nextNodeIds), branchMeta };
+      // 回边目标无效（跨 Stage/缺失）：退出循环。
+      this.loopManager.popActiveLoop();
+      const exitTo = loop.exitTo;
+      loopResult = { nextNodeIds: exitTo !== undefined && this.sameStageStep(node, exitTo) !== undefined ? [exitTo] : [] };
+      break;
     }
 
-    // 无 condition 或无带 expectation 的分支：仅并行分支 + 回退。
-    this.pushFallthrough(node, nextNodeIds);
-    return { nextNodeIds: dedupe(nextNodeIds) };
-  }
+    // 循环命中时，循环路由优先于前进分支（循环接管本轮调度）。
+    if (loopResult !== undefined) {
+      return loopResult;
+    }
 
-  /** 循环内跳转目标：`loop.next` > 分支评估 > `node.next`（均限同 Stage）。 */
-  private async resolveLoopTo(node: DagNodeRef, context: ResolveNextNodesContext): Promise<string | undefined> {
-    const loop = node.loop!;
-    if (loop.next !== undefined && this.sameStageStep(node, loop.next) !== undefined) {
-      return loop.next;
-    }
-    const loopBranch = await this.evaluateLoopBranch(node, context);
-    if (loopBranch !== undefined) {
-      return loopBranch;
-    }
-    if (node.next !== undefined && this.sameStageStep(node, node.next) !== undefined) {
-      return node.next;
-    }
-    return undefined;
-  }
-
-  /** 循环节点带 condition/branches 时用分支评估结果确定 loopTo（首个匹配分支）。 */
-  private async evaluateLoopBranch(node: DagNodeRef, context: ResolveNextNodesContext): Promise<string | undefined> {
-    if (node.condition === undefined || node.branches === undefined) {
-      return undefined;
-    }
-    const result = await this.evaluator.evaluate(node.condition, '', this.branchEvalOptions(node, context));
-    const expectation = extractExpectation(result.output);
-    const matched = this.matchBranches(expectation, node.branches);
-    for (const branch of matched) {
-      if (this.sameStageStep(node, branch.next) !== undefined) {
-        return branch.next;
-      }
-    }
-    return undefined;
-  }
-
-  /** 循环跳出目标：`exitTo`（限同 Stage）否则空（由 tryAdvanceStage 推进）。 */
-  private exitLoopIds(node: DagNodeRef): string[] {
-    const exitTo = node.loop?.exitTo;
-    if (exitTo !== undefined && this.sameStageStep(node, exitTo) !== undefined) {
-      return [exitTo];
-    }
-    return [];
-  }
-
-  /** 无匹配时的 Step 级回退（node.next 优先，回退数组顺序下一 Step，均限同 Stage）。 */
-  private pushFallthrough(node: DagNodeRef, nextNodeIds: string[]): void {
-    if (node.next !== undefined && this.sameStageStep(node, node.next) !== undefined) {
-      nextNodeIds.push(node.next);
-      return;
+    // 无循环：前进分支 + 数组顺序兜底。
+    if (nextNodeIds.length > 0) {
+      return { nextNodeIds: dedupe(nextNodeIds), ...(branchMeta === undefined ? {} : { branchMeta }) };
     }
     const arrayNext = this.arrayNextStep(node);
     if (arrayNext !== undefined) {
       nextNodeIds.push(arrayNext);
     }
+    return { nextNodeIds: dedupe(nextNodeIds), ...(branchMeta === undefined ? {} : { branchMeta }) };
+  }
+
+  /** 按 condition 类型判定条件分支是否通过。 */
+  private decideCondition(condition: CommandConfig, output: string, expectation: string | undefined): boolean {
+    if (condition.type === 'shell') {
+      if (expectation === undefined) {
+        return false;
+      }
+      return matchesExpectation(output.trim(), expectation);
+    }
+    return output.trim().toLowerCase() === 'true';
   }
 
   /** 数组顺序的下一 Step（同 Stage 内，线性兜底）。 */
@@ -339,17 +303,6 @@ export class WorkflowDagNavigator {
     const steps = node.stage.steps;
     const index = steps.findIndex(step => step.id === node.id);
     return index < 0 ? undefined : steps[index + 1]?.id;
-  }
-
-  /** 匹配 expectation 的带 expectation 分支。 */
-  private matchBranches(expectation: string, branches: readonly DagBranch[]): DagBranch[] {
-    const matched: DagBranch[] = [];
-    for (const branch of branches) {
-      if (branch.expectation !== undefined && matchesExpectation(expectation, branch.expectation)) {
-        matched.push(branch);
-      }
-    }
-    return matched;
   }
 
   /** 组装分支评估选项（候选分支 + 透传变量 + 循环上下文 + 取消信号）。 */
@@ -383,10 +336,7 @@ export class WorkflowDagNavigator {
         stage,
         id: stage.id,
         name: stage.name,
-        next: stage.next,
-        condition: stage.condition,
         branches: stage.branches,
-        loop: stage.loop,
       });
       for (const step of stage.steps) {
         this.nodeIndex.set(step.id, {
@@ -395,10 +345,7 @@ export class WorkflowDagNavigator {
           step,
           id: step.id,
           name: step.name ?? step.id,
-          next: step.next,
-          condition: step.condition,
           branches: step.branches,
-          loop: step.loop,
         });
       }
     }

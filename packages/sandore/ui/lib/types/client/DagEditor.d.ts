@@ -1,8 +1,10 @@
+import '@xyflow/react/dist/style.css';
+import './reactflow-theme.css';
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots';
 import { type SaveDefinition } from './sandore-save.ts';
 /** DagEditor 接收的最小业务 props：初始定义 + 保存回调 + locale。 */
 export interface DagEditorProps {
-    /** 类型化翻译函数（sandore 命名空间）。 */
+    /** 类型化的翻译函数（sandore 命名空间）。 */
     t: TranslateNS<'sandore'>;
     /** 已有定义的原始 YAML；省略时进入新建（空白骨架）。 */
     initialYaml?: string | undefined;
@@ -13,6 +15,6 @@ export interface DagEditorProps {
     /** 保存成功回调（携带持久化后的 id），供宿主刷新定义列表等。 */
     onSaved?: (id: string) => void;
 }
-/** 渲染 DagEditor。 */
+/** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
 export declare function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEditorProps): import("react").JSX.Element;
 //# sourceMappingURL=DagEditor.d.ts.map

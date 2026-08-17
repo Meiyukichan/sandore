@@ -1,0 +1,144 @@
+/* TreeNav 执行态左栏树形导航（DSH DisclosureRow 风格）。 */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--dsw-alias-bg-elevated);
+  overflow: hidden;
+}
+
+.header {
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 6px 12px;
+  box-sizing: border-box;
+}
+
+.node {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+
+.row:hover {
+  background: var(--dsw-alias-bg-hover);
+}
+
+.chevron {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--dsw-alias-label-caption);
+  transition: transform 0.15s;
+}
+
+.nodeCollapsed > .row .chevron {
+  transform: rotate(-90deg);
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.row:hover .label {
+  color: var(--dsw-alias-label-primary);
+}
+
+.jump {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--dsw-alias-accent-primary);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.row:hover .jump {
+  opacity: 1;
+}
+
+.jump:hover {
+  background: var(--dsw-alias-accent-bg);
+}
+
+.children {
+  display: flex;
+  flex-direction: column;
+}
+
+.leaf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.leaf:hover {
+  background: var(--dsw-alias-bg-hover);
+}
+
+.leafActive {
+  background: var(--dsw-alias-accent-bg);
+  color: var(--dsw-alias-accent-primary);
+}
+
+.leafIcon {
+  flex: none;
+  font-size: 12px;
+}
+
+.leafLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leafMeta {
+  flex: none;
+  font-size: 10px;
+  color: var(--dsw-alias-label-caption);
+}

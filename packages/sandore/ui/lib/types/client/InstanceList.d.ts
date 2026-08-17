@@ -9,11 +9,13 @@ export interface InstanceListProps {
     workspaces: readonly WorkspaceView[];
     /** 客户端过滤关键词（匹配 instanceId / jobId）。 */
     query: string;
+    /** 当前选中实例 id（高亮行；缺省不高亮）。 */
+    activeId?: string | undefined;
     /** 拉取实例摘要（RPC 已解包）。 */
     listInstances(): Promise<InstanceSummary[]>;
     /** 点击实例行下钻 RunView。 */
     onOpen(instanceId: string): void;
 }
 /** 渲染 InstanceList。 */
-export declare function InstanceList({ t, workspaces, query, listInstances, onOpen }: InstanceListProps): import("react").JSX.Element;
+export declare function InstanceList({ t, workspaces, query, activeId, listInstances, onOpen }: InstanceListProps): import("react").JSX.Element;
 //# sourceMappingURL=InstanceList.d.ts.map

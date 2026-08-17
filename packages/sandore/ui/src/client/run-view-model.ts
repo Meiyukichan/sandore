@@ -157,3 +157,164 @@ export function isSubagentStep(step: ExecutedStep): boolean {
   const command = step.sessionMeta?.command ?? step.command?.type
   return command === 'agent' || command === 'skill' || command === 'mcp'
 }
+
+// ── 树形导航 / 统一时间线派生（纯函数，无 React 依赖） ─────────────────────
+
+/** 树形导航节点类型。 */
+export type RunTreeNodeType = 'workflow' | 'stage' | 'step' | 'result' | 'artifact'
+
+/** 树形导航节点。 */
+export interface RunTreeNode {
+  readonly id: string
+  readonly name: string
+  readonly type: RunTreeNodeType
+  /** 节点状态（workflow 为实例生命周期态；stage/step 为 Step 态；叶子无）。 */
+  readonly status?: StepStatus | DagRunStatus | undefined
+  /** 归属 Step 的稳定标识（stepIdOf；供预览/操作反查）。 */
+  readonly stepId?: string | undefined
+  /** 子代理会话 id（sessionMeta.childId，供「跳子会话」）。 */
+  readonly childId?: string | undefined
+  /** 副信息（artifact 的 outputToId / 文件路径）。 */
+  readonly meta?: string | undefined
+  /** 预览正文（result 的输出文本 / artifact 的文件路径）。 */
+  readonly text?: string | undefined
+  readonly children?: readonly RunTreeNode[] | undefined
+}
+
+/** 统一时间线的 Step 卡片项。 */
+export interface TimelineStepItem {
+  readonly kind: 'step'
+  readonly stepId: string
+  readonly name: string
+  readonly status: StepStatus
+  /** 循环迭代标签（如 `#1.2`）。 */
+  readonly loopLabel?: string | undefined
+  /** completed 态输出文本（text 块拼接）。 */
+  readonly outputText?: string | undefined
+  /** failed 态错误详情。 */
+  readonly error?: string | undefined
+  /** 子代理会话 id（跳「查看详情」）。 */
+  readonly childId?: string | undefined
+  readonly visitCount: number
+}
+
+/** 统一时间线的用户气泡项。 */
+export interface TimelineUserItem {
+  readonly kind: 'user'
+  readonly content: string
+}
+
+/** 统一时间线条目（Step 卡片 / 用户气泡，按时间顺序）。 */
+export type TimelineItem = TimelineStepItem | TimelineUserItem
+
+/**
+ * 把 `output: ContentBlock[]` 的 text 块拼接为纯文本（无 text 块返回 undefined）。
+ * @param output - Step 执行输出块（引擎在 step-completed 事件/快照中内联）。
+ * @returns 拼接文本或 undefined。
+ */
+export function outputTextOf(output: readonly { readonly type: string; readonly text?: string }[] | undefined): string | undefined {
+  if (output === undefined || output.length === 0) return undefined
+  const parts: string[] = []
+  for (const block of output) {
+    if (block.type === 'text' && block.text !== undefined) parts.push(block.text)
+  }
+  return parts.length === 0 ? undefined : parts.join('\n')
+}
+
+/** 循环迭代路径 → 展示标签（`#1.2`），非循环返回 undefined。 */
+export function loopLabelOf(loopIteration: readonly number[] | undefined): string | undefined {
+  return loopIteration === undefined || loopIteration.length === 0
+    ? undefined
+    : `#${loopIteration.join('.')}`
+}
+
+/**
+ * 从 `WorkflowTaskState` 构建树形导航数据：workflow → stage → step → result/artifact 叶子。
+ * result 叶子来自 step 输出文本；artifact 叶子来自 `stageContracts` 产物契约的 files。
+ * @param state - 实例状态快照。
+ * @returns 树形导航根节点列表（单个 workflow 根）。
+ */
+export function buildRunTree(state: WorkflowTaskState): RunTreeNode[] {
+  // 叶子按「定义 stepId」分组（artifact.stepId 为定义 id；step 用 stepIdOf 对齐）。
+  const leavesByStepId = new Map<string, RunTreeNode[]>()
+  for (const step of state.executedSteps) {
+    const output = outputTextOf(step.output)
+    if (output === undefined) continue
+    const key = stepIdOf(step)
+    const current = leavesByStepId.get(key) ?? []
+    leavesByStepId.set(key, [...current, { id: `${step.id}:result`, name: '', type: 'result', stepId: key, text: output }])
+  }
+  for (const contract of Object.values(state.stageContracts)) {
+    for (const artifact of contract.artifacts) {
+      for (const file of artifact.files) {
+        const current = leavesByStepId.get(artifact.stepId) ?? []
+        leavesByStepId.set(artifact.stepId, [...current, {
+          id: `${artifact.stepId}:file:${file}`,
+          name: file,
+          type: 'artifact',
+          stepId: artifact.stepId,
+          meta: artifact.outputToId,
+          text: file,
+        }])
+      }
+    }
+  }
+
+  const stageNodes = state.stageInfos.map(stage => {
+    const steps = state.executedSteps.filter(step => step.stageId === stage.id)
+    return {
+      id: stage.id,
+      name: stage.name,
+      type: 'stage' as const,
+      status: stage.status,
+      children: steps.map(step => {
+        const key = stepIdOf(step)
+        return {
+          id: step.id,
+          name: step.name,
+          type: 'step' as const,
+          status: step.status,
+          stepId: key,
+          childId: step.sessionMeta?.childId,
+          children: leavesByStepId.get(key),
+        }
+      }),
+    }
+  })
+
+  return [{
+    id: state.workflowId,
+    name: state.workflowId,
+    type: 'workflow' as const,
+    status: state.status,
+    children: stageNodes,
+  }]
+}
+
+/**
+ * 从 `WorkflowTaskState` 构建统一时间线：初始输入 user 气泡 + 各 executedStep 卡片
+ * （按执行顺序）。running 卡无实时消息流（引擎不写 sessionMessages、无 step-message
+ * 事件），body 按状态展示输出文本 / 错误 / 运行中占位。
+ * @param state - 实例状态快照。
+ * @returns 时间线条目列表。
+ */
+export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
+  const items: TimelineItem[] = []
+  if (state.originalInput !== '') {
+    items.push({ kind: 'user', content: state.originalInput })
+  }
+  for (const step of state.executedSteps) {
+    items.push({
+      kind: 'step',
+      stepId: stepIdOf(step),
+      name: step.name,
+      status: step.status,
+      loopLabel: loopLabelOf(step.loopIteration),
+      outputText: outputTextOf(step.output),
+      error: step.error,
+      childId: step.sessionMeta?.childId,
+      visitCount: step.visitCount,
+    })
+  }
+  return items
+}

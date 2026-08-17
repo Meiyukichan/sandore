@@ -59,8 +59,8 @@ function convertTaskToStep(task: unknown): Record<string, unknown> {
 
 /**
  * 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`：同一 Scenario 内相邻 Task 依次接
- * `next`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个 Step（指向下一
- * Scenario 的首个 Task）。显式 `next` 不被覆盖。
+ * `branches: [{ next }]`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个
+ * Step（指向下一 Scenario 的首个 Task）。显式 `branches` 不被覆盖。
  */
 function convertStage(stage: Record<string, unknown>): Record<string, unknown> {
   const scenarios = stage.scenarios
@@ -72,12 +72,12 @@ function convertStage(stage: Record<string, unknown>): Record<string, unknown> {
     if (!isRecord(scenario)) continue
     const tasks = Array.isArray(scenario.tasks) ? scenario.tasks : []
     const converted = tasks.map(convertTaskToStep)
-    // 同一 Scenario 内相邻 Task 依次设 next，形成线性链。
+    // 同一 Scenario 内相邻 Task 依次设 branches（线性链）。
     for (let index = 0; index + 1 < converted.length; index++) {
       const current = converted[index]
       const following = converted[index + 1]
       if (current === undefined || following === undefined) continue
-      if (current.next === undefined) current.next = following.id
+      if (current.branches === undefined) current.branches = [{ next: following.id }]
     }
     scenarioSteps.set(String(scenario.id), converted)
     steps.push(...converted)
@@ -93,8 +93,8 @@ function convertStage(stage: Record<string, unknown>): Record<string, unknown> {
     if (own === undefined || own.length === 0 || target === undefined || target.length === 0) continue
     const last = own[own.length - 1]
     const firstTarget = target[0]
-    if (isRecord(last) && isRecord(firstTarget) && last.next === undefined) {
-      last.next = firstTarget.id
+    if (isRecord(last) && isRecord(firstTarget) && last.branches === undefined) {
+      last.branches = [{ next: firstTarget.id }]
     }
   }
 
@@ -132,15 +132,12 @@ export function convertLegacyToV2(raw: unknown): unknown {
 /** 具有 DAG 流控字段的节点（Stage 与 Step 共用）。 */
 interface FlowNode {
   id: string
-  next?: string | undefined
   branches?: DagBranch[] | undefined
-  loop?: DagLoop | undefined
 }
 
 /**
  * 校验节点 ID 引用完整性：
- * - `next`（含 `branches[].next`、`loop.next`、`loop.exitTo`）引用的节点 ID 均存在；
- * - `stage.next` 必须指向 Stage 节点（Step 节点会被 DAG 导航静默跳过）；
+ * - `branches[].next`、`branches[].loop.next`、`branches[].loop.exitTo` 引用的节点 ID 均存在；
  * - `inputFrom[].path` 的 `stageId[.stepId[.outputToId]]` 前两段（Stage/Step 节点 ID）存在。
  * 不满足时抛 `WorkflowYamlError('DEFINITION_INVALID')`。
  */
@@ -186,22 +183,17 @@ function validateReferences(definition: WorkflowDefinition): void {
     }
   }
   const checkNode = (node: FlowNode, kind: string): void => {
-    checkTarget(node.next, `${kind} '${node.id}'.next`)
     for (const branch of node.branches ?? []) {
       checkTarget(branch.next, `${kind} '${node.id}'.branches.next`)
-    }
-    if (node.loop !== undefined) {
-      checkTarget(node.loop.next, `${kind} '${node.id}'.loop.next`)
-      checkTarget(node.loop.exitTo, `${kind} '${node.id}'.loop.exitTo`)
+      if (branch.loop !== undefined) {
+        checkTarget(branch.loop.next, `${kind} '${node.id}'.branches.loop.next`)
+        checkTarget(branch.loop.exitTo, `${kind} '${node.id}'.branches.loop.exitTo`)
+      }
     }
   }
 
   for (const stage of definition.stages) {
     checkNode(stage, 'stage')
-    // `stage.next` 只推进 Stage 级主循环，指向 Step 会导致后续 Stage 被静默跳过。
-    if (stage.next !== undefined && !stageIds.has(stage.next)) {
-      throw new WorkflowYamlError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, 'DEFINITION_INVALID')
-    }
     for (const step of stage.steps) checkNode(step, 'step')
   }
   for (const step of definition.steps ?? []) checkNode(step, 'step')

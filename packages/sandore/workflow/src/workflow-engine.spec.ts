@@ -119,33 +119,34 @@ stages:
     name: 分支
     steps:
       - id: step-branch
-        condition:
-          type: prompt
-          value:
-            promptText: "route"
         branches:
-          - expectation: "agent"
+          - condition:
+              type: prompt
+              value:
+                promptText: "route"
             next: step-agent
           - next: step-parallel
-        next: step-fallback
       - id: step-agent
         command:
           type: agent
           value:
             promptText: "do-work"
-        next: step-merge
+        branches:
+          - next: step-merge
       - id: step-parallel
         command:
           type: shell
           value:
             command: "echo parallel"
-        next: step-merge
+        branches:
+          - next: step-merge
       - id: step-fallback
         command:
           type: shell
           value:
             command: "echo fallback"
-        next: step-merge
+        branches:
+          - next: step-merge
       - id: step-merge
         command:
           type: shell
@@ -155,16 +156,19 @@ stages:
     name: 循环
     steps:
       - id: step-loop
-        loop:
-          maxIterations: 3
-          next: step-iter
-          exitTo: step-finalize
+        branches:
+          - next: step-iter
+            loop:
+              maxIterations: 3
+              next: step-iter
+              exitTo: step-finalize
       - id: step-iter
         command:
           type: shell
           value:
             command: "echo iter"
-        next: step-loop
+        branches:
+          - next: step-loop
       - id: step-finalize
         command:
           type: prompt
@@ -179,7 +183,7 @@ stages:
             enabled: true
 `;
 
-/** 分支无匹配回退（用于验证 node.next 回退 + branchMeta 现场保留）。 */
+/** 分支无匹配（条件 false）→ 数组顺序兜底（用于验证兜底 + branchMeta 现场保留）。 */
 const branchFallbackYaml = `id: wfl-branch-fallback
 name: branch-fallback
 version: "1.0.0"
@@ -188,24 +192,23 @@ stages:
     name: 分支
     steps:
       - id: step-branch
-        condition:
-          type: prompt
-          value:
-            promptText: "route"
         branches:
-          - expectation: "matched"
+          - condition:
+              type: prompt
+              value:
+                promptText: "route"
             next: step-matched
-        next: step-fallback
-      - id: step-matched
-        command:
-          type: shell
-          value:
-            command: "echo matched"
       - id: step-fallback
         command:
           type: shell
           value:
             command: "echo fallback"
+      - id: step-matched
+        command:
+          type: shell
+          value:
+            command: "echo matched"
+        branches: []
 `;
 
 /** 嵌套循环定义：外层 2 次 × 内层 2 次（用于验证内层 visitCount 重置）。 */
@@ -217,21 +220,26 @@ stages:
     name: 嵌套循环
     steps:
       - id: step-outer-loop
-        loop:
-          maxIterations: 2
-          next: step-inner-loop
-          exitTo: step-done
+        branches:
+          - next: step-inner-loop
+            loop:
+              maxIterations: 2
+              next: step-inner-loop
+              exitTo: step-done
       - id: step-inner-loop
-        loop:
-          maxIterations: 2
-          next: step-iter
-          exitTo: step-outer-loop
+        branches:
+          - next: step-iter
+            loop:
+              maxIterations: 2
+              next: step-iter
+              exitTo: step-outer-loop
       - id: step-iter
         command:
           type: shell
           value:
             command: "echo iter"
-        next: step-inner-loop
+        branches:
+          - next: step-inner-loop
       - id: step-done
         command:
           type: shell
@@ -248,20 +256,23 @@ stages:
     name: 循环跳出
     steps:
       - id: step-loop
-        loop:
-          maxIterations: 5
-          breakCondition:
-            type: prompt
-            value:
-              promptText: "should we break?"
-          next: step-iter
-          exitTo: step-done
+        branches:
+          - next: step-iter
+            loop:
+              maxIterations: 5
+              breakCondition:
+                type: prompt
+                value:
+                  promptText: "should we break?"
+              next: step-iter
+              exitTo: step-done
       - id: step-iter
         command:
           type: shell
           value:
             command: "echo iter"
-        next: step-loop
+        branches:
+          - next: step-loop
       - id: step-done
         command:
           type: shell
@@ -886,9 +897,9 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
 
-    // 分支评估 → agent 执行 → prompt 执行 → 收尾 assess → 门禁（按序供给 chunk 流）。
+    // 条件分支评估（布尔 true）→ agent 执行 → prompt 执行 → 收尾 assess → 门禁（按序供给 chunk 流）。
     const responses = [
-      '{"branchExpectation": "agent"}',
+      'true',
       'report done',
       '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
       '{"taskStatus":"done"}',
@@ -924,11 +935,10 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(stepIds?.filter(id => id === 'step-fallback')).toHaveLength(0);
     expect(stepIds?.filter(id => id === 'step-merge')).toHaveLength(1);
 
-    // 分支决策点保留 branchMeta 评估现场。
+    // 分支决策点保留 branchMeta 评估现场（布尔判定输出）。
     const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
     expect(branchEntry?.branchMeta?.status).toBe('completed');
-    expect(branchEntry?.branchMeta?.result).toBe('{"branchExpectation": "agent"}');
-    expect(branchEntry?.branchMeta?.expectation).toBe('agent');
+    expect(branchEntry?.branchMeta?.result).toBe('true');
 
     // agent Step：真实 childId（synthetic:false）+ 子代理最终输出。
     const agentStep = state?.executedSteps.find(step => step.stepId === 'step-agent');
@@ -970,13 +980,13 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(Object.keys(state?.stageContracts ?? {})).toHaveLength(2);
   });
 
-  it('falls back to node.next and preserves branchMeta when no branch matches', async () => {
+  it('falls back to array order and preserves branchMeta when no branch matches', async () => {
     const { ctx, engine, persistence, llm, shell } = await harness();
     await putDefinition(persistence, 'wfl-branch-fallback', branchFallbackYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('{"branchExpectation": "other"}');
+    llm.streamHandler = () => textChunks('false');
 
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', jobId: 'job-1', originalInput: 'do it' });
@@ -985,16 +995,14 @@ describe('SandoreEngineRuntime DAG execution', () => {
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
 
-    // 无匹配 → 回退 node.next（step-fallback），匹配分支未执行。
+    // 条件 false → 分支未命中（branchMeta.result=false）→ 数组顺序兜底 step-fallback。
     const stepIds = state?.executedSteps.map(step => step.stepId);
-    expect(stepIds).toEqual(['step-branch', 'step-fallback']);
-    expect(stepIds?.filter(id => id === 'step-matched')).toHaveLength(0);
+    expect(stepIds).toEqual(['step-branch', 'step-fallback', 'step-matched']);
 
-    // branchMeta 保留原始评估结果。
+    // branchMeta 保留原始评估结果（false 证明条件分支未命中）。
     const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
     expect(branchEntry?.branchMeta?.status).toBe('completed');
-    expect(branchEntry?.branchMeta?.result).toBe('{"branchExpectation": "other"}');
-    expect(branchEntry?.branchMeta?.expectation).toBe('other');
+    expect(branchEntry?.branchMeta?.result).toBe('false');
   });
 
   it('executes nested loops fully on every outer iteration (inner loop visitCount resets)', async () => {

@@ -38,7 +38,7 @@ function instanceDotState(status) {
     return isDagRunStatus(status) ? runDotState(status) : 'warning';
 }
 /** 渲染 InstanceList。 */
-export function InstanceList({ t, workspaces, query, listInstances, onOpen }) {
+export function InstanceList({ t, workspaces, query, activeId, listInstances, onOpen }) {
     const [state, setState] = useState({ kind: 'loading' });
     // 轮询定时器与卸载标记：打开期间每 3s 刷新一次，卸载/收起面板即清理停止。
     const timerRef = useRef(undefined);
@@ -90,6 +90,6 @@ export function InstanceList({ t, workspaces, query, listInstances, onOpen }) {
     if (groups.length === 0) {
         return _jsx("p", { className: css.empty, children: t('panel.empty.nomatch') });
     }
-    return (_jsx("div", { className: css.listGroups, children: groups.map(group => (_jsxs("section", { className: css.groupSection, children: [_jsx("h3", { className: css.group, children: group.title }), _jsx("ul", { className: css.rows, children: group.instances.map(instance => (_jsx("li", { className: css.row, children: _jsxs("button", { type: "button", className: css.rowAction, onClick: () => { onOpen(instance.instanceId); }, children: [_jsx(StateDot, { state: instanceDotState(instance.status) }), _jsxs("span", { className: css.rowBody, children: [_jsx("span", { className: css.rowName, children: instance.instanceId }), _jsx("span", { className: css.rowCaption, children: `${instance.jobId} · ${formatTimestamp(instance.updatedAt)}` })] }), _jsx("span", { className: css.rowStatus, children: isDagRunStatus(instance.status) ? t(STATUS_KEYS[instance.status]) : instance.status })] }) }, instance.instanceId))) })] }, group.key))) }));
+    return (_jsx("div", { className: css.listGroups, children: groups.map(group => (_jsxs("section", { className: css.groupSection, children: [_jsx("h3", { className: css.group, children: group.title }), _jsx("ul", { className: css.rows, children: group.instances.map(instance => (_jsx("li", { className: css.row, children: _jsxs("button", { type: "button", className: `${css.rowAction} ${activeId === instance.instanceId ? css.rowActive : ''}`, onClick: () => { onOpen(instance.instanceId); }, children: [_jsx(StateDot, { state: instanceDotState(instance.status) }), _jsxs("span", { className: css.rowBody, children: [_jsx("span", { className: css.rowName, children: instance.instanceId }), _jsx("span", { className: css.rowCaption, children: `${instance.jobId} · ${formatTimestamp(instance.updatedAt)}` })] }), _jsx("span", { className: css.rowStatus, children: isDagRunStatus(instance.status) ? t(STATUS_KEYS[instance.status]) : instance.status })] }) }, instance.instanceId))) })] }, group.key))) }));
 }
 //# sourceMappingURL=InstanceList.js.map

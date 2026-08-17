@@ -1,0 +1,91 @@
+/* React Flow 官方主题（照抄官方 dagre 示例 theme css：白底节点、粉色选中、可见边）。 */
+
+.react-flow {
+  --xy-background-color: #f7f9fb;
+  --xy-node-background-color-default: #ffffff;
+  --xy-node-border-default: 1px solid #ededed;
+  --xy-node-boxshadow-default: 0px 3.54px 4.55px 0px #00000005, 0px 3.54px 4.55px 0px #0000000d, 0px 0.51px 1.01px 0px #0000001a;
+  --xy-node-border-radius-default: 8px;
+  --xy-node-color-default: #18181b;
+
+  --xy-handle-background-color-default: #ffffff;
+  --xy-handle-border-color-default: #aaaaaa;
+
+  --xy-edge-label-color-default: #505050;
+  --xy-edge-stroke-default: #b1b1b7;
+  --xy-edge-stroke-width-default: 2;
+
+  --xy-theme-selected: #f57dbd;
+  --xy-theme-hover: #c5c5c5;
+  --xy-theme-edge-hover: #18181b;
+  --xy-theme-color-focus: #e8e8e8;
+  --xy-theme-panel-bg: #ffffff;
+  --xy-theme-panel-text: #111827;
+  --xy-theme-muted-bg: #f3f4f6;
+  --xy-theme-subtle-border: #d1d5db;
+}
+
+.react-flow.dark {
+  --xy-background-color: #101012;
+  --xy-node-background-color-default: #1a1b1e;
+  --xy-node-border-default: 1px solid #303238;
+  --xy-handle-background-color-default: #141519;
+  --xy-handle-border-color-default: #5a5d66;
+  --xy-edge-label-color-default: #e6e7ea;
+  --xy-edge-stroke-default: #8b9099;
+  --xy-theme-hover: #7a7d86;
+  --xy-theme-edge-hover: #f3f4f6;
+  --xy-theme-panel-bg: #141519;
+  --xy-theme-panel-text: #f3f4f6;
+  --xy-theme-color-focus: #4b4e57;
+  --xy-node-boxshadow-default: none;
+}
+
+.react-flow {
+  background-color: var(--xy-background-color);
+}
+
+/* 默认节点样式（与官方一致：白底卡片、居中、padding）。 */
+.react-flow__node {
+  box-shadow: var(--xy-node-boxshadow-default);
+  border-radius: var(--xy-node-border-radius-default);
+  background-color: var(--xy-node-background-color-default);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 10px;
+  font-size: 12px;
+  flex-direction: column;
+  border: var(--xy-node-border-default);
+  color: var(--xy-node-color-default);
+}
+
+.react-flow__node.selectable:focus {
+  box-shadow: 0px 0px 0px 4px var(--xy-theme-color-focus);
+  border-color: var(--xy-theme-color-focus);
+}
+
+.react-flow__node.selectable:hover,
+.react-flow__node.draggable:hover {
+  border-color: var(--xy-theme-hover);
+}
+
+.react-flow__node.selectable.selected {
+  border-color: var(--xy-theme-selected);
+  box-shadow: var(--xy-node-boxshadow-default);
+}
+
+.react-flow__edge.selectable:hover .react-flow__edge-path,
+.react-flow__edge.selectable.selected .react-flow__edge-path {
+  stroke: var(--xy-theme-edge-hover);
+}
+
+.react-flow__handle {
+  background-color: var(--xy-handle-background-color-default);
+}
+
+.react-flow__handle.connectingfrom,
+.react-flow__handle.connectingto {
+  border-color: var(--xy-theme-edge-hover);
+}

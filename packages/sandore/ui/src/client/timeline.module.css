@@ -1,0 +1,238 @@
+/* UnifiedTimeline：step 卡片 + user 气泡（GitHub comment-card 风格，DSH token）。 */
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.timeline {
+  padding: 8px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty {
+  margin: 0;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-caption);
+  text-align: center;
+}
+
+/* ── Step 卡片 ───────────────────────────────────────────────────────────── */
+
+.stepCard {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-elevated);
+  overflow: hidden;
+}
+
+.stepHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.avatarDone {
+  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));
+  color: var(--dsw-alias-state-success);
+}
+
+.avatarRun {
+  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));
+  color: var(--dsw-alias-state-info);
+  animation: pulse 1.5s infinite;
+}
+
+.avatarFail {
+  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));
+  color: var(--dsw-alias-state-error);
+}
+
+.avatarPaused {
+  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));
+  color: var(--dsw-alias-state-warning);
+}
+
+.avatarTodo {
+  background: var(--dsw-alias-bg-active);
+  color: var(--dsw-alias-label-caption);
+}
+
+.stepName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.stepName:hover {
+  color: var(--dsw-alias-accent-primary);
+}
+
+.loopLabel {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-caption);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.badgeRun {
+  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));
+  color: var(--dsw-alias-state-info);
+}
+
+.badgeDone {
+  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));
+  color: var(--dsw-alias-state-success);
+}
+
+.badgeFail {
+  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));
+  color: var(--dsw-alias-state-error);
+}
+
+.badgePaused {
+  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));
+  color: var(--dsw-alias-state-warning);
+}
+
+.badgeDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badgeRun .badgeDot {
+  animation: pulse 1.5s infinite;
+}
+
+.visitCount {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.stepBody {
+  padding: 8px 12px 8px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stepReturn {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1.6;
+}
+
+.stepError {
+  font-size: 12px;
+  color: var(--dsw-alias-state-error);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stepPaused {
+  font-size: 12px;
+  color: var(--dsw-alias-state-warning);
+}
+
+.stepRunning {
+  font-size: 12px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.expandBtn {
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--dsw-alias-accent-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.expandBtn:hover {
+  text-decoration: underline;
+}
+
+/* ── 用户气泡 ────────────────────────────────────────────────────────────── */
+
+.userBubble {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 4px 12px;
+}
+
+.userContent {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-bottom-right-radius: 4px;
+  background: var(--dsw-alias-bg-sunken);
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.userAvatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));
+  color: var(--dsw-alias-state-success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}

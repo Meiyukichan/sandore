@@ -1,0 +1,206 @@
+/* DiscussionInput 状态驱动输入区。 */
+
+.root {
+  flex: none;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--dsw-alias-bg-elevated);
+  position: relative;
+}
+
+.mentionBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.targetBtn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--dsw-alias-accent-bg);
+  color: var(--dsw-alias-accent-primary);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.targetBtn:hover:not(:disabled) {
+  background: rgba(74, 126, 255, 0.15);
+}
+
+.targetBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mentionHint {
+  font-size: 10px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.picker {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 180px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-elevated);
+  border: 1px solid var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.picker button {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--dsw-alias-label-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker button:hover {
+  background: var(--dsw-alias-bg-hover);
+}
+
+.picker button.pickerActive {
+  background: var(--dsw-alias-accent-bg);
+  color: var(--dsw-alias-accent-primary);
+}
+
+.textarea {
+  width: 100%;
+  min-height: 36px;
+  max-height: 120px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-sunken);
+  border: 1px solid var(--dsw-alias-border-l1);
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary);
+  outline: none;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.textarea:focus {
+  border-color: var(--dsw-alias-accent-primary);
+}
+
+.textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.retryRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.retryLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption);
+  margin-right: 4px;
+}
+
+.retryBtn {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.retryBtn:hover {
+  background: var(--dsw-alias-bg-hover);
+}
+
+.retryBtnActive {
+  background: var(--dsw-alias-accent-primary);
+  color: #fff;
+  border-color: var(--dsw-alias-accent-primary);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.pauseBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--dsw-alias-state-warning);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.pauseBtn:hover {
+  background: #d97d04;
+}
+
+.pauseBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  box-shadow: none;
+}
+
+.sendBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--dsw-alias-accent-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(74, 126, 255, 0.3);
+}
+
+.sendBtn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.sendBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+  box-shadow: none;
+}

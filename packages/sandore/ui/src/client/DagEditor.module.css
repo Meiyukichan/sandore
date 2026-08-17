@@ -1,4 +1,4 @@
-/* DagEditor 编排器：Stage DAG 节点列表 + Step 编辑 + YAML 预览。 */
+/* DagEditor 编排画布：节点卡 + SVG 连线 + 工具条 + 编辑侧栏 + YAML 预览折叠。 */
 
 .editor {
   display: flex;
@@ -29,74 +29,540 @@
   color: var(--dsw-alias-label-primary);
 }
 
-.body {
+.success {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));
+}
+
+.error {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── 画布行：画布 + 编辑侧栏 ─────────────────────────────────────────────── */
+
+.canvasRow {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  overflow-y: auto;
-  box-sizing: border-box;
+  overflow: hidden;
 }
 
-.dag {
+.canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  overflow: hidden;
+  background-color: var(--dsw-alias-bg-sunken);
+  background-image: radial-gradient(circle, var(--dsw-alias-border-l2) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
-.nodeWrap {
+.canvasScroll {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+}
+
+.canvasContent {
+  position: relative;
+}
+
+.zoomWrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* 顶部覆盖控件（tabs 左上、工具条右上） */
+.canvasTabs {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
   display: flex;
-  flex-direction: column;
-}
-
-.stageHeader {
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-elevated);
+  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
-  background: var(--dsw-alias-bg-base);
 }
 
-.stepCount {
-  flex: none;
+.canvasTabs button {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--dsw-alias-label-caption);
+  cursor: pointer;
+}
+
+.canvasTabs button:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.canvasTabs button.tabActive {
+  background: var(--dsw-alias-accent-bg);
+  color: var(--dsw-alias-accent-primary);
+}
+
+/* 层级条：返回按钮 + 当前层级名。 */
+.backBtn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.backBtn:hover {
+  background: var(--dsw-alias-bg-hover);
+  color: var(--dsw-alias-accent-primary);
+}
+
+.crumb {
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.canvasTabs .addStageBtn {
+  margin-left: 4px;
+}
+
+.canvasToolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-elevated);
+  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
+.iconBtn {
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: var(--dsw-alias-button-ghost-active-fill);
-  font-size: 11px;
-  line-height: 20px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 14px;
   color: var(--dsw-alias-label-caption);
+  cursor: pointer;
 }
 
-.connector {
+.iconBtn:hover {
+  background: var(--dsw-alias-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── 节点卡（官方默认节点风格：白底由 wrapper 提供，内部只做居中内容布局） ── */
+
+.node {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.nodeTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--xy-node-color-default);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeSub {
+  font-size: 10px;
+  font-weight: 400;
+  color: #a1a1aa;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeSelected {
+  /* 外框高亮由 React Flow wrapper 的 .react-flow__node.selected 提供。 */
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+}
+
+.nodeIcon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--dsw-alias-accent-bg);
+  color: var(--dsw-alias-accent-primary);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 20px;
+  font-size: 12px;
+}
+
+.nodeType {
+  flex: none;
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--dsw-alias-accent-bg);
+  color: var(--dsw-alias-accent-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.nodeTitle {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeBody {
+  padding: 7px 11px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--dsw-alias-bg-elevated);
+}
+
+.nodeEmpty {
+  font-size: 11px;
   color: var(--dsw-alias-label-caption);
 }
 
-.steps {
+.nodeStepRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  min-width: 0;
+}
+
+.nodeDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-disabled);
+}
+
+.nodeStepName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.nodeStepType {
+  flex: none;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--dsw-alias-bg-active);
+  color: var(--dsw-alias-label-caption);
+}
+
+/* Stage 卡页脚：下钻提示 + Step 数徽章。 */
+.nodeFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 11px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-sunken);
+}
+
+.nodeDrillHint {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--dsw-alias-accent-primary);
+}
+
+.nodeCount {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-caption);
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-active);
+}
+
+/* Step 节点（Step DAG） */
+.stepNode {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.stepIcon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-active);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.stepNode .nodeDot {
+  background: var(--dsw-alias-label-caption);
+}
+
+/* React Flow 连接端口（Handle）：放大到易命中，白底灰边由 theme css 提供；hover 高亮。 */
+.handle {
+  width: 11px;
+  height: 11px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.handle:hover {
+  border-color: var(--xy-theme-selected);
+  background: var(--xy-theme-selected);
+}
+
+/* ── 右侧编辑侧栏 ────────────────────────────────────────────────────────── */
+
+.panel {
+  flex: none;
+  width: 420px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+  overflow: hidden;
+}
+
+.panelHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.panelTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.panelBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 16px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 8px 8px 24px;
 }
 
-.empty {
-  padding: 8px 0;
+.panelEmpty {
+  padding: 16px;
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-label-caption);
 }
 
-.stepActions {
+/* ── 流控编辑器（FlowEditor） ─────────────────────────────────────────────── */
+
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.branchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-sunken);
+}
+
+/* 分支行头部：类型下拉 + 目标只读框 + 删除按钮一行。 */
+.branchHead {
   display: flex;
   align-items: center;
+  gap: 6px;
+}
+
+/* 分支类型下拉（并行分支 / 条件分支）。 */
+.branchKindSelect {
+  flex: none;
+  width: 108px;
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.branchKindSelect:focus {
+  border-color: var(--dsw-alias-accent-primary);
+}
+
+/* 目标节点只读框（视觉与下拉一致：同边框/圆角/高度，弹性占满剩余宽度）。 */
+.branchTarget {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  line-height: 18px;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 分支类型说明小字。 */
+.branchHint {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+}
+
+/* 判断条件命令卡片：shell/提示词 Pill 与输入框放进带边框的卡片。 */
+.conditionCard {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-sunken);
+}
+
+.select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.select:focus {
+  border-color: var(--dsw-alias-accent-primary);
+}
+
+/* ── YAML 预览折叠 ───────────────────────────────────────────────────────── */
+
+.previewHeader {
+  flex: none;
+  min-height: 36px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-elevated);
+}
+
+.previewBody {
+  flex: none;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
+}
+
+/* ── Step 字段编辑（沿用既有表单样式） ───────────────────────────────────── */
+
+.stageHeader {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
 }
 
 .step {
@@ -105,14 +571,25 @@
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--dsw-alias-bg-base);
 }
 
 .stepHead {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+/* 标题输入框：占满 stepHead 剩余宽度（删除按钮固定，输入框 flex 撑开）。 */
+.titleInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.titleInput input {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .command {
@@ -149,6 +626,37 @@
   gap: 6px;
 }
 
+/* 透传变量条目：纵向堆叠（名称+删除一行，值/描述各占一行），输入框占满详情区。 */
+.varRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-sunken);
+}
+
+.varRowHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 名称输入框 wrapper 占满剩余宽度（删除按钮固定）：wrapper 去左右 padding 保证三元素等距，
+   内部 input 补回与 DSH 默认一致的 8px 左右 padding，使文字缩进与其他输入框相同。 */
+.varNameInput {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+
+.varNameInput input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1px 8px;
+}
+
 .gates {
   display: flex;
   flex-direction: column;
@@ -169,29 +677,4 @@
   line-height: 18px;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
-}
-
-.preview {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-height: 0;
-}
-
-.success {
-  margin: 0;
-  padding: 8px 12px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));
-}
-
-.error {
-  margin: 0;
-  padding: 8px 12px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }

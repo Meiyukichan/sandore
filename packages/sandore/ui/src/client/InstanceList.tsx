@@ -47,6 +47,8 @@ export interface InstanceListProps {
   workspaces: readonly WorkspaceView[]
   /** 客户端过滤关键词（匹配 instanceId / jobId）。 */
   query: string
+  /** 当前选中实例 id（高亮行；缺省不高亮）。 */
+  activeId?: string | undefined
   /** 拉取实例摘要（RPC 已解包）。 */
   listInstances(): Promise<InstanceSummary[]>
   /** 点击实例行下钻 RunView。 */
@@ -70,7 +72,7 @@ function instanceDotState(status: string): StateDotState {
 }
 
 /** 渲染 InstanceList。 */
-export function InstanceList({ t, workspaces, query, listInstances, onOpen }: InstanceListProps) {
+export function InstanceList({ t, workspaces, query, activeId, listInstances, onOpen }: InstanceListProps) {
   const [state, setState] = useState<InstanceListState>({ kind: 'loading' })
 
   // 轮询定时器与卸载标记：打开期间每 3s 刷新一次，卸载/收起面板即清理停止。
@@ -146,7 +148,11 @@ export function InstanceList({ t, workspaces, query, listInstances, onOpen }: In
           <ul className={css.rows}>
             {group.instances.map(instance => (
               <li key={instance.instanceId} className={css.row}>
-                <button type="button" className={css.rowAction} onClick={() => { onOpen(instance.instanceId) }}>
+                <button
+                  type="button"
+                  className={`${css.rowAction} ${activeId === instance.instanceId ? css.rowActive : ''}`}
+                  onClick={() => { onOpen(instance.instanceId) }}
+                >
                   <StateDot state={instanceDotState(instance.status)} />
                   <span className={css.rowBody}>
                     <span className={css.rowName}>{instance.instanceId}</span>

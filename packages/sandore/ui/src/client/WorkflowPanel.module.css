@@ -104,6 +104,16 @@
   background: var(--dsw-alias-bg-base);
 }
 
+/* 选中行高亮（accent 底 + 主色描边）。 */
+.rowActive {
+  border-color: var(--dsw-alias-accent-primary);
+  background: var(--dsw-alias-accent-bg);
+}
+
+.rowActive .rowAction:hover {
+  background: var(--dsw-alias-accent-bg);
+}
+
 .rowAction {
   flex: 1;
   min-width: 0;

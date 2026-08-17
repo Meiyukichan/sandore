@@ -22,6 +22,8 @@ export interface DefinitionListProps {
   t: TranslateNS<'sandore'>
   /** 客户端过滤关键词（匹配 name / id）。 */
   query: string
+  /** 当前选中定义 id（高亮行；缺省不高亮）。 */
+  activeId?: string | undefined
   /** 拉取定义列表（RPC 已解包）。 */
   listDefinitions(): Promise<WorkflowDefinitionEntry[]>
   /** 删除定义（RPC 已解包）。 */
@@ -69,7 +71,7 @@ function DeleteConfirmModal({ target, deleting, errorMessage, t, onCancel, onCon
 }
 
 /** 渲染 DefinitionList。 */
-export function DefinitionList({ t, query, listDefinitions, deleteDefinition, onOpen }: DefinitionListProps) {
+export function DefinitionList({ t, query, activeId, listDefinitions, deleteDefinition, onOpen }: DefinitionListProps) {
   const [state, setState] = useState<DefinitionListState>({ kind: 'loading' })
   const [confirmTarget, setConfirmTarget] = useState<WorkflowDefinitionEntry | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
@@ -140,7 +142,7 @@ export function DefinitionList({ t, query, listDefinitions, deleteDefinition, on
       ) : (
         <ul className={css.rows}>
           {filtered.map(definition => (
-            <li key={definition.id} className={css.row}>
+            <li key={definition.id} className={`${css.row} ${activeId === definition.id ? css.rowActive : ''}`}>
               <button type="button" className={css.rowAction} onClick={() => { onOpen(definition.id, definition.yaml) }}>
                 <span className={css.rowBody}>
                   <span className={css.rowName}>{definition.name}</span>
