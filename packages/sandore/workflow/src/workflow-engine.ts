@@ -16,6 +16,8 @@ import { Context, Service } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { Session } from '@deepseek-ai/dsh-session';
 import { SessionId } from '@deepseek-ai/dsh-session';
+// 加载 @deepseek-ai/dsh-session-title 的 Cordis 面声明（使 `ctx.sessionTitle` 类型可用）。
+import type { SessionTitleService } from '@deepseek-ai/dsh-session-title';
 import z from '@deepseek-ai/schemastery';
 
 import { WorkflowDagNavigator } from './dag-navigator.ts';
@@ -45,11 +47,11 @@ import type {
 } from './types.ts';
 import { parseWorkflowYaml } from './yaml-parser.ts';
 
-import { FinalizeManager } from '../../microflow/src/finalize-manager.ts';
-import { StageExecutor } from '../../microflow/src/stage-executor.ts';
-import type { StageExecutorResume, StageStepHooks } from '../../microflow/src/stage-executor.ts';
-import type { StepRunnerConfig } from '../../microflow/src/step-runner.ts';
-import type { Agent } from '../../microflow/src/subagents.ts';
+import { FinalizeManager } from '@deepseek-ai/dsh-sandore-microflow/src/finalize-manager';
+import { StageExecutor } from '@deepseek-ai/dsh-sandore-microflow/src/stage-executor';
+import type { StageExecutorResume, StageStepHooks } from '@deepseek-ai/dsh-sandore-microflow/src/stage-executor';
+import type { StepRunnerConfig } from '@deepseek-ai/dsh-sandore-microflow/src/step-runner';
+import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 
 /** 运行中的实例（控制器 + 宿主 Session + 宿主主代理 + 定义 + 状态快照 + 交互管理器）。 */
 interface ActiveInstance {
@@ -170,7 +172,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     defaultModel: z.string(),
   });
 
-  static inject = ['sessions', 'sessionPersistence', 'subagents', 'agents', 'llm', 'shell', 'fs', 'storageDomain', 'sandorePersistence', 'userQuestions'];
+  static inject = ['sessions', 'sessionPersistence', 'subagents', 'agents', 'llm', 'shell', 'fs', 'storageDomain', 'sandorePersistence', 'userQuestions', 'sessionTitle'];
 
   private readonly instances = new Map<string, ActiveInstance>();
 
@@ -211,6 +213,13 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     const session = this.ctx.sessions.get(SessionId(instanceId));
     if (session === undefined) {
       throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
+    }
+    // 补设宿主会话标题（source=user 优先于 DSH fallback 自动摘要）；rename 失败仅记录
+    // warn，不得使 startInstance 失败或中断实例执行。
+    try {
+      this.ctx.sessionTitle.rename(session, `工作流实例 ${instanceId}`);
+    } catch (error) {
+      this.ctx.logger.warn(`sandore: set host session title failed: ${renderError(error)}`);
     }
     const active = this.buildActiveInstance(controller, session, hostAgent, definition, state);
     this.instances.set(instanceId, active);
@@ -481,6 +490,11 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       { currentStageId: this.resumeStageId(active), stageContracts: active.state.stageContracts },
     );
     const loopManager = navigator.loopManagerInstance;
+    /** 当前循环迭代路径（无活跃循环时省略，供 step-* 事件 payload 使用）。 */
+    const currentLoopIteration = (): number[] | undefined => {
+      const path = loopManager.buildLoopIterationPath();
+      return path.length > 0 ? path : undefined;
+    };
     const finalizeManager = new FinalizeManager(this.ctx, runnerConfig);
     let stageId = navigator.currentNodeId;
 
@@ -495,9 +509,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       this.emitStageStart(session, info, stageId);
 
       const hooks: StageStepHooks = {
-        onStepStart: (step, childId) => this.emitStepStart(session, info, step.id, childId),
-        onStepCompleted: (step, childId, output) => this.emitStepCompleted(session, info, step.id, childId, output),
-        onStepFailed: (step, childId, error) => this.emitStepFailed(session, info, step.id, childId, error),
+        onStepStart: (step, childId) => this.emitStepStart(session, info, step.id, childId, step.name ?? step.id, currentLoopIteration()),
+        onStepCompleted: (step, childId, output) => this.emitStepCompleted(session, info, step.id, childId, output, step.name ?? step.id, currentLoopIteration()),
+        onStepFailed: (step, childId, error) => this.emitStepFailed(session, info, step.id, childId, error, step.name ?? step.id, currentLoopIteration()),
       };
 
       const resumeFrom = this.resumeInfo(active, stage);
@@ -743,8 +757,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         active.state = next;
         void this.persistState(active);
       },
-      emitStepPaused: (stepId, childId) => this.emitStepPaused(session, active, stepId, childId),
-      emitStepResumed: (stepId, childId, resumePrompt) => this.emitStepResumed(session, active, stepId, childId, resumePrompt),
+      emitStepPaused: (stepId, childId, name, loopIteration) => this.emitStepPaused(session, active, stepId, childId, name, loopIteration),
+      emitStepResumed: (stepId, childId, resumePrompt, name, loopIteration) => this.emitStepResumed(session, active, stepId, childId, resumePrompt, name, loopIteration),
     });
     const recovery = new RecoveryManager({
       signal: controller.signal,
@@ -768,7 +782,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         const child = this.ctx.sessions.fork(SessionId(source), boundary);
         return { events: child.events };
       },
-      emitStepRetried: (stepId, mode) => this.emitStepRetried(session, active, stepId, mode),
+      emitStepRetried: (stepId, mode, name, loopIteration) => this.emitStepRetried(session, active, stepId, mode, name, loopIteration),
       resumeExecution: () => this.resumeExecution(active),
     });
     active = {
@@ -926,49 +940,49 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     this.safeAppend(() => session.append('sandore/stage-completed', { taskId: info.taskId, stageId, stageContract }));
   }
 
-  private emitStepStart(session: Session, info: DagRunInfo, stepId: string, childId: string): void {
-    this.emitContained('sandore/step-start', [info, stepId, childId]);
-    this.safeAppend(() => session.append('sandore/step-start', { stepId, childId }));
+  private emitStepStart(session: Session, info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void {
+    this.emitContained('sandore/step-start', [info, stepId, childId, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
+    this.safeAppend(() => session.append('sandore/step-start', { stepId, childId, name, ...(loopIteration === undefined ? {} : { loopIteration }) }));
   }
 
-  private emitStepCompleted(session: Session, info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[]): void {
-    this.emitContained('sandore/step-completed', [info, stepId, childId, output]);
-    this.safeAppend(() => session.append('sandore/step-completed', { stepId, childId, output }));
+  private emitStepCompleted(session: Session, info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[], name: string, loopIteration?: number[]): void {
+    this.emitContained('sandore/step-completed', [info, stepId, childId, output, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
+    this.safeAppend(() => session.append('sandore/step-completed', { stepId, childId, output, name, ...(loopIteration === undefined ? {} : { loopIteration }) }));
   }
 
-  private emitStepFailed(session: Session, info: DagRunInfo, stepId: string, childId: string, error: string): void {
-    this.emitContained('sandore/step-failed', [info, stepId, childId, error]);
-    this.safeAppend(() => session.append('sandore/step-failed', { stepId, childId, error }));
+  private emitStepFailed(session: Session, info: DagRunInfo, stepId: string, childId: string, error: string, name: string, loopIteration?: number[]): void {
+    this.emitContained('sandore/step-failed', [info, stepId, childId, error, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
+    this.safeAppend(() => session.append('sandore/step-failed', { stepId, childId, error, name, ...(loopIteration === undefined ? {} : { loopIteration }) }));
   }
 
-  private emitStepPaused(session: Session, active: ActiveInstance, stepId: string, childId: string): void {
+  private emitStepPaused(session: Session, active: ActiveInstance, stepId: string, childId: string, name: string, loopIteration?: number[]): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
       jobId: active.state.jobId,
     };
-    this.emitContained('sandore/step-paused', [info, stepId, childId]);
-    this.safeAppend(() => session.append('sandore/step-paused', { stepId, childId }));
+    this.emitContained('sandore/step-paused', [info, stepId, childId, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
+    this.safeAppend(() => session.append('sandore/step-paused', { stepId, childId, name, ...(loopIteration === undefined ? {} : { loopIteration }) }));
   }
 
-  private emitStepResumed(session: Session, active: ActiveInstance, stepId: string, childId: string, resumePrompt?: string): void {
+  private emitStepResumed(session: Session, active: ActiveInstance, stepId: string, childId: string, resumePrompt: string | undefined, name: string, loopIteration?: number[]): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
       jobId: active.state.jobId,
     };
-    this.emitContained('sandore/step-resumed', [info, stepId, childId, resumePrompt]);
-    this.safeAppend(() => session.append('sandore/step-resumed', { stepId, childId, ...(resumePrompt === undefined ? {} : { resumePrompt }) }));
+    this.emitContained('sandore/step-resumed', [info, stepId, childId, resumePrompt, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
+    this.safeAppend(() => session.append('sandore/step-resumed', { stepId, childId, ...(resumePrompt === undefined ? {} : { resumePrompt }), name, ...(loopIteration === undefined ? {} : { loopIteration }) }));
   }
 
-  private emitStepRetried(session: Session, active: ActiveInstance, stepId: string, mode: RetryMode): void {
+  private emitStepRetried(session: Session, active: ActiveInstance, stepId: string, mode: RetryMode, name: string, loopIteration?: number[]): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
       jobId: active.state.jobId,
     };
-    this.emitContained('sandore/step-retried', [info, stepId, mode]);
-    this.safeAppend(() => session.append('sandore/step-retried', { stepId, mode }));
+    this.emitContained('sandore/step-retried', [info, stepId, mode, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
+    this.safeAppend(() => session.append('sandore/step-retried', { stepId, mode, name, ...(loopIteration === undefined ? {} : { loopIteration }) }));
   }
 
   private emitEnd(session: Session, info: DagRunInfo, result: DagResultInfo): void {

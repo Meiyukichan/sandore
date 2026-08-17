@@ -1,102 +1,139 @@
-/** 展开的 WorkflowPanel 占位：header（编排 toggle + 新增）+ 三态列表 + ping 往返验证。 */
-
-import { useState } from 'react'
-import { Button, IconPlusOutline16, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+/**
+ * WorkflowPanel：工作流展开面板（header 搜索/编排/新增 + 两级下钻 view 栈 + 宽展开）。
+ *
+ * 由 WorkflowButton 承载，以 `.panel` fixed 浮层弹出（宽展开 layer，不受 rail 宽度
+ * 约束）。header 在列表态提供搜索（客户端过滤）、编排 toggle（默认态↔编排态）与
+ * 新增按钮（编排态新增定义；默认态「新增实例」暂未实现，按钮禁用并以 tooltip 说明
+ * 需先创建定义/Job）；下钻态仅保留返回按钮。内部维护
+ * view 状态栈（`list` ↔ `editor`/DagEditor ↔ `run`/RunView，经 `viewStackReducer`），
+ * 编排 toggle / 搜索关键词存于面板自身 state，下钻返回后自然保留。
+ * @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowPanel
+ */
+import { useReducer, useState } from 'react'
+import {
+  Button, IconChevronLeftOutline14, IconPlusOutline16, IconSearchOutline16, Input, Pill,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { HostCall, PingResponse } from './host.ts'
-import { isPingResponse } from './host.ts'
-import type { SandoreKey } from './locales.ts'
+import type { WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
+import type { InstanceSummary, WorkflowDefinitionEntry } from '@deepseek-ai/dsh-sandore-workflow/remote'
+
+import { DagEditor } from './DagEditor.tsx'
+import { RunView } from './RunView.tsx'
+import type { RunViewRemote } from './RunView.tsx'
+import { InstanceList } from './InstanceList.tsx'
+import { DefinitionList } from './DefinitionList.tsx'
+import { INITIAL_VIEW_STACK, topView, viewStackReducer } from './view-stack.ts'
+import type { SaveDefinition } from './sandore-save.ts'
+import type { OpenDiscussion } from './open-discussion.ts'
 import css from './WorkflowPanel.module.css'
 
-/** 面板接收的最小业务 face。 */
+/** WorkflowPanel 接收的普通业务 props（由 WorkflowButton 从 slot face 与 owner 组装）。 */
 export interface WorkflowPanelProps {
   /** 类型化的翻译函数（sandore 命名空间）。 */
   t: TranslateNS<'sandore'>
-  /** Client→Host RPC 桥。 */
-  host: HostCall
+  /** 工作区成员表（供 InstanceList 按工作区分组）。 */
+  workspaces: readonly WorkspaceView[]
+  /** 拉取实例摘要（RPC 已解包）。 */
+  listInstances(): Promise<InstanceSummary[]>
+  /** 拉取定义列表（RPC 已解包）。 */
+  listDefinitions(): Promise<WorkflowDefinitionEntry[]>
+  /** 删除定义（RPC 已解包）。 */
+  deleteDefinition(id: string): Promise<boolean>
+  /** DagEditor 保存回调（由 createSandoreSave 产出）。 */
+  save: SaveDefinition
+  /** 按 instanceId 生成 RunView 的「打开讨论」回调（由 createOpenDiscussion 产出）。 */
+  openDiscussion(instanceId: string): OpenDiscussion
+  /** RunView 所需的最小 RPC 访问面。 */
+  remote: RunViewRemote
 }
 
-/** 三态列表占位行。 */
-interface PlaceholderRow {
-  readonly id: string
-  readonly name: string
-  readonly state: StateDotState
-  readonly statusKey: SandoreKey
-}
-
-/** 占位三态列表：就绪 / 运行中 / 已完成。 */
-const PLACEHOLDER_ROWS: readonly PlaceholderRow[] = [
-  { id: 'sandore-ready', name: 'sample-workflow-ready', state: 'warning', statusKey: 'panel.state.ready' },
-  { id: 'sandore-running', name: 'sample-workflow-running', state: 'ongoing', statusKey: 'panel.state.running' },
-  { id: 'sandore-done', name: 'sample-workflow-done', state: 'done', statusKey: 'panel.state.completed' },
-]
-
-/** ping 往返的本地状态。 */
-type PingState =
-  | { readonly kind: 'idle' }
-  | { readonly kind: 'pending' }
-  | { readonly kind: 'ok'; readonly response: PingResponse }
-  | { readonly kind: 'error'; readonly message: string }
-
-/** 渲染 WorkflowPanel 占位。 */
-export function WorkflowPanel({ t, host }: WorkflowPanelProps) {
+/** 渲染 WorkflowPanel。 */
+export function WorkflowPanel({ t, workspaces, listInstances, listDefinitions, deleteDefinition, save, openDiscussion, remote }: WorkflowPanelProps) {
+  const [viewStack, dispatch] = useReducer(viewStackReducer, INITIAL_VIEW_STACK)
   const [orchestrating, setOrchestrating] = useState(false)
-  const [ping, setPing] = useState<PingState>({ kind: 'idle' })
+  const [query, setQuery] = useState('')
 
-  const runPing = async (): Promise<void> => {
-    setPing({ kind: 'pending' })
-    try {
-      const result: unknown = await host.call('sandore.ping')
-      if (isPingResponse(result)) {
-        setPing({ kind: 'ok', response: result })
-      } else {
-        setPing({ kind: 'error', message: 'unexpected response shape' })
-      }
-    } catch (error) {
-      setPing({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
-    }
+  const current = topView(viewStack)
+  const drilled = current.kind !== 'list'
+
+  const handleBack = (): void => { dispatch({ type: 'back' }) }
+
+  const handleAdd = (): void => {
+    // 仅编排态可达（默认态「新增实例」按钮已禁用）：下钻空白 DagEditor，
+    // 无 initialId/initialYaml，首次保存走 createDefinition。
+    dispatch({ type: 'open', view: { kind: 'editor' } })
   }
 
   return (
-    <section className={css.panel} aria-label={t('panel.title')} data-sandore-panel>
+    <section
+      className={drilled ? `${css.panel} ${css.drill}` : css.panel}
+      aria-label={t('panel.title')}
+      data-sandore-panel
+    >
       <header className={css.header}>
-        <span className={css.title}>{t('panel.title')}</span>
-        <label className={css.orchestrate}>
-          <input
-            type="checkbox"
-            checked={orchestrating}
-            onChange={(event) => { setOrchestrating(event.target.checked) }}
-          />
-          <span>{t('panel.orchestrate')}</span>
-        </label>
-        <Button size="sm" variant="primary" icon={<IconPlusOutline16 />}>
-          {t('panel.add')}
-        </Button>
-      </header>
-      <div className={css.body}>
-        <h3 className={css.group}>{t('panel.list.heading')}</h3>
-        <ul className={css.rows}>
-          {PLACEHOLDER_ROWS.map((row) => (
-            <li key={row.id} className={css.row}>
-              <StateDot state={row.state} />
-              <span className={css.rowName}>{row.name}</span>
-              <span className={css.rowStatus}>{t(row.statusKey)}</span>
-            </li>
-          ))}
-        </ul>
-        <div className={css.ping}>
-          <Button size="sm" variant="outline" onClick={() => { void runPing() }} disabled={ping.kind === 'pending'}>
-            {ping.kind === 'pending' ? t('panel.ping.loading') : t('panel.ping')}
+        {drilled ? (
+          <Button size="sm" variant="ghost" icon={<IconChevronLeftOutline14 />} onClick={handleBack}>
+            {t('panel.back')}
           </Button>
-          {ping.kind === 'ok' && (
-            <pre className={css.pingResult}>{JSON.stringify(ping.response)}</pre>
-          )}
-          {ping.kind === 'error' && (
-            <p className={css.pingError} role="alert">{t('panel.ping.failed', { message: ping.message })}</p>
+        ) : (
+          <>
+            <span className={css.title}>{t('panel.title')}</span>
+            <Input
+              className={css.search ?? ''}
+              icon={<IconSearchOutline16 />}
+              value={query}
+              onChange={event => { setQuery(event.target.value) }}
+              placeholder={t('panel.search')}
+              aria-label={t('panel.search')}
+            />
+            <Pill active={orchestrating} onClick={() => { setOrchestrating(value => !value) }}>
+              {t('panel.orchestrate')}
+            </Pill>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<IconPlusOutline16 />}
+              disabled={!orchestrating}
+              title={orchestrating ? undefined : t('panel.add.instance.hint')}
+              onClick={handleAdd}
+            >
+              {orchestrating ? t('panel.add.definition') : t('panel.add.instance')}
+            </Button>
+          </>
+        )}
+      </header>
+
+      {drilled ? (
+        <div className={css.drillBody}>
+          {current.kind === 'editor' ? (
+            <DagEditor t={t} initialId={current.definitionId} initialYaml={current.initialYaml} save={save} />
+          ) : (
+            <RunView t={t} instanceId={current.instanceId} openDiscussion={openDiscussion(current.instanceId)} remote={remote} />
           )}
         </div>
-      </div>
+      ) : (
+        <div className={css.body}>
+          {orchestrating ? (
+            <DefinitionList
+              t={t}
+              query={query}
+              listDefinitions={listDefinitions}
+              deleteDefinition={deleteDefinition}
+              onOpen={(definitionId, initialYaml) => {
+                dispatch({ type: 'open', view: { kind: 'editor', definitionId, initialYaml } })
+              }}
+            />
+          ) : (
+            <InstanceList
+              t={t}
+              workspaces={workspaces}
+              query={query}
+              listInstances={listInstances}
+              onOpen={instanceId => { dispatch({ type: 'open', view: { kind: 'run', instanceId } }) }}
+            />
+          )}
+        </div>
+      )}
     </section>
   )
 }

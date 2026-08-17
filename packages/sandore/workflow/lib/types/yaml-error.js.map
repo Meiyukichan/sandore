@@ -1,0 +1,1 @@
+{"version":3,"file":"yaml-error.js","sourceRoot":"","sources":["../../src/yaml-error.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAKH;;;;;GAKG;AACH,MAAM,OAAO,iBAAkB,SAAQ,KAAK;IAC1C,kBAAkB;IACT,IAAI,CAAuB;IAEpC,YAAY,OAAe,EAAE,IAA2B,EAAE,OAAsB;QAC9E,KAAK,CAAC,OAAO,EAAE,OAAO,CAAC,CAAA;QACvB,IAAI,CAAC,IAAI,GAAG,mBAAmB,CAAA;QAC/B,IAAI,CAAC,IAAI,GAAG,IAAI,CAAA;IAClB,CAAC;CACF"}

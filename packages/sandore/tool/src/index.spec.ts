@@ -6,9 +6,9 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import { SandoreError } from '../../workflow/src/errors.ts';
-import type { DagInstanceState, DagRunStatus, DagStartRequest } from '../../workflow/src/types.ts';
-import type { SandoreEngineSurface } from '../../workflow/src/engine-surface.ts';
+import { SandoreError } from '@deepseek-ai/dsh-sandore-workflow/src/errors';
+import type { DagInstanceState, DagRunStatus, DagStartRequest } from '@deepseek-ai/dsh-sandore-workflow/src/types';
+import type { SandoreEngineSurface } from '@deepseek-ai/dsh-sandore-workflow/src/engine-surface';
 
 import { createSandoreTools } from './index.ts';
 import type { SandoreToolDefinition, SandoreToolResult } from './index.ts';

@@ -10,10 +10,10 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 
-import { BranchEvaluator, extractExpectation, matchesExpectation } from '../../microflow/src/branch-evaluator.ts';
-import type { BranchEvalOptions, BranchEvaluatorConfig } from '../../microflow/src/branch-evaluator.ts';
-import { LoopManager } from '../../microflow/src/loop-manager.ts';
-import type { LoopState } from '../../microflow/src/loop-manager.ts';
+import { BranchEvaluator, extractExpectation, matchesExpectation } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
+import type { BranchEvalOptions, BranchEvaluatorConfig } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
+import { LoopManager } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
+import type { LoopState } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
 
 import type { BranchMeta, CommandConfig, DagBranch, DagLoop, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from './schema.ts';
 import type { StageContract } from './types.ts';

@@ -26,7 +26,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 
-import type { AgentHandle, CreateAgentOptions } from '../../microflow/src/subagents.ts';
+import type { AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { SandoreError } from './errors.ts';
 import type { RetryRecord, WorkflowTaskState } from './schema.ts';
 
@@ -65,8 +65,8 @@ export interface RecoveryManagerOptions {
   readonly getSession: (id: string) => ForkSourceSession | undefined;
   /** `ctx.sessions.fork` 的注入包装（boundary 省略 = 全量历史）。 */
   readonly forkSession: (source: string, boundary?: number) => ForkSourceSession;
-  /** 双发 `sandore/step-retried` 事件。 */
-  readonly emitStepRetried: (stepId: string, mode: RetryMode) => void;
+  /** 双发 `sandore/step-retried` 事件（含 Step 名称与可选循环迭代路径）。 */
+  readonly emitStepRetried: (stepId: string, mode: RetryMode, name: string, loopIteration?: number[]) => void;
   /** 重试/恢复后的续跑执行（whenIdle + finalAssistantOutput + finalize + DAG 推进）。 */
   readonly resumeExecution: () => Promise<void>;
 }
@@ -162,7 +162,7 @@ export class RecoveryManager {
       retryHistory: [...(cleaned.retryHistory ?? []), retryRecord],
     };
     this.commitRunningStep(state, runningStep);
-    this.deps.emitStepRetried(stepIdOf(step), mode);
+    this.deps.emitStepRetried(stepIdOf(step), mode, step.name, step.loopIteration);
 
     // 2. 按模式准备子代理会话（revert/fork 需 fork + 新 agent + 更新 childId/parentSessionId）。
     let childId = childIdOf(step);

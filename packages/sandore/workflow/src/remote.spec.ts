@@ -17,6 +17,7 @@ import { SandorePersistence } from './persistence.ts'
 import { SandoreRemote } from './remote.ts'
 import type { WorkflowTaskState } from './schema.ts'
 import type { AskUserQuestionAnswer, DagRun, DagStartRequest } from './types.ts'
+import { parseWorkflowYaml } from './yaml-parser.ts'
 
 const validV2Yaml = `id: wfl-source
 name: demo
@@ -182,14 +183,43 @@ describe('SandoreRemote definition CRUD', () => {
 
     const created = await remote.createDefinition({ yaml: validV2Yaml })
     expect(created.id).toMatch(/^wfl-/)
-    expect(created.yaml).toBe(validV2Yaml)
     expect(created.name).toBe('demo')
     expect(created.version).toBe('1.0.0')
+
+    // 存储的 YAML 文本经规范序列化，其顶层 id 与记录键一致（而非调用方传入的原文 id）。
+    expect(parseWorkflowYaml(created.yaml).id).toBe(created.id)
 
     const listed = remote.listDefinitions()
     expect(listed).toHaveLength(1)
     expect(listed[0]?.id).toBe(created.id)
-    expect(remote.getYaml(created.id)).toBe(validV2Yaml)
+    expect(remote.getYaml(created.id)).toBe(created.yaml)
+  })
+
+  it('stores canonical YAML whose id matches the record key, not the sentinel id', async () => {
+    const { remote } = await harness()
+    const blankYaml = `id: wfl-new
+name: 未命名工作流
+version: "1.0.0"
+skills: []
+mcps: []
+agents: []
+settings:
+  defaultTimeout: 120
+  maxConcurrentAgents: 4
+stages:
+  - id: stg-1
+    name: 阶段 1
+    steps: []
+`
+
+    const created = await remote.createDefinition({ yaml: blankYaml })
+
+    expect(created.id).toMatch(/^wfl-/)
+    expect(created.id).not.toBe('wfl-new')
+    // 首次保存后再打开，YAML 里的 id 是真实 wfl-{uuid} 而非 wfl-new。
+    const stored = parseWorkflowYaml(remote.getYaml(created.id))
+    expect(stored.id).toBe(created.id)
+    expect(stored.id).not.toBe('wfl-new')
   })
 
   it('rejects invalid YAML and leaves the definitions table empty', async () => {
@@ -208,7 +238,7 @@ describe('SandoreRemote definition CRUD', () => {
     await expect(remote.updateYaml(created.id, 'stages: [ broken')).rejects.toMatchObject({
       code: 'YAML_PARSE',
     })
-    expect(remote.getYaml(created.id)).toBe(validV2Yaml)
+    expect(remote.getYaml(created.id)).toBe(created.yaml)
   })
 
   it('deletes a definition idempotently', async () => {
@@ -234,7 +264,7 @@ describe('SandoreRemote definition CRUD', () => {
     expect(updated.name).toBe('renamed')
     expect(updated.version).toBe('2.0.0')
     expect(updated.description).toBe('new description')
-    expect(updated.yaml).toBe(validV2Yaml)
+    expect(updated.yaml).toBe(created.yaml)
   })
 
   it('getYaml throws NODE_NOT_FOUND for a nonexistent definition', async () => {

@@ -10,7 +10,7 @@ import { Context, Service } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import z from '@deepseek-ai/schemastery';
 
-import type { Agent } from '../../microflow/src/subagents.ts';
+import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import type {
   AskUserQuestionAnswer,
   AskUserQuestionItem,
@@ -35,12 +35,12 @@ declare module '@deepseek-ai/cordis' {
     'sandore/start'(info: DagRunInfo): void;
     'sandore/stage-start'(info: DagRunInfo, stageId: string): void;
     'sandore/stage-completed'(info: DagRunInfo, stageId: string, contract: StageContract): void;
-    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string): void;
-    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[]): void;
-    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, error: string): void;
-    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string): void;
-    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt?: string): void;
-    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string): void;
+    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void;
+    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[], name: string, loopIteration?: number[]): void;
+    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, error: string, name: string, loopIteration?: number[]): void;
+    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void;
+    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt: string | undefined, name: string, loopIteration?: number[]): void;
+    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string, name: string, loopIteration?: number[]): void;
     'sandore/question'(info: DagRunInfo, question: PendingQuestionEntry): void;
     'sandore/permission'(info: DagRunInfo, permission: PendingPermissionEntry): void;
     'sandore/end'(info: DagRunInfo, result: DagResultInfo): void;
@@ -53,12 +53,12 @@ declare module '@deepseek-ai/dsh-session/types' {
     'sandore/start': { taskId: string; workflowId: string; jobId: string };
     'sandore/stage-start': { taskId: string; stageId: string };
     'sandore/stage-completed': { taskId: string; stageId: string; stageContract: StageContract };
-    'sandore/step-start': { stepId: string; childId: string };
-    'sandore/step-completed': { stepId: string; childId: string; output: ContentBlock[] };
-    'sandore/step-failed': { stepId: string; childId: string; error: string };
-    'sandore/step-paused': { stepId: string; childId: string };
-    'sandore/step-resumed': { stepId: string; childId: string; resumePrompt?: string };
-    'sandore/step-retried': { stepId: string; mode: string };
+    'sandore/step-start': { stepId: string; childId: string; name: string; loopIteration?: number[] };
+    'sandore/step-completed': { stepId: string; childId: string; output: ContentBlock[]; name: string; loopIteration?: number[] };
+    'sandore/step-failed': { stepId: string; childId: string; error: string; name: string; loopIteration?: number[] };
+    'sandore/step-paused': { stepId: string; childId: string; name: string; loopIteration?: number[] };
+    'sandore/step-resumed': { stepId: string; childId: string; resumePrompt?: string; name: string; loopIteration?: number[] };
+    'sandore/step-retried': { stepId: string; mode: string; name: string; loopIteration?: number[] };
     'sandore/question': { question: PendingQuestionEntry };
     'sandore/permission': { permission: PendingPermissionEntry };
     'sandore/end': { taskId: string; jobId: string; result: DagResultInfo };
@@ -142,7 +142,7 @@ export class SandoreEngineStub extends SandoreEngine {
     defaultModel: z.string(),
   });
 
-  static inject = ['sessions', 'sessionPersistence', 'subagents', 'llm', 'shell', 'fs', 'storageDomain', 'agents', 'userQuestions'];
+  static inject = ['sessions', 'sessionPersistence', 'subagents', 'llm', 'shell', 'fs', 'storageDomain', 'agents', 'userQuestions', 'sessionTitle'];
 
   startInstance(request: DagStartRequest): Promise<DagRun> {
     throw new Error('SandoreEngineStub.startInstance is not implemented');

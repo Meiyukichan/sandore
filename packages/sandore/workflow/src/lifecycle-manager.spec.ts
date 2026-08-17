@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../tests/mocks/llm.ts';
 import { FakeSessionStore } from '../tests/mocks/sessions.ts';
+import { FakeSessionTitle } from '../tests/mocks/session-title.ts';
 import { FakeShell, successResult } from '../tests/mocks/shell.ts';
 import { MemoryStorageDomain } from '../tests/mocks/storage-domain.ts';
 import { FakeSubagents } from '../tests/mocks/subagents.ts';
@@ -116,6 +117,7 @@ async function harness(config: SandoreConfig = {}): Promise<{
   ctx.provide('agents', agents);
   ctx.provide('subprocess', subprocess);
   ctx.provide('userQuestions', userQuestions);
+  ctx.provide('sessionTitle', new FakeSessionTitle());
   ctx.provide('fs', {});
 
   await ctx.plugin(SandoreEngineRuntime, config);
@@ -132,10 +134,10 @@ function provideLlmDirectory(llm: FakeLlm): void {
 /** 注册 pause/resume 相关 sandore/* 监听器并记录事件（名称 + 参数）。 */
 function recordSandoreEvents(ctx: Context): Array<{ name: string; args: unknown[] }> {
   const records: Array<{ name: string; args: unknown[] }> = [];
-  ctx.on('sandore/step-paused', (info, stepId, childId) => records.push({ name: 'sandore/step-paused', args: [info, stepId, childId] }));
-  ctx.on('sandore/step-resumed', (info, stepId, childId, resumePrompt) => records.push({ name: 'sandore/step-resumed', args: [info, stepId, childId, resumePrompt] }));
-  ctx.on('sandore/step-completed', (info, stepId, childId, output) => records.push({ name: 'sandore/step-completed', args: [info, stepId, childId, output] }));
-  ctx.on('sandore/step-failed', (info, stepId, childId, error) => records.push({ name: 'sandore/step-failed', args: [info, stepId, childId, error] }));
+  ctx.on('sandore/step-paused', (info, stepId, childId, name, loopIteration) => records.push({ name: 'sandore/step-paused', args: [info, stepId, childId, name, loopIteration] }));
+  ctx.on('sandore/step-resumed', (info, stepId, childId, resumePrompt, name, loopIteration) => records.push({ name: 'sandore/step-resumed', args: [info, stepId, childId, resumePrompt, name, loopIteration] }));
+  ctx.on('sandore/step-completed', (info, stepId, childId, output, name, loopIteration) => records.push({ name: 'sandore/step-completed', args: [info, stepId, childId, output, name, loopIteration] }));
+  ctx.on('sandore/step-failed', (info, stepId, childId, error, name, loopIteration) => records.push({ name: 'sandore/step-failed', args: [info, stepId, childId, error, name, loopIteration] }));
   ctx.on('sandore/aborted', info => records.push({ name: 'sandore/aborted', args: [info] }));
   return records;
 }
@@ -253,6 +255,8 @@ describe('LifecycleManager pause/resume via engine', () => {
     const record = records.find(r => r.name === 'sandore/step-paused');
     expect(record?.args[1]).toBe('step-agent');
     expect(record?.args[2]).toBe('child-1');
+    expect(record?.args[3]).toBe('step-agent');
+    expect(record?.args[4]).toBeUndefined();
     const session = sessions.get(run.instanceId);
     expect(session?.events.some(e => e.type === 'sandore/step-paused')).toBe(true);
 
@@ -399,6 +403,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     expect(record?.args[1]).toBe('step-agent');
     expect(record?.args[2]).toBe('child-1');
     expect(record?.args[3]).toBe('请继续处理 X');
+    expect(record?.args[4]).toBe('step-agent');
 
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
     gate.resolve();

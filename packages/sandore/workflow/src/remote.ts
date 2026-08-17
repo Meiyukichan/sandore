@@ -11,160 +11,44 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { z } from 'zod'
 
 import { SandoreError } from './errors.ts'
 import type { AskUserQuestionAnswer, DagRun, DagStartRequest } from './types.ts'
-import { parseWorkflowYaml } from './yaml-parser.ts'
+import { parseWorkflowYaml, serializeWorkflowYaml } from './yaml-parser.ts'
 import type { JobRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
-
-// ── wire 类型 ────────────────────────────────────────────────────────────────
-
-/** `definitions` 表条目：记录键（workflowId）与 value 的合并。 */
-export interface WorkflowDefinitionEntry extends WorkflowDefinitionRecord {
-  id: string
-}
-
-/** `jobs` 表条目：记录键（jobId）与 value 的合并。 */
-export interface JobEntry extends JobRecord {
-  id: string
-}
-
-/** 实例清单摘要（从 `state` 表派生）。 */
-export interface InstanceSummary {
-  instanceId: string
-  jobId: string
-  workflowId: string
-  status: WorkflowTaskState['status']
-  createdAt: string
-  updatedAt: string
-}
-
-/** 实例产物条目（从 `stageContracts` 的产物契约扁平化）。 */
-export interface ArtifactEntry {
-  stepId: string
-  stageId: string
-  outputToId?: string
-  files: string[]
-  returnPrompt?: string
-}
-
-// ── 入参 zod schema ──────────────────────────────────────────────────────────
-
-/** `createDefinition` 入参：仅承载 YAML 文本。 */
-const CreateDefinitionInputSchema = z.object({
-  yaml: z.string(),
-})
-
-/** `updateDefinition` 入参：可更新的元数据字段。 */
-const UpdateDefinitionInputSchema = z.object({
-  name: z.string().optional(),
-  version: z.string().optional(),
-  description: z.string().optional(),
-})
-
-/** `createJob` 入参。 */
-const CreateJobInputSchema = z.object({
-  name: z.string(),
-  workflowId: z.string(),
-  cwd: z.string().optional(),
-})
-
-/** `updateJob` 入参。 */
-const UpdateJobInputSchema = z.object({
-  name: z.string().optional(),
-  cwd: z.string().optional(),
-})
-
-/** `startInstance` 入参。 */
-const StartInstanceInputSchema = z.object({
-  jobId: z.string(),
-  originalInput: z.string(),
-  cwd: z.string().optional(),
-})
-
-/** 单个问题回答的 zod 校验（对齐 DSH `AskUserQuestionAnswerItem`）。 */
-const AskUserQuestionAnswerItemSchema = z.object({
-  id: z.string(),
-  selected: z.array(z.string()),
-  custom: z.string().optional(),
-})
-
-/** 用户整批回答的 zod 校验（对齐 DSH `AskUserQuestionAnswer`）。 */
-const AskUserQuestionAnswerSchema = z.object({
-  answers: z.array(AskUserQuestionAnswerItemSchema),
-})
-
-/** `replyQuestion` 入参。 */
-const ReplyQuestionInputSchema = z.object({
-  instanceId: z.string(),
-  requestId: z.string(),
-  answers: AskUserQuestionAnswerSchema,
-})
-
-/** `replyPermission` 入参（`reply` 限定 once/always/reject）。 */
-const ReplyPermissionInputSchema = z.object({
-  instanceId: z.string(),
-  requestId: z.string(),
-  reply: z.enum(['once', 'always', 'reject']),
-})
-
-/** `pauseStep` 入参。 */
-const PauseStepInputSchema = z.object({
-  instanceId: z.string(),
-  stepId: z.string(),
-})
-
-/** `resumeStep` 入参（可选恢复提示词）。 */
-const ResumeStepInputSchema = z.object({
-  instanceId: z.string(),
-  stepId: z.string(),
-  resumePrompt: z.string().optional(),
-})
-
-/** `pauseAll` 入参。 */
-const PauseAllInputSchema = z.object({
-  instanceId: z.string(),
-})
-
-/** `resumeAll` 入参（可选统一恢复提示词）。 */
-const ResumeAllInputSchema = z.object({
-  instanceId: z.string(),
-  resumePrompt: z.string().optional(),
-})
-
-/** `retryStep` 入参（`mode` 限定 continue/revert/fork）。 */
-const RetryStepInputSchema = z.object({
-  instanceId: z.string(),
-  stepId: z.string(),
-  mode: z.enum(['continue', 'revert', 'fork']),
-  message: z.string(),
-})
-
-export type CreateDefinitionInput = z.infer<typeof CreateDefinitionInputSchema>
-export type UpdateDefinitionInput = z.infer<typeof UpdateDefinitionInputSchema>
-export type CreateJobInput = z.infer<typeof CreateJobInputSchema>
-export type UpdateJobInput = z.infer<typeof UpdateJobInputSchema>
-export type StartInstanceInput = z.infer<typeof StartInstanceInputSchema>
-export type ReplyQuestionInput = z.infer<typeof ReplyQuestionInputSchema>
-export type ReplyPermissionInput = z.infer<typeof ReplyPermissionInputSchema>
-export type PauseStepInput = z.infer<typeof PauseStepInputSchema>
-export type ResumeStepInput = z.infer<typeof ResumeStepInputSchema>
-export type PauseAllInput = z.infer<typeof PauseAllInputSchema>
-export type ResumeAllInput = z.infer<typeof ResumeAllInputSchema>
-export type RetryStepInput = z.infer<typeof RetryStepInputSchema>
-
-// ── ping ─────────────────────────────────────────────────────────────────────
-
-/** `sandore.ping` 的桩返回数据（非真实引擎状态）。 */
-export interface PingResponse {
-  /** 恒为 true，表示往返成功。 */
-  pong: boolean
-  /** 服务命名空间标识。 */
-  service: string
-  /** Host 侧生成的时间戳（ISO 8601 字符串）。 */
-  time: string
-}
+import {
+  CreateDefinitionInputSchema,
+  CreateJobInputSchema,
+  PauseAllInputSchema,
+  PauseStepInputSchema,
+  ReplyPermissionInputSchema,
+  ReplyQuestionInputSchema,
+  ResumeAllInputSchema,
+  ResumeStepInputSchema,
+  RetryStepInputSchema,
+  StartInstanceInputSchema,
+  UpdateDefinitionInputSchema,
+  UpdateJobInputSchema,
+} from './wire.ts'
+import type {
+  ArtifactEntry,
+  CreateDefinitionInput,
+  CreateJobInput,
+  InstanceSummary,
+  JobEntry,
+  PauseAllInput,
+  PauseStepInput,
+  PingResponse,
+  ReplyPermissionInput,
+  ReplyQuestionInput,
+  ResumeAllInput,
+  ResumeStepInput,
+  RetryStepInput,
+  StartInstanceInput,
+  UpdateDefinitionInput,
+  UpdateJobInput,
+  WorkflowDefinitionEntry,
+} from './wire.ts'
 
 /** 实例的终态集合：`abortInstance` 对终态实例拒绝操作。 */
 const TERMINAL_STATUSES: ReadonlySet<WorkflowTaskState['status']> = new Set(['completed', 'failed', 'aborted'])
@@ -201,8 +85,9 @@ export class SandoreRemote extends TypertRemoteService {
   }
 
   /**
-   * 创建定义：解析+验证 YAML → 生成 `wfl-{uuid}` → 存 yaml 原文与元数据。
-   * 非法 YAML 抛 `SandoreError`，`definitions` 表不新增记录。
+   * 创建定义：解析+验证 YAML → 生成 `wfl-{uuid}` → 以规范 id 重新序列化存储。
+   * 非法 YAML 抛 `SandoreError`，`definitions` 表不新增记录。存储的 YAML 文本顶层
+   * `id` 与记录键一致（客户端传入的哨兵 id 如 `wfl-new` 不回写进持久化文本）。
    */
   @Remote('createDefinition')
   async createDefinition(input: CreateDefinitionInput): Promise<WorkflowDefinitionEntry> {
@@ -211,7 +96,7 @@ export class SandoreRemote extends TypertRemoteService {
     const id = `wfl-${globalThis.crypto.randomUUID()}`
     const now = new Date().toISOString()
     const record: WorkflowDefinitionRecord = {
-      yaml: parsed.yaml,
+      yaml: serializeWorkflowYaml({ ...definition, id }),
       name: definition.name,
       version: definition.version,
       ...(definition.description === undefined ? {} : { description: definition.description }),

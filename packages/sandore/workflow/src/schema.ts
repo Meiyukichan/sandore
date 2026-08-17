@@ -1,14 +1,17 @@
 /**
- * 工作流引擎的三层 Zod Schema 与派生 TS 类型。
+ * 工作流引擎的 Zod Schema 与派生 TS 类型（浏览器安全）。
  *
  * 记录 schema（存储域 value / 业务数据模型）用真实 `zod`（`z.infer` 保持类型不重复，
  * 同一 schema 后续可投影为 RPC wire schema）；插件 `Config` 才用 schemastery（见
- * `index.ts`）。三层为：定义层（`WorkflowDefinition`/`WorkflowStage`/`WorkflowStep`/
+ * `index.ts`）。分三层：定义层（`WorkflowDefinition`/`WorkflowStage`/`WorkflowStep`/
  * `CommandConfig` 五类型 discriminated union）、运行时层（`WorkflowTaskState`，无
- * `permissionMode`）、存储层（`sandoreDomainSpec` 三表 value schema）。
+ * `permissionMode`）、记录层（`WorkflowDefinitionRecord`/`JobRecord`）。
+ *
+ * 本模块仅依赖 `zod`（浏览器安全），存储域声明 `sandoreDomainSpec`（依赖 Node 侧
+ * `@deepseek-ai/dsh-storage-domain`）已拆至 `./domain.ts`，故可作为 `./schema`
+ * 子路径在浏览器侧安全导入。
  * @module @deepseek-ai/dsh-sandore-workflow/src/schema
  */
-import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
 
 /** Step 与 Stage 共用的执行状态枚举。 */
@@ -383,7 +386,7 @@ export const WorkflowTaskStateSchema = z.object({
   updatedAt: z.string(),
 })
 
-// ── 存储层 ────────────────────────────────────────────────────────────────
+// ── 记录层 ────────────────────────────────────────────────────────────────
 
 /** 工作流定义记录（`definitions` 表 value）：YAML 文本封顶 65536 字符防失控。 */
 export const WorkflowDefinitionRecordSchema = z.object({
@@ -402,17 +405,6 @@ export const JobRecordSchema = z.object({
   cwd: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
-})
-
-/** sandore 存储域声明：三表 `definitions`/`jobs`/`state`，Zod 校验每一条记录。 */
-export const sandoreDomainSpec = defineDomain({
-  name: 'sandore',
-  version: 1,
-  tables: {
-    definitions: domainTable<string, WorkflowDefinitionRecord>(WorkflowDefinitionRecordSchema),
-    jobs: domainTable<string, JobRecord>(JobRecordSchema),
-    state: domainTable<string, WorkflowTaskState>(WorkflowTaskStateSchema),
-  },
 })
 
 // ── 派生 TS 类型 ───────────────────────────────────────────────────────────

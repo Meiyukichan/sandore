@@ -8,10 +8,12 @@
 export type * from './types.ts'
 export * from './errors.ts'
 export * from './schema.ts'
+export * from './domain.ts'
 export * from './yaml-parser.ts'
 export type * from './shell.ts'
 export * from './seam.ts'
 export * from './dag-navigator.ts'
+export * from './remote.ts'
 
 import SandoreEngineRuntime from './workflow-engine.ts'
 

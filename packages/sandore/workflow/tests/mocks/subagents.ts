@@ -21,7 +21,7 @@ import type {
   SubagentRun,
   SubagentRuntime,
   SubagentStartRequest,
-} from '../../../microflow/src/subagents.ts';
+} from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 
 /** 一次 `followup` 调用的记录。 */
 export interface FakeFollowup {

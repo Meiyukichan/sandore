@@ -9,8 +9,8 @@
  * 自动发送首轮 prompt，编排仍由引擎 `runInstance` 主循环驱动。
  * @module @deepseek-ai/dsh-sandore-workflow/src/host-agent
  */
-import type { AgentSetup } from '../../microflow/src/subagents.ts';
-import { createSandoreTools } from '../../tool/src/index.ts';
+import type { AgentSetup } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
+import { createSandoreTools } from '@deepseek-ai/dsh-sandore-tool/src/index';
 
 import type { SandoreEngineSurface } from './engine-surface.ts';
 

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { SandoreError, isFatalSandoreError } from './errors.ts'
+import { sandoreDomainSpec } from './domain.ts'
 import {
   CommandConfigSchema,
   JobRecordSchema,
@@ -14,7 +15,6 @@ import {
   WorkflowDefinitionRecordSchema,
   WorkflowDefinitionSchema,
   WorkflowTaskStateSchema,
-  sandoreDomainSpec,
 } from './schema.ts'
 
 describe('SandoreError', () => {

@@ -15,7 +15,7 @@ import type { Context } from '@deepseek-ai/cordis';
 
 import { BranchEvaluator, extractBreakResult, matchesExpectation } from './branch-evaluator.ts';
 import type { BranchEvaluatorConfig } from './branch-evaluator.ts';
-import type { BranchMeta, CommandConfig, DagLoop } from '../../workflow/src/schema.ts';
+import type { BranchMeta, CommandConfig, DagLoop } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
 /** LoopManager 的引擎级配置（与 BranchEvaluator 共用）。 */
 export type LoopManagerConfig = BranchEvaluatorConfig;

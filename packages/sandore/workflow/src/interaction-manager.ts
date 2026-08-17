@@ -13,7 +13,7 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 
-import type { Agent } from '../../microflow/src/subagents.ts';
+import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { SandoreError } from './errors.ts';
 import { AskUserQuestionPayloadSchema } from './schema.ts';
 import type { UserQuestions } from './seam.ts';

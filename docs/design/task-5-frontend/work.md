@@ -20,14 +20,16 @@
    - `DagEditor.tsx` —— 编排器（Stage DAG 简化可视化 + Step 编辑 + YAML 预览/保存）
    - `RunView.tsx` —— 执行详情（轨迹/产物/交互控件 + 「打开讨论」按钮）
    - `DagStepNodeView.tsx` —— `sandore-step` 讨论节点（`conversation.chat.node` keyed，D8）
-2. 挂载固化：`cordis.yml` 静态组合 4 包（`workflow` + `microflow` + `tool` + `ui`），移除动态插件原型
+2. `packages/sandore/workflow/`（host 侧最小增量）：`inject` 补 `sessionTitle`；创建宿主 Session 后 `ctx.sessionTitle.rename(handle.session, '工作流实例 ${instanceId}')`（侧边栏辨识，`source=user` 优先于 DSH 默认 fallback 自动标题）
+3. 挂载固化：`cordis.yml` 静态组合 4 包（`workflow` + `microflow` + `tool` + `ui`），移除动态插件原型
 
 ## 关键决策
 - **D6**：入口 = `sidebar.footer.action` 按钮 + 展开 WorkflowPanel（设置上方，自包含 client 状态）；**不用** `conversation.view` tab 作为主入口
+- **DagEditor/RunView 承载（两级下钻 + 宽展开）**：sidebar 窄面板（260-300px）承载编辑器偏窄——WorkflowPanel 两级下钻：列表态（窄 rail）↔ 编辑/执行态（宽展开 layer，参考 `ui-cordis` 的 `CordisPanel`）；点定义→DagEditor、点实例→RunView、返回→列表；不用 `conversation.view`（session scope）也不用 `shell.overlay`（modal 风格）
 - **D7**：前端复用 DSH 组件与设计语言（`ui-primitives`/theme/locale/消息渲染/交互卡片），与 DSH web 风格一致
 - **D8**：讨论面板 = 复用 `ui-workflow-run` 的 Chat 节点机制——每个 Step 折叠为一个 `sandore-step` 节点（`ConversationNodeDefinition` + `conversation.chat.node` keyed），内联最后结果消息，点击跳转子对话页
 - **D9**：宿主主代理在 `completed` 后自然降级为自由对话（无 DefaultSessionManager）；`sandore_*` 工具仅挂宿主 Session
-- **数据获取**：`host.call('sandore.*')` RPC（点号）+ DSH 事件订阅（`sandore/*` Session 事件 / `session/projection` 帧）；不用独立 axios/fetch
+- **RPC 接线（手写 TypertRemoteContribution + `$mount`，DSH 官方范式）**：`import sandoreRemote from '@deepseek-ai/dsh-sandore-workflow/remote'` + `await ctx.remote.$mount(sandoreRemote)`，调 `ctx.remote.sandore.listDefinitions()` 等；**typert generator 硬编码 monorepo workspace 假设、第三方仓库不可用**——workflow build 移除 `typertPlugin`（改 tsc+tsdown），**手写 `lib/typert.remote-client.js`（27 个 `InvocationDescriptor`）+ `.d.ts`**（引用 `./types`，静态保留，官方合法回退，零 vendor）；**不用** `host.call`；事件订阅用 `sandore/*` Session 事件 / `session/projection` 帧，不用独立 axios/fetch
 - **DAG 可视化**：先 `ui-primitives` 简化实现（节点列表 + 连线示意），React Flow 作为后续增强
 
 ## 验证标准（Task 5 完成门槛）

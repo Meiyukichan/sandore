@@ -7,7 +7,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
 import { describe, expect, it } from 'vitest';
 
-import type { Agent, CreateAgentOptions } from '../../microflow/src/subagents.ts';
+import type { Agent, CreateAgentOptions } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { SandoreError } from './errors.ts';
 import { computeSafeRevertBoundary, RecoveryManager, synthesizeChildId } from './recovery-manager.ts';
 import type { ForkSourceSession, RetryMode } from './recovery-manager.ts';
@@ -99,7 +99,7 @@ function makeHarness(options?: {
   const followups: Array<{ childId: string; content: ContentBlock[] }> = [];
   const creates: CreateAgentOptions[] = [];
   const forks: Array<{ source: string; boundary: number | undefined }> = [];
-  const retried: Array<{ stepId: string; mode: RetryMode }> = [];
+  const retried: Array<{ stepId: string; mode: RetryMode; name: string; loopIteration?: number[] }> = [];
   let resumeCount = 0;
   const sessions = options?.sessions ?? new Map<string, ForkSourceSession>();
   let forked = options?.forked ?? { events: [] as readonly DshSessionEvent[] };
@@ -123,8 +123,8 @@ function makeHarness(options?: {
       forks.push({ source, boundary });
       return forked;
     },
-    emitStepRetried: (stepId, mode) => {
-      retried.push({ stepId, mode });
+    emitStepRetried: (stepId, mode, name, loopIteration) => {
+      retried.push({ stepId, mode, name, ...(loopIteration === undefined ? {} : { loopIteration }) });
     },
     resumeExecution: async () => {
       resumeCount += 1;
@@ -222,7 +222,7 @@ describe('RecoveryManager.retryStep continue mode', () => {
     expect(harness.followups).toHaveLength(1);
     expect(harness.followups[0]?.childId).toBe('child-1');
     expect(harness.followups[0]?.content).toEqual([{ type: 'text', text: 'please retry' }]);
-    expect(harness.retried).toEqual([{ stepId: 'step-1', mode: 'continue' }]);
+    expect(harness.retried).toEqual([{ stepId: 'step-1', mode: 'continue', name: 'step-1' }]);
 
     const step = harness.getState().executedSteps[0];
     expect(step?.sessionMeta?.childId).toBe('child-1');
@@ -230,6 +230,13 @@ describe('RecoveryManager.retryStep continue mode', () => {
     expect(step?.retryHistory?.[0]?.userMessage).toBe('please retry');
     expect(step?.parentSessionId).toBeUndefined();
     expect(harness.getResumeCount()).toBe(1);
+  });
+
+  it('passes step name and loopIteration through to emitStepRetried', async () => {
+    const harness = makeHarness({ step: makeFailedStep({ loopIteration: [2, 1] }) });
+    await harness.manager.retryStep('step-1', 'continue', 'please retry');
+
+    expect(harness.retried).toEqual([{ stepId: 'step-1', mode: 'continue', name: 'step-1', loopIteration: [2, 1] }]);
   });
 });
 

@@ -865,12 +865,12 @@ declare module '@deepseek-ai/cordis' {
     'sandore/start'(info: DagRunInfo): void
     'sandore/stage-start'(info: DagRunInfo, stageId: string): void
     'sandore/stage-completed'(info: DagRunInfo, stageId: string, contract: StageContract): void
-    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string): void
-    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[]): void
-    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, error: string): void
-    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string): void
-    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt?: string): void
-    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string): void
+    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void
+    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, name: string, output: ContentBlock[], loopIteration?: number[]): void
+    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, name: string, error: string, loopIteration?: number[]): void
+    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void
+    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, name: string, resumePrompt?: string, loopIteration?: number[]): void
+    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string, name: string, loopIteration?: number[]): void
     'sandore/question'(info: DagRunInfo, question: PendingQuestion): void
     'sandore/permission'(info: DagRunInfo, permission: PendingPermission): void
     'sandore/end'(info: DagRunInfo, result: DagResultInfo): void

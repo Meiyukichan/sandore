@@ -21,7 +21,7 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 
-import type { Agent, SubagentInterruptAuthority } from '../../microflow/src/subagents.ts';
+import type { Agent, SubagentInterruptAuthority } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { SandoreError } from './errors.ts';
 import type { WorkflowTaskState } from './schema.ts';
 import type { StepStatus } from './types.ts';
@@ -58,10 +58,10 @@ export interface LifecycleManagerOptions {
   readonly readState: () => WorkflowTaskState;
   /** 不可变重建 + 持久化当前状态快照。 */
   readonly commitState: (next: WorkflowTaskState) => void;
-  /** 双发 `sandore/step-paused` 事件。 */
-  readonly emitStepPaused: (stepId: string, childId: string) => void;
-  /** 双发 `sandore/step-resumed` 事件。 */
-  readonly emitStepResumed: (stepId: string, childId: string, resumePrompt?: string) => void;
+  /** 双发 `sandore/step-paused` 事件（含 Step 名称与可选循环迭代路径）。 */
+  readonly emitStepPaused: (stepId: string, childId: string, name: string, loopIteration?: number[]) => void;
+  /** 双发 `sandore/step-resumed` 事件（含 Step 名称与可选循环迭代路径）。 */
+  readonly emitStepResumed: (stepId: string, childId: string, resumePrompt: string | undefined, name: string, loopIteration?: number[]) => void;
 }
 
 /**
@@ -118,7 +118,7 @@ export class LifecycleManager {
     this.deps.interrupt(childId, { kind: 'ancestor', agent: this.deps.hostAgent });
     this.pausedChildIds.add(childId);
     this.commitStepStatus(step, 'paused', { pausedAt: now() });
-    this.deps.emitStepPaused(this.stepIdOf(step), childId);
+    this.deps.emitStepPaused(this.stepIdOf(step), childId, step.name, step.loopIteration);
   }
 
   /** 恢复单个 Step（反查 childId + 移出登记表 + followup + 状态 running + 事件）。 */
@@ -138,7 +138,7 @@ export class LifecycleManager {
       resumedAt: now(),
       ...(resumePrompt === undefined ? {} : { resumePrompt }),
     });
-    this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt);
+    this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt, step.name, step.loopIteration);
   }
 
   /** 暂停实例内全部 running/interacting Step（completed/failed 与非子代理 Step 跳过）。 */

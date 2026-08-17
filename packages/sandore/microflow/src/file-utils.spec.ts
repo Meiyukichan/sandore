@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { ExecutedStepDefault } from '../../workflow/src/types.ts';
+import type { ExecutedStepDefault } from '@deepseek-ai/dsh-sandore-workflow/src/types';
 import {
   escapeRegexChar,
   findFilesByGlob,

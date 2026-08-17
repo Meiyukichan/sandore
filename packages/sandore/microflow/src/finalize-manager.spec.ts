@@ -17,8 +17,8 @@ import { FinalizeAssessor, FinalizeManager, GateEvaluator, parseAssessResult, pa
 import type { FinalizeManagerConfig } from './finalize-manager.ts';
 import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome } from './file-utils.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
-import type { ExecutedStepDefault } from '../../workflow/src/types.ts';
-import type { WorkflowStep } from '../../workflow/src/schema.ts';
+import type { ExecutedStepDefault } from '@deepseek-ai/dsh-sandore-workflow/src/types';
+import type { WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
 /** 记录 fork 调用并返回可注入 fork 结果的极简会话存储。 */
 class FakeForkedSession {

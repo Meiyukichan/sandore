@@ -15,16 +15,33 @@
       "types": "./lib/types/types.d.ts",
       "default": "./lib/types/types.js"
     },
-    "./src/*": "./src/*",
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./remote": {
+      "types": "./lib/typert.remote-client.d.ts",
+      "default": "./lib/typert.remote-client.js"
+    },
+    "./schema": "./src/schema.ts",
+    "./yaml": "./src/yaml-parser.ts",
+    "./src/*": "./src/*.ts",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
+    "lib/schema.js",
+    "lib/yaml.js",
     "lib/types/**/*.js",
-    "lib/types/**/*.d.ts"
+    "lib/types/**/*.d.ts",
+    "lib/typert.host.js",
+    "lib/typert.host.d.ts",
+    "lib/typert.remote-client.js",
+    "lib/typert.remote-client.d.ts"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -b ../../../tsconfig.host.json && tsdown"
   },
   "dependencies": {
     "yaml": "^2.9.0",
@@ -33,7 +50,9 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-sandore-microflow": "workspace:*",
+    "@deepseek-ai/dsh-sandore-tool": "workspace:*",
     "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-title": "0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
     "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.6",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
@@ -46,7 +65,9 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-sandore-microflow": "workspace:*",
+    "@deepseek-ai/dsh-sandore-tool": "workspace:*",
     "@deepseek-ai/dsh-session": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-title": "0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
     "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.6",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",

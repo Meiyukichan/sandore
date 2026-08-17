@@ -292,12 +292,12 @@ declare module '@deepseek-ai/cordis' {
     'sandore/start'(info: DagRunInfo): void
     'sandore/stage-start'(info: DagRunInfo, stageId: string): void
     'sandore/stage-completed'(info: DagRunInfo, stageId: string, contract: StageContract): void
-    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string): void
-    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[]): void
-    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, error: string): void
-    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string): void
-    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt?: string): void
-    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string): void
+    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void
+    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, name: string, output: ContentBlock[], loopIteration?: number[]): void
+    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, name: string, error: string, loopIteration?: number[]): void
+    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void
+    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, name: string, resumePrompt?: string, loopIteration?: number[]): void
+    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string, name: string, loopIteration?: number[]): void
     'sandore/question'(info: DagRunInfo, question: PendingQuestion): void
     'sandore/permission'(info: DagRunInfo, permission: PendingPermission): void
     'sandore/end'(info: DagRunInfo, result: DagResultInfo): void
@@ -619,9 +619,9 @@ sandore 的 `WorkflowEventBus` + `WorkflowSseManager` 映射为 DSH 事件 + 前
   - `getDiscussion()` / `addChatMessage()`
   - `getArtifacts()`
   - `listProviders()` / `listModels()`（直接复用 `ctx.llm.listProviders()/listModels()`）
-- **Client 调用**：前端通过 `host.call('sandore.listDefinitions', {})` 等 Package-private RPC，或通过 Remote 服务的 generated client。
+- **Client 调用**：前端经 typert 贡献挂载——`import sandoreRemote from '@deepseek-ai/dsh-sandore-workflow/remote'` + `await ctx.remote.$mount(sandoreRemote)`，调 `ctx.remote.sandore.listDefinitions()` 等（命名空间 = `super(ctx, 'sandore')`）。
 
-> 说明：若采用 Dynamic Plugin 机制（原型阶段），用 `harness.handle(method, handler)` + `host.call(method, args)`；若采用持久化插件（生产阶段），用 Typert Remote 服务。两种都在设计里给出。
+> 说明：`host.call('sandore.*')` / `harness.handle(method, handler)` 是 **Dynamic Plugin 机制（原型阶段）**的 Package-private RPC，**不适用于持久化插件**；生产阶段用 Typert Remote 服务。**typert 构建局限**：`typert generator` 硬编码 monorepo workspace 假设（`WorkspaceTypertGenerator(root)` + `WorkspaceAnalyzer.discoverPackages()` 扫 workspace 内 `packages/*/*` 源码做 wire 拆分），sandore 是第三方仓库、`dsh-typert-protocol` 来自 npm 发布版（无 workspace 源码 face），generator 无法跑通 → 用**手写 `TypertRemoteContribution`**（`lib/typert.remote-client.js` 手写 27 个 `InvocationDescriptor`，引用 `./types`，静态保留），`$mount` 不关心贡献来源，这是官方合法回退（零 vendor、零维护）。两种机制不同，本节以持久化插件（Typert）为准。
 
 ---
 

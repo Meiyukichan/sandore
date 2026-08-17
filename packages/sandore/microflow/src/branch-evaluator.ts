@@ -24,8 +24,8 @@ import {
   splitCommand,
   textSummary,
 } from './internal.ts';
-import type { CommandConfig, DagBranch } from '../../workflow/src/schema.ts';
-import type { ShellExecRequest, ShellRunResult, SubprocessSpawnSpec } from '../../workflow/src/shell.ts';
+import type { CommandConfig, DagBranch } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { ShellExecRequest, ShellRunResult, SubprocessSpawnSpec } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
 
 /** shell 命令变体。 */
 type ShellCommand = Extract<CommandConfig, { type: 'shell' }>;

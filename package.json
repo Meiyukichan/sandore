@@ -9,13 +9,15 @@
   },
   "scripts": {
     "typecheck": "pnpm -r --if-present run typecheck",
-    "build": "pnpm -r --if-present run build",
+    "build": "pnpm run build:lib:host && pnpm -r --if-present run build",
+    "build:lib:host": "tsc -b tsconfig.host.json",
     "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^6.0.3",
+    "@deepseek-ai/dsh-typert-generator": "0.1.0-rc.6",
     "tsdown": "^0.22.2",
     "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   }
 }

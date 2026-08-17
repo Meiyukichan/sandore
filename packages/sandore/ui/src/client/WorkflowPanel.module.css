@@ -1,4 +1,4 @@
-/* 从 sidebar 底部浮出的工作流占位面板。 */
+/* 从 sidebar 底部浮出的工作流面板（宽展开 layer，fixed 定位不受 rail 宽度约束）。 */
 
 .panel {
   position: fixed;
@@ -17,11 +17,15 @@
   box-shadow: var(--dsw-shadow-lv2);
 }
 
+/* 下钻态：给出确定高度，使 DagEditor/RunView 的 height:100% 可解析并在内部滚动。 */
+.panel.drill {
+  height: 60vh;
+}
+
 .header {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   min-height: 44px;
   padding: 10px 12px;
@@ -31,21 +35,20 @@
 }
 
 .title {
+  flex: none;
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
   color: var(--dsw-alias-label-primary);
 }
 
-.orchestrate {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
+.search {
+  flex: 1;
+  min-width: 0;
+}
+
+.search input {
+  width: 100%;
 }
 
 .body {
@@ -53,6 +56,24 @@
   min-height: 0;
   overflow-y: auto;
   padding: 4px 12px 12px;
+}
+
+.drillBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.listGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.groupSection {
+  display: flex;
+  flex-direction: column;
 }
 
 .group {
@@ -76,22 +97,58 @@
 
 .row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  align-items: stretch;
+  overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
   background: var(--dsw-alias-bg-base);
 }
 
-.rowName {
+.rowAction {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+
+.rowBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rowName {
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
   color: var(--dsw-alias-label-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowCaption {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -107,33 +164,74 @@
   font-size: 11px;
   line-height: 20px;
   color: var(--dsw-alias-label-caption);
+  white-space: nowrap;
 }
 
-.ping {
+.deleteButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.deleteButton:hover {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.empty {
+  margin: 0;
+  padding: 12px 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.emptyBox {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 4px;
+  padding: 12px 0;
 }
 
-.pingResult {
+.emptyHint {
   margin: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-base);
-  font-family: var(--dsh-font-mono, monospace);
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+  color: var(--dsw-alias-label-caption);
 }
 
-.pingError {
+.error {
   margin: 0;
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+.errorBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.deleteConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deleteConfirmText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
 }

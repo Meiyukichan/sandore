@@ -15,7 +15,7 @@
  * `ctx.fs` 上下文键，宿主运行时注入的真实服务结构兼容即可。
  * @module @deepseek-ai/dsh-sandore-microflow/src/file-utils
  */
-import type { ExecutedStepDefault, InputFromItem } from '../../workflow/src/types.ts';
+import type { ExecutedStepDefault, InputFromItem } from '@deepseek-ai/dsh-sandore-workflow/src/types';
 import { textSummary } from './internal.ts';
 
 // ── 文件系统接缝（target 导向两段式协议） ───────────────────────────────────

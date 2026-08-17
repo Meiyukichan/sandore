@@ -1,16 +1,16 @@
 /**
- * 工作流 YAML 的 V1/V2 双格式解析与序列化。
+ * 工作流 YAML 的 V1/V2 双格式解析与序列化（浏览器安全）。
  *
  * `parseWorkflowYaml` 用 `yaml` 包的 `parseDocument(text, { prettyErrors: true })`
- * 解析（语法错误抛 `SandoreError('YAML_PARSE')`），检测 V1（`stages[].scenarios[]`）
+ * 解析（语法错误抛 `WorkflowYamlError('YAML_PARSE')`），检测 V1（`stages[].scenarios[]`）
  * 并自动 `convertLegacyToV2()` 转两级 `stages[].steps[]`，再走 `WorkflowDefinitionSchema`
- * 验证（失败抛 `SandoreError('DEFINITION_INVALID', { cause })`），最后做 `next` 引用
- * 完整性校验。`serializeWorkflowYaml` 序列化结果可被再次解析且深层相等。
+ * 验证（失败抛 `WorkflowYamlError('DEFINITION_INVALID', { cause })`），最后做 `next`
+ * 引用完整性校验。`serializeWorkflowYaml` 序列化结果可被再次解析且深层相等。
  * @module @deepseek-ai/dsh-sandore-workflow/src/yaml-parser
  */
 import { parseDocument, stringify, type YAMLError } from 'yaml'
 
-import { SandoreError } from './errors.ts'
+import { WorkflowYamlError } from './yaml-error.ts'
 import { WorkflowDefinitionSchema, type DagBranch, type DagLoop, type WorkflowDefinition } from './schema.ts'
 
 /** V1 旧 `PromptConfig` 类型名 → V2 `CommandConfig` 类型名的映射。 */
@@ -47,7 +47,7 @@ function describeError(error: unknown): string {
 /** 将 V1 的单个 Task 转为 V2 Step（`prompt`（旧 `PromptConfig`）→ `command`）。 */
 function convertTaskToStep(task: unknown): Record<string, unknown> {
   if (!isRecord(task)) {
-    throw new SandoreError('V1 task must be an object', 'DEFINITION_INVALID')
+    throw new WorkflowYamlError('V1 task must be an object', 'DEFINITION_INVALID')
   }
   const { prompt, ...rest } = task
   if (isRecord(prompt)) {
@@ -107,7 +107,7 @@ function convertStage(stage: Record<string, unknown>): Record<string, unknown> {
 /**
  * 检测 V1 三级结构（`stages[].scenarios[]`）并自动转换为 V2 两级结构
  * （`stages[].steps[]`）。同一 Stage 同时含 `steps[]` 与 `scenarios[]` 视为混合格式，
- * 抛 `SandoreError('DEFINITION_INVALID')`。
+ * 抛 `WorkflowYamlError('DEFINITION_INVALID')`。
  */
 export function convertLegacyToV2(raw: unknown): unknown {
   if (!isRecord(raw)) return raw
@@ -120,7 +120,7 @@ export function convertLegacyToV2(raw: unknown): unknown {
     const hasSteps = Array.isArray(stage.steps)
     const hasScen = Array.isArray(stage.scenarios)
     if (hasSteps && hasScen) {
-      throw new SandoreError(`stage '${String(stage.id)}' mixes 'steps' and 'scenarios'`, 'DEFINITION_INVALID')
+      throw new WorkflowYamlError(`stage '${String(stage.id)}' mixes 'steps' and 'scenarios'`, 'DEFINITION_INVALID')
     }
     if (hasScen) hasScenarios = true
   }
@@ -142,9 +142,36 @@ interface FlowNode {
  * - `next`（含 `branches[].next`、`loop.next`、`loop.exitTo`）引用的节点 ID 均存在；
  * - `stage.next` 必须指向 Stage 节点（Step 节点会被 DAG 导航静默跳过）；
  * - `inputFrom[].path` 的 `stageId[.stepId[.outputToId]]` 前两段（Stage/Step 节点 ID）存在。
- * 不满足时抛 `SandoreError('DEFINITION_INVALID')`。
+ * 不满足时抛 `WorkflowYamlError('DEFINITION_INVALID')`。
  */
 function validateReferences(definition: WorkflowDefinition): void {
+  // Stage/Step id 唯一性：重复 id 会让 DAG 导航与编辑按 id 命中多个节点。
+  const seenStageIds = new Set<string>()
+  for (const stage of definition.stages) {
+    if (seenStageIds.has(stage.id)) {
+      throw new WorkflowYamlError(`duplicate stage id '${stage.id}'`, 'DEFINITION_INVALID')
+    }
+    seenStageIds.add(stage.id)
+  }
+
+  const seenStepPositionIds = new Set<string>()
+  for (const stage of definition.stages) {
+    for (const step of stage.steps) {
+      if (seenStepPositionIds.has(step.id)) {
+        throw new WorkflowYamlError(`duplicate step id '${step.id}'`, 'DEFINITION_INVALID')
+      }
+      seenStepPositionIds.add(step.id)
+    }
+  }
+
+  const seenStepDefinitionIds = new Set<string>()
+  for (const step of definition.steps ?? []) {
+    if (seenStepDefinitionIds.has(step.id)) {
+      throw new WorkflowYamlError(`duplicate step id '${step.id}'`, 'DEFINITION_INVALID')
+    }
+    seenStepDefinitionIds.add(step.id)
+  }
+
   const stageIds = new Set(definition.stages.map(stage => stage.id))
   const stepIds = new Set<string>()
   for (const step of definition.steps ?? []) stepIds.add(step.id)
@@ -155,7 +182,7 @@ function validateReferences(definition: WorkflowDefinition): void {
 
   const checkTarget = (target: string | undefined, where: string): void => {
     if (target !== undefined && !nodeIds.has(target)) {
-      throw new SandoreError(`${where} references missing node '${target}'`, 'DEFINITION_INVALID')
+      throw new WorkflowYamlError(`${where} references missing node '${target}'`, 'DEFINITION_INVALID')
     }
   }
   const checkNode = (node: FlowNode, kind: string): void => {
@@ -173,7 +200,7 @@ function validateReferences(definition: WorkflowDefinition): void {
     checkNode(stage, 'stage')
     // `stage.next` 只推进 Stage 级主循环，指向 Step 会导致后续 Stage 被静默跳过。
     if (stage.next !== undefined && !stageIds.has(stage.next)) {
-      throw new SandoreError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, 'DEFINITION_INVALID')
+      throw new WorkflowYamlError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, 'DEFINITION_INVALID')
     }
     for (const step of stage.steps) checkNode(step, 'step')
   }
@@ -187,10 +214,10 @@ function validateReferences(definition: WorkflowDefinition): void {
       if (path === undefined || path.startsWith('${')) continue
       const [stageId, stepId] = path.split('.')
       if (stageId !== undefined && !stageIds.has(stageId)) {
-        throw new SandoreError(`step '${step.id}'.inputFrom references missing stage '${stageId}'`, 'DEFINITION_INVALID')
+        throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing stage '${stageId}'`, 'DEFINITION_INVALID')
       }
       if (stepId !== undefined && !stepIds.has(stepId)) {
-        throw new SandoreError(`step '${step.id}'.inputFrom references missing step '${stepId}'`, 'DEFINITION_INVALID')
+        throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${stepId}'`, 'DEFINITION_INVALID')
       }
     }
   }
@@ -208,7 +235,7 @@ export function parseWorkflowYaml(text: string): WorkflowDefinition {
   const document = parseDocument(text, { prettyErrors: true })
   if (document.errors.length > 0) {
     const detail = document.errors.map(describeYamlError).join('; ')
-    throw new SandoreError(`invalid YAML: ${detail}`, 'YAML_PARSE')
+    throw new WorkflowYamlError(`invalid YAML: ${detail}`, 'YAML_PARSE')
   }
 
   const data = convertLegacyToV2(document.toJS())
@@ -216,7 +243,7 @@ export function parseWorkflowYaml(text: string): WorkflowDefinition {
   try {
     definition = WorkflowDefinitionSchema.parse(data)
   } catch (error) {
-    throw new SandoreError(`invalid workflow definition: ${describeError(error)}`, 'DEFINITION_INVALID', { cause: error })
+    throw new WorkflowYamlError(`invalid workflow definition: ${describeError(error)}`, 'DEFINITION_INVALID', { cause: error })
   }
   validateReferences(definition)
   return definition

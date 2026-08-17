@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { SandoreError } from './errors.ts'
+import { WorkflowYamlError } from './yaml-error.ts'
 import { parseWorkflowYaml, serializeWorkflowYaml } from './yaml-parser.ts'
 
 const v2Yaml = `id: wfl-a1b2c3d4-e5f6-7890-abcd-ef1234567890
@@ -267,10 +267,10 @@ function expectDefinitionInvalid(text: string, fragment: string): void {
     parseWorkflowYaml(text)
     expect.unreachable('expected a throw')
   } catch (error) {
-    expect(error).toBeInstanceOf(SandoreError)
-    const sandoreError = error as SandoreError
-    expect(sandoreError.code).toBe('DEFINITION_INVALID')
-    expect(sandoreError.message).toContain(fragment)
+    expect(error).toBeInstanceOf(WorkflowYamlError)
+    const yamlError = error as WorkflowYamlError
+    expect(yamlError.code).toBe('DEFINITION_INVALID')
+    expect(yamlError.message).toContain(fragment)
   }
 }
 
@@ -316,15 +316,15 @@ describe('parseWorkflowYaml', () => {
     expect(mcp?.command).toEqual({ type: 'mcp', value: { promptText: 'filesystem-mcp' } })
   })
 
-  it('throws SandoreError YAML_PARSE with line info on syntax error', () => {
+  it('throws WorkflowYamlError YAML_PARSE with line info on syntax error', () => {
     try {
       parseWorkflowYaml('stages: [ Unclosed')
       expect.unreachable('expected a throw')
     } catch (error) {
-      expect(error).toBeInstanceOf(SandoreError)
-      const sandoreError = error as SandoreError
-      expect(sandoreError.code).toBe('YAML_PARSE')
-      expect(sandoreError.message).toMatch(/line \d+/)
+      expect(error).toBeInstanceOf(WorkflowYamlError)
+      const yamlError = error as WorkflowYamlError
+      expect(yamlError.code).toBe('YAML_PARSE')
+      expect(yamlError.message).toMatch(/line \d+/)
     }
   })
 
@@ -350,10 +350,10 @@ steps:
       parseWorkflowYaml(badYaml)
       expect.unreachable('expected a throw')
     } catch (error) {
-      expect(error).toBeInstanceOf(SandoreError)
-      const sandoreError = error as SandoreError
-      expect(sandoreError.code).toBe('DEFINITION_INVALID')
-      expect(sandoreError.message).toContain('step-missing')
+      expect(error).toBeInstanceOf(WorkflowYamlError)
+      const yamlError = error as WorkflowYamlError
+      expect(yamlError.code).toBe('DEFINITION_INVALID')
+      expect(yamlError.message).toContain('step-missing')
     }
   })
 
@@ -496,6 +496,60 @@ steps:
 `, "missing step 'step-missing'")
   })
 
+  it('throws DEFINITION_INVALID on duplicate stage ids', () => {
+    expectDefinitionInvalid(`id: wfl-x
+name: demo
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 分析
+    steps:
+      - id: step-1
+  - id: stg-1
+    name: 通知
+    steps:
+      - id: step-2
+`, "duplicate stage id 'stg-1'")
+  })
+
+  it('throws DEFINITION_INVALID on duplicate step ids within stage positions', () => {
+    expectDefinitionInvalid(`id: wfl-x
+name: demo
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 分析
+    steps:
+      - id: step-1
+      - id: step-1
+`, "duplicate step id 'step-1'")
+  })
+
+  it('throws DEFINITION_INVALID on duplicate step ids in the top-level steps table', () => {
+    expectDefinitionInvalid(`id: wfl-x
+name: demo
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 分析
+    steps:
+      - id: step-1
+steps:
+  - id: step-1
+    name: lint
+    command:
+      type: shell
+      value:
+        command: "echo hi"
+  - id: step-1
+    name: dup
+    command:
+      type: shell
+      value:
+        command: "echo dup"
+`, "duplicate step id 'step-1'")
+  })
+
   it('converts a V1 three-level definition to V2 two-level', () => {
     const v1Yaml = `id: code-review-workflow
 name: 代码审查工作流
@@ -600,8 +654,8 @@ stages:
       parseWorkflowYaml(mixedYaml)
       expect.unreachable('expected a throw')
     } catch (error) {
-      expect(error).toBeInstanceOf(SandoreError)
-      expect((error as SandoreError).code).toBe('DEFINITION_INVALID')
+      expect(error).toBeInstanceOf(WorkflowYamlError)
+      expect((error as WorkflowYamlError).code).toBe('DEFINITION_INVALID')
     }
   })
 })

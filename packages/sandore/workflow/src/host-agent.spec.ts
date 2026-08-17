@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentSetupContext, PromptSection } from '../../microflow/src/subagents.ts';
+import type { AgentSetupContext, PromptSection } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeSessionStore } from '../tests/mocks/sessions.ts';
 import type { SandoreEngineSurface } from './engine-surface.ts';

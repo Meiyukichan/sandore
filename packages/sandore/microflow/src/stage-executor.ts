@@ -17,9 +17,9 @@ import type {
   PassThroughVar,
   StageContract,
   StepStatus,
-} from '../../workflow/src/types.ts';
-import type { FinalizeAssessResult, Gates, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '../../workflow/src/schema.ts';
-import type { ResolveNextNodesContext, ResolveNextNodesResult } from '../../workflow/src/dag-navigator.ts';
+} from '@deepseek-ai/dsh-sandore-workflow/src/types';
+import type { FinalizeAssessResult, Gates, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { ResolveNextNodesContext, ResolveNextNodesResult } from '@deepseek-ai/dsh-sandore-workflow/src/dag-navigator';
 
 import { FinalizeManager } from './finalize-manager.ts';
 import { describeError, isCancellationError, textSummary } from './internal.ts';

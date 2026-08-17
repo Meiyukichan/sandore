@@ -6,7 +6,7 @@
 import { Context } from '@deepseek-ai/cordis';
 import { describe, expect, it } from 'vitest';
 
-import { FinalizeMetaSchema } from '../../workflow/src/schema.ts';
+import { FinalizeMetaSchema } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import {
   FakeAgent,
   FakeAgentRegistry,

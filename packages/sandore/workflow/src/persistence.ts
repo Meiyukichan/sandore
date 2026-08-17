@@ -10,12 +10,8 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 
-import {
-  sandoreDomainSpec,
-  type JobRecord,
-  type WorkflowDefinitionRecord,
-  type WorkflowTaskState,
-} from './schema.ts'
+import { sandoreDomainSpec } from './domain.ts'
+import type { JobRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

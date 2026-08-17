@@ -19,8 +19,8 @@ import type {
   DagRun,
   DagRunStatus,
   DagStartRequest,
-} from '../../workflow/src/types.ts';
-import type { SandoreEngineSurface } from '../../workflow/src/engine-surface.ts';
+} from '@deepseek-ai/dsh-sandore-workflow/src/types';
+import type { SandoreEngineSurface } from '@deepseek-ai/dsh-sandore-workflow/src/engine-surface';
 
 /** 创建编排器工具的入参。 */
 export interface CreateSandoreToolsOptions {

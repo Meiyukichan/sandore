@@ -7,5 +7,7 @@
  * microflow 不再跨包导入 workflow 的运行时值。
  * @module @deepseek-ai/dsh-sandore-workflow/src/errors
  */
-export { SandoreError, isFatalSandoreError } from '../../microflow/src/errors.ts';
-export type { SandoreErrorCode } from '../../microflow/src/errors.ts';
+export { SandoreError, isFatalSandoreError } from '@deepseek-ai/dsh-sandore-microflow/src/errors';
+export type { SandoreErrorCode } from '@deepseek-ai/dsh-sandore-microflow/src/errors';
+export { WorkflowYamlError } from './yaml-error.ts';
+export type { WorkflowYamlErrorCode } from './yaml-error.ts';

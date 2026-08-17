@@ -24,7 +24,7 @@ import { findFilesByGlob, findFilesByRegex, isGlobPattern } from './file-utils.t
 import { describeError, resolveProviderModel, textSummary } from './internal.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
 
-import type { ExecutedStepDefault, FinalizeOutcome } from '../../workflow/src/types.ts';
+import type { ExecutedStepDefault, FinalizeOutcome } from '@deepseek-ai/dsh-sandore-workflow/src/types';
 import type {
   AskUserQuestionPayload,
   FinalizeAssessResult,
@@ -33,7 +33,7 @@ import type {
   Gates,
   PassThroughVar,
   WorkflowStep,
-} from '../../workflow/src/schema.ts';
+} from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
 /** 收尾管理器引擎级配置（provider/model 三层回退的 L2 来源）。 */
 export interface FinalizeManagerConfig {

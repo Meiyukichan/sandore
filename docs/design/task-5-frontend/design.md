@@ -40,6 +40,11 @@ sidebar（footArea，设置上方）
 
 **风格参考**：完全仿 `ui-workspace` 的 WorkspaceBrowser 观感（header 搜索+操作按钮 + 分组/平铺列表）。workspace 的 header 组件与分组逻辑包内私有不可 import，工作流用 `@deepseek-ai/dsh-client-ui-primitives` 自绘同款观感；`useSessions`/`useWorkspaces` 是框架全局 hook，用于「实例 → 父 session → workspace」分组映射（分组依据 = `workspace.sessionIds` 显式成员表，非 cwd）。
 
+**DagEditor / RunView 承载（两级下钻 + 宽展开，D6 自包含原则的自然延伸）**：
+- sidebar 展开面板宽约 260-300px，承载结构化编辑器（DagEditor）和执行详情（RunView）偏窄。WorkflowPanel 采用**两级下钻**：列表态（窄 rail，仅三态列表）↔ 编辑/执行态（**宽展开 layer**，参考 `ui-cordis` 的 `CordisPanel` `wide ? css.layer : css.rail` 形态）。
+- 点定义 → 下钻到 DagEditor（宽展开）；点实例 → 下钻到 RunView（宽展开）；返回按钮回到列表态。全程面板自包含 client 状态（`open` + `view` 栈），零新增 slot 注册。
+- **不选 `conversation.view` tab**（session-maybe scope，与「管理 UI 应全局」的 D6 理由有张力）；**不选 `shell.overlay`**（modal 全帧浮层，与「融入 DSH web」的嵌入式风格有偏差）。
+
 ### 1.2 Slot 注册
 
 `ui` 的 Client 插件 `apply(ctx)` 注册：
@@ -228,6 +233,8 @@ RunView
 > - **宿主 Session 会自动出现在侧边栏**（非 subagent origin 的 `agents.create` 会话不过滤；引擎建宿主时 `meta.cwd` 必填，否则重启后冷会话从列表消失）。
 > - RunView 头部放「打开讨论」按钮 → `ctx.sessions.open(hostSessionId)`（`ui-workflow-run` 的 `openSession` 同款）。
 > - 用户也可直接在侧边栏点击宿主会话（标题 = `工作流实例 xxx`，由 `sessionTitle.rename` 设置）。
+
+> **宿主会话标题补设（Task 5 host 侧最小增量，探索确认）**：`ctx.sessionTitle.rename(session, title)` 是 DSH 现成服务（`SessionTitleService`，`rename` 产生 `source: { kind: 'user' }` 的用户标题，优先于默认 fallback 自动摘要）。当前引擎建宿主 Session 时未设置，Task 5 补：`workflow` 包 `inject` 加 `sessionTitle`，创建宿主 Session 后 `ctx.sessionTitle.rename(handle.session, \`工作流实例 ${instanceId}\`)`，让侧边栏一眼辨识「这是哪个工作流实例的宿主会话」，而非「首条消息自动摘要」。
     └── 终态消息路由（默认会话 / @mention 重试）
 ```
 
@@ -505,6 +512,30 @@ workflow:
 ---
 
 ## 6. 数据流与 RPC
+
+### 6.0 RPC 接线（typert 生成 + `ctx.remote.$mount`，DSH 官方范式）
+
+> 设计文档早期写 `host.call('sandore.*')`，那是**动态插件**（`cordis_define`/`cordis_run`）的 Package-private RPC，**不适用于持久化插件**。Task 1 已定 `SandoreRemote extends TypertRemoteService + @Remote`，其客户端消费走 DSH 官方 Typert 机制（对齐 `message-feedback`/`commands`/`goal` 等官方包，参考 `packages/api/remotes/src/client/index.ts` 的集中 `$mount` + `ui-commands` 的 `ctx.remote.commands.list`）：
+
+```
+workflow 包（Host）：SandoreRemote + @Remote('listInstances') 等
+    │  手写 lib/typert.remote-client.js（27 个 InvocationDescriptor）+ .d.ts（见下方「typert 构建局限」）
+    │  package.json 加 "./remote" 导出（指向手写 lib/typert.remote-client.js）
+    ▼
+ui 包（Client）：
+    import sandoreRemote from '@deepseek-ai/dsh-sandore-workflow/remote'   // default import
+    await ctx.remote.$mount(sandoreRemote)                                  // apply(ctx) 内挂载，返回 disposer
+    const defs = await ctx.remote.sandore.listDefinitions({})               // 调 ctx.remote.sandore.*
+```
+
+- `ctx.remote.sandore.*` 的命名空间 = `SandoreRemote` 的 `super(ctx, 'sandore')` service key
+- 本节下文的 `host.call('sandore.*')` 一律等价于 `ctx.remote.sandore.*`
+
+> **typert 构建局限（第三方仓库无法真正跑通 → 手写生成物，官方合法回退）**：`typert generator` 硬编码 monorepo workspace 假设（`WorkspaceTypertGenerator(root)` + `WorkspaceAnalyzer.discoverPackages()` 扫描 workspace 内的 `packages/*/*` 源码做 wire 类型拆分），而 sandore 是**第三方仓库**，`@deepseek-ai/dsh-typert-protocol` 来自 **npm 发布版**（node_modules，只有 lib 产物、无 workspace 源码 face），generator 无法识别其类型结构，build 无法真正跑通。因此：
+> - **workflow 包 build 移除 `typertPlugin`**，改为普通 `tsc` + `tsdown` 打包（无 typert 生成步骤，build 无错误）；
+> - **手写 `lib/typert.remote-client.js`**（27 个 RPC 的 `InvocationDescriptor`，结构见 `gateway.client.spec.ts` 的 `directDescriptor()`）+ `lib/typert.remote-client.d.ts`（类型声明），`typeSymbol`/`schema` 引用 workflow 的 `./types` 导出，**静态保留**（改 `@Remote` 方法时手动同步，typecheck + `$mount` 挂载 + 27 RPC 类型化作为验收兜底）；
+> - **ui 包正常跑 clientBundle**（`import sandoreRemote from '.../remote'` + `$mount`）。
+> - **不 vendor protocol**（避免复制 ~800 行 protocol 源码进 sandore 带来的包名冲突、运行时解析改指 vendor 版、长期同步维护）。
 
 ### 6.1 端到端数据流（以「执行一个工作流」为例）
 

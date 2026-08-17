@@ -28,8 +28,8 @@ import {
 } from './internal.ts';
 import { finalAssistantOutput } from './subagents.ts';
 import type { Agent } from './subagents.ts';
-import type { CommandConfig, WorkflowStep } from '../../workflow/src/schema.ts';
-import type { ShellExecRequest, ShellRunResult, SubprocessSpawnSpec } from '../../workflow/src/shell.ts';
+import type { CommandConfig, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { ShellExecRequest, ShellRunResult, SubprocessSpawnSpec } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
 
 type ShellCommand = Extract<CommandConfig, { type: 'shell' }>;
 type PromptCommand = Extract<CommandConfig, { type: 'prompt' }>;

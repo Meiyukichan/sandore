@@ -22,7 +22,7 @@ import type {
   Session,
   SessionEvent,
   SessionId,
-} from '../../../microflow/src/subagents.ts';
+} from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { FakeSessionStore } from './sessions.ts';
 
 /** 记录事件的最小 Session 形状。 */

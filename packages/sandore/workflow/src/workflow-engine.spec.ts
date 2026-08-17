@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../tests/mocks/llm.ts';
 import { FakeSessionStore } from '../tests/mocks/sessions.ts';
+import { FakeSessionTitle } from '../tests/mocks/session-title.ts';
 import { FakeShell, successResult } from '../tests/mocks/shell.ts';
 import { MemoryStorageDomain } from '../tests/mocks/storage-domain.ts';
 import { FakeSubagents } from '../tests/mocks/subagents.ts';
@@ -422,6 +423,7 @@ async function harness(config: SandoreConfig = {}): Promise<{
   subagents: FakeSubagents;
   agents: FakeAgentRegistry;
   userQuestions: FakeUserQuestions;
+  sessionTitle: FakeSessionTitle;
 }> {
   const ctx = new Context();
   const storageDomain = new MemoryStorageDomain();
@@ -436,6 +438,7 @@ async function harness(config: SandoreConfig = {}): Promise<{
   const agents = new FakeAgentRegistry(sessions);
   const subprocess = new FakeSubprocess();
   const userQuestions = new FakeUserQuestions();
+  const sessionTitle = new FakeSessionTitle();
   ctx.provide('llm', llm as unknown as LlmRuntime);
   ctx.provide('shell', shell as unknown as ShellExecutor);
   ctx.provide('sessions', sessions as unknown as SessionStore);
@@ -444,11 +447,12 @@ async function harness(config: SandoreConfig = {}): Promise<{
   ctx.provide('agents', agents);
   ctx.provide('subprocess', subprocess);
   ctx.provide('userQuestions', userQuestions);
+  ctx.provide('sessionTitle', sessionTitle);
   ctx.provide('fs', {});
 
   await ctx.plugin(SandoreEngineRuntime, config);
   const engine = ctx.sandoreEngine;
-  return { ctx, engine, persistence, llm, shell, sessions, subagents, agents, userQuestions };
+  return { ctx, engine, persistence, llm, shell, sessions, subagents, agents, userQuestions, sessionTitle };
 }
 
 /** 注册全部 sandore/* 监听器并记录事件（名称 + 参数）。 */
@@ -457,9 +461,9 @@ function recordSandoreEvents(ctx: Context): Array<{ name: string; args: unknown[
   ctx.on('sandore/start', info => records.push({ name: 'sandore/start', args: [info] }));
   ctx.on('sandore/stage-start', (info, stageId) => records.push({ name: 'sandore/stage-start', args: [info, stageId] }));
   ctx.on('sandore/stage-completed', (info, stageId, contract) => records.push({ name: 'sandore/stage-completed', args: [info, stageId, contract] }));
-  ctx.on('sandore/step-start', (info, stepId, childId) => records.push({ name: 'sandore/step-start', args: [info, stepId, childId] }));
-  ctx.on('sandore/step-completed', (info, stepId, childId, output) => records.push({ name: 'sandore/step-completed', args: [info, stepId, childId, output] }));
-  ctx.on('sandore/step-failed', (info, stepId, childId, error) => records.push({ name: 'sandore/step-failed', args: [info, stepId, childId, error] }));
+  ctx.on('sandore/step-start', (info, stepId, childId, name, loopIteration) => records.push({ name: 'sandore/step-start', args: [info, stepId, childId, name, loopIteration] }));
+  ctx.on('sandore/step-completed', (info, stepId, childId, output, name, loopIteration) => records.push({ name: 'sandore/step-completed', args: [info, stepId, childId, output, name, loopIteration] }));
+  ctx.on('sandore/step-failed', (info, stepId, childId, error, name, loopIteration) => records.push({ name: 'sandore/step-failed', args: [info, stepId, childId, error, name, loopIteration] }));
   ctx.on('sandore/end', (info, result) => records.push({ name: 'sandore/end', args: [info, result] }));
   ctx.on('sandore/aborted', info => records.push({ name: 'sandore/aborted', args: [info] }));
   return records;
@@ -493,11 +497,13 @@ describe('SandoreEngineRuntime interface', () => {
     expect(SandoreEngineStub).toBeTypeOf('function');
   });
 
-  it('declares agents and userQuestions in the seam inject list', () => {
+  it('declares agents, userQuestions, and sessionTitle in the seam inject list', () => {
     expect(SandoreEngineStub.inject).toContain('agents');
     expect(SandoreEngineStub.inject).toContain('userQuestions');
+    expect(SandoreEngineStub.inject).toContain('sessionTitle');
     expect(SandoreEngineRuntime.inject).toContain('agents');
     expect(SandoreEngineRuntime.inject).toContain('userQuestions');
+    expect(SandoreEngineRuntime.inject).toContain('sessionTitle');
   });
 
   it('routes recoverInstance and retryStep on unknown instances to NODE_NOT_FOUND (no longer not-implemented)', async () => {
@@ -565,6 +571,32 @@ describe('SandoreEngineRuntime startInstance', () => {
       engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' }),
     ).rejects.toThrow('setup boom');
     expect(persistence.state.size).toBe(0);
+  });
+
+  it('renames the host session title to `工作流实例 <instanceId>` after creating the host session', async () => {
+    const { engine, persistence, sessions, sessionTitle } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+
+    expect(sessionTitle.calls).toHaveLength(1);
+    expect(sessionTitle.calls[0]?.title).toBe(`工作流实例 ${run.instanceId}`);
+    // rename 传入的是经 ctx.sessions.get 读回的 live 宿主 Session（同一引用）。
+    expect(sessionTitle.calls[0]?.session).toBe(sessions.get(run.instanceId));
+  });
+
+  it('does not fail startInstance when sessionTitle.rename throws and still executes to completion', async () => {
+    const { ctx, engine, persistence, sessionTitle } = await harness();
+    await putDefinition(persistence, 'wfl-shell-only', shellOnlyYaml);
+    sessionTitle.renameError = new Error('title boom');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-shell-only', jobId: 'job-1', originalInput: 'do it' });
+
+    expect(run.status).toBe('running');
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('completed');
+    expect(sessionTitle.calls).toHaveLength(1);
   });
 
   it('falls back to the state table when the instance is not in memory', async () => {
@@ -636,9 +668,12 @@ describe('SandoreEngineRuntime linear execution', () => {
       'sandore/end',
     ]);
 
-    // prompt 成功：step-completed 事件 payload 的 output 即聚合 ContentBlock[]。
+    // prompt 成功：step-completed 事件 payload 的 output 即聚合 ContentBlock[]，
+    // 且 name 为 Step 定义 id（YAML 未写 name 时兜底回退 id）；非循环 Step 无 loopIteration。
     const promptCompleted = records.find(record => record.name === 'sandore/step-completed' && record.args[1] === 'step-prompt');
     expect(promptCompleted?.args[3]).toEqual([{ type: 'text', text: 'summary' }]);
+    expect(promptCompleted?.args[4]).toBe('step-prompt');
+    expect(promptCompleted?.args[5]).toBeUndefined();
 
     // 完成后 state 表读回快照。
     const state = persistence.state.get(run.instanceId);
@@ -739,7 +774,10 @@ describe('SandoreEngineRuntime failure', () => {
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('failed');
     expect(state?.executedSteps[0]?.error).toContain('boom');
-    expect(records.some(record => record.name === 'sandore/step-failed')).toBe(true);
+    const failed = records.find(record => record.name === 'sandore/step-failed');
+    expect(failed).toBeDefined();
+    expect(failed?.args[1]).toBe('step-abc');
+    expect(failed?.args[4]).toBe('step-abc');
   });
 
   it('keeps the first step completed when the second step fails', async () => {
@@ -914,10 +952,18 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(finalizeStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
     expect(finalizeStep?.finalizeMeta?.completionType).toBe('completed');
 
-    // agent Step 的 step-completed 事件载荷：真实 childId + 最终 output。
+    // agent Step 的 step-completed 事件载荷：真实 childId + 最终 output + name；
+    // 非循环 Step 无 loopIteration。
     const agentCompleted = records.find(record => record.name === 'sandore/step-completed' && record.args[1] === 'step-agent');
     expect(agentCompleted?.args[2]).toBe('child-1');
     expect(agentCompleted?.args[3]).toEqual([{ type: 'text', text: 'agent output' }]);
+    expect(agentCompleted?.args[4]).toBe('step-agent');
+    expect(agentCompleted?.args[5]).toBeUndefined();
+
+    // 循环内 Step 的 step-completed 事件载荷：name + 扁平迭代路径（末尾位置）。
+    const iterCompleted = records.filter(record => record.name === 'sandore/step-completed' && record.args[1] === 'step-iter');
+    expect(iterCompleted.map(record => record.args[4])).toEqual(['step-iter', 'step-iter', 'step-iter']);
+    expect(iterCompleted.map(record => record.args[5])).toEqual([[1], [2], [3]]);
 
     // 两 Stage 均 completed，契约落盘。
     expect(state?.stageInfos.map(info => info.status)).toEqual(['completed', 'completed']);
@@ -956,6 +1002,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
     await putDefinition(persistence, 'wfl-nested-loop', nestedLoopYaml);
     shell.runHandler = async spec => successResult(spec, 'iter');
 
+    const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-nested-loop', jobId: 'job-1', originalInput: 'do it' });
     await ended;
@@ -967,6 +1014,10 @@ describe('SandoreEngineRuntime DAG execution', () => {
     // loopIteration 路径为嵌套数组 [[1,1],[1,2],[2,1],[2,2]]。
     const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
     expect(iterations.map(step => step.loopIteration)).toEqual([[1, 1], [1, 2], [2, 1], [2, 2]]);
+
+    // 事件 payload 的 loopIteration 为嵌套完整路径数组（与 state 快照一致）。
+    const iterCompleted = records.filter(record => record.name === 'sandore/step-completed' && record.args[1] === 'step-iter');
+    expect(iterCompleted.map(record => record.args[5])).toEqual([[1, 1], [1, 2], [2, 1], [2, 2]]);
   });
 
   it('writes loopMeta to executedSteps when a breakCondition breaks the loop', async () => {
@@ -1310,8 +1361,8 @@ describe('SandoreEngineRuntime recovery', () => {
     // 续跑前给子代理回填最终输出。
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'retry output' }]));
 
-    const retried: Array<{ stepId: string; mode: string }> = [];
-    ctx.on('sandore/step-retried', (_info, stepId, mode) => retried.push({ stepId, mode }));
+    const retried: Array<{ stepId: string; mode: string; name: string; loopIteration?: number[] }> = [];
+    ctx.on('sandore/step-retried', (_info, stepId, mode, name, loopIteration) => retried.push({ stepId, mode, name, ...(loopIteration === undefined ? {} : { loopIteration }) }));
 
     await engine.retryStep(run.instanceId, 'step-agent', 'continue', 'please retry');
 
@@ -1325,7 +1376,7 @@ describe('SandoreEngineRuntime recovery', () => {
     expect(subagents.followups.some(item => item.childId === 'child-1')).toBe(true);
 
     // sandore/step-retried 双发：Cordis emit + Session append 同发。
-    expect(retried).toEqual([{ stepId: 'step-agent', mode: 'continue' }]);
+    expect(retried).toEqual([{ stepId: 'step-agent', mode: 'continue', name: 'step-agent' }]);
     expect(sessions.get(run.instanceId)?.events.some(event => event.type === 'sandore/step-retried')).toBe(true);
   });
 
@@ -1606,6 +1657,7 @@ describe('SandoreEngineRuntime recovery', () => {
     ctx.provide('shell', new FakeShell() as unknown as ShellExecutor);
     ctx.provide('subprocess', new FakeSubprocess());
     ctx.provide('userQuestions', new FakeUserQuestions());
+    ctx.provide('sessionTitle', new FakeSessionTitle());
     ctx.provide('fs', {});
 
     await ctx.plugin(SandoreEngineRuntime, {});

@@ -1,0 +1,18 @@
+# sandore 静态组合（patch overlay）：插件加载仅经此静态组合，启动即生效。
+#
+# 顶层为 YAML list；`- insert:` 块内每一行 `- id: <rowId> + name: '<包名>'`
+# 即插入一个插件行（静态组合挂载），可再带 `config`。格式对齐 DSH
+# `examples/web-cordis/cordis.yml` 的 patch overlay。
+
+- insert:
+    - id: workflow
+      name: '@deepseek-ai/dsh-sandore-workflow'
+      config:
+        defaultTimeoutMs: 7200000
+        maxConcurrentSteps: 0
+    - id: microflow
+      name: '@deepseek-ai/dsh-sandore-microflow'
+    - id: tool
+      name: '@deepseek-ai/dsh-sandore-tool'
+    - id: ui
+      name: '@deepseek-ai/dsh-client-ui-sandore'

@@ -733,6 +733,11 @@ getInstanceArtifacts(jobId, instanceId, stageId?): InstanceArtifactsData
 - **`synthetic: true` 标记**：让 Task 5 前端 renderer 区分「占位 childId」vs「真实子代理 SessionId」——`synthetic=true` 时点击 `sandore-step` 节点**不跳转**（无子对话页，避免 `ctx.sessions.open(占位id)` 报错），仅内联展示结果
 - **Task 3 迁移**：agent 类型用 `ctx.subagents.startContinuable()` 的真实 SessionId，`synthetic: false`；shell/prompt 保持合成占位
 
+**step-* 事件补 `name`/`loopIteration`（D8 折叠态需要）**：
+- `name`：step 定义的 `name`（引擎执行 Step 时闭包内有 step 定义，零成本取出）
+- `loopIteration`：`loopManager.buildLoopIterationPath()`（Task 3 已实现，返回 `number[]` 或 `undefined`）
+- 所有 6 个 `step-*` 事件（start/completed/failed/paused/resumed/retried）都携带 `name`（必填）+ `loopIteration?`（可选），前端 `ConversationNodeDefinition` 折叠时直接取，无需 RPC 补偿
+
 ### 5.2 Step 执行器映射（关键）
 
 > 来源：dsh-workflow §5.3
@@ -1335,12 +1340,12 @@ declare module '@deepseek-ai/cordis' {
     'sandore/start'(info: DagRunInfo): void
     'sandore/stage-start'(info: DagRunInfo, stageId: string): void
     'sandore/stage-completed'(info: DagRunInfo, stageId: string, contract: StageContract): void
-    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string): void
-    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[]): void
-    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, error: string): void
-    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string): void
-    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt?: string): void
-    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string): void
+    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void
+    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, name: string, output: ContentBlock[], loopIteration?: number[]): void
+    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, name: string, error: string, loopIteration?: number[]): void
+    'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void
+    'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, name: string, resumePrompt?: string, loopIteration?: number[]): void
+    'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string, name: string, loopIteration?: number[]): void
     'sandore/question'(info: DagRunInfo, question: PendingQuestion): void
     'sandore/permission'(info: DagRunInfo, permission: PendingPermission): void
     'sandore/end'(info: DagRunInfo, result: DagResultInfo): void

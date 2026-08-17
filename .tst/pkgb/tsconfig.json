@@ -1,0 +1,1 @@
+{ "compilerOptions": { "rootDir": "src", "outDir": "lib", "composite": true, "declaration": true, "moduleResolution": "bundler", "module": "esnext", "allowImportingTsExtensions": true, "rewriteRelativeImportExtensions": true, "strict": true, "skipLibCheck": true }, "include": ["src"] }

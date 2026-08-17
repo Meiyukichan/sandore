@@ -8,7 +8,7 @@ import { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm';
 import { describe, expect, it } from 'vitest';
 
-import type { WorkflowStep } from '../../workflow/src/schema.ts';
+import type { WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { textChunks } from '../../workflow/tests/mocks/llm.ts';
 import { FakeLlm } from '../../workflow/tests/mocks/llm.ts';

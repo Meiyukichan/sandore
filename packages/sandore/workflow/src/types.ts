@@ -41,6 +41,31 @@ export type {
   StepSessionMeta,
 }
 
+// ── RPC wire 类型（重导出自 remote.ts，供 typert 生成物 .d.ts 引用） ────────────
+//
+// typert generator 要求 Remote 边界（结果/参数）类型从「公共非 root 类型子路径」
+// （即 `./types`）导出；`remote.ts` 的 wire 类型原本仅从根 `.` 子路径导出，故在此
+// 以 `export type` 命名重导出，`resolveSymbol` 会解析到 remote.ts 中的同一 symbol。
+export type {
+  WorkflowDefinitionEntry,
+  JobEntry,
+  InstanceSummary,
+  ArtifactEntry,
+  PingResponse,
+  CreateDefinitionInput,
+  UpdateDefinitionInput,
+  CreateJobInput,
+  UpdateJobInput,
+  StartInstanceInput,
+  ReplyQuestionInput,
+  ReplyPermissionInput,
+  PauseStepInput,
+  ResumeStepInput,
+  PauseAllInput,
+  ResumeAllInput,
+  RetryStepInput,
+} from './wire.ts'
+
 /** 用户问答选项（对齐 DSH `AskUserQuestionOption`）。 */
 export interface AskUserQuestionOption {
   /** 选项对外展示标签。 */

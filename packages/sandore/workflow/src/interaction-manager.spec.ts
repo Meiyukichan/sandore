@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { FakeAgent } from '../tests/mocks/agents.ts';
 import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
-import type { Agent } from '../../microflow/src/subagents.ts';
+import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import {
   InteractionManager,
   parseDelegatedAsk,
