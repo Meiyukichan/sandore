@@ -148,9 +148,10 @@ export const TYPERT_REMOTE = {
       namespace: 'sandore',
       method: 'listJobs',
       invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'workflowId', wire: 'workflowId', source: 'json', acceptsUndefined: true, codec: json(z.string().optional(), '@deepseek-ai/dsh-sandore-workflow#sandore/listJobs:workflowId') },
-      ],
+      // Typert 客户端按 descriptor.parameters.length 严格校验实参个数，不支持 TS 可选
+      // 参数（官方无先例）。`workflowId?` 为可选过滤条件，UI 不传；省略后 Host 侧
+      // SRC fallback 以 src-json 宽松校验允许缺失，方法收到 undefined 即全量返回。
+      parameters: [],
       result: json(z.array(jobEntry), '@deepseek-ai/dsh-sandore-workflow/types#JobEntry'),
     },
     {
@@ -204,9 +205,9 @@ export const TYPERT_REMOTE = {
       namespace: 'sandore',
       method: 'listInstances',
       invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'jobId', wire: 'jobId', source: 'json', acceptsUndefined: true, codec: json(z.string().optional(), '@deepseek-ai/dsh-sandore-workflow#sandore/listInstances:jobId') },
-      ],
+      // 同 listJobs：`jobId?` 为可选过滤条件，Typert 客户端不支持可选参数，UI 不传，
+      // Host SRC 宽松校验允许缺失（jobId undefined → 全量列表）。
+      parameters: [],
       result: json(z.array(instanceSummary), '@deepseek-ai/dsh-sandore-workflow/types#InstanceSummary'),
     },
     {
@@ -336,9 +337,10 @@ export const TYPERT_REMOTE = {
       namespace: 'sandore',
       method: 'getArtifacts',
       invocation: { kind: 'direct' },
+      // `stageId?` 为可选过滤条件，Typert 客户端不支持可选参数；UI 只传必填 instanceId，
+      // stageId 由 Host SRC 宽松校验允许缺失（undefined → 全部 Stage 产物）。
       parameters: [
         { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), '@deepseek-ai/dsh-sandore-workflow#sandore/getArtifacts:instanceId') },
-        { name: 'stageId', wire: 'stageId', source: 'json', acceptsUndefined: true, codec: json(z.string().optional(), '@deepseek-ai/dsh-sandore-workflow#sandore/getArtifacts:stageId') },
       ],
       result: json(z.array(artifactEntry), '@deepseek-ai/dsh-sandore-workflow/types#ArtifactEntry'),
     },

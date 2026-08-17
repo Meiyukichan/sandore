@@ -4538,13 +4538,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					namespace: "sandore",
 					method: "listJobs",
 					invocation: { kind: "direct" },
-					parameters: [{
-						name: "workflowId",
-						wire: "workflowId",
-						source: "json",
-						acceptsUndefined: true,
-						codec: json(string().optional(), "@deepseek-ai/dsh-sandore-workflow#sandore/listJobs:workflowId")
-					}],
+					parameters: [],
 					result: json(array(jobEntry), "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
 				},
 				{
@@ -4621,13 +4615,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					namespace: "sandore",
 					method: "listInstances",
 					invocation: { kind: "direct" },
-					parameters: [{
-						name: "jobId",
-						wire: "jobId",
-						source: "json",
-						acceptsUndefined: true,
-						codec: json(string().optional(), "@deepseek-ai/dsh-sandore-workflow#sandore/listInstances:jobId")
-					}],
+					parameters: [],
 					result: json(array(instanceSummary), "@deepseek-ai/dsh-sandore-workflow/types#InstanceSummary")
 				},
 				{
@@ -4830,12 +4818,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						wire: "instanceId",
 						source: "json",
 						codec: json(string(), "@deepseek-ai/dsh-sandore-workflow#sandore/getArtifacts:instanceId")
-					}, {
-						name: "stageId",
-						wire: "stageId",
-						source: "json",
-						acceptsUndefined: true,
-						codec: json(string().optional(), "@deepseek-ai/dsh-sandore-workflow#sandore/getArtifacts:stageId")
 					}],
 					result: json(array(artifactEntry), "@deepseek-ai/dsh-sandore-workflow/types#ArtifactEntry")
 				},
@@ -15233,41 +15215,44 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"workspaces"
 		];
 		/** 挂载 sandore 远程命名空间、注册 locale 字典与工作流入口按钮。 */
-		function apply(ctx) {
+		async function apply(ctx) {
 			ctx.effect(() => ctx.locale.register(NS, {
 				zh,
 				en
 			}), "ui-sandore: dictionaries");
-			ctx.effect(() => ctx.remote.$mount(TYPERT_REMOTE), "ui-sandore: remote");
+			const disposeRemote = await ctx.remote.$mount(TYPERT_REMOTE);
+			ctx.effect(() => disposeRemote, "ui-sandore: remote");
 			ctx.conversationEvents.register(sandoreStepDefinition);
-			const sandore = {
-				ping: async () => unwrap(await ctx.remote.sandore.ping()),
-				listInstances: async () => unwrap(await ctx.remote.sandore.listInstances()),
-				listDefinitions: async () => unwrap(await ctx.remote.sandore.listDefinitions()),
-				deleteDefinition: async (id) => unwrap(await ctx.remote.sandore.deleteDefinition(id)),
-				save: createSandoreSave(ctx.remote.sandore),
-				openDiscussion: (instanceId) => createOpenDiscussion(ctx.sessions, instanceId),
-				remote: ctx.remote.sandore
-			};
-			ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register({
-				name: "sidebar.footer.action",
-				id: "sandore-btn",
-				locale: NS,
-				inject: () => sandore
-			}, WorkflowButton));
-			ctx.slots.inject("conversation.chat.node", () => ctx.slots.register({
-				name: "conversation.chat.node",
-				key: "sandore-step",
-				locale: NS,
-				inject: () => ({
-					openSession: (id) => {
-						ctx.sessions.open(id);
-					},
-					retryStep: async (input) => {
-						unwrap(await ctx.remote.sandore.retryStep(input));
-					}
-				})
-			}, DagStepNodeView));
+			await ctx.inject(["remote.sandore"], (remoteCtx) => {
+				const sandore = {
+					ping: async () => unwrap(await remoteCtx.remote.sandore.ping()),
+					listInstances: async () => unwrap(await remoteCtx.remote.sandore.listInstances()),
+					listDefinitions: async () => unwrap(await remoteCtx.remote.sandore.listDefinitions()),
+					deleteDefinition: async (id) => unwrap(await remoteCtx.remote.sandore.deleteDefinition(id)),
+					save: createSandoreSave(remoteCtx.remote.sandore),
+					openDiscussion: (instanceId) => createOpenDiscussion(remoteCtx.sessions, instanceId),
+					remote: remoteCtx.remote.sandore
+				};
+				remoteCtx.slots.inject("sidebar.footer.action", () => remoteCtx.slots.register({
+					name: "sidebar.footer.action",
+					id: "sandore-btn",
+					locale: NS,
+					inject: () => sandore
+				}, WorkflowButton));
+				remoteCtx.slots.inject("conversation.chat.node", () => remoteCtx.slots.register({
+					name: "conversation.chat.node",
+					key: "sandore-step",
+					locale: NS,
+					inject: () => ({
+						openSession: (id) => {
+							remoteCtx.sessions.open(id);
+						},
+						retryStep: async (input) => {
+							unwrap(await remoteCtx.remote.sandore.retryStep(input));
+						}
+					})
+				}, DagStepNodeView));
+			});
 		}
 		//#endregion
 		exports.apply = apply;

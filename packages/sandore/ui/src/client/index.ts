@@ -19,40 +19,47 @@ import { sandoreStepDefinition } from './sandore-step-definition.ts'
 export const inject = ['conversationEvents', 'slots', 'locale', 'remote', 'sessions', 'workspaces']
 
 /** 挂载 sandore 远程命名空间、注册 locale 字典与工作流入口按钮。 */
-export function apply(ctx: ClientContext): void {
+export async function apply(ctx: ClientContext): Promise<void> {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sandore: dictionaries')
 
-  // 将 workflow 包生成的 Remote 贡献挂到 `ctx.remote`，使 `ctx.remote.sandore.*`
-  // 命名空间就绪；disposer 经 ctx.effect 绑定插件 fiber，卸载时自动逆序清理。
-  ctx.effect(() => ctx.remote.$mount(sandoreRemote), 'ui-sandore: remote')
+  // 将 workflow 包生成的 Remote 贡献挂到 `ctx.remote`，使 `remote.sandore` 命名空间
+  // 服务就绪；disposer 经 ctx.effect 绑定插件 fiber，卸载时自动逆序清理。
+  const disposeRemote = await ctx.remote.$mount(sandoreRemote)
+  ctx.effect(() => disposeRemote, 'ui-sandore: remote')
 
-  // 注册 sandore-step 讨论节点 Definition（kind `sandore-step`、target `chat`）。
+  // 注册 sandore-step 讨论节点 Definition（kind `sandore-step`、target `chat`），
+  // 不依赖 `remote.sandore`。
   ctx.conversationEvents.register(sandoreStepDefinition)
 
-  const sandore: WorkflowButtonFace = {
-    ping: async (): Promise<PingResponse> => unwrap(await ctx.remote.sandore.ping()),
-    listInstances: async () => unwrap(await ctx.remote.sandore.listInstances()),
-    listDefinitions: async () => unwrap(await ctx.remote.sandore.listDefinitions()),
-    deleteDefinition: async (id: string) => unwrap(await ctx.remote.sandore.deleteDefinition(id)),
-    save: createSandoreSave(ctx.remote.sandore),
-    openDiscussion: (instanceId: string) => createOpenDiscussion(ctx.sessions, instanceId),
-    remote: ctx.remote.sandore,
-  }
+  // `remote.sandore` 命名空间服务由 `$mount` 动态安装（不在本插件静态 inject 中，
+  // self-mount + self-inject 会死锁）。用 `ctx.inject` 动态依赖注入：等命名空间服务
+  // 就绪后（$mount 已完成）再注册依赖它的 slot，回调内的 `ctx.remote.sandore` 可正常访问。
+  await ctx.inject(['remote.sandore'], (remoteCtx) => {
+    const sandore: WorkflowButtonFace = {
+      ping: async (): Promise<PingResponse> => unwrap(await remoteCtx.remote.sandore.ping()),
+      listInstances: async () => unwrap(await remoteCtx.remote.sandore.listInstances()),
+      listDefinitions: async () => unwrap(await remoteCtx.remote.sandore.listDefinitions()),
+      deleteDefinition: async (id: string) => unwrap(await remoteCtx.remote.sandore.deleteDefinition(id)),
+      save: createSandoreSave(remoteCtx.remote.sandore),
+      openDiscussion: (instanceId: string) => createOpenDiscussion(remoteCtx.sessions, instanceId),
+      remote: remoteCtx.remote.sandore,
+    }
 
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-    name: 'sidebar.footer.action',
-    id: 'sandore-btn',
-    locale: NS,
-    inject: (): WorkflowButtonFace => sandore,
-  }, WorkflowButton))
+    remoteCtx.slots.inject('sidebar.footer.action', () => remoteCtx.slots.register({
+      name: 'sidebar.footer.action',
+      id: 'sandore-btn',
+      locale: NS,
+      inject: (): WorkflowButtonFace => sandore,
+    }, WorkflowButton))
 
-  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
-    name: 'conversation.chat.node',
-    key: 'sandore-step',
-    locale: NS,
-    inject: (): SandoreStepInjected => ({
-      openSession: (id: SessionId) => { ctx.sessions.open(id) },
-      retryStep: async (input) => { unwrap(await ctx.remote.sandore.retryStep(input)) },
-    }),
-  }, DagStepNodeView))
+    remoteCtx.slots.inject('conversation.chat.node', () => remoteCtx.slots.register({
+      name: 'conversation.chat.node',
+      key: 'sandore-step',
+      locale: NS,
+      inject: (): SandoreStepInjected => ({
+        openSession: (id: SessionId) => { remoteCtx.sessions.open(id) },
+        retryStep: async (input) => { unwrap(await remoteCtx.remote.sandore.retryStep(input)) },
+      }),
+    }, DagStepNodeView))
+  })
 }
