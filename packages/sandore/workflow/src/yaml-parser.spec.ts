@@ -28,7 +28,6 @@ stages:
     name: 代码分析
     steps:
       - id: step-1
-        next: step-2
       - id: step-2
   - id: stg-2
     name: 通知
@@ -169,7 +168,7 @@ steps:
         command: "npm run lint 2>&1"
     inputFrom:
       - id: ipt-11111111-1111-1111-1111-111111111111
-        path: stg-11111111-1111-1111-1111-111111111111.step-11111111-1111-1111-1111-111111111111.opt-11111111-1111-1111-1111-111111111111
+        path: step-22222222-2222-2222-2222-222222222222   # 简化格式：path 直接为 step id
       - id: ipt-22222222-2222-2222-2222-222222222222
         regex: ".*\\\\.test\\\\.ts$"        # regex 模式匹配
     outputTo:
@@ -202,7 +201,7 @@ steps:
         modelId: model-yyy
     inputFrom:
       - id: ipt-33333333-3333-3333-3333-333333333333
-        path: stg-11111111-1111-1111-1111-111111111111.step-11111111-1111-1111-1111-111111111111
+        path: step-11111111-1111-1111-1111-111111111111   # 简化格式：path 直接为 step id
     outputTo:
       - id: opt-33333333-3333-3333-3333-333333333333
         path: "reports/review.md"
@@ -416,28 +415,6 @@ steps:
 `, 'step-missing')
   })
 
-  it('throws DEFINITION_INVALID when inputFrom[].path references a missing stage', () => {
-    expectDefinitionInvalid(`id: wfl-x
-name: demo
-version: "1.0.0"
-stages:
-  - id: stg-1
-    name: 分析
-    steps:
-      - id: step-1
-steps:
-  - id: step-1
-    name: lint
-    command:
-      type: shell
-      value:
-        command: "echo hi"
-    inputFrom:
-      - id: ipt-1
-        path: stg-missing.step-1
-`, "missing stage 'stg-missing'")
-  })
-
   it('throws DEFINITION_INVALID when inputFrom[].path references a missing step', () => {
     expectDefinitionInvalid(`id: wfl-x
 name: demo
@@ -456,8 +433,30 @@ steps:
         command: "echo hi"
     inputFrom:
       - id: ipt-1
-        path: stg-1.step-missing
+        path: step-missing
 `, "missing step 'step-missing'")
+  })
+
+  it('throws DEFINITION_INVALID when inputFrom[].path references a missing step (multi-segment rejected)', () => {
+    expectDefinitionInvalid(`id: wfl-x
+name: demo
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 分析
+    steps:
+      - id: step-1
+steps:
+  - id: step-1
+    name: lint
+    command:
+      type: shell
+      value:
+        command: "echo hi"
+    inputFrom:
+      - id: ipt-1
+        path: stg-1.step-1
+`, "missing step 'stg-1.step-1'")
   })
 
   it('throws DEFINITION_INVALID on duplicate stage ids', () => {
@@ -542,7 +541,8 @@ stages:
     expect(definition.stages[0]?.steps).toHaveLength(1)
     const step = definition.stages[0]?.steps[0]
     expect(step?.id).toBe('tsk-lint')
-    expect(step?.command).toEqual({ type: 'shell', value: { command: 'npm run lint 2>&1' } })
+    // 分离式：stage.steps 仅保留 id（+branches 流控），完整 command 定义不再内联。
+    expect(step).toEqual({ id: 'tsk-lint' })
   })
 
   it('chains adjacent tasks within a scenario and links the last task to the next scenario', () => {

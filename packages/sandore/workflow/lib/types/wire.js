@@ -26,6 +26,10 @@ export const CreateJobInputSchema = z.object({
     workflowId: z.string(),
     cwd: z.string().optional(),
 });
+/** `listJobs` 入参：可选按 workflowId 过滤（RPC 面统一对象入参，避免可选参数退化）。 */
+export const ListJobsInputSchema = z.object({
+    workflowId: z.string().optional(),
+});
 /** `updateJob` 入参。 */
 export const UpdateJobInputSchema = z.object({
     name: z.string().optional(),

@@ -10,9 +10,6 @@
 /** 编辑区模式：编排（DagEditor 画布）| 执行（RunView 三栏）。 */
 export type EditorMode = 'dag' | 'run'
 
-/** 定义视图：详情（默认）| 编排（两层 DAG）。 */
-export type DefinitionView = 'detail' | 'edit'
-
 /** 左列表模式：实例列表 | 定义列表（编排）。 */
 export type ListMode = 'instance' | 'definition'
 
@@ -37,14 +34,14 @@ export interface WorkflowUiState {
   readonly open: boolean
   /** 编辑区模式（编排/执行）。 */
   readonly mode: EditorMode
-  /** 定义视图（详情/编排，编排态生效）。 */
-  readonly definitionView: DefinitionView
   /** 左列表模式（实例/定义）。 */
   readonly listMode: ListMode
   /** 当前选中实例（执行态）。 */
   readonly selectedInstanceId: string | undefined
-  /** 当前选中定义（编排态；id 缺省 = 新建）。 */
+  /** 当前选中定义（编排态）。 */
   readonly selectedDefinition: { readonly id?: string | undefined; readonly initialYaml?: string | undefined } | undefined
+  /** 是否处于「新建定义」态（未选中任何定义但右侧显示空白 DagEditor）。 */
+  readonly creatingNew: boolean
   /** 右栏预览目标（null = 关闭）。 */
   readonly preview: PreviewTarget | null
   /** 左列表列宽（px）。 */
@@ -58,10 +55,10 @@ export interface WorkflowUiState {
 const INITIAL: WorkflowUiState = {
   open: false,
   mode: 'dag',
-  definitionView: 'detail',
   listMode: 'instance',
   selectedInstanceId: undefined,
   selectedDefinition: undefined,
+  creatingNew: false,
   preview: null,
   listWidth: 300,
   treeWidth: 240,
@@ -93,6 +90,11 @@ export function openWorkflowOverlay(): void {
   setWorkflowState({ open: true })
 }
 
+/** 切换 overlay 开关（侧边栏入口按钮：打开状态再点一次关闭）。 */
+export function toggleWorkflowOverlay(): void {
+  setWorkflowState({ open: !state.open })
+}
+
 /** 关闭 overlay（保留选中态，便于再次打开）。 */
 export function closeWorkflowOverlay(): void {
   setWorkflowState({ open: false })
@@ -104,16 +106,17 @@ export function selectInstance(instanceId: string): void {
     mode: 'run',
     selectedInstanceId: instanceId,
     selectedDefinition: undefined,
+    creatingNew: false,
     preview: null,
   })
 }
 
-/** 选中定义：切编排态（默认显示详情）+ 清实例选中 + 关预览。 */
+/** 选中定义：直接进入编排态（DAG 画布 + 右侧默认工作流详情）+ 清实例选中 + 关预览。 */
 export function selectDefinition(id: string, initialYaml: string): void {
   setWorkflowState({
     mode: 'dag',
-    definitionView: 'detail',
     selectedDefinition: { id, initialYaml },
+    creatingNew: false,
     selectedInstanceId: undefined,
     preview: null,
   })
@@ -123,8 +126,8 @@ export function selectDefinition(id: string, initialYaml: string): void {
 export function newDefinition(): void {
   setWorkflowState({
     mode: 'dag',
-    definitionView: 'edit',
     selectedDefinition: undefined,
+    creatingNew: true,
     selectedInstanceId: undefined,
     preview: null,
   })

@@ -4,7 +4,7 @@ import { en, NS, zh } from "./locales.js";
 import { WorkflowButton } from "./WorkflowButton.js";
 import { WorkflowOverlay } from "./WorkflowOverlay.js";
 import { createSandoreSave } from "./sandore-save.js";
-import { openWorkflowOverlay } from "./workflow-store.js";
+import { toggleWorkflowOverlay } from "./workflow-store.js";
 import { DagStepNodeView } from "./DagStepNodeView.js";
 import { sandoreStepDefinition } from "./sandore-step-definition.js";
 /** Client 插件依赖的 cordis 服务键。 */
@@ -19,12 +19,12 @@ export async function apply(ctx) {
     // 注册 sandore-step 讨论节点 Definition（kind `sandore-step`、target `chat`），
     // 把 sandore/step-* 事件折叠为宿主会话的 Chat 节点（不依赖 `remote.sandore`）。
     ctx.conversationEvents.register(sandoreStepDefinition);
-    // sidebar.footer.action 入口按钮：不依赖 remote，直接注册（点击打开 overlay）。
+    // sidebar.footer.action 入口按钮：不依赖 remote，直接注册（点击切换 overlay 开关）。
     ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
         name: 'sidebar.footer.action',
         id: 'sandore-btn',
         locale: NS,
-        inject: () => ({ onOpenWorkflow: openWorkflowOverlay }),
+        inject: () => ({ onToggleWorkflow: toggleWorkflowOverlay }),
     }, WorkflowButton));
     // `remote.sandore` 命名空间服务由 `$mount` 动态安装（不在本插件静态 inject 中，
     // self-mount + self-inject 会死锁）。用 `ctx.inject` 动态依赖注入：等命名空间服务
@@ -40,7 +40,7 @@ export async function apply(ctx) {
             inject: () => ({
                 listInstances: async () => unwrap(await sandore.listInstances()),
                 listDefinitions: async () => unwrap(await sandore.listDefinitions()),
-                listJobs: async (workflowId) => unwrap(await sandore.listJobs(workflowId)),
+                listJobs: async (workflowId) => unwrap(await sandore.listJobs(workflowId === undefined ? {} : { workflowId })),
                 createJob: async (input) => unwrap(await sandore.createJob(input)),
                 startInstance: async (input) => unwrap(await sandore.startInstance(input)),
                 deleteDefinition: async (id) => unwrap(await sandore.deleteDefinition(id)),

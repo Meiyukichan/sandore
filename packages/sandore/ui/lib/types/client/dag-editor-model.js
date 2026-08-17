@@ -1,3 +1,17 @@
+/**
+ * 构造某 Stage 的合并 Step 视图：`definition.steps[id]` 定义字段 + `stage.steps[id].branches`
+ * 流控字段。顶层缺定义（旧数据/未同步）时退回 `{id}` 骨架。
+ * @param definition - 工作流定义（含顶层 steps[]）。
+ * @param stage - 目标 Stage（含流控位 steps[]）。
+ * @returns 合并 Step 列表（顺序 = Stage 流控位顺序）。
+ */
+export function mergedStepsOf(definition, stage) {
+    const byId = new Map((definition.steps ?? []).map(step => [step.id, step]));
+    return stage.steps.map(slot => ({
+        ...(byId.get(slot.id) ?? { id: slot.id }),
+        ...(slot.branches === undefined ? {} : { branches: slot.branches }),
+    }));
+}
 /** 全部五类型命令判别字段（编辑表单下拉项）。 */
 export const COMMAND_TYPES = ['shell', 'prompt', 'agent', 'skill', 'mcp'];
 /** 生成带前缀的唯一 id（`{prefix}-{uuid}`），供 Stage/Step/ipt/opt 节点复用。 */
@@ -218,7 +232,7 @@ export function stageFlowEdges(stages) {
  * Step 层流控边（微流程：并行/条件 branches + **循环回边分支 loop**）。
  * 条件分支（有 condition）琥珀虚线带 label；循环分支（有 loop）`loop.next` 红色虚线
  * 回边；无 condition/loop 的并行分支默认灰实线。
- * @param steps - 某 Stage 内的 Step 列表。
+ * @param steps - 某 Stage 内的合并 Step 列表（含 branches 流控）。
  * @returns 去重后的流控边。
  */
 export function stepFlowEdges(steps) {

@@ -16,12 +16,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Background, ConnectionLineType, getSmoothStepPath, Handle, MarkerType, MiniMap, Panel, Position, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow, } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './reactflow-theme.css';
-import { Button, CodeBlock, DisclosureRow, IconChevronRightOutline14, IconPlusOutline16, IconTrashOutline16, Input, } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, CodeBlock, IconCheckOutline16, IconDownloadOutline16, IconPlayOutline16, IconPlusOutline16, IconSparkle16, IconTrashOutline16, Input, Modal, Toast, } from '@deepseek-ai/dsh-client-ui-primitives';
 import { parseWorkflowYaml, serializeWorkflowYaml } from '@deepseek-ai/dsh-sandore-workflow/yaml';
-import { createBlankDefinition, createCommand, createInputFromItem, createOutputToItem, createPassThroughVar, createStage, dagreLayout, newId, stageFlowEdges, stepFlowEdges, trimToUndefined, withDefinitionId, wouldCreateStageCycle, } from "./dag-editor-model.js";
+import { createBlankDefinition, createCommand, createInputFromItem, createOutputToItem, createPassThroughVar, createStage, dagreLayout, mergedStepsOf, newId, stageFlowEdges, stepFlowEdges, trimToUndefined, withDefinitionId, wouldCreateStageCycle, } from "./dag-editor-model.js";
 import { CommandEditor } from "./CommandEditor.js";
+import { WorkflowDetailFields } from "./DefinitionDetail.js";
 import { FlowEditor } from "./FlowEditor.js";
 import { describeSaveError } from "./sandore-save.js";
+import { describeError } from "./describe-error.js";
+import { selectInstance } from "./workflow-store.js";
 import css from './DagEditor.module.css';
 // ── React Flow 节点数据与自定义节点 ─────────────────────────────────────────
 /** Stage 节点卡尺寸（对齐官方 dagre 示例 nodeWidth 172）。 */
@@ -64,7 +67,7 @@ function ConnectionLineWithArrow({ fromX, fromY, toX, toY, fromPosition, toPosit
     return (_jsxs("g", { children: [_jsx("defs", { children: _jsx("marker", { id: markerId, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse", children: _jsx("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#b1b1b7" }) }) }), _jsx("path", { d: path, fill: "none", style: connectionLineStyle, markerEnd: `url(#${markerId})` })] }));
 }
 /** 渲染 React Flow 画布（必须在 ReactFlowProvider 内，工具条经 useReactFlow 控制缩放）。 */
-function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, onDrillStage, onSelectStep, onSelectStage, onConnectStage, onConnectStep, onDeleteNodes, onDeleteEdges, t }) {
+function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, onDrillStage, onSelectStep, onSelectStage, onPaneClick, onConnectStage, onConnectStep, onDeleteNodes, onDeleteEdges, t }) {
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     const { zoomIn, zoomOut, fitView, screenToFlowPosition } = useReactFlow();
@@ -101,7 +104,7 @@ function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, 
             }));
             return { nodes: stageNodes, edges: stageEdges };
         }
-        const steps = drilledStage?.steps ?? [];
+        const steps = drilledStage === undefined ? [] : mergedStepsOf(definition, drilledStage);
         const stepNodes = steps.map(step => ({
             id: step.id,
             type: 'step',
@@ -226,7 +229,9 @@ function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, 
                     onSelectStage(node.id);
                 else if (node.type === 'step')
                     onSelectStep(node.id);
-            }, onNodeDoubleClick: (_event, node) => {
+            }, 
+            // 点空白取消选中：Stage 层回工作流详情、Step 层回空态。
+            onPaneClick: onPaneClick, onNodeDoubleClick: (_event, node) => {
                 if (drillStageId === undefined && node.type === 'stage') {
                     onDrillStage(node.id);
                 }
@@ -236,22 +241,55 @@ function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, 
             }, children: [_jsx(Background, { gap: 20, color: "var(--dsw-alias-border-l2)" }), _jsx(MiniMap, { pannable: true, zoomable: true, maskColor: "rgba(0, 0, 0, 0.05)", nodeColor: node => (node.type === 'stage' ? 'var(--dsw-alias-accent-primary)' : 'var(--dsw-alias-label-caption)') }), _jsxs(Panel, { position: "top-right", className: css.canvasToolbar, children: [_jsx("button", { type: "button", className: css.iconBtn, title: t('editor.autoLayout'), "aria-label": t('editor.autoLayout'), onClick: autoLayout, children: "\uD83C\uDFAF" }), _jsx("button", { type: "button", className: css.iconBtn, title: t('editor.zoomIn'), "aria-label": t('editor.zoomIn'), onClick: () => { zoomIn({ duration: 200 }); }, children: "\uFF0B" }), _jsx("button", { type: "button", className: css.iconBtn, title: t('editor.zoomOut'), "aria-label": t('editor.zoomOut'), onClick: () => { zoomOut({ duration: 200 }); }, children: "\uFF0D" }), _jsx("button", { type: "button", className: css.iconBtn, title: t('editor.fit'), "aria-label": t('editor.fit'), onClick: () => { void fitView({ padding: 0.25, duration: 250 }); }, children: "\u2922" })] })] }) }));
 }
 // ── 字段编辑（Step 完整字段表单，沿用既有实现） ────────────────────────────
+/** 眼睛图标（预览按钮用；primitives 无眼睛图标，内联 SVG 16×16）。 */
+function EyeIcon() {
+    return (_jsxs("svg", { width: "16", height: "16", viewBox: "0 0 16 16", fill: "none", xmlns: "http://www.w3.org/2000/svg", "aria-hidden": true, children: [_jsx("path", { d: "M8 3C4.5 3 1.8 5.4 1 8c.8 2.6 3.5 5 7 5s6.2-2.4 7-5c-.8-2.6-3.5-5-7-5Z", stroke: "currentColor", strokeWidth: "1.4", strokeLinejoin: "round" }), _jsx("circle", { cx: "8", cy: "8", r: "2.2", stroke: "currentColor", strokeWidth: "1.4" })] }));
+}
 /** 折叠小节标题。 */
 function SectionLabel({ children }) {
     return _jsx("div", { className: css.sectionLabel, children: children });
 }
-/** 单个映射条目（inputFrom/outputTo 的 `{id, path, regex}`）编辑行。 */
-function MappingRow({ item, onChange, onRemove, t }) {
-    return (_jsxs("div", { className: css.itemRow, children: [_jsx(Input, { value: item.id, onChange: event => { onChange({ ...item, id: event.target.value }); }, placeholder: t('editor.field.id') }), _jsx(Input, { value: item.path ?? '', onChange: event => { onChange({ ...item, path: trimToUndefined(event.target.value) }); }, placeholder: t('editor.field.path') }), _jsx(Input, { value: item.regex ?? '', onChange: event => { onChange({ ...item, regex: trimToUndefined(event.target.value) }); }, placeholder: t('editor.field.regex') }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: onRemove, "aria-label": t('editor.remove.item') })] }));
+/**
+ * 输入参数条目：类型下拉（相对路径=引用 step / 正则匹配）+ 目标 step 下拉（显示名称）。
+ * 简化格式：`path` 存引用的 step id（单段），不再支持 stageId.stepId。
+ */
+function InputRow({ item, stepOptions, onChange, onRemove, t }) {
+    const mode = item.regex !== undefined ? 'regex' : 'path';
+    return (_jsxs("div", { className: css.itemRow, children: [_jsxs("select", { className: css.branchKindSelect, value: mode, onChange: event => {
+                    const next = event.target.value;
+                    if (next === 'regex')
+                        onChange({ ...item, regex: item.regex ?? '' });
+                    else
+                        onChange({ ...item, regex: undefined });
+                }, children: [_jsx("option", { value: "path", children: t('editor.field.stepName') }), _jsx("option", { value: "regex", children: t('editor.field.regex') })] }), mode === 'path' ? (_jsxs("select", { className: css.branchTarget, value: item.path ?? '', onChange: event => { onChange({ ...item, path: event.target.value === '' ? undefined : event.target.value }); }, children: [_jsx("option", { value: "", children: t('flow.none') }), stepOptions.map(step => (_jsx("option", { value: step.id, children: step.name }, step.id)))] })) : (_jsx(Input, { className: css.branchTarget ?? '', value: item.regex ?? '', onChange: event => { onChange({ ...item, regex: trimToUndefined(event.target.value) }); }, placeholder: t('editor.field.regex') })), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: onRemove, "aria-label": t('editor.remove.item') })] }));
+}
+/**
+ * 输出参数条目：类型下拉（相对路径 / 正则匹配）+ 相对路径字符串输入。
+ */
+function OutputRow({ item, onChange, onRemove, t }) {
+    const mode = item.regex !== undefined ? 'regex' : 'path';
+    return (_jsxs("div", { className: css.itemRow, children: [_jsxs("select", { className: css.branchKindSelect, value: mode, onChange: event => {
+                    const next = event.target.value;
+                    if (next === 'regex')
+                        onChange({ ...item, regex: item.regex ?? '' });
+                    else
+                        onChange({ ...item, regex: undefined });
+                }, children: [_jsx("option", { value: "path", children: t('editor.field.relativePath') }), _jsx("option", { value: "regex", children: t('editor.field.regex') })] }), _jsx(Input, { className: css.branchTarget ?? '', value: mode === 'path' ? (item.path ?? '') : (item.regex ?? ''), onChange: event => {
+                    const value = trimToUndefined(event.target.value);
+                    if (mode === 'path')
+                        onChange({ ...item, path: value });
+                    else
+                        onChange({ ...item, regex: value });
+                }, placeholder: mode === 'path' ? t('editor.field.relativePath') : t('editor.field.regex') }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: onRemove, "aria-label": t('editor.remove.item') })] }));
 }
 /** Step 完整字段编辑器（名称 + 执行 command + 流控 FlowEditor + 映射 + gates）。 */
-function StepEditor({ step, targets, onChange, onRemove, t }) {
+function StepEditor({ step, stageSteps, targets, onChange, onRemove, t }) {
     const inputFrom = step.inputFrom ?? [];
     const outputTo = step.outputTo ?? [];
     const passThroughVars = step.passThroughVars ?? [];
-    return (_jsxs("div", { className: css.step, children: [_jsxs("div", { className: css.stepHead, children: [_jsx(Input, { className: css.titleInput ?? '', value: step.name ?? '', onChange: event => { onChange({ ...step, name: trimToUndefined(event.target.value) }); }, placeholder: t('editor.step.placeholder'), "aria-label": t('editor.step.name') }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: onRemove, "aria-label": t('editor.remove.item') })] }), _jsx(SectionLabel, { children: t('editor.step.command') }), _jsx(CommandEditor, { command: step.command ?? createCommand('shell'), onChange: command => { onChange({ ...step, command }); }, t: t }), _jsx(FlowEditor, { t: t, targets: targets, conditionTypes: ['shell', 'prompt'], flow: { branches: step.branches }, onChange: flow => {
+    return (_jsxs("div", { className: css.step, children: [_jsxs("div", { className: css.stepHead, children: [_jsx(Input, { className: css.titleInput ?? '', value: step.name ?? '', onChange: event => { onChange({ ...step, name: trimToUndefined(event.target.value) }); }, placeholder: t('editor.step.placeholder'), "aria-label": t('editor.step.name') }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: onRemove, "aria-label": t('editor.remove.item') })] }), _jsx(SectionLabel, { children: t('editor.step.command') }), _jsx(CommandEditor, { command: step.command ?? createCommand('shell'), onChange: command => { onChange({ ...step, command }); }, t: t }), _jsx(FlowEditor, { t: t, targets: targets, stageSteps: stageSteps, currentId: step.id, conditionTypes: ['shell', 'prompt'], flow: { branches: step.branches }, onChange: flow => {
                     onChange({ ...step, branches: flow.branches });
-                } }), _jsx(SectionLabel, { children: t('editor.section.inputFrom') }), inputFrom.map((item, index) => (_jsx(MappingRow, { item: item, onChange: next => { onChange({ ...step, inputFrom: inputFrom.map((current, i) => (i === index ? next : current)) }); }, onRemove: () => { onChange({ ...step, inputFrom: inputFrom.filter((_, i) => i !== index) }); }, t: t }, index))), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { onChange({ ...step, inputFrom: [...inputFrom, createInputFromItem()] }); }, children: t('editor.add.item') }), _jsx(SectionLabel, { children: t('editor.section.outputTo') }), outputTo.map((item, index) => (_jsx(MappingRow, { item: item, onChange: next => { onChange({ ...step, outputTo: outputTo.map((current, i) => (i === index ? next : current)) }); }, onRemove: () => { onChange({ ...step, outputTo: outputTo.filter((_, i) => i !== index) }); }, t: t }, index))), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { onChange({ ...step, outputTo: [...outputTo, createOutputToItem()] }); }, children: t('editor.add.item') }), _jsx(SectionLabel, { children: t('editor.section.passThroughVars') }), passThroughVars.map((variable, index) => (_jsxs("div", { className: css.varRow, children: [_jsxs("div", { className: css.varRowHead, children: [_jsx(Input, { className: css.varNameInput ?? '', value: variable.name, onChange: event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, name: event.target.value } : v)) }); }, placeholder: t('editor.field.name') }), _jsx(Button, { size: "sm", variant: variable.refresh === true ? 'primary' : 'outline', onClick: () => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, refresh: variable.refresh === true ? undefined : true } : v)) }); }, children: t('editor.field.refresh') }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: () => { onChange({ ...step, passThroughVars: passThroughVars.filter((_, i) => i !== index) }); }, "aria-label": t('editor.remove.item') })] }), _jsx(Input, { value: variable.value, onChange: event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, value: event.target.value } : v)) }); }, placeholder: t('editor.field.value') }), _jsx(Input, { value: variable.description, onChange: event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, description: event.target.value } : v)) }); }, placeholder: t('editor.field.description') })] }, index))), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { onChange({ ...step, passThroughVars: [...passThroughVars, createPassThroughVar()] }); }, children: t('editor.add.item') }), _jsx(SectionLabel, { children: t('editor.section.gates') }), _jsx(GatesEditor, { gates: step.gates, onChange: gates => { onChange({ ...step, gates }); }, t: t })] }));
+                } }), _jsx(SectionLabel, { children: t('editor.section.inputFrom') }), inputFrom.map((item, index) => (_jsx(InputRow, { item: item, stepOptions: stageSteps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id })), onChange: next => { onChange({ ...step, inputFrom: inputFrom.map((current, i) => (i === index ? next : current)) }); }, onRemove: () => { onChange({ ...step, inputFrom: inputFrom.filter((_, i) => i !== index) }); }, t: t }, index))), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { onChange({ ...step, inputFrom: [...inputFrom, createInputFromItem()] }); }, children: t('editor.add.item') }), _jsx(SectionLabel, { children: t('editor.section.outputTo') }), outputTo.map((item, index) => (_jsx(OutputRow, { item: item, onChange: next => { onChange({ ...step, outputTo: outputTo.map((current, i) => (i === index ? next : current)) }); }, onRemove: () => { onChange({ ...step, outputTo: outputTo.filter((_, i) => i !== index) }); }, t: t }, index))), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { onChange({ ...step, outputTo: [...outputTo, createOutputToItem()] }); }, children: t('editor.add.item') }), _jsx(SectionLabel, { children: t('editor.section.passThroughVars') }), passThroughVars.map((variable, index) => (_jsxs("div", { className: css.varRow, children: [_jsxs("div", { className: css.varRowHead, children: [_jsx(Input, { className: css.varNameInput ?? '', value: variable.name, onChange: event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, name: event.target.value } : v)) }); }, placeholder: t('editor.field.name') }), _jsx(Button, { size: "sm", variant: variable.refresh === true ? 'primary' : 'outline', onClick: () => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, refresh: variable.refresh === true ? undefined : true } : v)) }); }, children: t('editor.field.refresh') }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: () => { onChange({ ...step, passThroughVars: passThroughVars.filter((_, i) => i !== index) }); }, "aria-label": t('editor.remove.item') })] }), _jsx(Input, { value: variable.value, onChange: event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, value: event.target.value } : v)) }); }, placeholder: t('editor.field.value') }), _jsx(Input, { value: variable.description, onChange: event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, description: event.target.value } : v)) }); }, placeholder: t('editor.field.description') })] }, index))), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { onChange({ ...step, passThroughVars: [...passThroughVars, createPassThroughVar()] }); }, children: t('editor.add.item') }), _jsx(SectionLabel, { children: t('editor.section.gates') }), _jsx(GatesEditor, { gates: step.gates, onChange: gates => { onChange({ ...step, gates }); }, t: t })] }));
 }
 /** Stage 编辑器（名称 + 连接节点流控；Stage 层不展示 Step 简表，下钻走画布双击）。 */
 function StageEditor({ stage, targets, onChange, onRemove, t }) {
@@ -274,14 +312,21 @@ function GatesEditor({ gates, onChange, t }) {
 }
 // ── 主组件 ─────────────────────────────────────────────────────────────────
 /** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
-export function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
+export function DagEditor({ t, initialYaml, initialId, save, onSaved, listJobs, createJob, startInstance }) {
     const [definition, setDefinition] = useState(() => initialYaml === undefined ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
     const [id, setId] = useState(initialId);
     const [saveState, setSaveState] = useState({ kind: 'idle' });
+    /** 保存成功轻提示（Toast，顶部居中临时横幅）；seq 递增供 Toast 按 key 重启动画。 */
+    const [toast, setToast] = useState(undefined);
     const [drillStageId, setDrillStageId] = useState(undefined);
-    const [selectedStageId, setSelectedStageId] = useState(definition.stages[0]?.id);
+    // 初始不选中任何 Stage：右侧面板默认展示工作流详情（WorkflowDetailFields），
+    // 点击 Stage 节点后才切换为该 Stage 的配置。
+    const [selectedStageId, setSelectedStageId] = useState(undefined);
     const [selectedStepId, setSelectedStepId] = useState(undefined);
     const [previewOpen, setPreviewOpen] = useState(false);
+    /** ▶ 测试运行状态：运行中禁用按钮；失败内联呈现错误。 */
+    const [running, setRunning] = useState(false);
+    const [runError, setRunError] = useState(undefined);
     const preview = useMemo(() => serializeWorkflowYaml(definition), [definition]);
     const patchStages = (patch) => {
         setDefinition(current => ({ ...current, stages: patch(current.stages) }));
@@ -289,14 +334,30 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
     const updateStage = (stageId, next) => {
         patchStages(stages => stages.map(stage => (stage.id === stageId ? next : stage)));
     };
+    /** 合并 Step 变更（V2 分离式）：定义字段写顶层 `definition.steps[id]`，流控 branches 写
+     *  `stage.steps[id].branches`。两者拆分落库，保证 YAML 分离式结构。 */
     const updateStep = (stageId, stepId, next) => {
-        patchStages(stages => stages.map(stage => (stage.id === stageId
-            ? { ...stage, steps: stage.steps.map(step => (step.id === stepId ? next : step)) }
-            : stage)));
+        const { branches, ...definition } = next;
+        // 定义部分（name/command/映射/gates 等）→ 顶层 steps[]（无 id 则按 id 追加）。
+        setDefinition(current => {
+            const steps = current.steps ?? [];
+            const existing = steps.some(step => step.id === stepId);
+            return { ...current, steps: existing ? steps.map(step => (step.id === stepId ? definition : step)) : [...steps, definition] };
+        });
+        // 流控部分（branches）→ Stage 流控位（无分支时省略字段，保持 YAML 干净）。
+        patchStages(stages => stages.map(stage => (stage.id !== stageId ? stage : {
+            ...stage,
+            steps: stage.steps.map(step => (step.id !== stepId ? step : { id: stepId, ...(branches === undefined ? {} : { branches }) })),
+        })));
     };
-    /** 删除 Step（面板移除按钮 / 画布键盘删除共用）：清理其余 Step 指向它的流控引用。 */
+    /** 删除 Step（面板移除按钮 / 画布键盘删除共用）：同步清顶层定义与 Stage 流控位，
+     *  并清理其余 Step 指向它的流控引用。 */
     const removeSteps = (stageId, ids) => {
         const removed = new Set(ids);
+        setDefinition(current => ({
+            ...current,
+            steps: (current.steps ?? []).filter(step => !removed.has(step.id)),
+        }));
         patchStages(stages => stages.map(stage => (stage.id !== stageId ? stage : {
             ...stage,
             steps: stage.steps
@@ -318,13 +379,22 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
     };
     const addStep = (stageId) => {
         const stepId = newId('step');
-        patchStages(stages => stages.map(stage => {
-            if (stage.id !== stageId)
-                return stage;
+        // 单次状态更新：流控位（仅 id + branches）进 Stage.steps，完整定义（name/command 等）进顶层 steps[]。
+        setDefinition(current => {
+            const stage = current.stages.find(candidate => candidate.id === stageId);
+            if (stage === undefined)
+                return current;
             const count = stage.steps.length;
             // 命令必填：新 step 默认带 shell 命令（编辑器直接显示，不做「+命令」占位）。
-            return { ...stage, steps: [...stage.steps, { id: stepId, name: `${t('editor.step.placeholder')} ${count + 1}`, command: createCommand('shell') }] };
-        }));
+            const definition = { id: stepId, name: `${t('editor.step.placeholder')} ${count + 1}`, command: createCommand('shell') };
+            return {
+                ...current,
+                stages: current.stages.map(candidate => (candidate.id === stageId
+                    ? { ...candidate, steps: [...candidate.steps, { id: stepId }] }
+                    : candidate)),
+                steps: [...(current.steps ?? []), definition],
+            };
+        });
         // 下钻态添加 step：自动选中新 step（右侧面板立即显示其配置）。
         if (drillStageId === stageId)
             setSelectedStepId(stepId);
@@ -368,6 +438,11 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
     /** 单击选中 Stage（右侧面板同步显示该 Stage 的配置）。 */
     const selectStage = (stageId) => {
         setSelectedStageId(stageId);
+        setSelectedStepId(undefined);
+    };
+    /** 点画布空白取消选中：Stage 层回工作流详情（默认视图）、Step 层回空态。 */
+    const clearSelection = () => {
+        setSelectedStageId(undefined);
         setSelectedStepId(undefined);
     };
     const backToStages = () => {
@@ -463,26 +538,73 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
             onSaved?.(savedId);
             setDefinition(current => withDefinitionId(current, savedId));
             setSaveState({ kind: 'ok' });
+            // 保存成功用顶部轻提示（Toast），不占用画布上方空间。
+            setToast(current => ({ seq: (current?.seq ?? 0) + 1, message: t('editor.save.success') }));
         }
         catch (error) {
             const { message, details } = describeSaveError(error);
             setSaveState({ kind: 'error', message, details });
         }
     };
-    const selectedStage = definition.stages.find(stage => stage.id === selectedStageId) ?? definition.stages[0];
+    // Ctrl+S 保存工作流（含右侧 Step 详情面板的当前编辑态——受控组件 onChange 即时提交，
+    // 保存直接序列化 definition 快照）。阻止浏览器默认「保存网页」。
+    useEffect(() => {
+        const onKeyDown = (event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+                event.preventDefault();
+                void runSave();
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => { window.removeEventListener('keydown', onKeyDown); };
+    });
+    // 无选中（selectedStageId === undefined）时不兜底到首个 Stage：右侧面板显示工作流详情。
+    const selectedStage = definition.stages.find(stage => stage.id === selectedStageId);
     const drilledStage = drillStageId === undefined
         ? undefined
         : definition.stages.find(stage => stage.id === drillStageId);
-    return (_jsxs("section", { className: css.editor, "aria-label": t('editor.title'), "data-sandore-dag-editor": true, children: [_jsxs("header", { className: css.header, children: [_jsx("span", { className: css.title, children: t('editor.title') }), _jsx(Button, { size: "sm", variant: "primary", disabled: saveState.kind === 'pending', onClick: () => { void runSave(); }, children: saveState.kind === 'pending' ? t('editor.saving') : t('editor.save') })] }), saveState.kind === 'ok' && (_jsx("p", { className: css.success, role: "status", children: t('editor.save.success') })), saveState.kind === 'error' && (_jsx("p", { className: css.error, role: "alert", children: saveState.details === undefined
+    /** 导出 YAML：下载为 `{id}.yaml` 文件（内容与保存到后端一致）。 */
+    const exportYaml = () => {
+        const yaml = serializeWorkflowYaml(definition);
+        const blob = new Blob([yaml], { type: 'application/yaml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${id ?? definition.id ?? 'workflow'}.yaml`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+    };
+    /** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态并选中新实例。 */
+    const runTest = async () => {
+        const definitionId = id ?? definition.id;
+        if (definitionId === undefined)
+            return;
+        setRunning(true);
+        setRunError(undefined);
+        try {
+            const jobs = await listJobs(definitionId);
+            const job = jobs[0] ?? await createJob({ name: `测试-${definitionId.slice(0, 8)}`, workflowId: definitionId });
+            const run = await startInstance({ jobId: job.id, originalInput: t('editor.testRun') });
+            selectInstance(run.instanceId);
+        }
+        catch (error) {
+            setRunError(describeError(error));
+        }
+        finally {
+            setRunning(false);
+        }
+    };
+    return (_jsxs("section", { className: css.editor, "aria-label": t('editor.title'), "data-sandore-dag-editor": true, children: [_jsxs("header", { className: css.header, children: [_jsx("span", { className: css.title, title: definition.name, children: definition.name }), _jsxs("span", { className: css.headerActions, children: [_jsx(Button, { size: "sm", variant: "ghost", icon: _jsx(EyeIcon, {}), onClick: () => { setPreviewOpen(current => !current); }, children: t('editor.preview') }), _jsx(Button, { size: "sm", variant: "ghost", icon: _jsx(IconDownloadOutline16, {}), onClick: exportYaml, children: t('editor.export') }), _jsx(Button, { size: "sm", variant: "primary", icon: _jsx(IconSparkle16, {}), title: t('editor.chatCreate.hint'), onClick: () => { setToast(current => ({ seq: (current?.seq ?? 0) + 1, message: t('editor.chatCreate.hint') })); }, children: t('editor.chatCreate') }), id !== undefined && (_jsx(Button, { size: "sm", variant: "primary", icon: _jsx(IconPlayOutline16, {}), disabled: running, onClick: () => { void runTest(); }, children: t('editor.test') })), _jsx(Button, { size: "sm", variant: "primary", icon: _jsx(IconCheckOutline16, {}), disabled: saveState.kind === 'pending', onClick: () => { void runSave(); }, children: saveState.kind === 'pending' ? t('editor.saving') : t('editor.save') })] })] }), saveState.kind === 'error' && (_jsx("p", { className: css.error, role: "alert", children: saveState.details === undefined
                     ? t('editor.save.failed', { message: saveState.message })
-                    : t('editor.save.failed', { message: `${saveState.message} — ${saveState.details}` }) })), _jsxs("div", { className: css.canvasRow, children: [_jsxs("div", { className: css.canvas, children: [_jsxs("div", { className: css.canvasTabs, children: [drillStageId !== undefined && (_jsxs("button", { type: "button", className: css.backBtn, onClick: backToStages, children: ["\u2190 ", t('editor.stageDag')] })), _jsx("span", { className: css.crumb, children: drillStageId === undefined ? t('editor.stageDag') : (drilledStage?.name ?? drillStageId) }), drillStageId === undefined ? (_jsx(Button, { size: "sm", variant: "outline", icon: _jsx(IconPlusOutline16, {}), onClick: addStage, children: t('editor.stage.add') })) : drilledStage !== undefined ? (_jsx(Button, { size: "sm", variant: "outline", icon: _jsx(IconPlusOutline16, {}), onClick: () => { addStep(drilledStage.id); }, children: t('editor.step.add') })) : null] }), _jsx(ReactFlowProvider, { children: _jsx(DagCanvas, { definition: definition, drillStageId: drillStageId, selectedStageId: selectedStageId, selectedStepId: selectedStepId, onDrillStage: drillStage, onSelectStep: setSelectedStepId, onSelectStage: selectStage, onConnectStage: connectStage, onConnectStep: connectStep, onDeleteNodes: deleteNodes, onDeleteEdges: deleteEdges, t: t }) })] }), _jsx("aside", { className: css.panel, "data-sandore-dag-panel": true, children: drillStageId === undefined ? (selectedStage === undefined ? (_jsx("span", { className: css.panelEmpty, children: t('editor.steps.empty') })) : (_jsx("div", { className: css.panelBody, children: _jsx(StageEditor, { stage: selectedStage, targets: definition.stages
+                    : t('editor.save.failed', { message: `${saveState.message} — ${saveState.details}` }) })), runError !== undefined && (_jsx("p", { className: css.error, role: "alert", children: t('panel.error', { message: runError }) })), _jsxs("div", { className: css.canvasRow, children: [_jsxs("div", { className: css.canvas, children: [_jsxs("div", { className: css.canvasTabs, children: [drillStageId !== undefined && (_jsxs("button", { type: "button", className: css.backBtn, onClick: backToStages, children: ["\u2190 ", t('editor.stageDag')] })), _jsx("span", { className: css.crumb, children: drillStageId === undefined ? t('editor.stageDag') : (drilledStage?.name ?? drillStageId) }), drillStageId === undefined ? (_jsx(Button, { size: "sm", variant: "outline", icon: _jsx(IconPlusOutline16, {}), onClick: addStage, children: t('editor.stage.add') })) : drilledStage !== undefined ? (_jsx(Button, { size: "sm", variant: "outline", icon: _jsx(IconPlusOutline16, {}), onClick: () => { addStep(drilledStage.id); }, children: t('editor.step.add') })) : null] }), _jsx(ReactFlowProvider, { children: _jsx(DagCanvas, { definition: definition, drillStageId: drillStageId, selectedStageId: selectedStageId, selectedStepId: selectedStepId, onDrillStage: drillStage, onSelectStep: setSelectedStepId, onSelectStage: selectStage, onPaneClick: clearSelection, onConnectStage: connectStage, onConnectStep: connectStep, onDeleteNodes: deleteNodes, onDeleteEdges: deleteEdges, t: t }) })] }), _jsx("aside", { className: css.panel, "data-sandore-dag-panel": true, children: drillStageId === undefined ? (selectedStage === undefined ? (_jsx("div", { className: css.panelBody, children: _jsx(WorkflowDetailFields, { t: t, definition: definition, onChange: next => { setDefinition(next); } }) })) : (_jsx("div", { className: css.panelBody, children: _jsx(StageEditor, { stage: selectedStage, targets: definition.stages
                                     .filter(stage => stage.id !== selectedStage.id)
                                     .filter(stage => !wouldCreateStageCycle(definition.stages, selectedStage.id, stage.id))
                                     .map(stage => ({ id: stage.id, name: stage.name })), onChange: next => { updateStage(selectedStage.id, next); }, onRemove: () => { removeStage(selectedStage.id); }, t: t }) }))) : (selectedStepId === undefined || drilledStage === undefined ? (_jsx("span", { className: css.panelEmpty, children: t('editor.steps.empty') })) : ((() => {
-                            const step = drilledStage.steps.find(candidate => candidate.id === selectedStepId);
+                            const mergedSteps = mergedStepsOf(definition, drilledStage);
+                            const step = mergedSteps.find(candidate => candidate.id === selectedStepId);
                             if (step === undefined)
                                 return _jsx("span", { className: css.panelEmpty, children: t('editor.steps.empty') });
-                            return (_jsx("div", { className: css.panelBody, children: _jsx(StepEditor, { step: step, targets: drilledStage.steps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id })), onChange: next => { updateStep(drilledStage.id, step.id, next); }, onRemove: () => { removeStep(drilledStage.id, step.id); }, t: t }) }));
-                        })())) })] }), _jsx(DisclosureRow, { icon: _jsx(IconChevronRightOutline14, {}), title: t('editor.preview'), open: previewOpen, expandable: true, onToggle: () => { setPreviewOpen(current => !current); }, previewChevron: false, rowClassName: css.previewHeader, children: _jsx("div", { className: css.previewBody, children: _jsx(CodeBlock, { code: preview, lang: "yaml", copyLabel: t('editor.preview') }) }) })] }));
+                            return (_jsx("div", { className: css.panelBody, children: _jsx(StepEditor, { step: step, stageSteps: mergedSteps, targets: mergedSteps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id })), onChange: next => { updateStep(drilledStage.id, step.id, next); }, onRemove: () => { removeStep(drilledStage.id, step.id); }, t: t }) }));
+                        })())) })] }), _jsx(Modal, { open: previewOpen, onClose: () => { setPreviewOpen(false); }, title: t('editor.preview'), closeLabel: t('overlay.close'), className: css.previewModal ?? '', contentClassName: css.previewModalBody ?? '', children: _jsx(CodeBlock, { code: preview, lang: "yaml", copyLabel: t('editor.preview') }) }), toast !== undefined && (_jsx(Toast, { text: toast.message, onDone: () => { setToast(undefined); } }, toast.seq))] }));
 }
 //# sourceMappingURL=DagEditor.js.map

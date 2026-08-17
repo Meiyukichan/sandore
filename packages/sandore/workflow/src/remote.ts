@@ -19,6 +19,7 @@ import type { JobRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './s
 import {
   CreateDefinitionInputSchema,
   CreateJobInputSchema,
+  ListJobsInputSchema,
   PauseAllInputSchema,
   PauseStepInputSchema,
   ReplyPermissionInputSchema,
@@ -36,6 +37,7 @@ import type {
   CreateJobInput,
   InstanceSummary,
   JobEntry,
+  ListJobsInput,
   PauseAllInput,
   PauseStepInput,
   PingResponse,
@@ -138,17 +140,18 @@ export class SandoreRemote extends TypertRemoteService {
     return this.requireDefinition(id).yaml
   }
 
-  /** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。 */
+  /** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。
+   *  元数据（name/version/description）从新 YAML 解析同步，保证列表展示与内容一致。 */
   @Remote('updateYaml')
   async updateYaml(id: string, yaml: string): Promise<WorkflowDefinitionEntry> {
-    parseWorkflowYaml(yaml)
+    const parsed = parseWorkflowYaml(yaml)
     const existing = this.requireDefinition(id)
     const now = new Date().toISOString()
     const next: WorkflowDefinitionRecord = {
       yaml,
-      name: existing.name,
-      version: existing.version,
-      ...(existing.description === undefined ? {} : { description: existing.description }),
+      name: parsed.name,
+      version: parsed.version,
+      ...(parsed.description === undefined ? {} : { description: parsed.description }),
       createdAt: existing.createdAt,
       updatedAt: now,
     }
@@ -158,12 +161,13 @@ export class SandoreRemote extends TypertRemoteService {
 
   // ── Job CRUD ─────────────────────────────────────────────────────────────
 
-  /** 列出 Job，可选按 workflowId 过滤。 */
+  /** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
   @Remote('listJobs')
-  listJobs(workflowId?: string): JobEntry[] {
+  listJobs(input: ListJobsInput): JobEntry[] {
+    const parsed = ListJobsInputSchema.parse(input)
     const entries: JobEntry[] = []
     for (const [id, record] of this.ctx.sandorePersistence.jobs.entries()) {
-      if (workflowId !== undefined && record.workflowId !== workflowId) continue
+      if (parsed.workflowId !== undefined && record.workflowId !== parsed.workflowId) continue
       entries.push({ id, ...record })
     }
     return entries

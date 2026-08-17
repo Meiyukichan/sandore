@@ -34,15 +34,18 @@ stages:
     name: 处理
     steps:
       - id: step-shell
-        command:
-          type: shell
-          value:
-            command: "echo ok"
       - id: step-agent
-        command:
-          type: agent
-          value:
-            promptText: "do-work"
+steps:
+  - id: step-shell
+    command:
+      type: shell
+      value:
+        command: "echo ok"
+  - id: step-agent
+    command:
+      type: agent
+      value:
+        promptText: "do-work"
 `;
 
 /** 单 Step prompt 定义（prompt Step 为合成 sessionMeta，用于非子代理暂停守卫测试）。 */
@@ -54,10 +57,12 @@ stages:
     name: 提示
     steps:
       - id: step-prompt
-        command:
-          type: prompt
-          value:
-            promptText: "do it"
+steps:
+  - id: step-prompt
+    command:
+      type: prompt
+      value:
+        promptText: "do it"
 `;
 
 /** 可手动 resolve/reject 的挂起 Promise（模拟子代理 whenIdle 挂起或取消）。 */

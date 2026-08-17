@@ -235,6 +235,7 @@ export class WorkflowDagNavigator {
         return target;
     }
     buildNodeIndex(definition) {
+        const definitions = new Map((definition.steps ?? []).map(step => [step.id, step]));
         for (const stage of definition.stages) {
             this.nodeIndex.set(stage.id, {
                 kind: 'stage',
@@ -244,13 +245,18 @@ export class WorkflowDagNavigator {
                 branches: stage.branches,
             });
             for (const step of stage.steps) {
+                // 分离式合并：stage.steps 提供 id + 流控（branches），definition.steps 提供完整定义。
+                const definitionStep = definitions.get(step.id);
+                const merged = definitionStep === undefined
+                    ? step
+                    : { ...definitionStep, ...(step.branches === undefined ? {} : { branches: step.branches }) };
                 this.nodeIndex.set(step.id, {
                     kind: 'step',
                     stage,
-                    step,
+                    step: merged,
                     id: step.id,
-                    name: step.name ?? step.id,
-                    branches: step.branches,
+                    name: merged.name ?? step.id,
+                    branches: merged.branches,
                 });
             }
         }

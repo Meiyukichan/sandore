@@ -46,7 +46,9 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
       <header className={css.listHeader}>
         <div className={css.listTitleRow}>
           <span className={css.listTitle}>{t('panel.title')}</span>
-          <div className={css.toggle} role="tablist" aria-label={t('panel.title')}>
+          {/* 实例/编排 开关：胶囊轨道 + 滑块，点击切换激活侧。 */}
+          <div className={css.toggle} role="tablist" aria-label={t('list.mode.switch')}>
+            <span className={`${css.toggleThumb} ${listMode === 'definition' ? css.toggleThumbRight : ''}`} />
             <button
               type="button"
               role="tab"

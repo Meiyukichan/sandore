@@ -148,10 +148,12 @@ export const TYPERT_REMOTE = {
       namespace: 'sandore',
       method: 'listJobs',
       invocation: { kind: 'direct' },
-      // Typert 客户端按 descriptor.parameters.length 严格校验实参个数，不支持 TS 可选
-      // 参数（官方无先例）。`workflowId?` 为可选过滤条件，UI 不传；省略后 Host 侧
-      // SRC fallback 以 src-json 宽松校验允许缺失，方法收到 undefined 即全量返回。
-      parameters: [],
+      // `workflowId?` 为可选过滤条件。Typert 客户端按 descriptor.parameters.length
+      // 严格校验实参个数（不支持 TS 可选参数），故统一为对象入参：UI 侧不传时给
+      // 空对象 {}，Host 侧宽松校验允许缺失（workflowId undefined → 全量返回）。
+      parameters: [
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ workflowId: z.string().optional() }), '@deepseek-ai/dsh-sandore-workflow/types#ListJobsInput') },
+      ],
       result: json(z.array(jobEntry), '@deepseek-ai/dsh-sandore-workflow/types#JobEntry'),
     },
     {

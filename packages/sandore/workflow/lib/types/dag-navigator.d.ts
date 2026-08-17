@@ -18,13 +18,17 @@ import type { BranchMeta, DagBranch, WorkflowDefinition, WorkflowStage, Workflow
 import type { StageContract } from './types.ts';
 /** 已保存 Stage 契约的运行时形状（与快照 `stageContracts` 值严格一致）。 */
 type StageContractValue = WorkflowTaskState['stageContracts'][string];
+/** 分离式合并后的完整 Step（顶层定义 + 流控 branches）。 */
+export type MergedStepRef = WorkflowStep & {
+    readonly branches?: DagBranch[] | undefined;
+};
 /** Stage 与 Step 在 DAG 调度层的统一节点视图（出边统一在 branches）。 */
 export interface DagNodeRef {
     readonly kind: 'stage' | 'step';
     /** 所属 Stage（始终可用）。 */
     readonly stage: WorkflowStage;
-    /** 仅 kind === 'step' 时存在。 */
-    readonly step?: WorkflowStep | undefined;
+    /** 仅 kind === 'step' 时存在（合并后的完整 Step）。 */
+    readonly step?: MergedStepRef | undefined;
     readonly id: string;
     readonly name: string;
     readonly branches?: DagBranch[] | undefined;

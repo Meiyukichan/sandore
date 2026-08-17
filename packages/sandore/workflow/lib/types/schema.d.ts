@@ -49,7 +49,7 @@ export declare const CommandConfigSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         promptText: z.ZodString;
     }, z.core.$strip>;
 }, z.core.$strip>], "type">;
-/** Step 输入绑定项：`path` 为 `stageId.stepId[.outputToId]` 引用，`regex` 对 Step/Stage 输出文本做正则匹配。 */
+/** Step 输入绑定项：`path` 为引用的 Step id（简化格式，单段），`regex` 对 Step 输出文本做正则匹配。 */
 export declare const InputFromItemSchema: z.ZodObject<{
     id: z.ZodString;
     path: z.ZodOptional<z.ZodString>;
@@ -206,7 +206,7 @@ export declare const WorkflowSettingsSchema: z.ZodObject<{
     defaultTimeout: z.ZodDefault<z.ZodNumber>;
     maxConcurrentAgents: z.ZodDefault<z.ZodNumber>;
 }, z.core.$strip>;
-/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义；`stages[].steps[]` 仅含 id + 流控字段）。 */
+/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义：命令 + 映射 + 透传变量 + 门控）。 */
 export declare const WorkflowStepSchema: z.ZodObject<{
     id: z.ZodString;
     name: z.ZodOptional<z.ZodString>;
@@ -260,6 +260,26 @@ export declare const WorkflowStepSchema: z.ZodObject<{
     }, z.core.$strip>>>;
     timeout: z.ZodOptional<z.ZodNumber>;
     defaultExpectation: z.ZodOptional<z.ZodString>;
+    rules: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    gates: z.ZodOptional<z.ZodObject<{
+        maxRetries: z.ZodOptional<z.ZodNumber>;
+        maxTokens: z.ZodOptional<z.ZodNumber>;
+        primary: z.ZodOptional<z.ZodObject<{
+            enabled: z.ZodBoolean;
+        }, z.core.$strip>>;
+        secondary: z.ZodOptional<z.ZodObject<{
+            enabled: z.ZodBoolean;
+            prompt: z.ZodOptional<z.ZodString>;
+        }, z.core.$strip>>;
+        need_confirm: z.ZodOptional<z.ZodBoolean>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+/**
+ * Stage 内 Step 位置（V2 分离式：仅 id + 流控 branches；完整定义在顶层 `steps[]`
+ * 按 id 交叉引用）。
+ */
+export declare const StageStepSchema: z.ZodObject<{
+    id: z.ZodString;
     branches: z.ZodOptional<z.ZodArray<z.ZodObject<{
         next: z.ZodString;
         label: z.ZodOptional<z.ZodString>;
@@ -334,21 +354,8 @@ export declare const WorkflowStepSchema: z.ZodObject<{
             exitTo: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>>;
     }, z.core.$strip>>>;
-    rules: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    gates: z.ZodOptional<z.ZodObject<{
-        maxRetries: z.ZodOptional<z.ZodNumber>;
-        maxTokens: z.ZodOptional<z.ZodNumber>;
-        primary: z.ZodOptional<z.ZodObject<{
-            enabled: z.ZodBoolean;
-        }, z.core.$strip>>;
-        secondary: z.ZodOptional<z.ZodObject<{
-            enabled: z.ZodBoolean;
-            prompt: z.ZodOptional<z.ZodString>;
-        }, z.core.$strip>>;
-        need_confirm: z.ZodOptional<z.ZodBoolean>;
-    }, z.core.$strip>>;
 }, z.core.$strip>;
-/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段（出边统一进 branches）。 */
+/** 单个 Stage 定义：内部 Step 流控（轻量）+ Stage 级 DAG 字段（出边统一进 branches）。 */
 export declare const WorkflowStageSchema: z.ZodObject<{
     id: z.ZodString;
     name: z.ZodString;
@@ -367,57 +374,6 @@ export declare const WorkflowStageSchema: z.ZodObject<{
     }, z.core.$strip>>;
     steps: z.ZodArray<z.ZodObject<{
         id: z.ZodString;
-        name: z.ZodOptional<z.ZodString>;
-        command: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
-            type: z.ZodLiteral<"agent">;
-            value: z.ZodObject<{
-                promptText: z.ZodString;
-                agentParamsTemplate: z.ZodOptional<z.ZodString>;
-                providerId: z.ZodOptional<z.ZodString>;
-                modelId: z.ZodOptional<z.ZodString>;
-            }, z.core.$strip>;
-        }, z.core.$strip>, z.ZodObject<{
-            type: z.ZodLiteral<"prompt">;
-            value: z.ZodObject<{
-                promptText: z.ZodString;
-                providerId: z.ZodOptional<z.ZodString>;
-                modelId: z.ZodOptional<z.ZodString>;
-            }, z.core.$strip>;
-        }, z.core.$strip>, z.ZodObject<{
-            type: z.ZodLiteral<"shell">;
-            value: z.ZodObject<{
-                command: z.ZodString;
-            }, z.core.$strip>;
-        }, z.core.$strip>, z.ZodObject<{
-            type: z.ZodLiteral<"skill">;
-            value: z.ZodObject<{
-                promptText: z.ZodString;
-                providerId: z.ZodOptional<z.ZodString>;
-            }, z.core.$strip>;
-        }, z.core.$strip>, z.ZodObject<{
-            type: z.ZodLiteral<"mcp">;
-            value: z.ZodObject<{
-                promptText: z.ZodString;
-            }, z.core.$strip>;
-        }, z.core.$strip>], "type">>;
-        inputFrom: z.ZodOptional<z.ZodArray<z.ZodObject<{
-            id: z.ZodString;
-            path: z.ZodOptional<z.ZodString>;
-            regex: z.ZodOptional<z.ZodString>;
-        }, z.core.$strip>>>;
-        outputTo: z.ZodOptional<z.ZodArray<z.ZodObject<{
-            id: z.ZodString;
-            path: z.ZodOptional<z.ZodString>;
-            regex: z.ZodOptional<z.ZodString>;
-        }, z.core.$strip>>>;
-        passThroughVars: z.ZodOptional<z.ZodArray<z.ZodObject<{
-            name: z.ZodString;
-            value: z.ZodString;
-            description: z.ZodString;
-            refresh: z.ZodOptional<z.ZodBoolean>;
-        }, z.core.$strip>>>;
-        timeout: z.ZodOptional<z.ZodNumber>;
-        defaultExpectation: z.ZodOptional<z.ZodString>;
         branches: z.ZodOptional<z.ZodArray<z.ZodObject<{
             next: z.ZodString;
             label: z.ZodOptional<z.ZodString>;
@@ -492,19 +448,6 @@ export declare const WorkflowStageSchema: z.ZodObject<{
                 exitTo: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>>;
         }, z.core.$strip>>>;
-        rules: z.ZodOptional<z.ZodArray<z.ZodString>>;
-        gates: z.ZodOptional<z.ZodObject<{
-            maxRetries: z.ZodOptional<z.ZodNumber>;
-            maxTokens: z.ZodOptional<z.ZodNumber>;
-            primary: z.ZodOptional<z.ZodObject<{
-                enabled: z.ZodBoolean;
-            }, z.core.$strip>>;
-            secondary: z.ZodOptional<z.ZodObject<{
-                enabled: z.ZodBoolean;
-                prompt: z.ZodOptional<z.ZodString>;
-            }, z.core.$strip>>;
-            need_confirm: z.ZodOptional<z.ZodBoolean>;
-        }, z.core.$strip>>;
     }, z.core.$strip>>;
     defaultExpectation: z.ZodOptional<z.ZodString>;
     branches: z.ZodOptional<z.ZodArray<z.ZodObject<{
@@ -627,57 +570,6 @@ export declare const WorkflowDefinitionSchema: z.ZodObject<{
         }, z.core.$strip>>;
         steps: z.ZodArray<z.ZodObject<{
             id: z.ZodString;
-            name: z.ZodOptional<z.ZodString>;
-            command: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
-                type: z.ZodLiteral<"agent">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                    agentParamsTemplate: z.ZodOptional<z.ZodString>;
-                    providerId: z.ZodOptional<z.ZodString>;
-                    modelId: z.ZodOptional<z.ZodString>;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"prompt">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                    providerId: z.ZodOptional<z.ZodString>;
-                    modelId: z.ZodOptional<z.ZodString>;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"shell">;
-                value: z.ZodObject<{
-                    command: z.ZodString;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"skill">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                    providerId: z.ZodOptional<z.ZodString>;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"mcp">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                }, z.core.$strip>;
-            }, z.core.$strip>], "type">>;
-            inputFrom: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                id: z.ZodString;
-                path: z.ZodOptional<z.ZodString>;
-                regex: z.ZodOptional<z.ZodString>;
-            }, z.core.$strip>>>;
-            outputTo: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                id: z.ZodString;
-                path: z.ZodOptional<z.ZodString>;
-                regex: z.ZodOptional<z.ZodString>;
-            }, z.core.$strip>>>;
-            passThroughVars: z.ZodOptional<z.ZodArray<z.ZodObject<{
-                name: z.ZodString;
-                value: z.ZodString;
-                description: z.ZodString;
-                refresh: z.ZodOptional<z.ZodBoolean>;
-            }, z.core.$strip>>>;
-            timeout: z.ZodOptional<z.ZodNumber>;
-            defaultExpectation: z.ZodOptional<z.ZodString>;
             branches: z.ZodOptional<z.ZodArray<z.ZodObject<{
                 next: z.ZodString;
                 label: z.ZodOptional<z.ZodString>;
@@ -752,19 +644,6 @@ export declare const WorkflowDefinitionSchema: z.ZodObject<{
                     exitTo: z.ZodOptional<z.ZodString>;
                 }, z.core.$strip>>;
             }, z.core.$strip>>>;
-            rules: z.ZodOptional<z.ZodArray<z.ZodString>>;
-            gates: z.ZodOptional<z.ZodObject<{
-                maxRetries: z.ZodOptional<z.ZodNumber>;
-                maxTokens: z.ZodOptional<z.ZodNumber>;
-                primary: z.ZodOptional<z.ZodObject<{
-                    enabled: z.ZodBoolean;
-                }, z.core.$strip>>;
-                secondary: z.ZodOptional<z.ZodObject<{
-                    enabled: z.ZodBoolean;
-                    prompt: z.ZodOptional<z.ZodString>;
-                }, z.core.$strip>>;
-                need_confirm: z.ZodOptional<z.ZodBoolean>;
-            }, z.core.$strip>>;
         }, z.core.$strip>>;
         defaultExpectation: z.ZodOptional<z.ZodString>;
         branches: z.ZodOptional<z.ZodArray<z.ZodObject<{
@@ -895,80 +774,6 @@ export declare const WorkflowDefinitionSchema: z.ZodObject<{
         }, z.core.$strip>>>;
         timeout: z.ZodOptional<z.ZodNumber>;
         defaultExpectation: z.ZodOptional<z.ZodString>;
-        branches: z.ZodOptional<z.ZodArray<z.ZodObject<{
-            next: z.ZodString;
-            label: z.ZodOptional<z.ZodString>;
-            condition: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
-                type: z.ZodLiteral<"agent">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                    agentParamsTemplate: z.ZodOptional<z.ZodString>;
-                    providerId: z.ZodOptional<z.ZodString>;
-                    modelId: z.ZodOptional<z.ZodString>;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"prompt">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                    providerId: z.ZodOptional<z.ZodString>;
-                    modelId: z.ZodOptional<z.ZodString>;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"shell">;
-                value: z.ZodObject<{
-                    command: z.ZodString;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"skill">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                    providerId: z.ZodOptional<z.ZodString>;
-                }, z.core.$strip>;
-            }, z.core.$strip>, z.ZodObject<{
-                type: z.ZodLiteral<"mcp">;
-                value: z.ZodObject<{
-                    promptText: z.ZodString;
-                }, z.core.$strip>;
-            }, z.core.$strip>], "type">>;
-            loop: z.ZodOptional<z.ZodObject<{
-                breakCondition: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
-                    type: z.ZodLiteral<"agent">;
-                    value: z.ZodObject<{
-                        promptText: z.ZodString;
-                        agentParamsTemplate: z.ZodOptional<z.ZodString>;
-                        providerId: z.ZodOptional<z.ZodString>;
-                        modelId: z.ZodOptional<z.ZodString>;
-                    }, z.core.$strip>;
-                }, z.core.$strip>, z.ZodObject<{
-                    type: z.ZodLiteral<"prompt">;
-                    value: z.ZodObject<{
-                        promptText: z.ZodString;
-                        providerId: z.ZodOptional<z.ZodString>;
-                        modelId: z.ZodOptional<z.ZodString>;
-                    }, z.core.$strip>;
-                }, z.core.$strip>, z.ZodObject<{
-                    type: z.ZodLiteral<"shell">;
-                    value: z.ZodObject<{
-                        command: z.ZodString;
-                    }, z.core.$strip>;
-                }, z.core.$strip>, z.ZodObject<{
-                    type: z.ZodLiteral<"skill">;
-                    value: z.ZodObject<{
-                        promptText: z.ZodString;
-                        providerId: z.ZodOptional<z.ZodString>;
-                    }, z.core.$strip>;
-                }, z.core.$strip>, z.ZodObject<{
-                    type: z.ZodLiteral<"mcp">;
-                    value: z.ZodObject<{
-                        promptText: z.ZodString;
-                    }, z.core.$strip>;
-                }, z.core.$strip>], "type">>;
-                breakExpectation: z.ZodOptional<z.ZodString>;
-                next: z.ZodOptional<z.ZodString>;
-                maxIterations: z.ZodNumber;
-                exitTo: z.ZodOptional<z.ZodString>;
-            }, z.core.$strip>>;
-        }, z.core.$strip>>>;
         rules: z.ZodOptional<z.ZodArray<z.ZodString>>;
         gates: z.ZodOptional<z.ZodObject<{
             maxRetries: z.ZodOptional<z.ZodNumber>;

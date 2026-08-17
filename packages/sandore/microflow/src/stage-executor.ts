@@ -18,7 +18,7 @@ import type {
   StageContract,
   StepStatus,
 } from '@deepseek-ai/dsh-sandore-workflow/src/types';
-import type { FinalizeAssessResult, Gates, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { FinalizeAssessResult, DagBranch, Gates, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import type { ResolveNextNodesContext, ResolveNextNodesResult } from '@deepseek-ai/dsh-sandore-workflow/src/dag-navigator';
 
 import { FinalizeManager } from './finalize-manager.ts';
@@ -26,6 +26,9 @@ import { describeError, isCancellationError, textSummary } from './internal.ts';
 import { LoopManager } from './loop-manager.ts';
 import { StepRunner } from './step-runner.ts';
 import type { StepRunnerConfig, PreviousStepOutput, StepRunResult } from './step-runner.ts';
+
+/** 分离式合并后的完整 Step：完整定义（command/映射等）+ 流控 branches。 */
+export type MergedStep = WorkflowStep & { readonly branches?: DagBranch[] | undefined };
 
 /** Stage 执行输入（原始需求 + 前置契约产物 + 透传变量）。 */
 export interface StageExecutionInput {
@@ -106,10 +109,10 @@ function synthesizeChildId(stepId: string): string {
   return `step-${stepId}-${execId}`;
 }
 
-/** 收集 Stage 内全部 Step 定义的透传变量。 */
-function collectPassThroughVars(stageDef: WorkflowStage): Record<string, PassThroughVarValue> {
+/** 收集 Stage 内全部 Step 定义的透传变量（steps 为合并后的完整 Step）。 */
+function collectPassThroughVars(steps: readonly WorkflowStep[]): Record<string, PassThroughVarValue> {
   const result: Record<string, PassThroughVarValue> = {};
-  for (const step of stageDef.steps) {
+  for (const step of steps) {
     for (const passThroughVar of step.passThroughVars ?? []) {
       result[passThroughVar.name] = toPassThroughValue(passThroughVar);
     }
@@ -201,7 +204,7 @@ function mergeGates(workflowDef: WorkflowDefinition, stageDef: WorkflowStage, st
  */
 /** Stage 断点续跑状态（ask 中断时保留，回复后 `execute()` 再次调用从断点续跑）。 */
 interface StageRunState {
-  readonly stepIndex: Map<string, WorkflowStep>;
+  readonly stepIndex: Map<string, MergedStep>;
   readonly executedSteps: ExecutedStepDefault[];
   readonly previousOutputs: PreviousStepOutput[];
   readonly passThroughVars: Record<string, PassThroughVarValue>;
@@ -238,9 +241,20 @@ export class StageExecutor {
   private runState: StageRunState | undefined;
   /** step.id → 真实子代理 SessionId（经 onChildStarted 记录，取消类错误判定暂停用）。 */
   private readonly realChildIds = new Map<string, string>();
+  /** 本 Stage 的完整 Step（按 id 合并 stages[].steps 流控 + 顶层 steps 完整定义，含 branches）。 */
+  private readonly steps: MergedStep[];
 
   constructor(private readonly options: StageExecutorOptions) {
     this.runner = new StepRunner(options.ctx, this.trackChildStarted(options.runnerConfig));
+    // 分离式合并：stage.steps 提供 id + 流控（branches），definition.steps 提供完整定义
+    // （command/映射/gates 等），按 id 合并成执行用的完整 WorkflowStep。
+    const definitions = new Map((options.workflowDef.steps ?? []).map(step => [step.id, step] as const));
+    this.steps = options.stageDef.steps.map(flowStep => {
+      const definition = definitions.get(flowStep.id);
+      return definition === undefined
+        ? flowStep as MergedStep
+        : { ...definition, ...(flowStep.branches === undefined ? {} : { branches: flowStep.branches }) } as MergedStep;
+    });
   }
 
   /** 包装 onChildStarted：记录真实 childId（供取消类错误查暂停登记表），再透传原回调。 */
@@ -295,14 +309,14 @@ export class StageExecutor {
 
   /** 初始化断点续跑状态（首次调用 execute 时）。 */
   private initState(): StageRunState {
-    const { stageDef, input } = this.options;
-    const stepIndex = new Map<string, WorkflowStep>();
-    for (const step of stageDef.steps) {
+    const { input } = this.options;
+    const stepIndex = new Map<string, MergedStep>();
+    for (const step of this.steps) {
       stepIndex.set(step.id, step);
     }
     const passThroughVars: Record<string, PassThroughVarValue> = {
       ...(input.passThroughVars as Record<string, PassThroughVarValue>),
-      ...collectPassThroughVars(stageDef),
+      ...collectPassThroughVars(this.steps),
     };
     // 崩溃恢复/重试续跑播种：跳过已完成 Step，续跑指定子代理 Step（原 executed 条目复用）。
     const resumeFrom = this.options.resumeFrom;
@@ -329,7 +343,7 @@ export class StageExecutor {
       };
     }
     const batch: string[] = [];
-    const firstStep = stageDef.steps[0];
+    const firstStep = this.steps[0];
     if (firstStep !== undefined) {
       batch.push(firstStep.id);
     }
@@ -394,7 +408,7 @@ export class StageExecutor {
   }
 
   /** 路由节点：resolveNextNodes 产出下一批，分支/循环评估现场回写路由条目。 */
-  private async processRoutingNode(nodeId: string, step: WorkflowStep, state: StageRunState): Promise<void> {
+  private async processRoutingNode(nodeId: string, step: MergedStep, state: StageRunState): Promise<void> {
     const { stageDef, loopManager, resolveNextNodes, visitCounts } = this.options;
     const routed = await resolveNextNodes(nodeId, this.buildContext(state));
     // 纯循环控制节点（无 command 且仅 loop 分支）平时不产生路由条目，仅在 breakCondition

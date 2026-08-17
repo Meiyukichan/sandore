@@ -8,7 +8,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { AskUserQuestionPayload, BranchMeta, CommandConfig, FinalizeAssessResult, FinalizeMeta, GateEvalResult, InputFromItem, OutputToItem, PassThroughVar, PendingPermissionEntry, PendingQuestionEntry, RetryRecord, SessionMessage, StepSessionMeta, WorkflowTaskState } from './schema.ts';
 export type { AskUserQuestionPayload, BranchMeta, CommandConfig, FinalizeAssessResult, FinalizeMeta, GateEvalResult, InputFromItem, OutputToItem, PassThroughVar, PendingPermissionEntry, PendingQuestionEntry, RetryRecord, SessionMessage, StepSessionMeta, WorkflowTaskState, };
-export type { WorkflowDefinitionEntry, JobEntry, InstanceSummary, ArtifactEntry, PingResponse, CreateDefinitionInput, UpdateDefinitionInput, CreateJobInput, UpdateJobInput, StartInstanceInput, ReplyQuestionInput, ReplyPermissionInput, PauseStepInput, ResumeStepInput, PauseAllInput, ResumeAllInput, RetryStepInput, } from './wire.ts';
+export type { WorkflowDefinitionEntry, JobEntry, InstanceSummary, ArtifactEntry, PingResponse, CreateDefinitionInput, UpdateDefinitionInput, CreateJobInput, ListJobsInput, UpdateJobInput, StartInstanceInput, ReplyQuestionInput, ReplyPermissionInput, PauseStepInput, ResumeStepInput, PauseAllInput, ResumeAllInput, RetryStepInput, } from './wire.ts';
 /** 用户问答选项（对齐 DSH `AskUserQuestionOption`）。 */
 export interface AskUserQuestionOption {
     /** 选项对外展示标签。 */

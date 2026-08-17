@@ -77,7 +77,7 @@ const CommandConfigSchema = z.discriminatedUnion("type", [
 		value: z.object({ promptText: z.string() })
 	})
 ]);
-/** Step 输入绑定项：`path` 为 `stageId.stepId[.outputToId]` 引用，`regex` 对 Step/Stage 输出文本做正则匹配。 */
+/** Step 输入绑定项：`path` 为引用的 Step id（简化格式，单段），`regex` 对 Step 输出文本做正则匹配。 */
 const InputFromItemSchema = z.object({
 	id: z.string(),
 	path: z.string().optional(),
@@ -102,19 +102,26 @@ const PassThroughVarValueSchema = z.object({
 	description: z.string(),
 	refresh: z.boolean().optional()
 });
-/** DAG 分支：省略 `expectation` 表示并行分支。 */
-const DagBranchSchema = z.object({
-	expectation: z.string().optional(),
-	next: z.string(),
-	label: z.string().optional()
-});
-/** DAG 循环控制。 */
+/** DAG 循环控制（挂在分支上的可选属性：该分支 next 指向更早节点 = 回边）。 */
 const DagLoopSchema = z.object({
 	breakCondition: CommandConfigSchema.optional(),
 	breakExpectation: z.string().optional(),
 	next: z.string().optional(),
 	maxIterations: z.number(),
 	exitTo: z.string().optional()
+});
+/**
+* DAG 分支：分支是唯一出边单元，统一 `{ next, condition?, loop? }` 三并列字段。
+* - 无 `condition` = 并行分支（始终纳入下一批，多条并发）；
+* - 有 `condition` = 条件分支（布尔判定：AI 输出 true/false，shell 走
+*   `matchesExpectation(breakExpectation)`，true 才走）；
+* - 有 `loop` = 循环分支（该分支 `next` 为回边，`loop` 控制迭代/跳出/exitTo）。
+*/
+const DagBranchSchema = z.object({
+	next: z.string(),
+	label: z.string().optional(),
+	condition: CommandConfigSchema.optional(),
+	loop: DagLoopSchema.optional()
 });
 /** 门控配置（Workflow/Stage/Step 三级合并）。 */
 const GatesSchema = z.object({
@@ -137,7 +144,7 @@ const WorkflowSettingsSchema = z.object({
 	defaultTimeout: z.number().default(DEFAULT_SETTINGS.defaultTimeout),
 	maxConcurrentAgents: z.number().default(DEFAULT_SETTINGS.maxConcurrentAgents)
 });
-/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义；`stages[].steps[]` 仅含 id + 流控字段）。 */
+/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义：命令 + 映射 + 透传变量 + 门控）。 */
 const WorkflowStepSchema = z.object({
 	id: z.string(),
 	name: z.string().optional(),
@@ -146,26 +153,27 @@ const WorkflowStepSchema = z.object({
 	outputTo: z.array(OutputToItemSchema).optional(),
 	passThroughVars: z.array(PassThroughVarSchema).optional(),
 	timeout: z.number().optional(),
-	next: z.string().optional(),
 	defaultExpectation: z.string().optional(),
-	condition: CommandConfigSchema.optional(),
-	branches: z.array(DagBranchSchema).optional(),
-	loop: DagLoopSchema.optional(),
 	rules: z.array(z.string()).optional(),
 	gates: GatesSchema.optional()
 });
-/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段。 */
+/**
+* Stage 内 Step 位置（V2 分离式：仅 id + 流控 branches；完整定义在顶层 `steps[]`
+* 按 id 交叉引用）。
+*/
+const StageStepSchema = z.object({
+	id: z.string(),
+	branches: z.array(DagBranchSchema).optional()
+});
+/** 单个 Stage 定义：内部 Step 流控（轻量）+ Stage 级 DAG 字段（出边统一进 branches）。 */
 const WorkflowStageSchema = z.object({
 	id: z.string(),
 	name: z.string(),
 	rules: z.array(z.string()).optional(),
 	gates: GatesSchema.optional(),
-	steps: z.array(WorkflowStepSchema),
-	next: z.string().optional(),
+	steps: z.array(StageStepSchema),
 	defaultExpectation: z.string().optional(),
-	condition: CommandConfigSchema.optional(),
-	branches: z.array(DagBranchSchema).optional(),
-	loop: DagLoopSchema.optional()
+	branches: z.array(DagBranchSchema).optional()
 });
 /** 工作流定义（V2 两级 Stage → Step）。 */
 const WorkflowDefinitionSchema = z.object({
@@ -421,4 +429,4 @@ const JobRecordSchema = z.object({
 	updatedAt: z.string()
 });
 //#endregion
-export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SessionMessageSchema, StageContractSchema, StageInfoSchema, StepSessionMetaSchema, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema };
+export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SessionMessageSchema, StageContractSchema, StageInfoSchema, StageStepSchema, StepSessionMetaSchema, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema };

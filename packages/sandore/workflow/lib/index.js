@@ -4,7 +4,7 @@ import { defineDomain, domainTable } from "@deepseek-ai/dsh-storage-domain";
 import { parseDocument, stringify } from "yaml";
 import { Service } from "@deepseek-ai/cordis";
 import z$1 from "@deepseek-ai/schemastery";
-import { BranchEvaluator, extractExpectation, matchesExpectation } from "@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator";
+import { BranchEvaluator, matchesExpectation } from "@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator";
 import { LoopManager } from "@deepseek-ai/dsh-sandore-microflow/src/loop-manager";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { SessionId } from "@deepseek-ai/dsh-session";
@@ -106,7 +106,7 @@ const CommandConfigSchema = z.discriminatedUnion("type", [
 		value: z.object({ promptText: z.string() })
 	})
 ]);
-/** Step 输入绑定项：`path` 为 `stageId.stepId[.outputToId]` 引用，`regex` 对 Step/Stage 输出文本做正则匹配。 */
+/** Step 输入绑定项：`path` 为引用的 Step id（简化格式，单段），`regex` 对 Step 输出文本做正则匹配。 */
 const InputFromItemSchema = z.object({
 	id: z.string(),
 	path: z.string().optional(),
@@ -131,19 +131,26 @@ const PassThroughVarValueSchema = z.object({
 	description: z.string(),
 	refresh: z.boolean().optional()
 });
-/** DAG 分支：省略 `expectation` 表示并行分支。 */
-const DagBranchSchema = z.object({
-	expectation: z.string().optional(),
-	next: z.string(),
-	label: z.string().optional()
-});
-/** DAG 循环控制。 */
+/** DAG 循环控制（挂在分支上的可选属性：该分支 next 指向更早节点 = 回边）。 */
 const DagLoopSchema = z.object({
 	breakCondition: CommandConfigSchema.optional(),
 	breakExpectation: z.string().optional(),
 	next: z.string().optional(),
 	maxIterations: z.number(),
 	exitTo: z.string().optional()
+});
+/**
+* DAG 分支：分支是唯一出边单元，统一 `{ next, condition?, loop? }` 三并列字段。
+* - 无 `condition` = 并行分支（始终纳入下一批，多条并发）；
+* - 有 `condition` = 条件分支（布尔判定：AI 输出 true/false，shell 走
+*   `matchesExpectation(breakExpectation)`，true 才走）；
+* - 有 `loop` = 循环分支（该分支 `next` 为回边，`loop` 控制迭代/跳出/exitTo）。
+*/
+const DagBranchSchema = z.object({
+	next: z.string(),
+	label: z.string().optional(),
+	condition: CommandConfigSchema.optional(),
+	loop: DagLoopSchema.optional()
 });
 /** 门控配置（Workflow/Stage/Step 三级合并）。 */
 const GatesSchema = z.object({
@@ -166,7 +173,7 @@ const WorkflowSettingsSchema = z.object({
 	defaultTimeout: z.number().default(DEFAULT_SETTINGS.defaultTimeout),
 	maxConcurrentAgents: z.number().default(DEFAULT_SETTINGS.maxConcurrentAgents)
 });
-/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义；`stages[].steps[]` 仅含 id + 流控字段）。 */
+/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义：命令 + 映射 + 透传变量 + 门控）。 */
 const WorkflowStepSchema = z.object({
 	id: z.string(),
 	name: z.string().optional(),
@@ -175,26 +182,27 @@ const WorkflowStepSchema = z.object({
 	outputTo: z.array(OutputToItemSchema).optional(),
 	passThroughVars: z.array(PassThroughVarSchema).optional(),
 	timeout: z.number().optional(),
-	next: z.string().optional(),
 	defaultExpectation: z.string().optional(),
-	condition: CommandConfigSchema.optional(),
-	branches: z.array(DagBranchSchema).optional(),
-	loop: DagLoopSchema.optional(),
 	rules: z.array(z.string()).optional(),
 	gates: GatesSchema.optional()
 });
-/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段。 */
+/**
+* Stage 内 Step 位置（V2 分离式：仅 id + 流控 branches；完整定义在顶层 `steps[]`
+* 按 id 交叉引用）。
+*/
+const StageStepSchema = z.object({
+	id: z.string(),
+	branches: z.array(DagBranchSchema).optional()
+});
+/** 单个 Stage 定义：内部 Step 流控（轻量）+ Stage 级 DAG 字段（出边统一进 branches）。 */
 const WorkflowStageSchema = z.object({
 	id: z.string(),
 	name: z.string(),
 	rules: z.array(z.string()).optional(),
 	gates: GatesSchema.optional(),
-	steps: z.array(WorkflowStepSchema),
-	next: z.string().optional(),
+	steps: z.array(StageStepSchema),
 	defaultExpectation: z.string().optional(),
-	condition: CommandConfigSchema.optional(),
-	branches: z.array(DagBranchSchema).optional(),
-	loop: DagLoopSchema.optional()
+	branches: z.array(DagBranchSchema).optional()
 });
 /** 工作流定义（V2 两级 Stage → Step）。 */
 const WorkflowDefinitionSchema = z.object({
@@ -524,26 +532,33 @@ function convertTaskToStep(task) {
 	return { ...rest };
 }
 /**
-* 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`：同一 Scenario 内相邻 Task 依次接
-* `next`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个 Step（指向下一
-* Scenario 的首个 Task）。显式 `next` 不被覆盖。
+* 将单个 Stage 的 `scenarios[]` 展平为分离式输出：
+* - Stage 的 `steps[]` 只保留流控位 `{ id, branches? }`；
+* - 完整 Task 定义（name/command/映射等，**不含 branches**）收集到 `definitions`，
+*   由 `convertLegacyToV2` 汇总进顶层 `steps[]`（V2 分离式按 id 交叉引用）。
+* 同一 Scenario 内相邻 Task 依次接 `branches: [{ next }]`（tsk-a→tsk-b→tsk-c），
+* Scenario 的 `next` 落到其最后一个 Step（指向下一 Scenario 的首个 Task）。
+* 显式 `branches` 不被覆盖。
 */
 function convertStage(stage) {
 	const scenarios = stage.scenarios;
-	if (!Array.isArray(scenarios)) return stage;
-	const steps = [];
+	if (!Array.isArray(scenarios)) return {
+		stage,
+		definitions: []
+	};
+	const converted = [];
 	const scenarioSteps = /* @__PURE__ */ new Map();
 	for (const scenario of scenarios) {
 		if (!isRecord(scenario)) continue;
-		const converted = (Array.isArray(scenario.tasks) ? scenario.tasks : []).map(convertTaskToStep);
-		for (let index = 0; index + 1 < converted.length; index++) {
-			const current = converted[index];
-			const following = converted[index + 1];
+		const list = (Array.isArray(scenario.tasks) ? scenario.tasks : []).map(convertTaskToStep);
+		for (let index = 0; index + 1 < list.length; index++) {
+			const current = list[index];
+			const following = list[index + 1];
 			if (current === void 0 || following === void 0) continue;
-			if (current.next === void 0) current.next = following.id;
+			if (current.branches === void 0) current.branches = [{ next: following.id }];
 		}
-		scenarioSteps.set(String(scenario.id), converted);
-		steps.push(...converted);
+		scenarioSteps.set(String(scenario.id), list);
+		converted.push(...list);
 	}
 	for (const scenario of scenarios) {
 		if (!isRecord(scenario)) continue;
@@ -554,17 +569,30 @@ function convertStage(stage) {
 		if (own === void 0 || own.length === 0 || target === void 0 || target.length === 0) continue;
 		const last = own[own.length - 1];
 		const firstTarget = target[0];
-		if (isRecord(last) && isRecord(firstTarget) && last.next === void 0) last.next = firstTarget.id;
+		if (isRecord(last) && isRecord(firstTarget) && last.branches === void 0) last.branches = [{ next: firstTarget.id }];
+	}
+	const steps = [];
+	const definitions = [];
+	for (const task of converted) {
+		const { branches, ...definition } = task;
+		steps.push(branches === void 0 ? { id: task.id } : {
+			id: task.id,
+			branches
+		});
+		definitions.push(definition);
 	}
 	return {
-		...Object.fromEntries(Object.entries(stage).filter(([key]) => key !== "scenarios")),
-		steps
+		stage: {
+			...Object.fromEntries(Object.entries(stage).filter(([key]) => key !== "scenarios")),
+			steps
+		},
+		definitions
 	};
 }
 /**
 * 检测 V1 三级结构（`stages[].scenarios[]`）并自动转换为 V2 两级结构
-* （`stages[].steps[]`）。同一 Stage 同时含 `steps[]` 与 `scenarios[]` 视为混合格式，
-* 抛 `WorkflowYamlError('DEFINITION_INVALID')`。
+* （`stages[].steps[]` 流控 + 顶层 `steps[]` 完整定义）。同一 Stage 同时含
+* `steps[]` 与 `scenarios[]` 视为混合格式，抛 `WorkflowYamlError('DEFINITION_INVALID')`。
 */
 function convertLegacyToV2(raw) {
 	if (!isRecord(raw)) return raw;
@@ -579,15 +607,23 @@ function convertLegacyToV2(raw) {
 		if (hasScen) hasScenarios = true;
 	}
 	if (!hasScenarios) return raw;
+	const definitions = [];
+	const convertedStages = stages.map((stage) => {
+		if (!isRecord(stage)) return stage;
+		const { stage: converted, definitions: stageDefs } = convertStage(stage);
+		definitions.push(...stageDefs);
+		return converted;
+	});
+	const existingSteps = Array.isArray(raw.steps) ? raw.steps : [];
 	return {
 		...raw,
-		stages: stages.map((stage) => isRecord(stage) ? convertStage(stage) : stage)
+		stages: convertedStages,
+		steps: [...existingSteps, ...definitions]
 	};
 }
 /**
 * 校验节点 ID 引用完整性：
-* - `next`（含 `branches[].next`、`loop.next`、`loop.exitTo`）引用的节点 ID 均存在；
-* - `stage.next` 必须指向 Stage 节点（Step 节点会被 DAG 导航静默跳过）；
+* - `branches[].next`、`branches[].loop.next`、`branches[].loop.exitTo` 引用的节点 ID 均存在；
 * - `inputFrom[].path` 的 `stageId[.stepId[.outputToId]]` 前两段（Stage/Step 节点 ID）存在。
 * 不满足时抛 `WorkflowYamlError('DEFINITION_INVALID')`。
 */
@@ -616,26 +652,23 @@ function validateReferences(definition) {
 		if (target !== void 0 && !nodeIds.has(target)) throw new WorkflowYamlError(`${where} references missing node '${target}'`, "DEFINITION_INVALID");
 	};
 	const checkNode = (node, kind) => {
-		checkTarget(node.next, `${kind} '${node.id}'.next`);
-		for (const branch of node.branches ?? []) checkTarget(branch.next, `${kind} '${node.id}'.branches.next`);
-		if (node.loop !== void 0) {
-			checkTarget(node.loop.next, `${kind} '${node.id}'.loop.next`);
-			checkTarget(node.loop.exitTo, `${kind} '${node.id}'.loop.exitTo`);
+		for (const branch of node.branches ?? []) {
+			checkTarget(branch.next, `${kind} '${node.id}'.branches.next`);
+			if (branch.loop !== void 0) {
+				checkTarget(branch.loop.next, `${kind} '${node.id}'.branches.loop.next`);
+				checkTarget(branch.loop.exitTo, `${kind} '${node.id}'.branches.loop.exitTo`);
+			}
 		}
 	};
 	for (const stage of definition.stages) {
 		checkNode(stage, "stage");
-		if (stage.next !== void 0 && !stageIds.has(stage.next)) throw new WorkflowYamlError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, "DEFINITION_INVALID");
 		for (const step of stage.steps) checkNode(step, "step");
 	}
 	for (const step of definition.steps ?? []) checkNode(step, "step");
-	const allSteps = [...definition.steps ?? [], ...definition.stages.flatMap((stage) => stage.steps)];
-	for (const step of allSteps) for (const input of step.inputFrom ?? []) {
+	for (const step of definition.steps ?? []) for (const input of step.inputFrom ?? []) {
 		const path = input.path;
 		if (path === void 0 || path.startsWith("${")) continue;
-		const [stageId, stepId] = path.split(".");
-		if (stageId !== void 0 && !stageIds.has(stageId)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing stage '${stageId}'`, "DEFINITION_INVALID");
-		if (stepId !== void 0 && !stepIds.has(stepId)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${stepId}'`, "DEFINITION_INVALID");
+		if (!stepIds.has(path)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${path}'`, "DEFINITION_INVALID");
 	}
 }
 /**
@@ -804,14 +837,19 @@ var WorkflowDagNavigator = class {
 	/**
 	* 推进到下一 Stage。
 	*
-	* 仅在当前 Stage 已完成（`isStageAllDone`）时推进：优先跟随当前 Stage 的 `next`，
-	* 否则按定义数组顺序推断下一 Stage。无下一 Stage 返回 false。
+	* 仅在当前 Stage 已完成（`isStageAllDone`）时推进：优先跟随当前 Stage 的
+	* `branches`（首个同 Stage 有效目标，通常为串行/并行下一 Stage），否则按定义数组
+	* 顺序推断下一 Stage。无下一 Stage 返回 false。
 	*/
 	tryAdvanceStage() {
 		if (!this.isStageAllDone(this.currentStageId)) return false;
 		const current = this.nodeIndex.get(this.currentStageId);
 		if (current === void 0 || current.kind !== "stage") return false;
-		let nextId = current.next;
+		let nextId;
+		for (const branch of current.branches ?? []) if (this.nodeIndex.get(branch.next)?.kind === "stage") {
+			nextId = branch.next;
+			break;
+		}
 		if (nextId === void 0) {
 			const index = this.stageOrder.indexOf(current.id);
 			nextId = index >= 0 ? this.stageOrder[index + 1] : void 0;
@@ -824,120 +862,101 @@ var WorkflowDagNavigator = class {
 	/**
 	* Step 级调度单一入口。
 	*
-	* 按优先级解析下一批节点：① Loop（`loop.next` > 分支评估 > `node.next`，仅同阶段，
-	* 回边经 `checkLoopBreak` 判定跳出/继续）；② Branches（评估 `condition` 路由到
-	* expectation 匹配分支，无 expectation 的并行分支始终纳入，无匹配回退 `node.next`）；
-	* ③ Next（同阶段）；④ 无 Step 级目标返回空（由引擎 `tryAdvanceStage` 跨阶段推进）。
+	* 统一分支路由（branches 是唯一出边单元）：
+	* ① 并行分支（无 condition）始终纳入下一批（多条并发）；
+	* ② 条件分支（有 condition）逐条布尔评估（AI 输出 true/false；shell 走
+	*    `matchesExpectation(breakExpectation)`），true 纳入；
+	* ③ 循环分支（有 loop，next 为回边）：命中后经 `checkLoopBreak` 判定跳出
+	*    （走 `exitTo`）或继续下一迭代（回 `loop.next`）；
+	* ④ 无任何命中时按定义数组顺序线性兜底；无 Step 级目标返回空
+	*    （由引擎 `tryAdvanceStage` 跨阶段推进）。
 	*/
 	async resolveNextNodes(nodeId, context) {
 		const node = this.nodeIndex.get(nodeId);
 		if (node === void 0 || node.kind !== "step") return { nextNodeIds: [] };
-		if (node.loop !== void 0) return this.resolveLoop(node, context);
-		if (node.branches !== void 0 && node.branches.length > 0) return this.resolveBranches(node, context);
-		if (node.next !== void 0 && this.sameStageStep(node, node.next) !== void 0) return { nextNodeIds: [node.next] };
-		const arrayNext = this.arrayNextStep(node);
-		if (arrayNext !== void 0) return { nextNodeIds: [arrayNext] };
-		return { nextNodeIds: [] };
-	}
-	/** 循环路由：首次进入压栈，回边经 checkLoopBreak 判定跳出（exitTo）或继续（loopTo）。 */
-	async resolveLoop(node, context) {
-		const loop = node.loop;
-		if (this.loopManager.activeLoopNodeId !== node.id) {
-			context.visitCounts[node.id] = 0;
-			this.loopManager.pushActiveLoop(node.id, loop.maxIterations);
-			const loopTo = await this.resolveLoopTo(node, context);
-			if (loopTo === void 0) {
-				this.loopManager.popActiveLoop();
-				return { nextNodeIds: this.exitLoopIds(node) };
-			}
-			return { nextNodeIds: [loopTo] };
-		}
-		const visitCount = (context.visitCounts[node.id] ?? 0) + 1;
-		context.visitCounts[node.id] = visitCount;
-		const outcome = await this.loopManager.checkLoopBreak({
-			id: node.id,
-			loop
-		}, visitCount, {
-			input: "",
-			output: "",
-			passThroughVars: context.passThroughVars
-		});
-		if (outcome.shouldBreak) {
-			this.loopManager.popActiveLoop();
-			return {
-				nextNodeIds: this.exitLoopIds(node),
-				...outcome.loopMeta === void 0 ? {} : { loopMeta: outcome.loopMeta }
-			};
-		}
-		this.loopManager.incrementLoopIteration();
-		const loopTo = await this.resolveLoopTo(node, context);
-		if (loopTo === void 0) {
-			this.loopManager.popActiveLoop();
-			return { nextNodeIds: this.exitLoopIds(node) };
-		}
-		return { nextNodeIds: [loopTo] };
-	}
-	/** 分支路由：匹配 expectation 的分支 + 并行分支（无 expectation）入下一批。 */
-	async resolveBranches(node, context) {
 		const branches = node.branches ?? [];
-		const parallel = branches.filter((branch) => branch.expectation === void 0);
-		const expected = branches.filter((branch) => branch.expectation !== void 0);
+		if (branches.length === 0) {
+			const arrayNext = this.arrayNextStep(node);
+			return arrayNext === void 0 ? { nextNodeIds: [] } : { nextNodeIds: [arrayNext] };
+		}
+		const parallel = branches.filter((branch) => branch.condition === void 0 && branch.loop === void 0);
+		const conditional = branches.filter((branch) => branch.condition !== void 0 && branch.loop === void 0);
+		const loopBranches = branches.filter((branch) => branch.loop !== void 0);
 		const nextNodeIds = [];
+		let branchMeta;
 		for (const branch of parallel) if (this.sameStageStep(node, branch.next) !== void 0) nextNodeIds.push(branch.next);
-		if (node.condition !== void 0 && expected.length > 0) {
-			const result = await this.evaluator.evaluate(node.condition, "", this.branchEvalOptions(node, context));
-			const expectation = extractExpectation(result.output);
-			const branchMeta = {
+		for (const branch of conditional) {
+			const result = await this.evaluator.evaluate(branch.condition, "", this.branchEvalOptions(node, context));
+			branchMeta = {
 				status: "completed",
 				result: result.output,
-				...result.sessionHandle === null ? {} : { sessionId: result.sessionHandle },
-				expectation
+				...result.sessionHandle === null ? {} : { sessionId: result.sessionHandle }
 			};
-			const matched = this.matchBranches(expectation, expected);
-			for (const branch of matched) if (this.sameStageStep(node, branch.next) !== void 0) nextNodeIds.push(branch.next);
-			if (matched.length > 0) return {
-				nextNodeIds: dedupe(nextNodeIds),
-				branchMeta
-			};
-			this.pushFallthrough(node, nextNodeIds);
-			return {
-				nextNodeIds: dedupe(nextNodeIds),
-				branchMeta
-			};
+			if (this.decideCondition(branch.condition, result.output, branch.label) && this.sameStageStep(node, branch.next) !== void 0) nextNodeIds.push(branch.next);
 		}
-		this.pushFallthrough(node, nextNodeIds);
-		return { nextNodeIds: dedupe(nextNodeIds) };
-	}
-	/** 循环内跳转目标：`loop.next` > 分支评估 > `node.next`（均限同 Stage）。 */
-	async resolveLoopTo(node, context) {
-		const loop = node.loop;
-		if (loop.next !== void 0 && this.sameStageStep(node, loop.next) !== void 0) return loop.next;
-		const loopBranch = await this.evaluateLoopBranch(node, context);
-		if (loopBranch !== void 0) return loopBranch;
-		if (node.next !== void 0 && this.sameStageStep(node, node.next) !== void 0) return node.next;
-	}
-	/** 循环节点带 condition/branches 时用分支评估结果确定 loopTo（首个匹配分支）。 */
-	async evaluateLoopBranch(node, context) {
-		if (node.condition === void 0 || node.branches === void 0) return;
-		const result = await this.evaluator.evaluate(node.condition, "", this.branchEvalOptions(node, context));
-		const expectation = extractExpectation(result.output);
-		const matched = this.matchBranches(expectation, node.branches);
-		for (const branch of matched) if (this.sameStageStep(node, branch.next) !== void 0) return branch.next;
-	}
-	/** 循环跳出目标：`exitTo`（限同 Stage）否则空（由 tryAdvanceStage 推进）。 */
-	exitLoopIds(node) {
-		const exitTo = node.loop?.exitTo;
-		if (exitTo !== void 0 && this.sameStageStep(node, exitTo) !== void 0) return [exitTo];
-		return [];
-	}
-	/** 无匹配时的 Step 级回退（node.next 优先，回退数组顺序下一 Step，均限同 Stage）。 */
-	pushFallthrough(node, nextNodeIds) {
-		if (node.next !== void 0 && this.sameStageStep(node, node.next) !== void 0) {
-			nextNodeIds.push(node.next);
-			return;
+		let loopResult;
+		for (const branch of loopBranches) {
+			const loop = branch.loop;
+			if (this.loopManager.activeLoopNodeId === node.id) {
+				const visitCount = (context.visitCounts[node.id] ?? 0) + 1;
+				context.visitCounts[node.id] = visitCount;
+				const outcome = await this.loopManager.checkLoopBreak({
+					id: node.id,
+					loop
+				}, visitCount, {
+					input: "",
+					output: "",
+					passThroughVars: context.passThroughVars
+				});
+				if (outcome.shouldBreak) {
+					this.loopManager.popActiveLoop();
+					const exitTo = loop.exitTo;
+					loopResult = {
+						nextNodeIds: exitTo !== void 0 && this.sameStageStep(node, exitTo) !== void 0 ? [exitTo] : [],
+						...outcome.loopMeta === void 0 ? {} : { loopMeta: outcome.loopMeta }
+					};
+					break;
+				}
+				this.loopManager.incrementLoopIteration();
+				const loopTo = loop.next;
+				if (loopTo !== void 0 && this.sameStageStep(node, loopTo) !== void 0) {
+					loopResult = { nextNodeIds: [loopTo] };
+					break;
+				}
+				loopResult = { nextNodeIds: [] };
+				break;
+			}
+			context.visitCounts[node.id] = 0;
+			this.loopManager.pushActiveLoop(node.id, loop.maxIterations);
+			const loopTo = loop.next;
+			if (loopTo !== void 0 && this.sameStageStep(node, loopTo) !== void 0) {
+				loopResult = { nextNodeIds: [loopTo] };
+				break;
+			}
+			this.loopManager.popActiveLoop();
+			const exitTo = loop.exitTo;
+			loopResult = { nextNodeIds: exitTo !== void 0 && this.sameStageStep(node, exitTo) !== void 0 ? [exitTo] : [] };
+			break;
 		}
+		if (loopResult !== void 0) return loopResult;
+		if (nextNodeIds.length > 0) return {
+			nextNodeIds: dedupe(nextNodeIds),
+			...branchMeta === void 0 ? {} : { branchMeta }
+		};
 		const arrayNext = this.arrayNextStep(node);
 		if (arrayNext !== void 0) nextNodeIds.push(arrayNext);
+		return {
+			nextNodeIds: dedupe(nextNodeIds),
+			...branchMeta === void 0 ? {} : { branchMeta }
+		};
+	}
+	/** 按 condition 类型判定条件分支是否通过。 */
+	decideCondition(condition, output, expectation) {
+		if (condition.type === "shell") {
+			if (expectation === void 0) return false;
+			return matchesExpectation(output.trim(), expectation);
+		}
+		return output.trim().toLowerCase() === "true";
 	}
 	/** 数组顺序的下一 Step（同 Stage 内，线性兜底）。 */
 	arrayNextStep(node) {
@@ -945,12 +964,6 @@ var WorkflowDagNavigator = class {
 		const steps = node.stage.steps;
 		const index = steps.findIndex((step) => step.id === node.id);
 		return index < 0 ? void 0 : steps[index + 1]?.id;
-	}
-	/** 匹配 expectation 的带 expectation 分支。 */
-	matchBranches(expectation, branches) {
-		const matched = [];
-		for (const branch of branches) if (branch.expectation !== void 0 && matchesExpectation(expectation, branch.expectation)) matched.push(branch);
-		return matched;
 	}
 	/** 组装分支评估选项（候选分支 + 透传变量 + 循环上下文 + 取消信号）。 */
 	branchEvalOptions(node, context) {
@@ -971,28 +984,30 @@ var WorkflowDagNavigator = class {
 		return target;
 	}
 	buildNodeIndex(definition) {
+		const definitions = new Map((definition.steps ?? []).map((step) => [step.id, step]));
 		for (const stage of definition.stages) {
 			this.nodeIndex.set(stage.id, {
 				kind: "stage",
 				stage,
 				id: stage.id,
 				name: stage.name,
-				next: stage.next,
-				condition: stage.condition,
-				branches: stage.branches,
-				loop: stage.loop
+				branches: stage.branches
 			});
-			for (const step of stage.steps) this.nodeIndex.set(step.id, {
-				kind: "step",
-				stage,
-				step,
-				id: step.id,
-				name: step.name ?? step.id,
-				next: step.next,
-				condition: step.condition,
-				branches: step.branches,
-				loop: step.loop
-			});
+			for (const step of stage.steps) {
+				const definitionStep = definitions.get(step.id);
+				const merged = definitionStep === void 0 ? step : {
+					...definitionStep,
+					...step.branches === void 0 ? {} : { branches: step.branches }
+				};
+				this.nodeIndex.set(step.id, {
+					kind: "step",
+					stage,
+					step: merged,
+					id: step.id,
+					name: merged.name ?? step.id,
+					branches: merged.branches
+				});
+			}
 		}
 	}
 };
@@ -1022,6 +1037,8 @@ const CreateJobInputSchema = z.object({
 	workflowId: z.string(),
 	cwd: z.string().optional()
 });
+/** `listJobs` 入参：可选按 workflowId 过滤（RPC 面统一对象入参，避免可选参数退化）。 */
+const ListJobsInputSchema = z.object({ workflowId: z.string().optional() });
 /** `updateJob` 入参。 */
 const UpdateJobInputSchema = z.object({
 	name: z.string().optional(),
@@ -1584,16 +1601,17 @@ let SandoreRemote = (() => {
 		getYaml(id) {
 			return this.requireDefinition(id).yaml;
 		}
-		/** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。 */
+		/** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。
+		*  元数据（name/version/description）从新 YAML 解析同步，保证列表展示与内容一致。 */
 		async updateYaml(id, yaml) {
-			parseWorkflowYaml(yaml);
+			const parsed = parseWorkflowYaml(yaml);
 			const existing = this.requireDefinition(id);
 			const now = (/* @__PURE__ */ new Date()).toISOString();
 			const next = {
 				yaml,
-				name: existing.name,
-				version: existing.version,
-				...existing.description === void 0 ? {} : { description: existing.description },
+				name: parsed.name,
+				version: parsed.version,
+				...parsed.description === void 0 ? {} : { description: parsed.description },
 				createdAt: existing.createdAt,
 				updatedAt: now
 			};
@@ -1603,11 +1621,12 @@ let SandoreRemote = (() => {
 				...next
 			};
 		}
-		/** 列出 Job，可选按 workflowId 过滤。 */
-		listJobs(workflowId) {
+		/** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
+		listJobs(input) {
+			const parsed = ListJobsInputSchema.parse(input);
 			const entries = [];
 			for (const [id, record] of this.ctx.sandorePersistence.jobs.entries()) {
-				if (workflowId !== void 0 && record.workflowId !== workflowId) continue;
+				if (parsed.workflowId !== void 0 && record.workflowId !== parsed.workflowId) continue;
 				entries.push({
 					id,
 					...record
@@ -3098,10 +3117,12 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		if (resumeStep === void 0) return;
 		const stepDef = stage.steps.find((step) => step.id === (resumeStep.stepId ?? resumeStep.id));
 		if (stepDef === void 0) return;
+		const definitionStep = active.definition.steps?.find((step) => step.id === stepDef.id);
+		const mergedStep = definitionStep === void 0 ? { id: stepDef.id } : { ...definitionStep };
 		return {
 			completedSteps: stageSteps.filter((step) => step.id !== resumeStep.id && step.status === "completed"),
 			resumeSubagent: {
-				step: stepDef,
+				step: mergedStep,
 				executed: resumeStep,
 				childId: resumeStep.sessionMeta?.childId ?? resumeStep.id
 			}
@@ -3436,4 +3457,4 @@ var SandoreWorkflowPlugin = class extends Service {
 //#region src/index.ts
 var src_default = SandoreWorkflowPlugin;
 //#endregion
-export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SandoreEngine, SandoreEngineRuntime, SandoreEngineStub, SandoreError, SandoreRemote, SandoreWorkflowPlugin, SessionMessageSchema, StageContractSchema, StageInfoSchema, StepSessionMetaSchema, WorkflowDagNavigator, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema, WorkflowYamlError, convertLegacyToV2, src_default as default, isFatalSandoreError, parseWorkflowYaml, sandoreDomainSpec, serializeWorkflowYaml };
+export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SandoreEngine, SandoreEngineRuntime, SandoreEngineStub, SandoreError, SandoreRemote, SandoreWorkflowPlugin, SessionMessageSchema, StageContractSchema, StageInfoSchema, StageStepSchema, StepSessionMetaSchema, WorkflowDagNavigator, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema, WorkflowYamlError, convertLegacyToV2, src_default as default, isFatalSandoreError, parseWorkflowYaml, sandoreDomainSpec, serializeWorkflowYaml };

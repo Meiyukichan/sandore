@@ -32,21 +32,23 @@ version: "1.0.0"
 stages:
   - id: stg-1
     name: 分析
-    next: stg-2
     steps:
       - id: step-abc
-        command:
-          type: shell
-          value:
-            command: "echo hello"
   - id: stg-2
     name: 推理
     steps:
       - id: step-prompt
-        command:
-          type: prompt
-          value:
-            promptText: "summarize"
+steps:
+  - id: step-abc
+    command:
+      type: shell
+      value:
+        command: "echo hello"
+  - id: step-prompt
+    command:
+      type: prompt
+      value:
+        promptText: "summarize"
 `;
 
 /** 单 Stage 多 Step（A 输出被 B 引用）定义。 */
@@ -58,21 +60,24 @@ stages:
     name: 处理
     steps:
       - id: step-a
-        command:
-          type: shell
-          value:
-            command: "echo hello"
-        outputTo:
-          - id: opt-a
-            path: "out.txt"
       - id: step-b
-        command:
-          type: prompt
-          value:
-            promptText: "summarize"
-        inputFrom:
-          - id: in-a
-            path: "stg-1.step-a.opt-a"
+steps:
+  - id: step-a
+    command:
+      type: shell
+      value:
+        command: "echo hello"
+    outputTo:
+      - id: opt-a
+        path: "out.txt"
+  - id: step-b
+    command:
+      type: prompt
+      value:
+        promptText: "summarize"
+    inputFrom:
+      - id: in-a
+        path: "step-a"
 `;
 
 /** 单 Stage 两个 shell Step（用于第二步失败断言）。 */
@@ -84,15 +89,18 @@ stages:
     name: 处理
     steps:
       - id: step-a
-        command:
-          type: shell
-          value:
-            command: "echo ok"
       - id: step-b
-        command:
-          type: shell
-          value:
-            command: "false"
+steps:
+  - id: step-a
+    command:
+      type: shell
+      value:
+        command: "echo ok"
+  - id: step-b
+    command:
+      type: shell
+      value:
+        command: "false"
 `;
 
 /** 单 Stage 单 shell Step（用于崩溃恢复重跑：无需 llm 目录即可跑通）。 */
@@ -104,10 +112,12 @@ stages:
     name: 单shell
     steps:
       - id: step-shell
-        command:
-          type: shell
-          value:
-            command: "echo hi"
+steps:
+  - id: step-shell
+    command:
+      type: shell
+      value:
+        command: "echo hi"
 `;
 
 /** 完整 DAG（分支 + 并行 + 汇合 + 循环 + 门禁 + 透传变量 + agent 子代理）。 */
@@ -127,31 +137,15 @@ stages:
             next: step-agent
           - next: step-parallel
       - id: step-agent
-        command:
-          type: agent
-          value:
-            promptText: "do-work"
         branches:
           - next: step-merge
       - id: step-parallel
-        command:
-          type: shell
-          value:
-            command: "echo parallel"
         branches:
           - next: step-merge
       - id: step-fallback
-        command:
-          type: shell
-          value:
-            command: "echo fallback"
         branches:
           - next: step-merge
       - id: step-merge
-        command:
-          type: shell
-          value:
-            command: "echo merge"
   - id: stg-2
     name: 循环
     steps:
@@ -163,24 +157,49 @@ stages:
               next: step-iter
               exitTo: step-finalize
       - id: step-iter
-        command:
-          type: shell
-          value:
-            command: "echo iter"
         branches:
           - next: step-loop
       - id: step-finalize
-        command:
-          type: prompt
-          value:
-            promptText: "report \${projectName}"
-        passThroughVars:
-          - name: projectName
-            value: "\${projectName}"
-            description: "项目名"
-        gates:
-          primary:
-            enabled: true
+steps:
+  - id: step-branch
+  - id: step-agent
+    command:
+      type: agent
+      value:
+        promptText: "do-work"
+  - id: step-parallel
+    command:
+      type: shell
+      value:
+        command: "echo parallel"
+  - id: step-fallback
+    command:
+      type: shell
+      value:
+        command: "echo fallback"
+  - id: step-merge
+    command:
+      type: shell
+      value:
+        command: "echo merge"
+  - id: step-loop
+  - id: step-iter
+    command:
+      type: shell
+      value:
+        command: "echo iter"
+  - id: step-finalize
+    command:
+      type: prompt
+      value:
+        promptText: "report \${projectName}"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: "项目名"
+    gates:
+      primary:
+        enabled: true
 `;
 
 /** 分支无匹配（条件 false）→ 数组顺序兜底（用于验证兜底 + branchMeta 现场保留）。 */
@@ -199,16 +218,20 @@ stages:
                 promptText: "route"
             next: step-matched
       - id: step-fallback
-        command:
-          type: shell
-          value:
-            command: "echo fallback"
       - id: step-matched
-        command:
-          type: shell
-          value:
-            command: "echo matched"
         branches: []
+steps:
+  - id: step-branch
+  - id: step-fallback
+    command:
+      type: shell
+      value:
+        command: "echo fallback"
+  - id: step-matched
+    command:
+      type: shell
+      value:
+        command: "echo matched"
 `;
 
 /** 嵌套循环定义：外层 2 次 × 内层 2 次（用于验证内层 visitCount 重置）。 */
@@ -234,17 +257,22 @@ stages:
               next: step-iter
               exitTo: step-outer-loop
       - id: step-iter
-        command:
-          type: shell
-          value:
-            command: "echo iter"
         branches:
           - next: step-inner-loop
       - id: step-done
-        command:
-          type: shell
-          value:
-            command: "echo done"
+steps:
+  - id: step-outer-loop
+  - id: step-inner-loop
+  - id: step-iter
+    command:
+      type: shell
+      value:
+        command: "echo iter"
+  - id: step-done
+    command:
+      type: shell
+      value:
+        command: "echo done"
 `;
 
 /** 带 breakCondition 的循环定义（prompt 判定跳出，验证 loopMeta 回写）。 */
@@ -267,17 +295,21 @@ stages:
               next: step-iter
               exitTo: step-done
       - id: step-iter
-        command:
-          type: shell
-          value:
-            command: "echo iter"
         branches:
           - next: step-loop
       - id: step-done
-        command:
-          type: shell
-          value:
-            command: "echo done"
+steps:
+  - id: step-loop
+  - id: step-iter
+    command:
+      type: shell
+      value:
+        command: "echo iter"
+  - id: step-done
+    command:
+      type: shell
+      value:
+        command: "echo done"
 `;
 
 /** 写入一条工作流定义记录。 */
@@ -1060,14 +1092,16 @@ stages:
     name: 提问
     steps:
       - id: step-ask
-        command:
-          type: prompt
-          value:
-            promptText: "do it"
-        passThroughVars:
-          - name: projectName
-            value: "\${projectName}"
-            description: "项目名"
+steps:
+  - id: step-ask
+    command:
+      type: prompt
+      value:
+        promptText: "do it"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: "项目名"
 `;
 
 /** 单 Stage 多 Step：step-ask（prompt + 门禁 + 透传变量）触发中途 ask，step-after 为剩余 Step。 */
@@ -1079,22 +1113,25 @@ stages:
     name: 中途提问
     steps:
       - id: step-ask
-        command:
-          type: prompt
-          value:
-            promptText: "do it"
-        passThroughVars:
-          - name: projectName
-            value: "\${projectName}"
-            description: "项目名"
-        gates:
-          primary:
-            enabled: true
       - id: step-after
-        command:
-          type: shell
-          value:
-            command: "echo done"
+steps:
+  - id: step-ask
+    command:
+      type: prompt
+      value:
+        promptText: "do it"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: "项目名"
+    gates:
+      primary:
+        enabled: true
+  - id: step-after
+    command:
+      type: shell
+      value:
+        command: "echo done"
 `;
 
 /** 单 Stage agent Step（子代理 final result 含 [[SANDORE_ASK]] 标记块触发转接）。 */
@@ -1106,10 +1143,12 @@ stages:
     name: 委托
     steps:
       - id: step-agent
-        command:
-          type: agent
-          value:
-            promptText: "do-work"
+steps:
+  - id: step-agent
+    command:
+      type: agent
+      value:
+        promptText: "do-work"
 `;
 
 /** 等待一次 sandore/question 事件并返回载荷（用于读取 requestId）。 */
@@ -1306,10 +1345,12 @@ stages:
     name: 单agent
     steps:
       - id: step-agent
-        command:
-          type: agent
-          value:
-            promptText: "do work"
+steps:
+  - id: step-agent
+    command:
+      type: agent
+      value:
+        promptText: "do work"
 `;
 
 /** 单 Stage 三 Step：shell（outputTo）→ agent（中间失败可重试）→ shell（剩余 Step）。 */
@@ -1321,26 +1362,30 @@ stages:
     name: 重试续跑
     steps:
       - id: step-a
-        command:
-          type: shell
-          value:
-            command: "echo hello"
-        outputTo:
-          - id: opt-a
-            path: "out-a.txt"
       - id: step-b
-        command:
-          type: agent
-          value:
-            promptText: "do work"
-        outputTo:
-          - id: opt-b
-            path: "out-b.txt"
       - id: step-c
-        command:
-          type: shell
-          value:
-            command: "echo done"
+steps:
+  - id: step-a
+    command:
+      type: shell
+      value:
+        command: "echo hello"
+    outputTo:
+      - id: opt-a
+        path: "out-a.txt"
+  - id: step-b
+    command:
+      type: agent
+      value:
+        promptText: "do work"
+    outputTo:
+      - id: opt-b
+        path: "out-b.txt"
+  - id: step-c
+    command:
+      type: shell
+      value:
+        command: "echo done"
 `;
 
 describe('SandoreEngineRuntime recovery', () => {

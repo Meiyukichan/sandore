@@ -51,6 +51,10 @@ export declare const CreateJobInputSchema: z.ZodObject<{
     workflowId: z.ZodString;
     cwd: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
+/** `listJobs` 入参：可选按 workflowId 过滤（RPC 面统一对象入参，避免可选参数退化）。 */
+export declare const ListJobsInputSchema: z.ZodObject<{
+    workflowId: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
 /** `updateJob` 入参。 */
 export declare const UpdateJobInputSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
@@ -132,6 +136,7 @@ export declare const RetryStepInputSchema: z.ZodObject<{
 export type CreateDefinitionInput = z.infer<typeof CreateDefinitionInputSchema>;
 export type UpdateDefinitionInput = z.infer<typeof UpdateDefinitionInputSchema>;
 export type CreateJobInput = z.infer<typeof CreateJobInputSchema>;
+export type ListJobsInput = z.infer<typeof ListJobsInputSchema>;
 export type UpdateJobInput = z.infer<typeof UpdateJobInputSchema>;
 export type StartInstanceInput = z.infer<typeof StartInstanceInputSchema>;
 export type ReplyQuestionInput = z.infer<typeof ReplyQuestionInputSchema>;

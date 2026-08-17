@@ -67,7 +67,7 @@ export const CommandConfigSchema = z.discriminatedUnion('type', [
   }),
 ])
 
-/** Step 输入绑定项：`path` 为 `stageId.stepId[.outputToId]` 引用，`regex` 对 Step/Stage 输出文本做正则匹配。 */
+/** Step 输入绑定项：`path` 为引用的 Step id（简化格式，单段），`regex` 对 Step 输出文本做正则匹配。 */
 export const InputFromItemSchema = z.object({
   id: z.string(),
   path: z.string().optional(),
@@ -140,7 +140,7 @@ export const WorkflowSettingsSchema = z.object({
   maxConcurrentAgents: z.number().default(DEFAULT_SETTINGS.maxConcurrentAgents),
 })
 
-/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义；`stages[].steps[]` 仅含 id + 流控字段）。 */
+/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义：命令 + 映射 + 透传变量 + 门控）。 */
 export const WorkflowStepSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
@@ -150,18 +150,26 @@ export const WorkflowStepSchema = z.object({
   passThroughVars: z.array(PassThroughVarSchema).optional(),
   timeout: z.number().optional(),
   defaultExpectation: z.string().optional(),
-  branches: z.array(DagBranchSchema).optional(),
   rules: z.array(z.string()).optional(),
   gates: GatesSchema.optional(),
 })
 
-/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段（出边统一进 branches）。 */
+/**
+ * Stage 内 Step 位置（V2 分离式：仅 id + 流控 branches；完整定义在顶层 `steps[]`
+ * 按 id 交叉引用）。
+ */
+export const StageStepSchema = z.object({
+  id: z.string(),
+  branches: z.array(DagBranchSchema).optional(),
+})
+
+/** 单个 Stage 定义：内部 Step 流控（轻量）+ Stage 级 DAG 字段（出边统一进 branches）。 */
 export const WorkflowStageSchema = z.object({
   id: z.string(),
   name: z.string(),
   rules: z.array(z.string()).optional(),
   gates: GatesSchema.optional(),
-  steps: z.array(WorkflowStepSchema),
+  steps: z.array(StageStepSchema),
   defaultExpectation: z.string().optional(),
   branches: z.array(DagBranchSchema).optional(),
 })

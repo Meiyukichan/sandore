@@ -26,12 +26,59 @@ function TargetSelect({ value, targets, t, onChange }) {
 /**
  * 渲染 Stage/Step 流控编辑器（分支列表：每条 = 类型下拉 + 只读目标 + 判断条件 + 循环）。
  * 循环由画布回环连线自动产生（loop 必填），详情不做手动添加。
+ * @param stageSteps - 当前 Stage 内全部合并 step（含 branches 流控），用于计算回环环上节点。
+ * @param currentId - 当前编辑节点 id。
  * @param conditionTypes - 判断条件命令可选类型（缺省 = 全部五类型；Stage 层 shell/prompt）。
  */
-export function FlowEditor({ t, flow, targets, onChange, conditionTypes }) {
+export function FlowEditor({ t, flow, targets, onChange, stageSteps, currentId, conditionTypes }) {
     const branches = flow.branches ?? [];
     const setBranch = (index, next) => {
         onChange({ ...flow, branches: branches.map((b, i) => (i === index ? next : b)) });
+    };
+    /**
+     * 计算回环环上节点集合：从回边目标出发沿出边（branches[].next + loop.next）做图搜索，
+     * 若可回到当前节点，则**实际参与该回环的节点**（路径成员）都不能作为跳出目标
+     * （否则跳出后仍会无限循环）。
+     */
+    const loopNodesOf = (branch) => {
+        const current = currentId;
+        if (stageSteps === undefined || current === undefined)
+            return new Set();
+        const back = branch.next;
+        const outgoing = new Map();
+        for (const step of stageSteps) {
+            const targets = [];
+            for (const b of step.branches ?? []) {
+                if (b.next !== undefined && b.next !== '')
+                    targets.push(b.next);
+                if (b.loop?.next !== undefined && b.loop.next !== '')
+                    targets.push(b.loop.next);
+            }
+            outgoing.set(step.id, targets);
+        }
+        // 从回边目标 DFS，记录能到达当前节点的路径成员。
+        const onPath = new Set();
+        const visited = new Set();
+        const dfs = (id, path) => {
+            if (id === current) {
+                for (const node of path)
+                    onPath.add(node);
+                return true;
+            }
+            if (visited.has(id))
+                return false;
+            visited.add(id);
+            let found = false;
+            for (const next of outgoing.get(id) ?? []) {
+                if (dfs(next, [...path, id]))
+                    found = true;
+            }
+            return found;
+        };
+        if (back !== undefined && back !== '') {
+            dfs(back, [back]);
+        }
+        return onPath;
     };
     /** 目标节点名（读 targets 表；未知 id 显示原 id）。 */
     const targetName = (id) => targets.find(target => target.id === id)?.name ?? id;
@@ -49,7 +96,7 @@ export function FlowEditor({ t, flow, targets, onChange, conditionTypes }) {
                                         const value = event.target.value;
                                         // END 占位符（__end__）不写入 YAML：存 exitTo: undefined，引擎推进下一 Stage。
                                         setBranch(index, { ...branch, loop: { ...branch.loop, exitTo: value === '__end__' ? undefined : value } });
-                                    }, children: [_jsx("option", { value: "__end__", children: t('flow.end') }), targets.map(target => (_jsx("option", { value: target.id, children: target.name }, target.id)))] }), _jsx(SectionLabel, { children: t('flow.breakCondition') }), branch.loop.breakCondition === undefined ? (_jsx(Button, { variant: "outline", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { setBranch(index, { ...branch, loop: { ...branch.loop, breakCondition: createCommand('prompt') } }); }, children: t('flow.addCondition') })) : (_jsx(CommandEditor, { command: branch.loop.breakCondition, onChange: breakCondition => { setBranch(index, { ...branch, loop: { ...branch.loop, breakCondition } }); }, t: t }))] }))] }, index));
+                                    }, children: [_jsx("option", { value: "__end__", children: t('flow.end') }), targets.filter(target => !loopNodesOf(branch).has(target.id)).map(target => (_jsx("option", { value: target.id, children: target.name }, target.id)))] }), _jsx(SectionLabel, { children: t('flow.breakCondition') }), branch.loop.breakCondition === undefined ? (_jsx(Button, { variant: "outline", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { setBranch(index, { ...branch, loop: { ...branch.loop, breakCondition: createCommand('prompt') } }); }, children: t('flow.addCondition') })) : (_jsx(CommandEditor, { command: branch.loop.breakCondition, onChange: breakCondition => { setBranch(index, { ...branch, loop: { ...branch.loop, breakCondition } }); }, t: t }))] }))] }, index));
             }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: () => { onChange({ ...flow, branches: [...branches, { next: '' }] }); }, children: t('flow.addBranch') })] }));
 }
 //# sourceMappingURL=FlowEditor.js.map

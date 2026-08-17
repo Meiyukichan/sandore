@@ -15,7 +15,7 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CommandConfig, DagBranch } from '@deepseek-ai/dsh-sandore-workflow/schema'
 
 import { CommandEditor } from './CommandEditor.tsx'
-import { createCommand, isConditionalBranch, parseOptionalNumber, trimToUndefined, type CommandType } from './dag-editor-model.ts'
+import { createCommand, isConditionalBranch, parseOptionalNumber, trimToUndefined, type CommandType, type MergedStep } from './dag-editor-model.ts'
 import css from './DagEditor.module.css'
 
 /** 流控目标节点（下拉选项）。 */
@@ -54,13 +54,19 @@ function TargetSelect({ value, targets, t, onChange }: {
 /**
  * 渲染 Stage/Step 流控编辑器（分支列表：每条 = 类型下拉 + 只读目标 + 判断条件 + 循环）。
  * 循环由画布回环连线自动产生（loop 必填），详情不做手动添加。
+ * @param stageSteps - 当前 Stage 内全部合并 step（含 branches 流控），用于计算回环环上节点。
+ * @param currentId - 当前编辑节点 id。
  * @param conditionTypes - 判断条件命令可选类型（缺省 = 全部五类型；Stage 层 shell/prompt）。
  */
-export function FlowEditor({ t, flow, targets, onChange, conditionTypes }: {
+export function FlowEditor({ t, flow, targets, onChange, stageSteps, currentId, conditionTypes }: {
   readonly t: TranslateNS<'sandore'>
   readonly flow: FlowFields
   readonly targets: readonly FlowTarget[]
   readonly onChange: (flow: FlowFields) => void
+  /** 当前 Stage 内全部合并 step（含 branches）；缺省时不做环上节点过滤。 */
+  readonly stageSteps?: readonly MergedStep[] | undefined
+  /** 当前编辑节点 id（用于计算回环区间）。 */
+  readonly currentId?: string | undefined
   /** 判断条件命令可选类型（缺省 = 全部五类型）。 */
   readonly conditionTypes?: readonly CommandType[] | undefined
 }) {
@@ -68,6 +74,46 @@ export function FlowEditor({ t, flow, targets, onChange, conditionTypes }: {
 
   const setBranch = (index: number, next: DagBranch): void => {
     onChange({ ...flow, branches: branches.map((b, i) => (i === index ? next : b)) })
+  }
+
+  /**
+   * 计算回环环上节点集合：从回边目标出发沿出边（branches[].next + loop.next）做图搜索，
+   * 若可回到当前节点，则**实际参与该回环的节点**（路径成员）都不能作为跳出目标
+   * （否则跳出后仍会无限循环）。
+   */
+  const loopNodesOf = (branch: DagBranch): Set<string> => {
+    const current = currentId
+    if (stageSteps === undefined || current === undefined) return new Set()
+    const back = branch.next
+    const outgoing = new Map<string, string[]>()
+    for (const step of stageSteps) {
+      const targets: string[] = []
+      for (const b of step.branches ?? []) {
+        if (b.next !== undefined && b.next !== '') targets.push(b.next)
+        if (b.loop?.next !== undefined && b.loop.next !== '') targets.push(b.loop.next)
+      }
+      outgoing.set(step.id, targets)
+    }
+    // 从回边目标 DFS，记录能到达当前节点的路径成员。
+    const onPath = new Set<string>()
+    const visited = new Set<string>()
+    const dfs = (id: string, path: readonly string[]): boolean => {
+      if (id === current) {
+        for (const node of path) onPath.add(node)
+        return true
+      }
+      if (visited.has(id)) return false
+      visited.add(id)
+      let found = false
+      for (const next of outgoing.get(id) ?? []) {
+        if (dfs(next, [...path, id])) found = true
+      }
+      return found
+    }
+    if (back !== undefined && back !== '') {
+      dfs(back, [back])
+    }
+    return onPath
   }
 
   /** 目标节点名（读 targets 表；未知 id 显示原 id）。 */
@@ -155,7 +201,8 @@ export function FlowEditor({ t, flow, targets, onChange, conditionTypes }: {
                   }}
                 >
                   <option value="__end__">{t('flow.end')}</option>
-                  {targets.map(target => (
+                  {/* 跳出目标排除回环环上节点（当前/回边 step 及环间节点），否则跳出后仍会无限循环。 */}
+                  {targets.filter(target => !loopNodesOf(branch).has(target.id)).map(target => (
                     <option key={target.id} value={target.id}>{target.name}</option>
                   ))}
                 </select>

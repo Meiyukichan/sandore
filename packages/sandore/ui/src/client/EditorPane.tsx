@@ -1,20 +1,17 @@
 /**
- * EditorPane：工作流 overlay 右栏编辑区（模式条 + 编排态 DagEditor / 执行态 RunView）。
+ * EditorPane：工作流 overlay 右栏编辑区（编排态 DagEditor / 执行态 RunView）。
  *
- * 模式与选中态走 `workflow-store`；模式条提供 编排/执行 toggle 与「▶ 测试运行」
- * （对当前定义找/建 Job 后 `startInstance`，成功后自动切执行态并选中新实例）。
+ * 模式与选中态走 `workflow-store`；无顶部模式条（编排/执行由列表点击与测试运行
+ * 驱动）。「▶ 测试运行」按钮在 DagEditor header 内（DagEditor 自持 RPC）。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/EditorPane
  */
-import { useState, useSyncExternalStore } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useSyncExternalStore } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 
 import { DagEditor } from './DagEditor.tsx'
-import { DefinitionDetail } from './DefinitionDetail.tsx'
 import { RunView } from './RunView.tsx'
 import type { WorkflowOverlayFace } from './workflow-face.ts'
-import { getWorkflowState, selectInstance, setWorkflowState, subscribeWorkflowState } from './workflow-store.ts'
-import { describeError } from './describe-error.ts'
+import { getWorkflowState, subscribeWorkflowState } from './workflow-store.ts'
 import css from './WorkflowOverlay.module.css'
 
 /** EditorPane 接收的 props。 */
@@ -30,83 +27,17 @@ export interface EditorPaneProps {
 /** 渲染右栏编辑区。 */
 export function EditorPane({ t, face, onSaved }: EditorPaneProps) {
   const mode = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().mode)
-  const definitionView = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().definitionView)
   const selectedInstanceId = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId)
   const selectedDefinition = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedDefinition)
-  const [running, setRunning] = useState(false)
-  const [runError, setRunError] = useState<string | undefined>(undefined)
-
-  const title = mode === 'dag'
-    ? (selectedDefinition?.id === undefined ? t('editor.newDefinition') : t('editor.title'))
-    : (selectedInstanceId ?? t('panel.title'))
-
-  /** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态选中新实例。 */
-  const runTest = async (): Promise<void> => {
-    const definitionId = selectedDefinition?.id
-    if (definitionId === undefined) return
-    setRunning(true)
-    setRunError(undefined)
-    try {
-      const jobs = await face.listJobs(definitionId)
-      const job = jobs[0] ?? await face.createJob({ name: `测试-${definitionId.slice(0, 8)}`, workflowId: definitionId })
-      const run = await face.startInstance({ jobId: job.id, originalInput: t('editor.testRun') })
-      selectInstance(run.instanceId)
-    } catch (error) {
-      setRunError(describeError(error))
-    } finally {
-      setRunning(false)
-    }
-  }
+  const creatingNew = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().creatingNew)
 
   return (
     <div className={css.editorCol} data-sandore-wf-editor>
-      <div className={css.modeBar}>
-        <span className={css.editorTitle}>{title}</span>
-        <span className={css.spacer} />
-        <div className={css.modeSwitch} role="tablist" aria-label={t('panel.title')}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'dag'}
-            className={mode === 'dag' ? css.modeActive : ''}
-            onClick={() => { setWorkflowState({ mode: 'dag' }) }}
-          >
-            {t('editor.mode.dag')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'run'}
-            className={mode === 'run' ? css.modeActive : ''}
-            onClick={() => { setWorkflowState({ mode: 'run' }) }}
-          >
-            {t('editor.mode.run')}
-          </button>
-        </div>
-        {mode === 'dag' && selectedDefinition?.id !== undefined && (
-          <Button size="sm" variant="primary" disabled={running} onClick={() => { void runTest() }}>
-            ▶ {t('editor.testRun')}
-          </Button>
-        )}
-      </div>
-      {runError !== undefined && (
-        <p className={css.runError} role="alert">{t('panel.error', { message: runError })}</p>
-      )}
       <div className={css.editorBody}>
         {mode === 'dag' ? (
-          selectedDefinition !== undefined && definitionView === 'detail' ? (
-            <DefinitionDetail
-              key={selectedDefinition.id ?? 'new'}
-              t={t}
-              initialYaml={selectedDefinition.initialYaml}
-              initialId={selectedDefinition.id}
-              save={face.save}
-              onSaved={(yaml) => {
-                setWorkflowState({ selectedDefinition: { id: selectedDefinition.id, initialYaml: yaml } })
-                onSaved(selectedDefinition.id ?? '')
-              }}
-              onEnterEdit={() => { setWorkflowState({ definitionView: 'edit' }) }}
-            />
+          // 编排态：未选中定义且非新建 → 占位；选中/新建 → DagEditor。
+          selectedDefinition === undefined && !creatingNew ? (
+            <div className={css.editorPlaceholder}>{t('view.placeholder')}</div>
           ) : (
             <DagEditor
               key={selectedDefinition?.id ?? 'new'}
@@ -115,6 +46,9 @@ export function EditorPane({ t, face, onSaved }: EditorPaneProps) {
               initialId={selectedDefinition?.id}
               save={face.save}
               onSaved={onSaved}
+              listJobs={face.listJobs}
+              createJob={face.createJob}
+              startInstance={face.startInstance}
             />
           )
         ) : selectedInstanceId === undefined ? (

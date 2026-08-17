@@ -241,6 +241,18 @@ stages:
     expect(remote.getYaml(created.id)).toBe(created.yaml)
   })
 
+  it('syncs metadata from the new yaml on updateYaml', async () => {
+    const { remote } = await harness()
+    const created = await remote.createDefinition({ yaml: validV2Yaml })
+    const renamed = validV2Yaml.replace('name: demo', 'name: 已改名工作流')
+
+    const updated = await remote.updateYaml(created.id, renamed)
+
+    expect(updated.name).toBe('已改名工作流')
+    expect(updated.yaml).toBe(renamed)
+    expect(remote.listDefinitions().find(entry => entry.id === created.id)?.name).toBe('已改名工作流')
+  })
+
   it('deletes a definition idempotently', async () => {
     const { remote } = await harness()
     const created = await remote.createDefinition({ yaml: validV2Yaml })
@@ -292,10 +304,10 @@ describe('SandoreRemote job CRUD', () => {
     await remote.createJob({ name: 'job-a', workflowId: workflowA.id })
     await remote.createJob({ name: 'job-b', workflowId: workflowB.id })
 
-    const jobsA = remote.listJobs(workflowA.id)
+    const jobsA = remote.listJobs({ workflowId: workflowA.id })
     expect(jobsA).toHaveLength(1)
     expect(jobsA[0]?.workflowId).toBe(workflowA.id)
-    expect(remote.listJobs()).toHaveLength(2)
+    expect(remote.listJobs({})).toHaveLength(2)
   })
 
   it('reads a single job by id', async () => {
@@ -328,7 +340,7 @@ describe('SandoreRemote job CRUD', () => {
     const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
 
     await expect(remote.deleteJob(job.id)).resolves.toBe(true)
-    expect(remote.listJobs()).toHaveLength(0)
+    expect(remote.listJobs({})).toHaveLength(0)
     await expect(remote.deleteJob(job.id)).resolves.toBe(false)
   })
 })

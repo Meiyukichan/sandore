@@ -29,6 +29,14 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* 头部右侧操作组（预览 YAML / 导出 / 保存）。 */
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
 .success {
   margin: 0;
   padding: 8px 12px;
@@ -554,6 +562,22 @@
   overflow-y: auto;
   padding: 8px 12px 12px;
   border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
+}
+
+/* 预览弹窗：宽高都放大。 */
+.previewModal {
+  width: min(720px, 86vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.previewModalBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
   background: var(--dsw-alias-bg-base);
 }
 

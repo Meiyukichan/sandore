@@ -1,14 +1,14 @@
 /**
  * WorkflowOverlay：shell.overlay 全局工作流 UI（root scope，不挂会话）。
  *
- * 覆盖 conversation/details 列（sidebar 保持可见可点）：header（标题/刷新/关闭）+
- * 双栏工作台（左 WorkflowList + 分隔条 + 右 EditorPane）。sidebar 实测宽经
- * ResizeObserver 同步到 `--wf-left`，overlay 内容永远从 sidebar 右缘开始。
+ * 覆盖 conversation/details 列（sidebar 保持可见可点）：双栏工作台
+ * （左 WorkflowList + 分隔条 + 右 EditorPane）。无顶部栏——关闭经侧边栏
+ * 入口按钮再次点击（toggle）完成。sidebar 实测宽经 ResizeObserver 同步到
+ * `--wf-left`，overlay 内容永远从 sidebar 右缘开始。
  * 打开/关闭/选中态全部在 `workflow-store`。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowOverlay
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { IconCloseOutline16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GlobalStandardProps, InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 
 import { WorkflowList } from './WorkflowList.tsx'
@@ -16,7 +16,7 @@ import { EditorPane } from './EditorPane.tsx'
 import { DragHandle } from './DragHandle.tsx'
 import type { WorkflowOverlayFace } from './workflow-face.ts'
 import {
-  closeWorkflowOverlay, getWorkflowState, resizeListWidth, subscribeWorkflowState,
+  getWorkflowState, resizeListWidth, subscribeWorkflowState,
 } from './workflow-store.ts'
 import css from './WorkflowOverlay.module.css'
 
@@ -71,29 +71,6 @@ export function WorkflowOverlay({
   return (
     <div className={css.layer} ref={layerRef} data-sandore-overlay-layer>
       <div className={css.overlay} data-sandore-overlay>
-        <header className={css.header}>
-          <span className={css.headerTitle}>🔀 {t('panel.title')}</span>
-          <span className={css.spacer} />
-          <button
-            type="button"
-            className={css.iconBtn}
-            aria-label={t('overlay.refresh')}
-            title={t('overlay.refresh')}
-            onClick={() => { setRefreshKey(key => key + 1) }}
-          >
-            <IconRefreshOutline16 />
-          </button>
-          <button
-            type="button"
-            className={css.iconBtn}
-            aria-label={t('overlay.close')}
-            title={t('overlay.close')}
-            data-sandore-overlay-close
-            onClick={closeWorkflowOverlay}
-          >
-            <IconCloseOutline16 />
-          </button>
-        </header>
         <div className={css.body}>
           <WorkflowList t={t} workspaces={workspaces} face={face} refreshKey={refreshKey} width={listWidth} />
           <DragHandle side="list" className={css.dragHandle} onDrag={resizeListWidth} />

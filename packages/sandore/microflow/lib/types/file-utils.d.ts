@@ -88,14 +88,13 @@ export declare function idMatches(actualId: string, targetId: string): boolean;
 /**
  * 按 `path` 就近匹配已执行 Step。
  *
- * 支持三种路径：`stg-xxx`（Stage 级，倒序最近优先）、`stg-xxx.step-xxx`
- * （Step 级，自当前条目前一条起往前最近匹配，`idMatches` 支持循环后缀 id）、
- * `stg-xxx.step-xxx.opt-xxx`（OutputTo 级，先定位 Step 再过滤特定 outputTo）。
+ * 简化格式：`path` 直接为 Step id（单段），自执行列表末尾往前最近匹配同名 Step
+ * （`idMatches` 支持循环后缀 id）；不再支持 `stageId.stepId` / `stageId.stepId.opt-xxx`。
  * @param executedSteps - 扁平已执行 Step（含循环迭代条目）。
- * @param currentIndex - 当前 Step 在 `executedSteps` 中的索引。
- * @param path - `stageId[.stepId[.outputToId]]` 引用路径。
+ * @param _currentIndex - 保留参数（兼容调用方）。
+ * @param path - 引用的 Step id。
  */
-export declare function resolvePathSegments(executedSteps: readonly ExecutedStepDefault[], currentIndex: number, path: string): ExecutedStepDefault[];
+export declare function resolvePathSegments(executedSteps: readonly ExecutedStepDefault[], _currentIndex: number, path: string): ExecutedStepDefault[];
 /**
  * 解析 `inputFromItems` 为就近命中的已执行 Step。
  *

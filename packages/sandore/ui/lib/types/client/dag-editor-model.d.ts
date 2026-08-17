@@ -7,6 +7,21 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/dag-editor-model
  */
 import type { CommandConfig, DagBranch, InputFromItem, OutputToItem, PassThroughVar, WorkflowDefinition, WorkflowStage, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/schema';
+/**
+ * 合并视图 Step（V2 分离式）：Stage 流控位（`{id, branches?}`）与顶层定义
+ * （`definition.steps[id]` 全字段）按 id 合并，供画布/编辑器读取完整字段。
+ */
+export type MergedStep = WorkflowStep & {
+    branches?: DagBranch[];
+};
+/**
+ * 构造某 Stage 的合并 Step 视图：`definition.steps[id]` 定义字段 + `stage.steps[id].branches`
+ * 流控字段。顶层缺定义（旧数据/未同步）时退回 `{id}` 骨架。
+ * @param definition - 工作流定义（含顶层 steps[]）。
+ * @param stage - 目标 Stage（含流控位 steps[]）。
+ * @returns 合并 Step 列表（顺序 = Stage 流控位顺序）。
+ */
+export declare function mergedStepsOf(definition: WorkflowDefinition, stage: WorkflowStage): MergedStep[];
 /** 五类型命令判别字段（对齐 `CommandConfig` discriminated union）。 */
 export type CommandType = CommandConfig['type'];
 /** 全部五类型命令判别字段（编辑表单下拉项）。 */
@@ -59,7 +74,7 @@ export declare function createBlankDefinition(id?: string): WorkflowDefinition;
 /** Stage 节点高度：随 Step 行数增长（封顶 6 行）。 */
 export declare function stageNodeHeight(stepCount: number): number;
 /** 单个 Step 的流出目标（branches[].next + branches[].loop.next，去空）。 */
-export declare function stepTargetsOf(step: WorkflowStep): string[];
+export declare function stepTargetsOf(step: MergedStep): string[];
 /** 流控边类型：串行 / 并行分支 / 条件分支 / 循环回边。 */
 export type FlowEdgeKind = 'serial' | 'parallel' | 'conditional' | 'loop';
 /** 流控边规格（供 DAG 画布渲染与 dagre 布局）。 */
@@ -97,10 +112,10 @@ export declare function stageFlowEdges(stages: readonly WorkflowStage[]): FlowEd
  * Step 层流控边（微流程：并行/条件 branches + **循环回边分支 loop**）。
  * 条件分支（有 condition）琥珀虚线带 label；循环分支（有 loop）`loop.next` 红色虚线
  * 回边；无 condition/loop 的并行分支默认灰实线。
- * @param steps - 某 Stage 内的 Step 列表。
+ * @param steps - 某 Stage 内的合并 Step 列表（含 branches 流控）。
  * @returns 去重后的流控边。
  */
-export declare function stepFlowEdges(steps: readonly WorkflowStep[]): FlowEdgeSpec[];
+export declare function stepFlowEdges(steps: readonly MergedStep[]): FlowEdgeSpec[];
 /** 参与 dagre 布局的节点尺寸。 */
 export interface DagreNodeSpec {
     readonly id: string;

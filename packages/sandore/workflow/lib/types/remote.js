@@ -35,7 +35,7 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { SandoreError } from "./errors.js";
 import { parseWorkflowYaml, serializeWorkflowYaml } from "./yaml-parser.js";
-import { CreateDefinitionInputSchema, CreateJobInputSchema, PauseAllInputSchema, PauseStepInputSchema, ReplyPermissionInputSchema, ReplyQuestionInputSchema, ResumeAllInputSchema, ResumeStepInputSchema, RetryStepInputSchema, StartInstanceInputSchema, UpdateDefinitionInputSchema, UpdateJobInputSchema, } from "./wire.js";
+import { CreateDefinitionInputSchema, CreateJobInputSchema, ListJobsInputSchema, PauseAllInputSchema, PauseStepInputSchema, ReplyPermissionInputSchema, ReplyQuestionInputSchema, ResumeAllInputSchema, ResumeStepInputSchema, RetryStepInputSchema, StartInstanceInputSchema, UpdateDefinitionInputSchema, UpdateJobInputSchema, } from "./wire.js";
 /** 实例的终态集合：`abortInstance` 对终态实例拒绝操作。 */
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'aborted']);
 /**
@@ -197,16 +197,17 @@ let SandoreRemote = (() => {
         getYaml(id) {
             return this.requireDefinition(id).yaml;
         }
-        /** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。 */
+        /** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。
+         *  元数据（name/version/description）从新 YAML 解析同步，保证列表展示与内容一致。 */
         async updateYaml(id, yaml) {
-            parseWorkflowYaml(yaml);
+            const parsed = parseWorkflowYaml(yaml);
             const existing = this.requireDefinition(id);
             const now = new Date().toISOString();
             const next = {
                 yaml,
-                name: existing.name,
-                version: existing.version,
-                ...(existing.description === undefined ? {} : { description: existing.description }),
+                name: parsed.name,
+                version: parsed.version,
+                ...(parsed.description === undefined ? {} : { description: parsed.description }),
                 createdAt: existing.createdAt,
                 updatedAt: now,
             };
@@ -214,11 +215,12 @@ let SandoreRemote = (() => {
             return { id, ...next };
         }
         // ── Job CRUD ─────────────────────────────────────────────────────────────
-        /** 列出 Job，可选按 workflowId 过滤。 */
-        listJobs(workflowId) {
+        /** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
+        listJobs(input) {
+            const parsed = ListJobsInputSchema.parse(input);
             const entries = [];
             for (const [id, record] of this.ctx.sandorePersistence.jobs.entries()) {
-                if (workflowId !== undefined && record.workflowId !== workflowId)
+                if (parsed.workflowId !== undefined && record.workflowId !== parsed.workflowId)
                     continue;
                 entries.push({ id, ...record });
             }

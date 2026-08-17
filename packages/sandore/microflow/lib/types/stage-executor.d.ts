@@ -12,11 +12,15 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { ExecutedStepDefault, StageContract, StepStatus } from '@deepseek-ai/dsh-sandore-workflow/src/types';
-import type { WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { DagBranch, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import type { ResolveNextNodesContext, ResolveNextNodesResult } from '@deepseek-ai/dsh-sandore-workflow/src/dag-navigator';
 import { FinalizeManager } from './finalize-manager.ts';
 import { LoopManager } from './loop-manager.ts';
 import type { StepRunnerConfig } from './step-runner.ts';
+/** 分离式合并后的完整 Step：完整定义（command/映射等）+ 流控 branches。 */
+export type MergedStep = WorkflowStep & {
+    readonly branches?: DagBranch[] | undefined;
+};
 /** Stage 执行输入（原始需求 + 前置契约产物 + 透传变量）。 */
 export interface StageExecutionInput {
     readonly originalInput: string;
@@ -89,6 +93,8 @@ export declare class StageExecutor {
     private runState;
     /** step.id → 真实子代理 SessionId（经 onChildStarted 记录，取消类错误判定暂停用）。 */
     private readonly realChildIds;
+    /** 本 Stage 的完整 Step（按 id 合并 stages[].steps 流控 + 顶层 steps 完整定义，含 branches）。 */
+    private readonly steps;
     constructor(options: StageExecutorOptions);
     /** 包装 onChildStarted：记录真实 childId（供取消类错误查暂停登记表），再透传原回调。 */
     private trackChildStarted;

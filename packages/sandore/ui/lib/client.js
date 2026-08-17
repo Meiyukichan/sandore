@@ -4562,7 +4562,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					namespace: "sandore",
 					method: "listJobs",
 					invocation: { kind: "direct" },
-					parameters: [],
+					parameters: [{
+						name: "input",
+						wire: "input",
+						source: "json",
+						codec: json(object({ workflowId: string().optional() }), "@deepseek-ai/dsh-sandore-workflow/types#ListJobsInput")
+					}],
 					result: json(array$1(jobEntry), "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
 				},
 				{
@@ -4936,7 +4941,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.saving": "保存中…",
 			"editor.save.success": "保存成功",
 			"editor.save.failed": "保存失败：{message}",
-			"editor.preview": "YAML 预览",
+			"editor.preview": "预览",
+			"editor.export": "导出",
 			"editor.steps.count": "{count} 个步骤",
 			"editor.steps.empty": "暂无步骤",
 			"editor.step.add": "添加步骤",
@@ -4957,6 +4963,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.field.id": "ID",
 			"editor.field.path": "路径",
 			"editor.field.regex": "正则",
+			"editor.field.stepName": "步骤名称",
+			"editor.field.relativePath": "相对路径",
 			"editor.field.name": "名称",
 			"editor.field.value": "值",
 			"editor.field.description": "描述",
@@ -4973,8 +4981,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.field.needConfirm": "需确认",
 			"editor.field.secondaryGate": "二级门禁（secondary）",
 			"editor.field.secondaryPrompt": "门禁审查提示词",
-			"editor.section.inputFrom": "输入映射",
-			"editor.section.outputTo": "输出映射",
+			"editor.section.inputFrom": "输入参数",
+			"editor.section.outputTo": "输出参数",
 			"editor.section.passThroughVars": "透传变量",
 			"editor.section.gates": "门控",
 			"editor.section.branches": "分支",
@@ -5053,8 +5061,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"overlay.refresh": "刷新",
 			"list.mode.instance": "实例",
 			"list.mode.definition": "编排",
+			"list.mode.switch": "切换列表模式",
 			"editor.mode.dag": "编排",
 			"editor.mode.run": "执行",
+			"editor.chatCreate": "对话生成",
+			"editor.chatCreate.hint": "对话生成即将上线",
+			"editor.test": "测试",
 			"editor.testRun": "测试运行",
 			"editor.autoLayout": "自动布局",
 			"editor.zoomIn": "放大",
@@ -5140,7 +5152,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.saving": "Saving…",
 			"editor.save.success": "Saved",
 			"editor.save.failed": "Save failed: {message}",
-			"editor.preview": "YAML preview",
+			"editor.preview": "Preview",
+			"editor.export": "Export",
 			"editor.steps.count": "{count} steps",
 			"editor.steps.empty": "No steps",
 			"editor.step.add": "Add step",
@@ -5161,6 +5174,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.field.id": "ID",
 			"editor.field.path": "Path",
 			"editor.field.regex": "Regex",
+			"editor.field.stepName": "Step name",
+			"editor.field.relativePath": "Relative path",
 			"editor.field.name": "Name",
 			"editor.field.value": "Value",
 			"editor.field.description": "Description",
@@ -5257,8 +5272,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"overlay.refresh": "Refresh",
 			"list.mode.instance": "Instances",
 			"list.mode.definition": "Orchestrate",
+			"list.mode.switch": "Switch list mode",
 			"editor.mode.dag": "Orchestrate",
 			"editor.mode.run": "Execute",
+			"editor.chatCreate": "Chat create",
+			"editor.chatCreate.hint": "Chat-to-create coming soon",
+			"editor.test": "Test",
 			"editor.testRun": "Test run",
 			"editor.autoLayout": "Auto layout",
 			"editor.zoomIn": "Zoom in",
@@ -5318,10 +5337,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		let state = {
 			open: false,
 			mode: "dag",
-			definitionView: "detail",
 			listMode: "instance",
 			selectedInstanceId: void 0,
 			selectedDefinition: void 0,
+			creatingNew: false,
 			preview: null,
 			listWidth: 300,
 			treeWidth: 240,
@@ -5347,13 +5366,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			};
 			for (const listener of listeners) listener();
 		}
-		/** 打开 overlay。 */
-		function openWorkflowOverlay() {
-			setWorkflowState({ open: true });
-		}
-		/** 关闭 overlay（保留选中态，便于再次打开）。 */
-		function closeWorkflowOverlay() {
-			setWorkflowState({ open: false });
+		/** 切换 overlay 开关（侧边栏入口按钮：打开状态再点一次关闭）。 */
+		function toggleWorkflowOverlay() {
+			setWorkflowState({ open: !state.open });
 		}
 		/** 选中实例：切执行态 + 清定义选中 + 关预览。 */
 		function selectInstance(instanceId) {
@@ -5361,18 +5376,19 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				mode: "run",
 				selectedInstanceId: instanceId,
 				selectedDefinition: void 0,
+				creatingNew: false,
 				preview: null
 			});
 		}
-		/** 选中定义：切编排态（默认显示详情）+ 清实例选中 + 关预览。 */
+		/** 选中定义：直接进入编排态（DAG 画布 + 右侧默认工作流详情）+ 清实例选中 + 关预览。 */
 		function selectDefinition(id, initialYaml) {
 			setWorkflowState({
 				mode: "dag",
-				definitionView: "detail",
 				selectedDefinition: {
 					id,
 					initialYaml
 				},
+				creatingNew: false,
 				selectedInstanceId: void 0,
 				preview: null
 			});
@@ -5381,8 +5397,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		function newDefinition() {
 			setWorkflowState({
 				mode: "dag",
-				definitionView: "edit",
 				selectedDefinition: void 0,
+				creatingNew: true,
 				selectedInstanceId: void 0,
 				preview: null
 			});
@@ -5416,9 +5432,65 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		var WorkflowButton_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1wzuf_" + prop : void 0 });
 		//#endregion
 		//#region lib/types/client/WorkflowButton.js
-		/** sidebar.footer.action 工作流入口：点击打开 shell.overlay 全局工作流 UI（设置上方）。 */
-		/** 渲染工作流入口按钮，点击打开全局工作流 overlay；overlay 打开时按钮高亮。 */
-		function WorkflowButton({ wide, t, onOpenWorkflow }) {
+		/** sidebar.footer.action 工作流入口：点击切换 shell.overlay 全局工作流 UI（设置上方）。 */
+		/**
+		* 工作流图标：Lucide "workflow" 官方形状——顶部左右两个节点 + 底部中间节点，
+		* 顶部水平连线 + 中间垂直连线（标准工作流符号）。手绘内联 SVG 16×16，
+		* stroke = currentColor。
+		*/
+		function WorkflowIcon() {
+			return (0, react_jsx_runtime.jsxs)("svg", {
+				width: "16",
+				height: "16",
+				viewBox: "0 0 16 16",
+				fill: "none",
+				xmlns: "http://www.w3.org/2000/svg",
+				"aria-hidden": true,
+				children: [
+					(0, react_jsx_runtime.jsx)("rect", {
+						x: "1.6",
+						y: "1.6",
+						width: "4",
+						height: "4",
+						rx: "1",
+						stroke: "currentColor",
+						strokeWidth: "1.3"
+					}),
+					(0, react_jsx_runtime.jsx)("rect", {
+						x: "10.4",
+						y: "1.6",
+						width: "4",
+						height: "4",
+						rx: "1",
+						stroke: "currentColor",
+						strokeWidth: "1.3"
+					}),
+					(0, react_jsx_runtime.jsx)("rect", {
+						x: "6",
+						y: "10.4",
+						width: "4",
+						height: "4",
+						rx: "1",
+						stroke: "currentColor",
+						strokeWidth: "1.3"
+					}),
+					(0, react_jsx_runtime.jsx)("path", {
+						d: "M5.6 3.6h4.8",
+						stroke: "currentColor",
+						strokeWidth: "1.3",
+						strokeLinecap: "round"
+					}),
+					(0, react_jsx_runtime.jsx)("path", {
+						d: "M8 5.6v4.8",
+						stroke: "currentColor",
+						strokeWidth: "1.3",
+						strokeLinecap: "round"
+					})
+				]
+			});
+		}
+		/** 渲染工作流入口按钮，点击切换全局工作流 overlay 开关；overlay 打开时按钮高亮。 */
+		function WorkflowButton({ wide, t, onToggleWorkflow }) {
 			const open = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().open);
 			return (0, react_jsx_runtime.jsx)("div", {
 				className: wide ? WorkflowButton_module_css_default.layer : `${WorkflowButton_module_css_default.layer} ${WorkflowButton_module_css_default.rail}`,
@@ -5429,9 +5501,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					"aria-label": t("button.aria"),
 					"aria-expanded": open,
 					onClick: () => {
-						onOpenWorkflow();
+						onToggleWorkflow();
 					},
-					children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBranchOutline16, {}), wide && (0, react_jsx_runtime.jsx)("span", {
+					children: [(0, react_jsx_runtime.jsx)(WorkflowIcon, {}), wide && (0, react_jsx_runtime.jsx)("span", {
 						className: WorkflowButton_module_css_default.badgeLabel,
 						children: t("button.trigger")
 					})]
@@ -6012,7 +6084,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowOverlay.module.css.mjs
-		const css$10 = "/* WorkflowOverlay：shell.s1mmu1_overlay 全局工作流 UI（覆盖 conversation/details 列，sidebar 可见）。 */\n\n.s1mmu1_layer {\n  position: absolute;\n  inset: 0;\n  z-index: 30;\n  pointer-events: none;\n}\n\n.s1mmu1_overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  left: var(--wf-left, 248px);\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.08);\n  pointer-events: auto;\n  animation: overlay-in 0.18s ease;\n}\n\n@keyframes overlay-in {\n  from {\n    transform: translateX(16px);\n    opacity: 0;\n  }\n  to {\n    transform: translateX(0);\n    opacity: 1;\n  }\n}\n\n.s1mmu1_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_headerTitle {\n  font-size: 14px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_spacer {\n  flex: 1;\n}\n\n.s1mmu1_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 8px;\n  background: transparent;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 双栏工作台 ─────────────────────────────────────────────────────────── */\n\n.s1mmu1_body {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1mmu1_drag-handle 观感）。 */\n.s1mmu1_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1mmu1_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1mmu1_dragHandle:hover::after,\n.s1mmu1_dragHandle.s1mmu1_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n/* ── 左栏列表 ────────────────────────────────────────────────────────────── */\n\n.s1mmu1_list {\n  flex: none;\n  min-width: 200px;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1mmu1_listHeader {\n  flex: none;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1mmu1_listTitleRow {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.s1mmu1_listTitle {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_toggle {\n  display: inline-flex;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  padding: 2px;\n  gap: 1px;\n}\n\n.s1mmu1_toggle button {\n  padding: 3px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_toggle button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1mmu1_toggle button.s1mmu1_toggleActive {\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  box-shadow: var(--dsw-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));\n  font-weight: 500;\n}\n\n.s1mmu1_listToolbar {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1mmu1_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1mmu1_search input {\n  width: 100%;\n}\n\n.s1mmu1_listBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 6px 10px 12px;\n  box-sizing: border-box;\n}\n\n/* ── 右栏编辑区 ──────────────────────────────────────────────────────────── */\n\n.s1mmu1_editorCol {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1mmu1_modeBar {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_editorTitle {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_modeSwitch {\n  display: inline-flex;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  padding: 2px;\n  gap: 1px;\n}\n\n.s1mmu1_modeSwitch button {\n  padding: 4px 12px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_modeSwitch button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1mmu1_modeSwitch button.s1mmu1_modeActive {\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  box-shadow: var(--dsw-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));\n  font-weight: 500;\n}\n\n.s1mmu1_runError {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n.s1mmu1_editorBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n.s1mmu1_editorPlaceholder {\n  flex: 1;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 24px;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n";
+		const css$10 = "/* WorkflowOverlay：shell.s1mmu1_overlay 全局工作流 UI（覆盖 conversation/details 列，sidebar 可见）。 */\n\n.s1mmu1_layer {\n  position: absolute;\n  inset: 0;\n  z-index: 30;\n  pointer-events: none;\n}\n\n.s1mmu1_overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  left: var(--wf-left, 248px);\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.08);\n  pointer-events: auto;\n  animation: overlay-in 0.18s ease;\n}\n\n@keyframes overlay-in {\n  from {\n    transform: translateX(16px);\n    opacity: 0;\n  }\n  to {\n    transform: translateX(0);\n    opacity: 1;\n  }\n}\n\n.s1mmu1_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_headerTitle {\n  font-size: 14px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_spacer {\n  flex: 1;\n}\n\n.s1mmu1_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 8px;\n  background: transparent;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 双栏工作台 ─────────────────────────────────────────────────────────── */\n\n.s1mmu1_body {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1mmu1_drag-handle 观感）。 */\n.s1mmu1_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1mmu1_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1mmu1_dragHandle:hover::after,\n.s1mmu1_dragHandle.s1mmu1_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n/* ── 左栏列表 ────────────────────────────────────────────────────────────── */\n\n.s1mmu1_list {\n  flex: none;\n  min-width: 200px;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1mmu1_listHeader {\n  flex: none;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1mmu1_listTitleRow {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.s1mmu1_listTitle {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n/* 实例/编排 开关：紧凑黑白配色（白轨道 + 黑滑块）。滑块为选中侧，激活白字/未激活灰字。 */\n.s1mmu1_toggle {\n  position: relative;\n  display: inline-flex;\n  align-items: center;\n  border-radius: 999px;\n  background: #fff;\n  border: 1px solid rgba(0, 0, 0, 0.25);\n  padding: 2px;\n  width: 80px;\n  height: 22px;\n  box-sizing: border-box;\n}\n\n/* 滑块：黑色圆钮（选中侧），左右滑动。 */\n.s1mmu1_toggleThumb {\n  position: absolute;\n  top: 2px;\n  left: 2px;\n  width: calc(50% - 3px);\n  height: calc(100% - 4px);\n  border-radius: 999px;\n  background: #000;\n  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);\n  transition: left 0.18s ease;\n  pointer-events: none;\n}\n\n.s1mmu1_toggleThumb.s1mmu1_toggleThumbRight {\n  left: calc(50% + 1px);\n}\n\n.s1mmu1_toggle button {\n  position: relative;\n  z-index: 1;\n  flex: 1;\n  padding: 0 4px;\n  border: none;\n  background: transparent;\n  font-size: 11px;\n  line-height: 18px;\n  font-family: inherit;\n  text-align: center;\n  color: rgba(0, 0, 0, 0.5);\n  cursor: pointer;\n  transition: color 0.18s ease;\n}\n\n.s1mmu1_toggle button:hover {\n  color: rgba(0, 0, 0, 0.8);\n}\n\n.s1mmu1_toggle button.s1mmu1_toggleActive {\n  /* 黑滑块上用柔和浅色文字（纯白刺眼、主题深色不可见；浅灰居中）。 */\n  color: rgba(255, 255, 255, 0.92);\n  font-weight: 500;\n}\n\n\n\n\n\n\n\n.s1mmu1_listToolbar {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1mmu1_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1mmu1_search input {\n  width: 100%;\n}\n\n.s1mmu1_listBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 6px 10px 12px;\n  box-sizing: border-box;\n}\n\n/* ── 右栏编辑区 ──────────────────────────────────────────────────────────── */\n\n.s1mmu1_editorCol {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1mmu1_modeBar {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_editorTitle {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_modeSwitch {\n  display: inline-flex;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  padding: 2px;\n  gap: 1px;\n}\n\n.s1mmu1_modeSwitch button {\n  padding: 4px 12px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_modeSwitch button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1mmu1_modeSwitch button.s1mmu1_modeActive {\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  box-shadow: var(--dsw-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));\n  font-weight: 500;\n}\n\n.s1mmu1_runError {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n.s1mmu1_editorBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n.s1mmu1_editorPlaceholder {\n  flex: 1;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 24px;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n\n/* 内联错误提示（编辑器加载/保存失败等）。 */\n.s1mmu1_error {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n\n";
 		const tagId$10 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowOverlay.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$10) + "]") === null) {
 			const tag = document.createElement("style");
@@ -6051,26 +6123,30 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						}), (0, react_jsx_runtime.jsxs)("div", {
 							className: WorkflowOverlay_module_css_default.toggle,
 							role: "tablist",
-							"aria-label": t("panel.title"),
-							children: [(0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								role: "tab",
-								"aria-selected": listMode === "instance",
-								className: listMode === "instance" ? WorkflowOverlay_module_css_default.toggleActive : "",
-								onClick: () => {
-									setWorkflowState({ listMode: "instance" });
-								},
-								children: t("list.mode.instance")
-							}), (0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								role: "tab",
-								"aria-selected": listMode === "definition",
-								className: listMode === "definition" ? WorkflowOverlay_module_css_default.toggleActive : "",
-								onClick: () => {
-									setWorkflowState({ listMode: "definition" });
-								},
-								children: t("list.mode.definition")
-							})]
+							"aria-label": t("list.mode.switch"),
+							children: [
+								(0, react_jsx_runtime.jsx)("span", { className: `${WorkflowOverlay_module_css_default.toggleThumb} ${listMode === "definition" ? WorkflowOverlay_module_css_default.toggleThumbRight : ""}` }),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									role: "tab",
+									"aria-selected": listMode === "instance",
+									className: listMode === "instance" ? WorkflowOverlay_module_css_default.toggleActive : "",
+									onClick: () => {
+										setWorkflowState({ listMode: "instance" });
+									},
+									children: t("list.mode.instance")
+								}),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									role: "tab",
+									"aria-selected": listMode === "definition",
+									className: listMode === "definition" ? WorkflowOverlay_module_css_default.toggleActive : "",
+									onClick: () => {
+										setWorkflowState({ listMode: "definition" });
+									},
+									children: t("list.mode.definition")
+								})
+							]
 						})]
 					}), (0, react_jsx_runtime.jsxs)("div", {
 						className: WorkflowOverlay_module_css_default.listToolbar,
@@ -23865,7 +23941,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				value: object({ promptText: string() })
 			})
 		]);
-		/** Step 输入绑定项：`path` 为 `stageId.stepId[.outputToId]` 引用，`regex` 对 Step/Stage 输出文本做正则匹配。 */
+		/** Step 输入绑定项：`path` 为引用的 Step id（简化格式，单段），`regex` 对 Step 输出文本做正则匹配。 */
 		const InputFromItemSchema = object({
 			id: string(),
 			path: string().optional(),
@@ -23932,7 +24008,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			defaultTimeout: number().default(DEFAULT_SETTINGS.defaultTimeout),
 			maxConcurrentAgents: number().default(DEFAULT_SETTINGS.maxConcurrentAgents)
 		});
-		/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义；`stages[].steps[]` 仅含 id + 流控字段）。 */
+		/** 单个 Step 定义（V2 顶层 `steps[]` 完整定义：命令 + 映射 + 透传变量 + 门控）。 */
 		const WorkflowStepSchema = object({
 			id: string(),
 			name: string().optional(),
@@ -23942,17 +24018,24 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			passThroughVars: array$1(PassThroughVarSchema).optional(),
 			timeout: number().optional(),
 			defaultExpectation: string().optional(),
-			branches: array$1(DagBranchSchema).optional(),
 			rules: array$1(string()).optional(),
 			gates: GatesSchema.optional()
 		});
-		/** 单个 Stage 定义：内部 Step 流控 + Stage 级 DAG 字段（出边统一进 branches）。 */
+		/**
+		* Stage 内 Step 位置（V2 分离式：仅 id + 流控 branches；完整定义在顶层 `steps[]`
+		* 按 id 交叉引用）。
+		*/
+		const StageStepSchema = object({
+			id: string(),
+			branches: array$1(DagBranchSchema).optional()
+		});
+		/** 单个 Stage 定义：内部 Step 流控（轻量）+ Stage 级 DAG 字段（出边统一进 branches）。 */
 		const WorkflowStageSchema = object({
 			id: string(),
 			name: string(),
 			rules: array$1(string()).optional(),
 			gates: GatesSchema.optional(),
-			steps: array$1(WorkflowStepSchema),
+			steps: array$1(StageStepSchema),
 			defaultExpectation: string().optional(),
 			branches: array$1(DagBranchSchema).optional()
 		});
@@ -24261,26 +24344,33 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			return { ...rest };
 		}
 		/**
-		* 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`：同一 Scenario 内相邻 Task 依次接
-		* `branches: [{ next }]`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个
-		* Step（指向下一 Scenario 的首个 Task）。显式 `branches` 不被覆盖。
+		* 将单个 Stage 的 `scenarios[]` 展平为分离式输出：
+		* - Stage 的 `steps[]` 只保留流控位 `{ id, branches? }`；
+		* - 完整 Task 定义（name/command/映射等，**不含 branches**）收集到 `definitions`，
+		*   由 `convertLegacyToV2` 汇总进顶层 `steps[]`（V2 分离式按 id 交叉引用）。
+		* 同一 Scenario 内相邻 Task 依次接 `branches: [{ next }]`（tsk-a→tsk-b→tsk-c），
+		* Scenario 的 `next` 落到其最后一个 Step（指向下一 Scenario 的首个 Task）。
+		* 显式 `branches` 不被覆盖。
 		*/
 		function convertStage(stage) {
 			const scenarios = stage.scenarios;
-			if (!Array.isArray(scenarios)) return stage;
-			const steps = [];
+			if (!Array.isArray(scenarios)) return {
+				stage,
+				definitions: []
+			};
+			const converted = [];
 			const scenarioSteps = /* @__PURE__ */ new Map();
 			for (const scenario of scenarios) {
 				if (!isRecord$1(scenario)) continue;
-				const converted = (Array.isArray(scenario.tasks) ? scenario.tasks : []).map(convertTaskToStep);
-				for (let index = 0; index + 1 < converted.length; index++) {
-					const current = converted[index];
-					const following = converted[index + 1];
+				const list = (Array.isArray(scenario.tasks) ? scenario.tasks : []).map(convertTaskToStep);
+				for (let index = 0; index + 1 < list.length; index++) {
+					const current = list[index];
+					const following = list[index + 1];
 					if (current === void 0 || following === void 0) continue;
 					if (current.branches === void 0) current.branches = [{ next: following.id }];
 				}
-				scenarioSteps.set(String(scenario.id), converted);
-				steps.push(...converted);
+				scenarioSteps.set(String(scenario.id), list);
+				converted.push(...list);
 			}
 			for (const scenario of scenarios) {
 				if (!isRecord$1(scenario)) continue;
@@ -24293,15 +24383,28 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				const firstTarget = target[0];
 				if (isRecord$1(last) && isRecord$1(firstTarget) && last.branches === void 0) last.branches = [{ next: firstTarget.id }];
 			}
+			const steps = [];
+			const definitions = [];
+			for (const task of converted) {
+				const { branches, ...definition } = task;
+				steps.push(branches === void 0 ? { id: task.id } : {
+					id: task.id,
+					branches
+				});
+				definitions.push(definition);
+			}
 			return {
-				...Object.fromEntries(Object.entries(stage).filter(([key]) => key !== "scenarios")),
-				steps
+				stage: {
+					...Object.fromEntries(Object.entries(stage).filter(([key]) => key !== "scenarios")),
+					steps
+				},
+				definitions
 			};
 		}
 		/**
 		* 检测 V1 三级结构（`stages[].scenarios[]`）并自动转换为 V2 两级结构
-		* （`stages[].steps[]`）。同一 Stage 同时含 `steps[]` 与 `scenarios[]` 视为混合格式，
-		* 抛 `WorkflowYamlError('DEFINITION_INVALID')`。
+		* （`stages[].steps[]` 流控 + 顶层 `steps[]` 完整定义）。同一 Stage 同时含
+		* `steps[]` 与 `scenarios[]` 视为混合格式，抛 `WorkflowYamlError('DEFINITION_INVALID')`。
 		*/
 		function convertLegacyToV2(raw) {
 			if (!isRecord$1(raw)) return raw;
@@ -24316,9 +24419,18 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				if (hasScen) hasScenarios = true;
 			}
 			if (!hasScenarios) return raw;
+			const definitions = [];
+			const convertedStages = stages.map((stage) => {
+				if (!isRecord$1(stage)) return stage;
+				const { stage: converted, definitions: stageDefs } = convertStage(stage);
+				definitions.push(...stageDefs);
+				return converted;
+			});
+			const existingSteps = Array.isArray(raw.steps) ? raw.steps : [];
 			return {
 				...raw,
-				stages: stages.map((stage) => isRecord$1(stage) ? convertStage(stage) : stage)
+				stages: convertedStages,
+				steps: [...existingSteps, ...definitions]
 			};
 		}
 		/**
@@ -24365,13 +24477,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				for (const step of stage.steps) checkNode(step, "step");
 			}
 			for (const step of definition.steps ?? []) checkNode(step, "step");
-			const allSteps = [...definition.steps ?? [], ...definition.stages.flatMap((stage) => stage.steps)];
-			for (const step of allSteps) for (const input of step.inputFrom ?? []) {
+			for (const step of definition.steps ?? []) for (const input of step.inputFrom ?? []) {
 				const path = input.path;
 				if (path === void 0 || path.startsWith("${")) continue;
-				const [stageId, stepId] = path.split(".");
-				if (stageId !== void 0 && !stageIds.has(stageId)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing stage '${stageId}'`, "DEFINITION_INVALID");
-				if (stepId !== void 0 && !stepIds.has(stepId)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${stepId}'`, "DEFINITION_INVALID");
+				if (!stepIds.has(path)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${path}'`, "DEFINITION_INVALID");
 			}
 		}
 		/**
@@ -27578,6 +27687,20 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				version: require_version()
 			};
 		})))(), 1);
+		/**
+		* 构造某 Stage 的合并 Step 视图：`definition.steps[id]` 定义字段 + `stage.steps[id].branches`
+		* 流控字段。顶层缺定义（旧数据/未同步）时退回 `{id}` 骨架。
+		* @param definition - 工作流定义（含顶层 steps[]）。
+		* @param stage - 目标 Stage（含流控位 steps[]）。
+		* @returns 合并 Step 列表（顺序 = Stage 流控位顺序）。
+		*/
+		function mergedStepsOf(definition, stage) {
+			const byId = new Map((definition.steps ?? []).map((step) => [step.id, step]));
+			return stage.steps.map((slot) => ({
+				...byId.get(slot.id) ?? { id: slot.id },
+				...slot.branches === void 0 ? {} : { branches: slot.branches }
+			}));
+		}
 		/** 全部五类型命令判别字段（编辑表单下拉项）。 */
 		const COMMAND_TYPES = [
 			"shell",
@@ -27852,7 +27975,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		* Step 层流控边（微流程：并行/条件 branches + **循环回边分支 loop**）。
 		* 条件分支（有 condition）琥珀虚线带 label；循环分支（有 loop）`loop.next` 红色虚线
 		* 回边；无 condition/loop 的并行分支默认灰实线。
-		* @param steps - 某 Stage 内的 Step 列表。
+		* @param steps - 某 Stage 内的合并 Step 列表（含 branches 流控）。
 		* @returns 去重后的流控边。
 		*/
 		function stepFlowEdges(steps) {
@@ -27927,7 +28050,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\DagEditor.module.css.mjs
-		const css$7 = "/* DagEditor 编排画布：节点卡 + SVG 连线 + 工具条 + 编辑侧栏 + YAML 预览折叠。 */\n\n.s1ymwp_editor {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1ymwp_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_title {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_success {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));\n}\n\n.s1ymwp_error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n/* ── 画布行：画布 + 编辑侧栏 ─────────────────────────────────────────────── */\n\n.s1ymwp_canvasRow {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n.s1ymwp_canvas {\n  flex: 1;\n  min-width: 0;\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  background-color: var(--dsw-alias-bg-sunken);\n  background-image: radial-gradient(circle, var(--dsw-alias-border-l2) 1px, transparent 1px);\n  background-size: 20px 20px;\n}\n\n.s1ymwp_canvasScroll {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  overflow: hidden;\n}\n\n.s1ymwp_canvasContent {\n  position: relative;\n}\n\n.s1ymwp_zoomWrap {\n  position: absolute;\n  top: 0;\n  left: 0;\n}\n\n.s1ymwp_edges {\n  position: absolute;\n  top: 0;\n  left: 0;\n  pointer-events: none;\n}\n\n/* 顶部覆盖控件（tabs 左上、工具条右上） */\n.s1ymwp_canvasTabs {\n  position: absolute;\n  top: 12px;\n  left: 12px;\n  z-index: 10;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  padding: 3px;\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-elevated);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_canvasTabs button {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1ymwp_canvasTabs button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1ymwp_canvasTabs button.s1ymwp_tabActive {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n/* 层级条：返回按钮 + 当前层级名。 */\n.s1ymwp_backBtn {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.s1ymwp_backBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ymwp_crumb {\n  padding: 4px 6px;\n  font-size: 11px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_canvasTabs .s1ymwp_addStageBtn {\n  margin-left: 4px;\n}\n\n.s1ymwp_canvasToolbar {\n  position: absolute;\n  top: 12px;\n  right: 12px;\n  z-index: 10;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  padding: 4px;\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-elevated);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 14px;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1ymwp_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 节点卡（官方默认节点风格：白底由 wrapper 提供，内部只做居中内容布局） ── */\n\n.s1ymwp_node {\n  width: 100%;\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  gap: 2px;\n}\n\n.s1ymwp_nodeTitle {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--xy-node-color-default);\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeSub {\n  font-size: 10px;\n  font-weight: 400;\n  color: #a1a1aa;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeSelected {\n  /* 外框高亮由 React Flow wrapper 的 .s1ymwp_react-flow__node.s1ymwp_selected 提供。 */\n}\n\n.s1ymwp_nodeHeader {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  padding: 9px 11px;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n  overflow: hidden;\n}\n\n.s1ymwp_nodeIcon {\n  flex: none;\n  width: 22px;\n  height: 22px;\n  border-radius: 6px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 12px;\n}\n\n.s1ymwp_nodeType {\n  flex: none;\n  margin-left: auto;\n  font-size: 9px;\n  font-weight: 600;\n  padding: 2px 6px;\n  border-radius: 4px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  text-transform: uppercase;\n  letter-spacing: 0.03em;\n}\n\n.s1ymwp_nodeTitle {\n  min-width: 0;\n  flex: 1;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeBody {\n  padding: 7px 11px 8px;\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1ymwp_nodeEmpty {\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1ymwp_nodeStepRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 11px;\n  color: var(--dsw-alias-label-secondary);\n  min-width: 0;\n}\n\n.s1ymwp_nodeDot {\n  flex: none;\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: var(--dsw-alias-label-disabled);\n}\n\n.s1ymwp_nodeStepName {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  flex: 1;\n}\n\n.s1ymwp_nodeStepType {\n  flex: none;\n  font-size: 9px;\n  font-weight: 600;\n  padding: 0 4px;\n  border-radius: 3px;\n  background: var(--dsw-alias-bg-active);\n  color: var(--dsw-alias-label-caption);\n}\n\n/* Stage 卡页脚：下钻提示 + Step 数徽章。 */\n.s1ymwp_nodeFooter {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 11px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_nodeDrillHint {\n  font-size: 10px;\n  font-weight: 500;\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ymwp_nodeCount {\n  font-size: 10px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-caption);\n  padding: 0 6px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-active);\n}\n\n/* Step 节点（Step DAG） */\n.s1ymwp_stepNode {\n  width: 100%;\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  gap: 2px;\n}\n\n.s1ymwp_stepIcon {\n  flex: none;\n  width: 18px;\n  height: 18px;\n  border-radius: 5px;\n  background: var(--dsw-alias-bg-active);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 11px;\n}\n\n.s1ymwp_stepNode .s1ymwp_nodeDot {\n  background: var(--dsw-alias-label-caption);\n}\n\n/* React Flow 连接端口（Handle）：放大到易命中，白底灰边由 theme css 提供；hover 高亮。 */\n.s1ymwp_handle {\n  width: 11px;\n  height: 11px;\n  transition: border-color 0.12s, background 0.12s;\n}\n\n.s1ymwp_handle:hover {\n  border-color: var(--xy-theme-selected);\n  background: var(--xy-theme-selected);\n}\n\n/* ── 右侧编辑侧栏 ────────────────────────────────────────────────────────── */\n\n.s1ymwp_panel {\n  flex: none;\n  width: 420px;\n  min-width: 320px;\n  display: flex;\n  flex-direction: column;\n  border-left: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1ymwp_panelHeader {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-height: 44px;\n  padding: 8px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_panelTitle {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_panelBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 10px 12px 16px;\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_panelEmpty {\n  padding: 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n/* ── 流控编辑器（FlowEditor） ─────────────────────────────────────────────── */\n\n.s1ymwp_flow {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_branchRow {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n/* 分支行头部：类型下拉 + 目标只读框 + 删除按钮一行。 */\n.s1ymwp_branchHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 分支类型下拉（并行分支 / 条件分支）。 */\n.s1ymwp_branchKindSelect {\n  flex: none;\n  width: 108px;\n  padding: 5px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  font-size: 12px;\n  font-family: inherit;\n  outline: none;\n  box-sizing: border-box;\n}\n\n.s1ymwp_branchKindSelect:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n/* 目标节点只读框（视觉与下拉一致：同边框/圆角/高度，弹性占满剩余宽度）。 */\n.s1ymwp_branchTarget {\n  flex: 1;\n  min-width: 0;\n  height: 30px;\n  padding: 5px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-primary);\n  line-height: 18px;\n  box-sizing: border-box;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* 分支类型说明小字。 */\n.s1ymwp_branchHint {\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n/* 判断条件命令卡片：shell/提示词 Pill 与输入框放进带边框的卡片。 */\n.s1ymwp_conditionCard {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_select {\n  width: 100%;\n  padding: 6px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  font-size: 12px;\n  font-family: inherit;\n  outline: none;\n  box-sizing: border-box;\n}\n\n.s1ymwp_select:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n/* ── YAML 预览折叠 ───────────────────────────────────────────────────────── */\n\n.s1ymwp_previewHeader {\n  flex: none;\n  min-height: 36px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1ymwp_previewBody {\n  flex: none;\n  max-height: 220px;\n  overflow-y: auto;\n  padding: 8px 12px 12px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n/* ── Step 字段编辑（沿用既有表单样式） ───────────────────────────────────── */\n\n.s1ymwp_stageHeader {\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_step {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_stepHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 标题输入框：占满 stepHead 剩余宽度（删除按钮固定，输入框 flex 撑开）。 */\n.s1ymwp_titleInput {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1ymwp_titleInput input {\n  width: 100%;\n  box-sizing: border-box;\n}\n\n.s1ymwp_command {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_commandTypes {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px;\n}\n\n.s1ymwp_commandValue {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_sectionLabel {\n  margin-top: 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.s1ymwp_itemRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 透传变量条目：纵向堆叠（名称+删除一行，值/描述各占一行），输入框占满详情区。 */\n.s1ymwp_varRow {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_varRowHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 名称输入框 wrapper 占满剩余宽度（删除按钮固定）：wrapper 去左右 padding 保证三元素等距，\n   内部 input 补回与 DSH 默认一致的 8px 左右 padding，使文字缩进与其他输入框相同。 */\n.s1ymwp_varNameInput {\n  flex: 1;\n  min-width: 0;\n  padding: 0;\n}\n\n.s1ymwp_varNameInput input {\n  width: 100%;\n  box-sizing: border-box;\n  padding: 1px 8px;\n}\n\n.s1ymwp_gates {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_loop {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_checkbox {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n";
+		const css$7 = "/* DagEditor 编排画布：节点卡 + SVG 连线 + 工具条 + 编辑侧栏 + YAML 预览折叠。 */\n\n.s1ymwp_editor {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1ymwp_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_title {\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n/* 头部右侧操作组（预览 YAML / 导出 / 保存）。 */\n.s1ymwp_headerActions {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  flex: none;\n}\n\n.s1ymwp_success {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));\n}\n\n.s1ymwp_error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n/* ── 画布行：画布 + 编辑侧栏 ─────────────────────────────────────────────── */\n\n.s1ymwp_canvasRow {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n.s1ymwp_canvas {\n  flex: 1;\n  min-width: 0;\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  background-color: var(--dsw-alias-bg-sunken);\n  background-image: radial-gradient(circle, var(--dsw-alias-border-l2) 1px, transparent 1px);\n  background-size: 20px 20px;\n}\n\n.s1ymwp_canvasScroll {\n  position: absolute;\n  top: 0;\n  left: 0;\n  right: 0;\n  bottom: 0;\n  overflow: hidden;\n}\n\n.s1ymwp_canvasContent {\n  position: relative;\n}\n\n.s1ymwp_zoomWrap {\n  position: absolute;\n  top: 0;\n  left: 0;\n}\n\n.s1ymwp_edges {\n  position: absolute;\n  top: 0;\n  left: 0;\n  pointer-events: none;\n}\n\n/* 顶部覆盖控件（tabs 左上、工具条右上） */\n.s1ymwp_canvasTabs {\n  position: absolute;\n  top: 12px;\n  left: 12px;\n  z-index: 10;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  padding: 3px;\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-elevated);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_canvasTabs button {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1ymwp_canvasTabs button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1ymwp_canvasTabs button.s1ymwp_tabActive {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n/* 层级条：返回按钮 + 当前层级名。 */\n.s1ymwp_backBtn {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.s1ymwp_backBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ymwp_crumb {\n  padding: 4px 6px;\n  font-size: 11px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_canvasTabs .s1ymwp_addStageBtn {\n  margin-left: 4px;\n}\n\n.s1ymwp_canvasToolbar {\n  position: absolute;\n  top: 12px;\n  right: 12px;\n  z-index: 10;\n  display: flex;\n  align-items: center;\n  gap: 2px;\n  padding: 4px;\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-elevated);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  border: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 14px;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1ymwp_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 节点卡（官方默认节点风格：白底由 wrapper 提供，内部只做居中内容布局） ── */\n\n.s1ymwp_node {\n  width: 100%;\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  gap: 2px;\n}\n\n.s1ymwp_nodeTitle {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--xy-node-color-default);\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeSub {\n  font-size: 10px;\n  font-weight: 400;\n  color: #a1a1aa;\n  max-width: 100%;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeSelected {\n  /* 外框高亮由 React Flow wrapper 的 .s1ymwp_react-flow__node.s1ymwp_selected 提供。 */\n}\n\n.s1ymwp_nodeHeader {\n  display: flex;\n  align-items: center;\n  gap: 7px;\n  padding: 9px 11px;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n  overflow: hidden;\n}\n\n.s1ymwp_nodeIcon {\n  flex: none;\n  width: 22px;\n  height: 22px;\n  border-radius: 6px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 12px;\n}\n\n.s1ymwp_nodeType {\n  flex: none;\n  margin-left: auto;\n  font-size: 9px;\n  font-weight: 600;\n  padding: 2px 6px;\n  border-radius: 4px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  text-transform: uppercase;\n  letter-spacing: 0.03em;\n}\n\n.s1ymwp_nodeTitle {\n  min-width: 0;\n  flex: 1;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ymwp_nodeBody {\n  padding: 7px 11px 8px;\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1ymwp_nodeEmpty {\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1ymwp_nodeStepRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 11px;\n  color: var(--dsw-alias-label-secondary);\n  min-width: 0;\n}\n\n.s1ymwp_nodeDot {\n  flex: none;\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: var(--dsw-alias-label-disabled);\n}\n\n.s1ymwp_nodeStepName {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  flex: 1;\n}\n\n.s1ymwp_nodeStepType {\n  flex: none;\n  font-size: 9px;\n  font-weight: 600;\n  padding: 0 4px;\n  border-radius: 3px;\n  background: var(--dsw-alias-bg-active);\n  color: var(--dsw-alias-label-caption);\n}\n\n/* Stage 卡页脚：下钻提示 + Step 数徽章。 */\n.s1ymwp_nodeFooter {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  padding: 5px 11px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_nodeDrillHint {\n  font-size: 10px;\n  font-weight: 500;\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ymwp_nodeCount {\n  font-size: 10px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-caption);\n  padding: 0 6px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-active);\n}\n\n/* Step 节点（Step DAG） */\n.s1ymwp_stepNode {\n  width: 100%;\n  height: 100%;\n  display: flex;\n  flex-direction: column;\n  align-items: center;\n  justify-content: center;\n  gap: 2px;\n}\n\n.s1ymwp_stepIcon {\n  flex: none;\n  width: 18px;\n  height: 18px;\n  border-radius: 5px;\n  background: var(--dsw-alias-bg-active);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 11px;\n}\n\n.s1ymwp_stepNode .s1ymwp_nodeDot {\n  background: var(--dsw-alias-label-caption);\n}\n\n/* React Flow 连接端口（Handle）：放大到易命中，白底灰边由 theme css 提供；hover 高亮。 */\n.s1ymwp_handle {\n  width: 11px;\n  height: 11px;\n  transition: border-color 0.12s, background 0.12s;\n}\n\n.s1ymwp_handle:hover {\n  border-color: var(--xy-theme-selected);\n  background: var(--xy-theme-selected);\n}\n\n/* ── 右侧编辑侧栏 ────────────────────────────────────────────────────────── */\n\n.s1ymwp_panel {\n  flex: none;\n  width: 420px;\n  min-width: 320px;\n  display: flex;\n  flex-direction: column;\n  border-left: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1ymwp_panelHeader {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  min-height: 44px;\n  padding: 8px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1ymwp_panelTitle {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ymwp_panelBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 10px 12px 16px;\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_panelEmpty {\n  padding: 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n/* ── 流控编辑器（FlowEditor） ─────────────────────────────────────────────── */\n\n.s1ymwp_flow {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_branchRow {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n/* 分支行头部：类型下拉 + 目标只读框 + 删除按钮一行。 */\n.s1ymwp_branchHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 分支类型下拉（并行分支 / 条件分支）。 */\n.s1ymwp_branchKindSelect {\n  flex: none;\n  width: 108px;\n  padding: 5px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  font-size: 12px;\n  font-family: inherit;\n  outline: none;\n  box-sizing: border-box;\n}\n\n.s1ymwp_branchKindSelect:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n/* 目标节点只读框（视觉与下拉一致：同边框/圆角/高度，弹性占满剩余宽度）。 */\n.s1ymwp_branchTarget {\n  flex: 1;\n  min-width: 0;\n  height: 30px;\n  padding: 5px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  font-size: 12px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-primary);\n  line-height: 18px;\n  box-sizing: border-box;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* 分支类型说明小字。 */\n.s1ymwp_branchHint {\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n/* 判断条件命令卡片：shell/提示词 Pill 与输入框放进带边框的卡片。 */\n.s1ymwp_conditionCard {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_select {\n  width: 100%;\n  padding: 6px 8px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 6px;\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  font-size: 12px;\n  font-family: inherit;\n  outline: none;\n  box-sizing: border-box;\n}\n\n.s1ymwp_select:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n/* ── YAML 预览折叠 ───────────────────────────────────────────────────────── */\n\n.s1ymwp_previewHeader {\n  flex: none;\n  min-height: 36px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1ymwp_previewBody {\n  flex: none;\n  max-height: 220px;\n  overflow-y: auto;\n  padding: 8px 12px 12px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n/* 预览弹窗：宽高都放大。 */\n.s1ymwp_previewModal {\n  width: min(720px, 86vw);\n  max-height: 82vh;\n  display: flex;\n  flex-direction: column;\n}\n\n.s1ymwp_previewModalBody {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n/* ── Step 字段编辑（沿用既有表单样式） ───────────────────────────────────── */\n\n.s1ymwp_stageHeader {\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_step {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 10px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1ymwp_stepHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 标题输入框：占满 stepHead 剩余宽度（删除按钮固定，输入框 flex 撑开）。 */\n.s1ymwp_titleInput {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1ymwp_titleInput input {\n  width: 100%;\n  box-sizing: border-box;\n}\n\n.s1ymwp_command {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1ymwp_commandTypes {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 4px;\n}\n\n.s1ymwp_commandValue {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_sectionLabel {\n  margin-top: 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.s1ymwp_itemRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 透传变量条目：纵向堆叠（名称+删除一行，值/描述各占一行），输入框占满详情区。 */\n.s1ymwp_varRow {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  padding: 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n}\n\n.s1ymwp_varRowHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n/* 名称输入框 wrapper 占满剩余宽度（删除按钮固定）：wrapper 去左右 padding 保证三元素等距，\n   内部 input 补回与 DSH 默认一致的 8px 左右 padding，使文字缩进与其他输入框相同。 */\n.s1ymwp_varNameInput {\n  flex: 1;\n  min-width: 0;\n  padding: 0;\n}\n\n.s1ymwp_varNameInput input {\n  width: 100%;\n  box-sizing: border-box;\n  padding: 1px 8px;\n}\n\n.s1ymwp_gates {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_loop {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1ymwp_checkbox {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n";
 		const tagId$7 = "@deepseek-ai/dsh-client-ui-sandore/DagEditor.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$7) + "]") === null) {
 			const tag = document.createElement("style");
@@ -28059,6 +28182,154 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			});
 		}
 		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\DefinitionDetail.module.css.mjs
+		const css$6 = "/* DefinitionDetail：工作流定义详情。 */\n\n.s1gbb7_detail {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1gbb7_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1gbb7_title {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1gbb7_spacer {\n  flex: 1;\n}\n\n.s1gbb7_success {\n  margin: 0;\n  padding: 8px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));\n}\n\n.s1gbb7_error {\n  margin: 0;\n  padding: 8px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1gbb7_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 16px;\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  max-width: 560px;\n}\n\n.s1gbb7_field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1gbb7_label {\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1gbb7_sectionTitle {\n  margin-top: 8px;\n  font-size: 11px;\n  font-weight: 600;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n/* 复选框行（工作流级 primary 门禁开关）。 */\n.s1gbb7_checkbox {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n";
+		const tagId$6 = "@deepseek-ai/dsh-client-ui-sandore/DefinitionDetail.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$6) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$6;
+			tag.textContent = css$6;
+			document.head.appendChild(tag);
+		}
+		var DefinitionDetail_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1gbb7_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/DefinitionDetail.js
+		/**
+		* WorkflowDetailFields：工作流定义详情的**受控字段表单**（点击定义直接进 DAG 后，
+		* 右侧面板默认展示；选中 Stage/Step 时切换为节点配置）。
+		*
+		* 仅渲染 name / version / description / settings（defaultTimeout / maxConcurrentAgents）
+		* 与工作流级 primary 门禁开关；字段变更经 `onChange` 直接更新宿主 `WorkflowDefinition`
+		* （由 DagEditor 持有，保存/Ctrl+S 统一序列化）。不含 header 与保存按钮。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DefinitionDetail
+		*/
+		/** 渲染工作流详情字段表单（右侧面板默认视图）。 */
+		function WorkflowDetailFields({ t, definition, onChange }) {
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: DefinitionDetail_module_css_default.body,
+				children: [
+					(0, react_jsx_runtime.jsx)("div", {
+						className: DefinitionDetail_module_css_default.sectionTitle,
+						children: t("detail.title")
+					}),
+					(0, react_jsx_runtime.jsxs)("label", {
+						className: DefinitionDetail_module_css_default.field,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: DefinitionDetail_module_css_default.label,
+							children: t("detail.name")
+						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							value: definition.name,
+							onChange: (event) => {
+								onChange({
+									...definition,
+									name: event.target.value
+								});
+							},
+							placeholder: t("detail.name")
+						})]
+					}),
+					(0, react_jsx_runtime.jsxs)("label", {
+						className: DefinitionDetail_module_css_default.field,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: DefinitionDetail_module_css_default.label,
+							children: t("detail.version")
+						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							value: definition.version,
+							onChange: (event) => {
+								onChange({
+									...definition,
+									version: event.target.value
+								});
+							},
+							placeholder: t("detail.version")
+						})]
+					}),
+					(0, react_jsx_runtime.jsxs)("label", {
+						className: DefinitionDetail_module_css_default.field,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: DefinitionDetail_module_css_default.label,
+							children: t("detail.description")
+						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							value: definition.description ?? "",
+							onChange: (event) => {
+								onChange({
+									...definition,
+									description: trimToUndefined(event.target.value)
+								});
+							},
+							placeholder: t("detail.description")
+						})]
+					}),
+					(0, react_jsx_runtime.jsx)("div", {
+						className: DefinitionDetail_module_css_default.sectionTitle,
+						children: t("detail.settings")
+					}),
+					(0, react_jsx_runtime.jsxs)("label", {
+						className: DefinitionDetail_module_css_default.field,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: DefinitionDetail_module_css_default.label,
+							children: t("detail.defaultTimeout")
+						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							type: "number",
+							value: String(definition.settings.defaultTimeout),
+							onChange: (event) => {
+								onChange({
+									...definition,
+									settings: {
+										...definition.settings,
+										defaultTimeout: parseOptionalNumber(event.target.value) ?? 120
+									}
+								});
+							}
+						})]
+					}),
+					(0, react_jsx_runtime.jsxs)("label", {
+						className: DefinitionDetail_module_css_default.field,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: DefinitionDetail_module_css_default.label,
+							children: t("detail.maxConcurrentAgents")
+						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+							type: "number",
+							value: String(definition.settings.maxConcurrentAgents),
+							onChange: (event) => {
+								onChange({
+									...definition,
+									settings: {
+										...definition.settings,
+										maxConcurrentAgents: parseOptionalNumber(event.target.value) ?? 4
+									}
+								});
+							}
+						})]
+					}),
+					(0, react_jsx_runtime.jsxs)("label", {
+						className: DefinitionDetail_module_css_default.field,
+						children: [(0, react_jsx_runtime.jsx)("span", {
+							className: DefinitionDetail_module_css_default.label,
+							children: t("detail.primaryGate")
+						}), (0, react_jsx_runtime.jsxs)("label", {
+							className: DefinitionDetail_module_css_default.checkbox,
+							children: [(0, react_jsx_runtime.jsx)("input", {
+								type: "checkbox",
+								checked: definition.gates?.primary?.enabled ?? false,
+								onChange: (event) => {
+									const next = {
+										...definition.gates ?? {},
+										primary: { enabled: event.target.checked }
+									};
+									onChange({
+										...definition,
+										gates: next
+									});
+								}
+							}), (0, react_jsx_runtime.jsx)("span", { children: t("detail.primaryGate.enabled") })]
+						})]
+					})
+				]
+			});
+		}
+		//#endregion
 		//#region lib/types/client/FlowEditor.js
 		/**
 		* FlowEditor：Stage/Step 通用流控编辑器（分支是唯一出边单元）。
@@ -28099,15 +28370,51 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		/**
 		* 渲染 Stage/Step 流控编辑器（分支列表：每条 = 类型下拉 + 只读目标 + 判断条件 + 循环）。
 		* 循环由画布回环连线自动产生（loop 必填），详情不做手动添加。
+		* @param stageSteps - 当前 Stage 内全部合并 step（含 branches 流控），用于计算回环环上节点。
+		* @param currentId - 当前编辑节点 id。
 		* @param conditionTypes - 判断条件命令可选类型（缺省 = 全部五类型；Stage 层 shell/prompt）。
 		*/
-		function FlowEditor({ t, flow, targets, onChange, conditionTypes }) {
+		function FlowEditor({ t, flow, targets, onChange, stageSteps, currentId, conditionTypes }) {
 			const branches = flow.branches ?? [];
 			const setBranch = (index, next) => {
 				onChange({
 					...flow,
 					branches: branches.map((b, i) => i === index ? next : b)
 				});
+			};
+			/**
+			* 计算回环环上节点集合：从回边目标出发沿出边（branches[].next + loop.next）做图搜索，
+			* 若可回到当前节点，则**实际参与该回环的节点**（路径成员）都不能作为跳出目标
+			* （否则跳出后仍会无限循环）。
+			*/
+			const loopNodesOf = (branch) => {
+				const current = currentId;
+				if (stageSteps === void 0 || current === void 0) return /* @__PURE__ */ new Set();
+				const back = branch.next;
+				const outgoing = /* @__PURE__ */ new Map();
+				for (const step of stageSteps) {
+					const targets = [];
+					for (const b of step.branches ?? []) {
+						if (b.next !== void 0 && b.next !== "") targets.push(b.next);
+						if (b.loop?.next !== void 0 && b.loop.next !== "") targets.push(b.loop.next);
+					}
+					outgoing.set(step.id, targets);
+				}
+				const onPath = /* @__PURE__ */ new Set();
+				const visited = /* @__PURE__ */ new Set();
+				const dfs = (id, path) => {
+					if (id === current) {
+						for (const node of path) onPath.add(node);
+						return true;
+					}
+					if (visited.has(id)) return false;
+					visited.add(id);
+					let found = false;
+					for (const next of outgoing.get(id) ?? []) if (dfs(next, [...path, id])) found = true;
+					return found;
+				};
+				if (back !== void 0 && back !== "") dfs(back, [back]);
+				return onPath;
 			};
 			/** 目标节点名（读 targets 表；未知 id 显示原 id）。 */
 			const targetName = (id) => targets.find((target) => target.id === id)?.name ?? id;
@@ -28234,7 +28541,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 											children: [(0, react_jsx_runtime.jsx)("option", {
 												value: "__end__",
 												children: t("flow.end")
-											}), targets.map((target) => (0, react_jsx_runtime.jsx)("option", {
+											}), targets.filter((target) => !loopNodesOf(branch).has(target.id)).map((target) => (0, react_jsx_runtime.jsx)("option", {
 												value: target.id,
 												children: target.name
 											}, target.id))]
@@ -28475,7 +28782,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			})] });
 		}
 		/** 渲染 React Flow 画布（必须在 ReactFlowProvider 内，工具条经 useReactFlow 控制缩放）。 */
-		function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, onDrillStage, onSelectStep, onSelectStage, onConnectStage, onConnectStep, onDeleteNodes, onDeleteEdges, t }) {
+		function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, onDrillStage, onSelectStep, onSelectStage, onPaneClick, onConnectStage, onConnectStep, onDeleteNodes, onDeleteEdges, t }) {
 			const [nodes, setNodes, onNodesChange] = useNodesState([]);
 			const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 			const { zoomIn, zoomOut, fitView, screenToFlowPosition } = useReactFlow();
@@ -28522,7 +28829,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						}
 					}))
 				};
-				const steps = drilledStage?.steps ?? [];
+				const steps = drilledStage === void 0 ? [] : mergedStepsOf(definition, drilledStage);
 				return {
 					nodes: steps.map((step) => ({
 						id: step.id,
@@ -28714,6 +29021,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						if (node.type === "stage") onSelectStage(node.id);
 						else if (node.type === "step") onSelectStep(node.id);
 					},
+					onPaneClick,
 					onNodeDoubleClick: (_event, node) => {
 						if (drillStageId === void 0 && node.type === "stage") onDrillStage(node.id);
 						else if (node.type === "step") onSelectStep(node.id);
@@ -28780,6 +29088,29 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				})
 			});
 		}
+		/** 眼睛图标（预览按钮用；primitives 无眼睛图标，内联 SVG 16×16）。 */
+		function EyeIcon() {
+			return (0, react_jsx_runtime.jsxs)("svg", {
+				width: "16",
+				height: "16",
+				viewBox: "0 0 16 16",
+				fill: "none",
+				xmlns: "http://www.w3.org/2000/svg",
+				"aria-hidden": true,
+				children: [(0, react_jsx_runtime.jsx)("path", {
+					d: "M8 3C4.5 3 1.8 5.4 1 8c.8 2.6 3.5 5 7 5s6.2-2.4 7-5c-.8-2.6-3.5-5-7-5Z",
+					stroke: "currentColor",
+					strokeWidth: "1.4",
+					strokeLinejoin: "round"
+				}), (0, react_jsx_runtime.jsx)("circle", {
+					cx: "8",
+					cy: "8",
+					r: "2.2",
+					stroke: "currentColor",
+					strokeWidth: "1.4"
+				})]
+			});
+		}
 		/** 折叠小节标题。 */
 		function SectionLabel({ children }) {
 			return (0, react_jsx_runtime.jsx)("div", {
@@ -28787,32 +29118,54 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				children
 			});
 		}
-		/** 单个映射条目（inputFrom/outputTo 的 `{id, path, regex}`）编辑行。 */
-		function MappingRow({ item, onChange, onRemove, t }) {
+		/**
+		* 输入参数条目：类型下拉（相对路径=引用 step / 正则匹配）+ 目标 step 下拉（显示名称）。
+		* 简化格式：`path` 存引用的 step id（单段），不再支持 stageId.stepId。
+		*/
+		function InputRow({ item, stepOptions, onChange, onRemove, t }) {
+			const mode = item.regex !== void 0 ? "regex" : "path";
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: DagEditor_module_css_default.itemRow,
 				children: [
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-						value: item.id,
+					(0, react_jsx_runtime.jsxs)("select", {
+						className: DagEditor_module_css_default.branchKindSelect,
+						value: mode,
 						onChange: (event) => {
-							onChange({
+							if (event.target.value === "regex") onChange({
 								...item,
-								id: event.target.value
+								regex: item.regex ?? ""
+							});
+							else onChange({
+								...item,
+								regex: void 0
 							});
 						},
-						placeholder: t("editor.field.id")
+						children: [(0, react_jsx_runtime.jsx)("option", {
+							value: "path",
+							children: t("editor.field.stepName")
+						}), (0, react_jsx_runtime.jsx)("option", {
+							value: "regex",
+							children: t("editor.field.regex")
+						})]
 					}),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+					mode === "path" ? (0, react_jsx_runtime.jsxs)("select", {
+						className: DagEditor_module_css_default.branchTarget,
 						value: item.path ?? "",
 						onChange: (event) => {
 							onChange({
 								...item,
-								path: trimToUndefined(event.target.value)
+								path: event.target.value === "" ? void 0 : event.target.value
 							});
 						},
-						placeholder: t("editor.field.path")
-					}),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+						children: [(0, react_jsx_runtime.jsx)("option", {
+							value: "",
+							children: t("flow.none")
+						}), stepOptions.map((step) => (0, react_jsx_runtime.jsx)("option", {
+							value: step.id,
+							children: step.name
+						}, step.id))]
+					}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+						className: DagEditor_module_css_default.branchTarget ?? "",
 						value: item.regex ?? "",
 						onChange: (event) => {
 							onChange({
@@ -28832,8 +29185,63 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				]
 			});
 		}
+		/**
+		* 输出参数条目：类型下拉（相对路径 / 正则匹配）+ 相对路径字符串输入。
+		*/
+		function OutputRow({ item, onChange, onRemove, t }) {
+			const mode = item.regex !== void 0 ? "regex" : "path";
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: DagEditor_module_css_default.itemRow,
+				children: [
+					(0, react_jsx_runtime.jsxs)("select", {
+						className: DagEditor_module_css_default.branchKindSelect,
+						value: mode,
+						onChange: (event) => {
+							if (event.target.value === "regex") onChange({
+								...item,
+								regex: item.regex ?? ""
+							});
+							else onChange({
+								...item,
+								regex: void 0
+							});
+						},
+						children: [(0, react_jsx_runtime.jsx)("option", {
+							value: "path",
+							children: t("editor.field.relativePath")
+						}), (0, react_jsx_runtime.jsx)("option", {
+							value: "regex",
+							children: t("editor.field.regex")
+						})]
+					}),
+					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+						className: DagEditor_module_css_default.branchTarget ?? "",
+						value: mode === "path" ? item.path ?? "" : item.regex ?? "",
+						onChange: (event) => {
+							const value = trimToUndefined(event.target.value);
+							if (mode === "path") onChange({
+								...item,
+								path: value
+							});
+							else onChange({
+								...item,
+								regex: value
+							});
+						},
+						placeholder: mode === "path" ? t("editor.field.relativePath") : t("editor.field.regex")
+					}),
+					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+						variant: "ghost",
+						size: "sm",
+						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {}),
+						onClick: onRemove,
+						"aria-label": t("editor.remove.item")
+					})
+				]
+			});
+		}
 		/** Step 完整字段编辑器（名称 + 执行 command + 流控 FlowEditor + 映射 + gates）。 */
-		function StepEditor({ step, targets, onChange, onRemove, t }) {
+		function StepEditor({ step, stageSteps, targets, onChange, onRemove, t }) {
 			const inputFrom = step.inputFrom ?? [];
 			const outputTo = step.outputTo ?? [];
 			const passThroughVars = step.passThroughVars ?? [];
@@ -28875,6 +29283,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					(0, react_jsx_runtime.jsx)(FlowEditor, {
 						t,
 						targets,
+						stageSteps,
+						currentId: step.id,
 						conditionTypes: ["shell", "prompt"],
 						flow: { branches: step.branches },
 						onChange: (flow) => {
@@ -28885,8 +29295,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						}
 					}),
 					(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.section.inputFrom") }),
-					inputFrom.map((item, index) => (0, react_jsx_runtime.jsx)(MappingRow, {
+					inputFrom.map((item, index) => (0, react_jsx_runtime.jsx)(InputRow, {
 						item,
+						stepOptions: stageSteps.filter((candidate) => candidate.id !== step.id).map((candidate) => ({
+							id: candidate.id,
+							name: candidate.name ?? candidate.id
+						})),
 						onChange: (next) => {
 							onChange({
 								...step,
@@ -28914,7 +29328,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						children: t("editor.add.item")
 					}),
 					(0, react_jsx_runtime.jsx)(SectionLabel, { children: t("editor.section.outputTo") }),
-					outputTo.map((item, index) => (0, react_jsx_runtime.jsx)(MappingRow, {
+					outputTo.map((item, index) => (0, react_jsx_runtime.jsx)(OutputRow, {
 						item,
 						onChange: (next) => {
 							onChange({
@@ -29124,14 +29538,19 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			});
 		}
 		/** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
-		function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
+		function DagEditor({ t, initialYaml, initialId, save, onSaved, listJobs, createJob, startInstance }) {
 			const [definition, setDefinition] = (0, react.useState)(() => initialYaml === void 0 ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
 			const [id, setId] = (0, react.useState)(initialId);
 			const [saveState, setSaveState] = (0, react.useState)({ kind: "idle" });
+			/** 保存成功轻提示（Toast，顶部居中临时横幅）；seq 递增供 Toast 按 key 重启动画。 */
+			const [toast, setToast] = (0, react.useState)(void 0);
 			const [drillStageId, setDrillStageId] = (0, react.useState)(void 0);
-			const [selectedStageId, setSelectedStageId] = (0, react.useState)(definition.stages[0]?.id);
+			const [selectedStageId, setSelectedStageId] = (0, react.useState)(void 0);
 			const [selectedStepId, setSelectedStepId] = (0, react.useState)(void 0);
 			const [previewOpen, setPreviewOpen] = (0, react.useState)(false);
+			/** ▶ 测试运行状态：运行中禁用按钮；失败内联呈现错误。 */
+			const [running, setRunning] = (0, react.useState)(false);
+			const [runError, setRunError] = (0, react.useState)(void 0);
 			const preview = (0, react.useMemo)(() => serializeWorkflowYaml(definition), [definition]);
 			const patchStages = (patch) => {
 				setDefinition((current) => ({
@@ -29142,15 +29561,34 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const updateStage = (stageId, next) => {
 				patchStages((stages) => stages.map((stage) => stage.id === stageId ? next : stage));
 			};
+			/** 合并 Step 变更（V2 分离式）：定义字段写顶层 `definition.steps[id]`，流控 branches 写
+			*  `stage.steps[id].branches`。两者拆分落库，保证 YAML 分离式结构。 */
 			const updateStep = (stageId, stepId, next) => {
-				patchStages((stages) => stages.map((stage) => stage.id === stageId ? {
+				const { branches, ...definition } = next;
+				setDefinition((current) => {
+					const steps = current.steps ?? [];
+					const existing = steps.some((step) => step.id === stepId);
+					return {
+						...current,
+						steps: existing ? steps.map((step) => step.id === stepId ? definition : step) : [...steps, definition]
+					};
+				});
+				patchStages((stages) => stages.map((stage) => stage.id !== stageId ? stage : {
 					...stage,
-					steps: stage.steps.map((step) => step.id === stepId ? next : step)
-				} : stage));
+					steps: stage.steps.map((step) => step.id !== stepId ? step : {
+						id: stepId,
+						...branches === void 0 ? {} : { branches }
+					})
+				}));
 			};
-			/** 删除 Step（面板移除按钮 / 画布键盘删除共用）：清理其余 Step 指向它的流控引用。 */
+			/** 删除 Step（面板移除按钮 / 画布键盘删除共用）：同步清顶层定义与 Stage 流控位，
+			*  并清理其余 Step 指向它的流控引用。 */
 			const removeSteps = (stageId, ids) => {
 				const removed = new Set(ids);
+				setDefinition((current) => ({
+					...current,
+					steps: (current.steps ?? []).filter((step) => !removed.has(step.id))
+				}));
 				patchStages((stages) => stages.map((stage) => stage.id !== stageId ? stage : {
 					...stage,
 					steps: stage.steps.filter((step) => !removed.has(step.id)).map((step) => ({
@@ -29171,18 +29609,24 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			};
 			const addStep = (stageId) => {
 				const stepId = newId("step");
-				patchStages((stages) => stages.map((stage) => {
-					if (stage.id !== stageId) return stage;
+				setDefinition((current) => {
+					const stage = current.stages.find((candidate) => candidate.id === stageId);
+					if (stage === void 0) return current;
 					const count = stage.steps.length;
-					return {
-						...stage,
-						steps: [...stage.steps, {
-							id: stepId,
-							name: `${t("editor.step.placeholder")} ${count + 1}`,
-							command: createCommand("shell")
-						}]
+					const definition = {
+						id: stepId,
+						name: `${t("editor.step.placeholder")} ${count + 1}`,
+						command: createCommand("shell")
 					};
-				}));
+					return {
+						...current,
+						stages: current.stages.map((candidate) => candidate.id === stageId ? {
+							...candidate,
+							steps: [...candidate.steps, { id: stepId }]
+						} : candidate),
+						steps: [...current.steps ?? [], definition]
+					};
+				});
 				if (drillStageId === stageId) setSelectedStepId(stepId);
 			};
 			const addStage = () => {
@@ -29223,6 +29667,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			/** 单击选中 Stage（右侧面板同步显示该 Stage 的配置）。 */
 			const selectStage = (stageId) => {
 				setSelectedStageId(stageId);
+				setSelectedStepId(void 0);
+			};
+			/** 点画布空白取消选中：Stage 层回工作流详情（默认视图）、Step 层回空态。 */
+			const clearSelection = () => {
+				setSelectedStageId(void 0);
 				setSelectedStepId(void 0);
 			};
 			const backToStages = () => {
@@ -29322,6 +29771,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					onSaved?.(savedId);
 					setDefinition((current) => withDefinitionId(current, savedId));
 					setSaveState({ kind: "ok" });
+					setToast((current) => ({
+						seq: (current?.seq ?? 0) + 1,
+						message: t("editor.save.success")
+					}));
 				} catch (error) {
 					const { message, details } = describeSaveError(error);
 					setSaveState({
@@ -29331,8 +29784,51 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					});
 				}
 			};
-			const selectedStage = definition.stages.find((stage) => stage.id === selectedStageId) ?? definition.stages[0];
+			(0, react.useEffect)(() => {
+				const onKeyDown = (event) => {
+					if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+						event.preventDefault();
+						runSave();
+					}
+				};
+				window.addEventListener("keydown", onKeyDown);
+				return () => {
+					window.removeEventListener("keydown", onKeyDown);
+				};
+			});
+			const selectedStage = definition.stages.find((stage) => stage.id === selectedStageId);
 			const drilledStage = drillStageId === void 0 ? void 0 : definition.stages.find((stage) => stage.id === drillStageId);
+			/** 导出 YAML：下载为 `{id}.yaml` 文件（内容与保存到后端一致）。 */
+			const exportYaml = () => {
+				const yaml = serializeWorkflowYaml(definition);
+				const blob = new Blob([yaml], { type: "application/yaml;charset=utf-8" });
+				const url = URL.createObjectURL(blob);
+				const anchor = document.createElement("a");
+				anchor.href = url;
+				anchor.download = `${id ?? definition.id ?? "workflow"}.yaml`;
+				anchor.click();
+				URL.revokeObjectURL(url);
+			};
+			/** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态并选中新实例。 */
+			const runTest = async () => {
+				const definitionId = id ?? definition.id;
+				if (definitionId === void 0) return;
+				setRunning(true);
+				setRunError(void 0);
+				try {
+					selectInstance((await startInstance({
+						jobId: ((await listJobs(definitionId))[0] ?? await createJob({
+							name: `测试-${definitionId.slice(0, 8)}`,
+							workflowId: definitionId
+						})).id,
+						originalInput: t("editor.testRun")
+					})).instanceId);
+				} catch (error) {
+					setRunError(describeError$1(error));
+				} finally {
+					setRunning(false);
+				}
+			};
 			return (0, react_jsx_runtime.jsxs)("section", {
 				className: DagEditor_module_css_default.editor,
 				"aria-label": t("editor.title"),
@@ -29342,26 +29838,72 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						className: DagEditor_module_css_default.header,
 						children: [(0, react_jsx_runtime.jsx)("span", {
 							className: DagEditor_module_css_default.title,
-							children: t("editor.title")
-						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							size: "sm",
-							variant: "primary",
-							disabled: saveState.kind === "pending",
-							onClick: () => {
-								runSave();
-							},
-							children: saveState.kind === "pending" ? t("editor.saving") : t("editor.save")
+							title: definition.name,
+							children: definition.name
+						}), (0, react_jsx_runtime.jsxs)("span", {
+							className: DagEditor_module_css_default.headerActions,
+							children: [
+								(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									variant: "ghost",
+									icon: (0, react_jsx_runtime.jsx)(EyeIcon, {}),
+									onClick: () => {
+										setPreviewOpen((current) => !current);
+									},
+									children: t("editor.preview")
+								}),
+								(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									variant: "ghost",
+									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDownloadOutline16, {}),
+									onClick: exportYaml,
+									children: t("editor.export")
+								}),
+								(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									variant: "primary",
+									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSparkle16, {}),
+									title: t("editor.chatCreate.hint"),
+									onClick: () => {
+										setToast((current) => ({
+											seq: (current?.seq ?? 0) + 1,
+											message: t("editor.chatCreate.hint")
+										}));
+									},
+									children: t("editor.chatCreate")
+								}),
+								id !== void 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									variant: "primary",
+									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlayOutline16, {}),
+									disabled: running,
+									onClick: () => {
+										runTest();
+									},
+									children: t("editor.test")
+								}),
+								(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+									size: "sm",
+									variant: "primary",
+									icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}),
+									disabled: saveState.kind === "pending",
+									onClick: () => {
+										runSave();
+									},
+									children: saveState.kind === "pending" ? t("editor.saving") : t("editor.save")
+								})
+							]
 						})]
-					}),
-					saveState.kind === "ok" && (0, react_jsx_runtime.jsx)("p", {
-						className: DagEditor_module_css_default.success,
-						role: "status",
-						children: t("editor.save.success")
 					}),
 					saveState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
 						className: DagEditor_module_css_default.error,
 						role: "alert",
 						children: saveState.details === void 0 ? t("editor.save.failed", { message: saveState.message }) : t("editor.save.failed", { message: `${saveState.message} — ${saveState.details}` })
+					}),
+					runError !== void 0 && (0, react_jsx_runtime.jsx)("p", {
+						className: DagEditor_module_css_default.error,
+						role: "alert",
+						children: t("panel.error", { message: runError })
 					}),
 					(0, react_jsx_runtime.jsxs)("div", {
 						className: DagEditor_module_css_default.canvasRow,
@@ -29404,6 +29946,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 								onDrillStage: drillStage,
 								onSelectStep: setSelectedStepId,
 								onSelectStage: selectStage,
+								onPaneClick: clearSelection,
 								onConnectStage: connectStage,
 								onConnectStep: connectStep,
 								onDeleteNodes: deleteNodes,
@@ -29413,9 +29956,15 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						}), (0, react_jsx_runtime.jsx)("aside", {
 							className: DagEditor_module_css_default.panel,
 							"data-sandore-dag-panel": true,
-							children: drillStageId === void 0 ? selectedStage === void 0 ? (0, react_jsx_runtime.jsx)("span", {
-								className: DagEditor_module_css_default.panelEmpty,
-								children: t("editor.steps.empty")
+							children: drillStageId === void 0 ? selectedStage === void 0 ? (0, react_jsx_runtime.jsx)("div", {
+								className: DagEditor_module_css_default.panelBody,
+								children: (0, react_jsx_runtime.jsx)(WorkflowDetailFields, {
+									t,
+									definition,
+									onChange: (next) => {
+										setDefinition(next);
+									}
+								})
 							}) : (0, react_jsx_runtime.jsx)("div", {
 								className: DagEditor_module_css_default.panelBody,
 								children: (0, react_jsx_runtime.jsx)(StageEditor, {
@@ -29436,7 +29985,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 								className: DagEditor_module_css_default.panelEmpty,
 								children: t("editor.steps.empty")
 							}) : (() => {
-								const step = drilledStage.steps.find((candidate) => candidate.id === selectedStepId);
+								const mergedSteps = mergedStepsOf(definition, drilledStage);
+								const step = mergedSteps.find((candidate) => candidate.id === selectedStepId);
 								if (step === void 0) return (0, react_jsx_runtime.jsx)("span", {
 									className: DagEditor_module_css_default.panelEmpty,
 									children: t("editor.steps.empty")
@@ -29445,7 +29995,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 									className: DagEditor_module_css_default.panelBody,
 									children: (0, react_jsx_runtime.jsx)(StepEditor, {
 										step,
-										targets: drilledStage.steps.filter((candidate) => candidate.id !== step.id).map((candidate) => ({
+										stageSteps: mergedSteps,
+										targets: mergedSteps.filter((candidate) => candidate.id !== step.id).map((candidate) => ({
 											id: candidate.id,
 											name: candidate.name ?? candidate.id
 										})),
@@ -29461,231 +30012,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							})()
 						})]
 					}),
-					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.DisclosureRow, {
-						icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {}),
-						title: t("editor.preview"),
+					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
 						open: previewOpen,
-						expandable: true,
-						onToggle: () => {
-							setPreviewOpen((current) => !current);
+						onClose: () => {
+							setPreviewOpen(false);
 						},
-						previewChevron: false,
-						rowClassName: DagEditor_module_css_default.previewHeader,
-						children: (0, react_jsx_runtime.jsx)("div", {
-							className: DagEditor_module_css_default.previewBody,
-							children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.CodeBlock, {
-								code: preview,
-								lang: "yaml",
-								copyLabel: t("editor.preview")
-							})
+						title: t("editor.preview"),
+						closeLabel: t("overlay.close"),
+						className: DagEditor_module_css_default.previewModal ?? "",
+						contentClassName: DagEditor_module_css_default.previewModalBody ?? "",
+						children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.CodeBlock, {
+							code: preview,
+							lang: "yaml",
+							copyLabel: t("editor.preview")
 						})
-					})
-				]
-			});
-		}
-		//#endregion
-		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\DefinitionDetail.module.css.mjs
-		const css$6 = "/* DefinitionDetail：工作流定义详情。 */\n\n.s1gbb7_detail {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1gbb7_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1gbb7_title {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1gbb7_spacer {\n  flex: 1;\n}\n\n.s1gbb7_success {\n  margin: 0;\n  padding: 8px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary));\n}\n\n.s1gbb7_error {\n  margin: 0;\n  padding: 8px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1gbb7_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 16px;\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  max-width: 560px;\n}\n\n.s1gbb7_field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1gbb7_label {\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1gbb7_sectionTitle {\n  margin-top: 8px;\n  font-size: 11px;\n  font-weight: 600;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n/* 复选框行（工作流级 primary 门禁开关）。 */\n.s1gbb7_checkbox {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n";
-		const tagId$6 = "@deepseek-ai/dsh-client-ui-sandore/DefinitionDetail.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$6) + "]") === null) {
-			const tag = document.createElement("style");
-			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
-			tag.dataset.pluginCss = tagId$6;
-			tag.textContent = css$6;
-			document.head.appendChild(tag);
-		}
-		var DefinitionDetail_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1gbb7_" + prop : void 0 });
-		//#endregion
-		//#region lib/types/client/DefinitionDetail.js
-		/**
-		* DefinitionDetail：工作流定义详情（点击定义后右侧默认显示）。
-		*
-		* 编辑 name / version / description / settings（defaultTimeout / maxConcurrentAgents），
-		* 保存走 `save`（新建 `createDefinition`、后续 `updateYaml`），保存后回填 id 与最新
-		* YAML（供「进入编排」的 DagEditor 重新解析）。「进入编排」经 `onEnterEdit` 切两层 DAG。
-		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DefinitionDetail
-		*/
-		/** 渲染定义详情。 */
-		function DefinitionDetail({ t, initialYaml, initialId, save, onSaved, onEnterEdit }) {
-			const [definition, setDefinition] = (0, react.useState)(() => initialYaml === void 0 ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
-			const [id, setId] = (0, react.useState)(initialId);
-			const [saveState, setSaveState] = (0, react.useState)({ kind: "idle" });
-			const runSave = async () => {
-				setSaveState({ kind: "pending" });
-				try {
-					const savedId = await save(id, serializeWorkflowYaml(definition));
-					setId(savedId);
-					const saved = withDefinitionId(definition, savedId);
-					setDefinition(saved);
-					onSaved?.(serializeWorkflowYaml(saved));
-					setSaveState({ kind: "ok" });
-				} catch (error) {
-					const { message, details } = describeSaveError(error);
-					setSaveState({
-						kind: "error",
-						message,
-						details
-					});
-				}
-			};
-			return (0, react_jsx_runtime.jsxs)("section", {
-				className: DefinitionDetail_module_css_default.detail,
-				"aria-label": t("detail.title"),
-				"data-sandore-definition-detail": true,
-				children: [
-					(0, react_jsx_runtime.jsxs)("header", {
-						className: DefinitionDetail_module_css_default.header,
-						children: [
-							(0, react_jsx_runtime.jsx)("span", {
-								className: DefinitionDetail_module_css_default.title,
-								children: t("detail.title")
-							}),
-							(0, react_jsx_runtime.jsx)("span", { className: DefinitionDetail_module_css_default.spacer }),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "outline",
-								onClick: onEnterEdit,
-								children: t("detail.edit")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "primary",
-								disabled: saveState.kind === "pending",
-								onClick: () => {
-									runSave();
-								},
-								children: saveState.kind === "pending" ? t("editor.saving") : t("editor.save")
-							})
-						]
 					}),
-					saveState.kind === "ok" && (0, react_jsx_runtime.jsx)("p", {
-						className: DefinitionDetail_module_css_default.success,
-						role: "status",
-						children: t("editor.save.success")
-					}),
-					saveState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
-						className: DefinitionDetail_module_css_default.error,
-						role: "alert",
-						children: saveState.details === void 0 ? t("editor.save.failed", { message: saveState.message }) : t("editor.save.failed", { message: `${saveState.message} — ${saveState.details}` })
-					}),
-					(0, react_jsx_runtime.jsxs)("div", {
-						className: DefinitionDetail_module_css_default.body,
-						children: [
-							(0, react_jsx_runtime.jsxs)("label", {
-								className: DefinitionDetail_module_css_default.field,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: DefinitionDetail_module_css_default.label,
-									children: t("detail.name")
-								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-									value: definition.name,
-									onChange: (event) => {
-										setDefinition((current) => ({
-											...current,
-											name: event.target.value
-										}));
-									},
-									placeholder: t("detail.name")
-								})]
-							}),
-							(0, react_jsx_runtime.jsxs)("label", {
-								className: DefinitionDetail_module_css_default.field,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: DefinitionDetail_module_css_default.label,
-									children: t("detail.version")
-								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-									value: definition.version,
-									onChange: (event) => {
-										setDefinition((current) => ({
-											...current,
-											version: event.target.value
-										}));
-									},
-									placeholder: t("detail.version")
-								})]
-							}),
-							(0, react_jsx_runtime.jsxs)("label", {
-								className: DefinitionDetail_module_css_default.field,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: DefinitionDetail_module_css_default.label,
-									children: t("detail.description")
-								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-									value: definition.description ?? "",
-									onChange: (event) => {
-										setDefinition((current) => ({
-											...current,
-											description: trimToUndefined(event.target.value)
-										}));
-									},
-									placeholder: t("detail.description")
-								})]
-							}),
-							(0, react_jsx_runtime.jsx)("div", {
-								className: DefinitionDetail_module_css_default.sectionTitle,
-								children: t("detail.settings")
-							}),
-							(0, react_jsx_runtime.jsxs)("label", {
-								className: DefinitionDetail_module_css_default.field,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: DefinitionDetail_module_css_default.label,
-									children: t("detail.defaultTimeout")
-								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-									type: "number",
-									value: String(definition.settings.defaultTimeout),
-									onChange: (event) => {
-										setDefinition((current) => ({
-											...current,
-											settings: {
-												...current.settings,
-												defaultTimeout: parseOptionalNumber(event.target.value) ?? 120
-											}
-										}));
-									}
-								})]
-							}),
-							(0, react_jsx_runtime.jsxs)("label", {
-								className: DefinitionDetail_module_css_default.field,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: DefinitionDetail_module_css_default.label,
-									children: t("detail.maxConcurrentAgents")
-								}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-									type: "number",
-									value: String(definition.settings.maxConcurrentAgents),
-									onChange: (event) => {
-										setDefinition((current) => ({
-											...current,
-											settings: {
-												...current.settings,
-												maxConcurrentAgents: parseOptionalNumber(event.target.value) ?? 4
-											}
-										}));
-									}
-								})]
-							}),
-							(0, react_jsx_runtime.jsxs)("label", {
-								className: DefinitionDetail_module_css_default.field,
-								children: [(0, react_jsx_runtime.jsx)("span", {
-									className: DefinitionDetail_module_css_default.label,
-									children: t("detail.primaryGate")
-								}), (0, react_jsx_runtime.jsxs)("label", {
-									className: DefinitionDetail_module_css_default.checkbox,
-									children: [(0, react_jsx_runtime.jsx)("input", {
-										type: "checkbox",
-										checked: definition.gates?.primary?.enabled ?? false,
-										onChange: (event) => {
-											const next = {
-												...definition.gates ?? {},
-												primary: { enabled: event.target.checked }
-											};
-											setDefinition((current) => ({
-												...current,
-												gates: next
-											}));
-										}
-									}), (0, react_jsx_runtime.jsx)("span", { children: t("detail.primaryGate.enabled") })]
-								})]
-							})
-						]
-					})
+					toast !== void 0 && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Toast, {
+						text: toast.message,
+						onDone: () => {
+							setToast(void 0);
+						}
+					}, toast.seq)
 				]
 			});
 		}
@@ -30779,128 +31126,45 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region lib/types/client/EditorPane.js
 		/**
-		* EditorPane：工作流 overlay 右栏编辑区（模式条 + 编排态 DagEditor / 执行态 RunView）。
+		* EditorPane：工作流 overlay 右栏编辑区（编排态 DagEditor / 执行态 RunView）。
 		*
-		* 模式与选中态走 `workflow-store`；模式条提供 编排/执行 toggle 与「▶ 测试运行」
-		* （对当前定义找/建 Job 后 `startInstance`，成功后自动切执行态并选中新实例）。
+		* 模式与选中态走 `workflow-store`；无顶部模式条（编排/执行由列表点击与测试运行
+		* 驱动）。「▶ 测试运行」按钮在 DagEditor header 内（DagEditor 自持 RPC）。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/EditorPane
 		*/
 		/** 渲染右栏编辑区。 */
 		function EditorPane({ t, face, onSaved }) {
 			const mode = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().mode);
-			const definitionView = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().definitionView);
 			const selectedInstanceId = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId);
 			const selectedDefinition = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedDefinition);
-			const [running, setRunning] = (0, react.useState)(false);
-			const [runError, setRunError] = (0, react.useState)(void 0);
-			const title = mode === "dag" ? selectedDefinition?.id === void 0 ? t("editor.newDefinition") : t("editor.title") : selectedInstanceId ?? t("panel.title");
-			/** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态选中新实例。 */
-			const runTest = async () => {
-				const definitionId = selectedDefinition?.id;
-				if (definitionId === void 0) return;
-				setRunning(true);
-				setRunError(void 0);
-				try {
-					const job = (await face.listJobs(definitionId))[0] ?? await face.createJob({
-						name: `测试-${definitionId.slice(0, 8)}`,
-						workflowId: definitionId
-					});
-					selectInstance((await face.startInstance({
-						jobId: job.id,
-						originalInput: t("editor.testRun")
-					})).instanceId);
-				} catch (error) {
-					setRunError(describeError$1(error));
-				} finally {
-					setRunning(false);
-				}
-			};
-			return (0, react_jsx_runtime.jsxs)("div", {
+			const creatingNew = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().creatingNew);
+			return (0, react_jsx_runtime.jsx)("div", {
 				className: WorkflowOverlay_module_css_default.editorCol,
 				"data-sandore-wf-editor": true,
-				children: [
-					(0, react_jsx_runtime.jsxs)("div", {
-						className: WorkflowOverlay_module_css_default.modeBar,
-						children: [
-							(0, react_jsx_runtime.jsx)("span", {
-								className: WorkflowOverlay_module_css_default.editorTitle,
-								children: title
-							}),
-							(0, react_jsx_runtime.jsx)("span", { className: WorkflowOverlay_module_css_default.spacer }),
-							(0, react_jsx_runtime.jsxs)("div", {
-								className: WorkflowOverlay_module_css_default.modeSwitch,
-								role: "tablist",
-								"aria-label": t("panel.title"),
-								children: [(0, react_jsx_runtime.jsx)("button", {
-									type: "button",
-									role: "tab",
-									"aria-selected": mode === "dag",
-									className: mode === "dag" ? WorkflowOverlay_module_css_default.modeActive : "",
-									onClick: () => {
-										setWorkflowState({ mode: "dag" });
-									},
-									children: t("editor.mode.dag")
-								}), (0, react_jsx_runtime.jsx)("button", {
-									type: "button",
-									role: "tab",
-									"aria-selected": mode === "run",
-									className: mode === "run" ? WorkflowOverlay_module_css_default.modeActive : "",
-									onClick: () => {
-										setWorkflowState({ mode: "run" });
-									},
-									children: t("editor.mode.run")
-								})]
-							}),
-							mode === "dag" && selectedDefinition?.id !== void 0 && (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "primary",
-								disabled: running,
-								onClick: () => {
-									runTest();
-								},
-								children: ["▶ ", t("editor.testRun")]
-							})
-						]
-					}),
-					runError !== void 0 && (0, react_jsx_runtime.jsx)("p", {
-						className: WorkflowOverlay_module_css_default.runError,
-						role: "alert",
-						children: t("panel.error", { message: runError })
-					}),
-					(0, react_jsx_runtime.jsx)("div", {
-						className: WorkflowOverlay_module_css_default.editorBody,
-						children: mode === "dag" ? selectedDefinition !== void 0 && definitionView === "detail" ? (0, react_jsx_runtime.jsx)(DefinitionDetail, {
-							t,
-							initialYaml: selectedDefinition.initialYaml,
-							initialId: selectedDefinition.id,
-							save: face.save,
-							onSaved: (yaml) => {
-								setWorkflowState({ selectedDefinition: {
-									id: selectedDefinition.id,
-									initialYaml: yaml
-								} });
-								onSaved(selectedDefinition.id ?? "");
-							},
-							onEnterEdit: () => {
-								setWorkflowState({ definitionView: "edit" });
-							}
-						}, selectedDefinition.id ?? "new") : (0, react_jsx_runtime.jsx)(DagEditor, {
-							t,
-							initialYaml: selectedDefinition?.initialYaml,
-							initialId: selectedDefinition?.id,
-							save: face.save,
-							onSaved
-						}, selectedDefinition?.id ?? "new") : selectedInstanceId === void 0 ? (0, react_jsx_runtime.jsx)("div", {
-							className: WorkflowOverlay_module_css_default.editorPlaceholder,
-							children: t("view.placeholder")
-						}) : (0, react_jsx_runtime.jsx)(RunView, {
-							t,
-							instanceId: selectedInstanceId,
-							remote: face.remote,
-							openSession: face.openSession
-						}, selectedInstanceId)
-					})
-				]
+				children: (0, react_jsx_runtime.jsx)("div", {
+					className: WorkflowOverlay_module_css_default.editorBody,
+					children: mode === "dag" ? selectedDefinition === void 0 && !creatingNew ? (0, react_jsx_runtime.jsx)("div", {
+						className: WorkflowOverlay_module_css_default.editorPlaceholder,
+						children: t("view.placeholder")
+					}) : (0, react_jsx_runtime.jsx)(DagEditor, {
+						t,
+						initialYaml: selectedDefinition?.initialYaml,
+						initialId: selectedDefinition?.id,
+						save: face.save,
+						onSaved,
+						listJobs: face.listJobs,
+						createJob: face.createJob,
+						startInstance: face.startInstance
+					}, selectedDefinition?.id ?? "new") : selectedInstanceId === void 0 ? (0, react_jsx_runtime.jsx)("div", {
+						className: WorkflowOverlay_module_css_default.editorPlaceholder,
+						children: t("view.placeholder")
+					}) : (0, react_jsx_runtime.jsx)(RunView, {
+						t,
+						instanceId: selectedInstanceId,
+						remote: face.remote,
+						openSession: face.openSession
+					}, selectedInstanceId)
+				})
 			});
 		}
 		//#endregion
@@ -30908,9 +31172,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		/**
 		* WorkflowOverlay：shell.overlay 全局工作流 UI（root scope，不挂会话）。
 		*
-		* 覆盖 conversation/details 列（sidebar 保持可见可点）：header（标题/刷新/关闭）+
-		* 双栏工作台（左 WorkflowList + 分隔条 + 右 EditorPane）。sidebar 实测宽经
-		* ResizeObserver 同步到 `--wf-left`，overlay 内容永远从 sidebar 右缘开始。
+		* 覆盖 conversation/details 列（sidebar 保持可见可点）：双栏工作台
+		* （左 WorkflowList + 分隔条 + 右 EditorPane）。无顶部栏——关闭经侧边栏
+		* 入口按钮再次点击（toggle）完成。sidebar 实测宽经 ResizeObserver 同步到
+		* `--wf-left`，overlay 内容永远从 sidebar 右缘开始。
 		* 打开/关闭/选中态全部在 `workflow-store`。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowOverlay
 		*/
@@ -30961,38 +31226,10 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				className: WorkflowOverlay_module_css_default.layer,
 				ref: layerRef,
 				"data-sandore-overlay-layer": true,
-				children: (0, react_jsx_runtime.jsxs)("div", {
+				children: (0, react_jsx_runtime.jsx)("div", {
 					className: WorkflowOverlay_module_css_default.overlay,
 					"data-sandore-overlay": true,
-					children: [(0, react_jsx_runtime.jsxs)("header", {
-						className: WorkflowOverlay_module_css_default.header,
-						children: [
-							(0, react_jsx_runtime.jsxs)("span", {
-								className: WorkflowOverlay_module_css_default.headerTitle,
-								children: ["🔀 ", t("panel.title")]
-							}),
-							(0, react_jsx_runtime.jsx)("span", { className: WorkflowOverlay_module_css_default.spacer }),
-							(0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								className: WorkflowOverlay_module_css_default.iconBtn,
-								"aria-label": t("overlay.refresh"),
-								title: t("overlay.refresh"),
-								onClick: () => {
-									setRefreshKey((key) => key + 1);
-								},
-								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {})
-							}),
-							(0, react_jsx_runtime.jsx)("button", {
-								type: "button",
-								className: WorkflowOverlay_module_css_default.iconBtn,
-								"aria-label": t("overlay.close"),
-								title: t("overlay.close"),
-								"data-sandore-overlay-close": true,
-								onClick: closeWorkflowOverlay,
-								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCloseOutline16, {})
-							})
-						]
-					}), (0, react_jsx_runtime.jsxs)("div", {
+					children: (0, react_jsx_runtime.jsxs)("div", {
 						className: WorkflowOverlay_module_css_default.body,
 						children: [
 							(0, react_jsx_runtime.jsx)(WorkflowList, {
@@ -31015,7 +31252,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 								}
 							})
 						]
-					})]
+					})
 				})
 			});
 		}
@@ -31317,7 +31554,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				name: "sidebar.footer.action",
 				id: "sandore-btn",
 				locale: NS,
-				inject: () => ({ onOpenWorkflow: openWorkflowOverlay })
+				inject: () => ({ onToggleWorkflow: toggleWorkflowOverlay })
 			}, WorkflowButton));
 			await ctx.inject(["remote.sandore"], (remoteCtx) => {
 				const sandore = remoteCtx.remote.sandore;
@@ -31329,7 +31566,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					inject: () => ({
 						listInstances: async () => unwrap(await sandore.listInstances()),
 						listDefinitions: async () => unwrap(await sandore.listDefinitions()),
-						listJobs: async (workflowId) => unwrap(await sandore.listJobs(workflowId)),
+						listJobs: async (workflowId) => unwrap(await sandore.listJobs(workflowId === void 0 ? {} : { workflowId })),
 						createJob: async (input) => unwrap(await sandore.createJob(input)),
 						startInstance: async (input) => unwrap(await sandore.startInstance(input)),
 						deleteDefinition: async (id) => unwrap(await sandore.deleteDefinition(id)),

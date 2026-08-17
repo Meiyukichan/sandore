@@ -256,7 +256,7 @@ describe('resolvePathSegments / resolveFromInputFrom', () => {
       executedStep({ id: 'step-step-a-49aa', stepId: 'step-a-49aa', stageId: 'stg-1' }),
       executedStep({ id: 'step-step-b-0001', stepId: 'step-b', stageId: 'stg-1' }),
     ];
-    const result = resolvePathSegments(executed, 2, 'stg-1.step-a');
+    const result = resolvePathSegments(executed, 2, 'step-a');
     expect(result).toEqual([executed[1]]);
   });
 
@@ -265,33 +265,28 @@ describe('resolvePathSegments / resolveFromInputFrom', () => {
       executedStep({ id: 'step-step-a-0001', stepId: 'step-a-0001', stageId: 'stg-1' }),
       executedStep({ id: 'step-step-a-49aa', stepId: 'step-a-49aa', stageId: 'stg-1' }),
     ];
-    // currentIndex 指向当前（第二条）迭代条目；就近匹配应命中上一条而非当前条目。
-    const result = resolvePathSegments(executed, 1, 'stg-1.step-a');
-    expect(result).toEqual([executed[0]]);
+    // 简化格式：path 为 step id；就近匹配命中最近同名 Step。
+    const result = resolvePathSegments(executed, 1, 'step-a-49aa');
+    expect(result).toEqual([executed[1]]);
   });
 
-  it('resolves Stage level to all steps in the stage, nearest first', () => {
+  it('resolves Step level by step id, nearest last', () => {
     const executed: ExecutedStepDefault[] = [
       executedStep({ id: 'e-a', stepId: 'a', stageId: 'stg-1' }),
       executedStep({ id: 'e-b', stepId: 'b', stageId: 'stg-1' }),
       executedStep({ id: 'e-c', stepId: 'c', stageId: 'stg-2' }),
     ];
-    const result = resolvePathSegments(executed, 2, 'stg-1');
-    expect(result).toEqual([executed[1], executed[0]]);
+    const result = resolvePathSegments(executed, 2, 'b');
+    expect(result).toEqual([executed[1]]);
   });
 
-  it('resolves OutputTo level by filtering the specific outputTo id', () => {
+  it('resolves Step level and returns empty for unknown step id', () => {
     const executed: ExecutedStepDefault[] = [
-      executedStep({
-        id: 'e-a',
-        stepId: 'step-a',
-        stageId: 'stg-1',
-        outputTo: [{ id: 'opt-x' }, { id: 'opt-y' }],
-      }),
+      executedStep({ id: 'e-a', stepId: 'step-a', stageId: 'stg-1' }),
       executedStep({ id: 'e-b', stepId: 'step-b', stageId: 'stg-1' }),
     ];
-    expect(resolvePathSegments(executed, 1, 'stg-1.step-a.opt-x')).toEqual([executed[0]]);
-    expect(resolvePathSegments(executed, 1, 'stg-1.step-a.opt-z')).toEqual([]);
+    expect(resolvePathSegments(executed, 1, 'step-a')).toEqual([executed[0]]);
+    expect(resolvePathSegments(executed, 1, 'step-unknown')).toEqual([]);
   });
 
   it('falls back to the previous executed entry when inputFrom is empty', () => {

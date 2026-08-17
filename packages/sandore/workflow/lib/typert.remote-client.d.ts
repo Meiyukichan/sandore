@@ -11,6 +11,7 @@ import type {
   DagRun,
   InstanceSummary,
   JobEntry,
+  ListJobsInput,
   PauseAllInput,
   PauseStepInput,
   PingResponse,
@@ -44,7 +45,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     deleteDefinition: (id: string) => Promise<RemoteResult<boolean>>
     getYaml: (id: string) => Promise<RemoteResult<string>>
     updateYaml: (id: string, yaml: string) => Promise<RemoteResult<WorkflowDefinitionEntry>>
-    listJobs: (workflowId?: string) => Promise<RemoteResult<JobEntry[]>>
+    listJobs: (input: ListJobsInput) => Promise<RemoteResult<JobEntry[]>>
     createJob: (input: CreateJobInput) => Promise<RemoteResult<JobEntry>>
     getJob: (id: string) => Promise<RemoteResult<JobEntry>>
     updateJob: (id: string, input: UpdateJobInput) => Promise<RemoteResult<JobEntry>>
@@ -73,7 +74,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'sandore/deleteDefinition': (id: string) => Promise<RemoteResult<boolean>>
     'sandore/getYaml': (id: string) => Promise<RemoteResult<string>>
     'sandore/updateYaml': (id: string, yaml: string) => Promise<RemoteResult<WorkflowDefinitionEntry>>
-    'sandore/listJobs': (workflowId?: string) => Promise<RemoteResult<JobEntry[]>>
+    'sandore/listJobs': (input: ListJobsInput) => Promise<RemoteResult<JobEntry[]>>
     'sandore/createJob': (input: CreateJobInput) => Promise<RemoteResult<JobEntry>>
     'sandore/getJob': (id: string) => Promise<RemoteResult<JobEntry>>
     'sandore/updateJob': (id: string, input: UpdateJobInput) => Promise<RemoteResult<JobEntry>>

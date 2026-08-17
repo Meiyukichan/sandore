@@ -19,23 +19,27 @@ import {
 import '@xyflow/react/dist/style.css'
 import './reactflow-theme.css'
 import {
-  Button, CodeBlock, DisclosureRow, IconChevronRightOutline14, IconPlusOutline16,
-  IconTrashOutline16, Input,
+  Button, CodeBlock, IconCheckOutline16, IconDownloadOutline16, IconPlayOutline16, IconPlusOutline16,
+  IconSparkle16, IconTrashOutline16, Input, Modal, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
-  DagBranch, Gates, InputFromItem, WorkflowDefinition, WorkflowStage, WorkflowStep,
+  DagBranch, Gates, InputFromItem, OutputToItem, WorkflowDefinition, WorkflowStage, WorkflowStep,
 } from '@deepseek-ai/dsh-sandore-workflow/schema'
+import type { DagRun, JobEntry } from '@deepseek-ai/dsh-sandore-workflow/remote'
 import { parseWorkflowYaml, serializeWorkflowYaml } from '@deepseek-ai/dsh-sandore-workflow/yaml'
 
 import {
   createBlankDefinition, createCommand, createInputFromItem, createOutputToItem, createPassThroughVar,
-  createStage, dagreLayout, newId, parseOptionalNumber, stageFlowEdges, stepFlowEdges,
-  trimToUndefined, withDefinitionId, wouldCreateStageCycle, type FlowEdgeKind,
+  createStage, dagreLayout, mergedStepsOf, newId, parseOptionalNumber, stageFlowEdges, stepFlowEdges,
+  trimToUndefined, withDefinitionId, wouldCreateStageCycle, type FlowEdgeKind, type MergedStep,
 } from './dag-editor-model.ts'
 import { CommandEditor } from './CommandEditor.tsx'
+import { WorkflowDetailFields } from './DefinitionDetail.tsx'
 import { FlowEditor, type FlowFields, type FlowTarget } from './FlowEditor.tsx'
 import { describeSaveError, type SaveDefinition } from './sandore-save.ts'
+import { describeError } from './describe-error.ts'
+import { selectInstance } from './workflow-store.ts'
 import css from './DagEditor.module.css'
 
 /** DagEditor 接收的最小业务 props：初始定义 + 保存回调 + locale。 */
@@ -50,6 +54,12 @@ export interface DagEditorProps {
   save: SaveDefinition
   /** 保存成功回调（携带持久化后的 id），供宿主刷新定义列表等。 */
   onSaved?: (id: string) => void
+  /** 按 workflowId 过滤拉取 Job 列表（「▶ 测试运行」用）。 */
+  listJobs(workflowId?: string): Promise<JobEntry[]>
+  /** 创建 Job（「▶ 测试运行」无 Job 时用）。 */
+  createJob(input: { name: string; workflowId: string; cwd?: string }): Promise<JobEntry>
+  /** 启动实例（「▶ 测试运行」用）。 */
+  startInstance(input: { jobId: string; originalInput: string; cwd?: string }): Promise<DagRun>
 }
 
 /** 保存流程本地状态。 */
@@ -164,6 +174,8 @@ interface DagCanvasProps {
   onSelectStep(stepId: string): void
   /** 点 Stage 节点（Stage 层选中，右侧面板同步）。 */
   onSelectStage(stageId: string): void
+  /** 点画布空白：取消选中（Stage 层回到工作流详情 / Step 层回到空态）。 */
+  onPaneClick(): void
   /** 拖拽连线（Stage 层）：source → target 设串行 next。 */
   onConnectStage(source: string, target: string): void
   /** 拖拽连线（Step 层）：source → target 设串行 next。 */
@@ -177,7 +189,7 @@ interface DagCanvasProps {
 }
 
 /** 渲染 React Flow 画布（必须在 ReactFlowProvider 内，工具条经 useReactFlow 控制缩放）。 */
-function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, onDrillStage, onSelectStep, onSelectStage, onConnectStage, onConnectStep, onDeleteNodes, onDeleteEdges, t }: DagCanvasProps) {
+function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, onDrillStage, onSelectStep, onSelectStage, onPaneClick, onConnectStage, onConnectStep, onDeleteNodes, onDeleteEdges, t }: DagCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const { zoomIn, zoomOut, fitView, screenToFlowPosition } = useReactFlow()
@@ -216,7 +228,7 @@ function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, 
       }))
       return { nodes: stageNodes, edges: stageEdges }
     }
-    const steps = drilledStage?.steps ?? []
+    const steps = drilledStage === undefined ? [] : mergedStepsOf(definition, drilledStage)
     const stepNodes: Node[] = steps.map(step => ({
       id: step.id,
       type: 'step',
@@ -358,6 +370,8 @@ function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, 
           if (node.type === 'stage') onSelectStage(node.id)
           else if (node.type === 'step') onSelectStep(node.id)
         }}
+        // 点空白取消选中：Stage 层回工作流详情、Step 层回空态。
+        onPaneClick={onPaneClick}
         onNodeDoubleClick={(_event, node) => {
           if (drillStageId === undefined && node.type === 'stage') {
             onDrillStage(node.id)
@@ -394,33 +408,122 @@ function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, 
 
 // ── 字段编辑（Step 完整字段表单，沿用既有实现） ────────────────────────────
 
+/** 眼睛图标（预览按钮用；primitives 无眼睛图标，内联 SVG 16×16）。 */
+function EyeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path
+        d="M8 3C4.5 3 1.8 5.4 1 8c.8 2.6 3.5 5 7 5s6.2-2.4 7-5c-.8-2.6-3.5-5-7-5Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <circle cx="8" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  )
+}
+
 /** 折叠小节标题。 */
 function SectionLabel({ children }: { readonly children: string }) {
   return <div className={css.sectionLabel}>{children}</div>
 }
 
-/** 单个映射条目（inputFrom/outputTo 的 `{id, path, regex}`）编辑行。 */
-function MappingRow({ item, onChange, onRemove, t }: {
+/**
+ * 输入参数条目：类型下拉（相对路径=引用 step / 正则匹配）+ 目标 step 下拉（显示名称）。
+ * 简化格式：`path` 存引用的 step id（单段），不再支持 stageId.stepId。
+ */
+function InputRow({ item, stepOptions, onChange, onRemove, t }: {
   readonly item: InputFromItem
+  readonly stepOptions: readonly FlowTarget[]
   readonly onChange: (item: InputFromItem) => void
   readonly onRemove: () => void
   readonly t: TranslateNS<'sandore'>
 }) {
+  const mode: 'path' | 'regex' = item.regex !== undefined ? 'regex' : 'path'
   return (
     <div className={css.itemRow}>
-      <Input value={item.id} onChange={event => { onChange({ ...item, id: event.target.value }) }} placeholder={t('editor.field.id')} />
-      <Input value={item.path ?? ''} onChange={event => { onChange({ ...item, path: trimToUndefined(event.target.value) }) }} placeholder={t('editor.field.path')} />
-      <Input value={item.regex ?? ''} onChange={event => { onChange({ ...item, regex: trimToUndefined(event.target.value) }) }} placeholder={t('editor.field.regex')} />
+      <select
+        className={css.branchKindSelect}
+        value={mode}
+        onChange={event => {
+          const next = event.target.value
+          if (next === 'regex') onChange({ ...item, regex: item.regex ?? '' })
+          else onChange({ ...item, regex: undefined })
+        }}
+      >
+        <option value="path">{t('editor.field.stepName')}</option>
+        <option value="regex">{t('editor.field.regex')}</option>
+      </select>
+      {mode === 'path' ? (
+        <select
+          className={css.branchTarget}
+          value={item.path ?? ''}
+          onChange={event => { onChange({ ...item, path: event.target.value === '' ? undefined : event.target.value }) }}
+        >
+          <option value="">{t('flow.none')}</option>
+          {stepOptions.map(step => (
+            <option key={step.id} value={step.id}>{step.name}</option>
+          ))}
+        </select>
+      ) : (
+        <Input
+          className={css.branchTarget ?? ''}
+          value={item.regex ?? ''}
+          onChange={event => { onChange({ ...item, regex: trimToUndefined(event.target.value) }) }}
+          placeholder={t('editor.field.regex')}
+        />
+      )}
+      <Button variant="ghost" size="sm" icon={<IconTrashOutline16 />} onClick={onRemove} aria-label={t('editor.remove.item')} />
+    </div>
+  )
+}
+
+/**
+ * 输出参数条目：类型下拉（相对路径 / 正则匹配）+ 相对路径字符串输入。
+ */
+function OutputRow({ item, onChange, onRemove, t }: {
+  readonly item: OutputToItem
+  readonly onChange: (item: OutputToItem) => void
+  readonly onRemove: () => void
+  readonly t: TranslateNS<'sandore'>
+}) {
+  const mode: 'path' | 'regex' = item.regex !== undefined ? 'regex' : 'path'
+  return (
+    <div className={css.itemRow}>
+      <select
+        className={css.branchKindSelect}
+        value={mode}
+        onChange={event => {
+          const next = event.target.value
+          if (next === 'regex') onChange({ ...item, regex: item.regex ?? '' })
+          else onChange({ ...item, regex: undefined })
+        }}
+      >
+        <option value="path">{t('editor.field.relativePath')}</option>
+        <option value="regex">{t('editor.field.regex')}</option>
+      </select>
+      <Input
+        className={css.branchTarget ?? ''}
+        value={mode === 'path' ? (item.path ?? '') : (item.regex ?? '')}
+        onChange={event => {
+          const value = trimToUndefined(event.target.value)
+          if (mode === 'path') onChange({ ...item, path: value })
+          else onChange({ ...item, regex: value })
+        }}
+        placeholder={mode === 'path' ? t('editor.field.relativePath') : t('editor.field.regex')}
+      />
       <Button variant="ghost" size="sm" icon={<IconTrashOutline16 />} onClick={onRemove} aria-label={t('editor.remove.item')} />
     </div>
   )
 }
 
 /** Step 完整字段编辑器（名称 + 执行 command + 流控 FlowEditor + 映射 + gates）。 */
-function StepEditor({ step, targets, onChange, onRemove, t }: {
-  readonly step: WorkflowStep
+function StepEditor({ step, stageSteps, targets, onChange, onRemove, t }: {
+  readonly step: MergedStep
+  /** 当前 Stage 内全部合并 step（含 branches），用于计算回环环上节点。 */
+  readonly stageSteps: readonly MergedStep[]
   readonly targets: readonly FlowTarget[]
-  readonly onChange: (step: WorkflowStep) => void
+  readonly onChange: (step: MergedStep) => void
   readonly onRemove: () => void
   readonly t: TranslateNS<'sandore'>
 }) {
@@ -448,6 +551,8 @@ function StepEditor({ step, targets, onChange, onRemove, t }: {
       <FlowEditor
         t={t}
         targets={targets}
+        stageSteps={stageSteps}
+        currentId={step.id}
         conditionTypes={['shell', 'prompt']}
         flow={{ branches: step.branches }}
         onChange={flow => {
@@ -457,9 +562,10 @@ function StepEditor({ step, targets, onChange, onRemove, t }: {
 
       <SectionLabel>{t('editor.section.inputFrom')}</SectionLabel>
       {inputFrom.map((item, index) => (
-        <MappingRow
+        <InputRow
           key={index}
           item={item}
+          stepOptions={stageSteps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id }))}
           onChange={next => { onChange({ ...step, inputFrom: inputFrom.map((current, i) => (i === index ? next : current)) }) }}
           onRemove={() => { onChange({ ...step, inputFrom: inputFrom.filter((_, i) => i !== index) }) }}
           t={t}
@@ -471,7 +577,7 @@ function StepEditor({ step, targets, onChange, onRemove, t }: {
 
       <SectionLabel>{t('editor.section.outputTo')}</SectionLabel>
       {outputTo.map((item, index) => (
-        <MappingRow
+        <OutputRow
           key={index}
           item={item}
           onChange={next => { onChange({ ...step, outputTo: outputTo.map((current, i) => (i === index ? next : current)) }) }}
@@ -584,15 +690,22 @@ function GatesEditor({ gates, onChange, t }: {
 // ── 主组件 ─────────────────────────────────────────────────────────────────
 
 /** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
-export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEditorProps) {
+export function DagEditor({ t, initialYaml, initialId, save, onSaved, listJobs, createJob, startInstance }: DagEditorProps) {
   const [definition, setDefinition] = useState<WorkflowDefinition>(() =>
     initialYaml === undefined ? createBlankDefinition() : parseWorkflowYaml(initialYaml))
   const [id, setId] = useState<string | undefined>(initialId)
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' })
+  /** 保存成功轻提示（Toast，顶部居中临时横幅）；seq 递增供 Toast 按 key 重启动画。 */
+  const [toast, setToast] = useState<{ seq: number, message: string } | undefined>(undefined)
   const [drillStageId, setDrillStageId] = useState<string | undefined>(undefined)
-  const [selectedStageId, setSelectedStageId] = useState<string | undefined>(definition.stages[0]?.id)
+  // 初始不选中任何 Stage：右侧面板默认展示工作流详情（WorkflowDetailFields），
+  // 点击 Stage 节点后才切换为该 Stage 的配置。
+  const [selectedStageId, setSelectedStageId] = useState<string | undefined>(undefined)
   const [selectedStepId, setSelectedStepId] = useState<string | undefined>(undefined)
   const [previewOpen, setPreviewOpen] = useState(false)
+  /** ▶ 测试运行状态：运行中禁用按钮；失败内联呈现错误。 */
+  const [running, setRunning] = useState(false)
+  const [runError, setRunError] = useState<string | undefined>(undefined)
 
   const preview = useMemo(() => serializeWorkflowYaml(definition), [definition])
 
@@ -604,15 +717,31 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
     patchStages(stages => stages.map(stage => (stage.id === stageId ? next : stage)))
   }
 
-  const updateStep = (stageId: string, stepId: string, next: WorkflowStep): void => {
-    patchStages(stages => stages.map(stage => (stage.id === stageId
-      ? { ...stage, steps: stage.steps.map(step => (step.id === stepId ? next : step)) }
-      : stage)))
+  /** 合并 Step 变更（V2 分离式）：定义字段写顶层 `definition.steps[id]`，流控 branches 写
+   *  `stage.steps[id].branches`。两者拆分落库，保证 YAML 分离式结构。 */
+  const updateStep = (stageId: string, stepId: string, next: MergedStep): void => {
+    const { branches, ...definition } = next
+    // 定义部分（name/command/映射/gates 等）→ 顶层 steps[]（无 id 则按 id 追加）。
+    setDefinition(current => {
+      const steps = current.steps ?? []
+      const existing = steps.some(step => step.id === stepId)
+      return { ...current, steps: existing ? steps.map(step => (step.id === stepId ? definition : step)) : [...steps, definition] }
+    })
+    // 流控部分（branches）→ Stage 流控位（无分支时省略字段，保持 YAML 干净）。
+    patchStages(stages => stages.map(stage => (stage.id !== stageId ? stage : {
+      ...stage,
+      steps: stage.steps.map(step => (step.id !== stepId ? step : { id: stepId, ...(branches === undefined ? {} : { branches }) })),
+    })))
   }
 
-  /** 删除 Step（面板移除按钮 / 画布键盘删除共用）：清理其余 Step 指向它的流控引用。 */
+  /** 删除 Step（面板移除按钮 / 画布键盘删除共用）：同步清顶层定义与 Stage 流控位，
+   *  并清理其余 Step 指向它的流控引用。 */
   const removeSteps = (stageId: string, ids: readonly string[]): void => {
     const removed = new Set(ids)
+    setDefinition(current => ({
+      ...current,
+      steps: (current.steps ?? []).filter(step => !removed.has(step.id)),
+    }))
     patchStages(stages => stages.map(stage => (stage.id !== stageId ? stage : {
       ...stage,
       steps: stage.steps
@@ -635,12 +764,21 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
 
   const addStep = (stageId: string): void => {
     const stepId = newId('step')
-    patchStages(stages => stages.map(stage => {
-      if (stage.id !== stageId) return stage
+    // 单次状态更新：流控位（仅 id + branches）进 Stage.steps，完整定义（name/command 等）进顶层 steps[]。
+    setDefinition(current => {
+      const stage = current.stages.find(candidate => candidate.id === stageId)
+      if (stage === undefined) return current
       const count = stage.steps.length
       // 命令必填：新 step 默认带 shell 命令（编辑器直接显示，不做「+命令」占位）。
-      return { ...stage, steps: [...stage.steps, { id: stepId, name: `${t('editor.step.placeholder')} ${count + 1}`, command: createCommand('shell') }] }
-    }))
+      const definition: WorkflowStep = { id: stepId, name: `${t('editor.step.placeholder')} ${count + 1}`, command: createCommand('shell') }
+      return {
+        ...current,
+        stages: current.stages.map(candidate => (candidate.id === stageId
+          ? { ...candidate, steps: [...candidate.steps, { id: stepId }] }
+          : candidate)),
+        steps: [...(current.steps ?? []), definition],
+      }
+    })
     // 下钻态添加 step：自动选中新 step（右侧面板立即显示其配置）。
     if (drillStageId === stageId) setSelectedStepId(stepId)
   }
@@ -687,6 +825,12 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
   /** 单击选中 Stage（右侧面板同步显示该 Stage 的配置）。 */
   const selectStage = (stageId: string): void => {
     setSelectedStageId(stageId)
+    setSelectedStepId(undefined)
+  }
+
+  /** 点画布空白取消选中：Stage 层回工作流详情（默认视图）、Step 层回空态。 */
+  const clearSelection = (): void => {
+    setSelectedStageId(undefined)
     setSelectedStepId(undefined)
   }
 
@@ -779,35 +923,106 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
       onSaved?.(savedId)
       setDefinition(current => withDefinitionId(current, savedId))
       setSaveState({ kind: 'ok' })
+      // 保存成功用顶部轻提示（Toast），不占用画布上方空间。
+      setToast(current => ({ seq: (current?.seq ?? 0) + 1, message: t('editor.save.success') }))
     } catch (error) {
       const { message, details } = describeSaveError(error)
       setSaveState({ kind: 'error', message, details })
     }
   }
 
-  const selectedStage = definition.stages.find(stage => stage.id === selectedStageId) ?? definition.stages[0]
+  // Ctrl+S 保存工作流（含右侧 Step 详情面板的当前编辑态——受控组件 onChange 即时提交，
+  // 保存直接序列化 definition 快照）。阻止浏览器默认「保存网页」。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault()
+        void runSave()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  })
+
+  // 无选中（selectedStageId === undefined）时不兜底到首个 Stage：右侧面板显示工作流详情。
+  const selectedStage = definition.stages.find(stage => stage.id === selectedStageId)
   const drilledStage = drillStageId === undefined
     ? undefined
     : definition.stages.find(stage => stage.id === drillStageId)
 
+  /** 导出 YAML：下载为 `{id}.yaml` 文件（内容与保存到后端一致）。 */
+  const exportYaml = (): void => {
+    const yaml = serializeWorkflowYaml(definition)
+    const blob = new Blob([yaml], { type: 'application/yaml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${id ?? definition.id ?? 'workflow'}.yaml`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  /** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态并选中新实例。 */
+  const runTest = async (): Promise<void> => {
+    const definitionId = id ?? definition.id
+    if (definitionId === undefined) return
+    setRunning(true)
+    setRunError(undefined)
+    try {
+      const jobs = await listJobs(definitionId)
+      const job = jobs[0] ?? await createJob({ name: `测试-${definitionId.slice(0, 8)}`, workflowId: definitionId })
+      const run = await startInstance({ jobId: job.id, originalInput: t('editor.testRun') })
+      selectInstance(run.instanceId)
+    } catch (error) {
+      setRunError(describeError(error))
+    } finally {
+      setRunning(false)
+    }
+  }
+
   return (
     <section className={css.editor} aria-label={t('editor.title')} data-sandore-dag-editor>
       <header className={css.header}>
-        <span className={css.title}>{t('editor.title')}</span>
-        <Button size="sm" variant="primary" disabled={saveState.kind === 'pending'} onClick={() => { void runSave() }}>
-          {saveState.kind === 'pending' ? t('editor.saving') : t('editor.save')}
-        </Button>
+        {/* 标题 = 当前工作流名称（随右侧详情字段编辑实时更新）。 */}
+        <span className={css.title} title={definition.name}>{definition.name}</span>
+        <span className={css.headerActions}>
+          <Button size="sm" variant="ghost" icon={<EyeIcon />} onClick={() => { setPreviewOpen(current => !current) }}>
+            {t('editor.preview')}
+          </Button>
+          <Button size="sm" variant="ghost" icon={<IconDownloadOutline16 />} onClick={exportYaml}>
+            {t('editor.export')}
+          </Button>
+          {/* 对话生成：静态按钮（测试左边，样式同测试/保存），待接入 AI 生成。 */}
+          <Button
+            size="sm"
+            variant="primary"
+            icon={<IconSparkle16 />}
+            title={t('editor.chatCreate.hint')}
+            onClick={() => { setToast(current => ({ seq: (current?.seq ?? 0) + 1, message: t('editor.chatCreate.hint') })) }}
+          >
+            {t('editor.chatCreate')}
+          </Button>
+          {/* 测试运行：置于导出右、保存左；样式与保存一致（primary 背景框）。 */}
+          {id !== undefined && (
+            <Button size="sm" variant="primary" icon={<IconPlayOutline16 />} disabled={running} onClick={() => { void runTest() }}>
+              {t('editor.test')}
+            </Button>
+          )}
+          <Button size="sm" variant="primary" icon={<IconCheckOutline16 />} disabled={saveState.kind === 'pending'} onClick={() => { void runSave() }}>
+            {saveState.kind === 'pending' ? t('editor.saving') : t('editor.save')}
+          </Button>
+        </span>
       </header>
 
-      {saveState.kind === 'ok' && (
-        <p className={css.success} role="status">{t('editor.save.success')}</p>
-      )}
       {saveState.kind === 'error' && (
         <p className={css.error} role="alert">
           {saveState.details === undefined
             ? t('editor.save.failed', { message: saveState.message })
             : t('editor.save.failed', { message: `${saveState.message} — ${saveState.details}` })}
         </p>
+      )}
+      {runError !== undefined && (
+        <p className={css.error} role="alert">{t('panel.error', { message: runError })}</p>
       )}
 
       <div className={css.canvasRow}>
@@ -842,6 +1057,7 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
               onDrillStage={drillStage}
               onSelectStep={setSelectedStepId}
               onSelectStage={selectStage}
+              onPaneClick={clearSelection}
               onConnectStage={connectStage}
               onConnectStep={connectStep}
               onDeleteNodes={deleteNodes}
@@ -851,11 +1067,18 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
           </ReactFlowProvider>
         </div>
 
-        {/* 右侧编辑面板：Stage 层 → 选中阶段（名称 + Step 列表）；下钻层 → 选中 Step。 */}
+        {/* 右侧编辑面板：Stage 层无选中 → 工作流详情（WorkflowDetailFields）；选中 Stage →
+            Stage 配置；下钻层 → 选中 Step 配置。 */}
         <aside className={css.panel} data-sandore-dag-panel>
           {drillStageId === undefined ? (
             selectedStage === undefined ? (
-              <span className={css.panelEmpty}>{t('editor.steps.empty')}</span>
+              <div className={css.panelBody}>
+                <WorkflowDetailFields
+                  t={t}
+                  definition={definition}
+                  onChange={next => { setDefinition(next) }}
+                />
+              </div>
             ) : (
               <div className={css.panelBody}>
                 <StageEditor
@@ -875,13 +1098,15 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
               <span className={css.panelEmpty}>{t('editor.steps.empty')}</span>
             ) : (
               (() => {
-                const step = drilledStage.steps.find(candidate => candidate.id === selectedStepId)
+                const mergedSteps = mergedStepsOf(definition, drilledStage)
+                const step = mergedSteps.find(candidate => candidate.id === selectedStepId)
                 if (step === undefined) return <span className={css.panelEmpty}>{t('editor.steps.empty')}</span>
                 return (
                   <div className={css.panelBody}>
                     <StepEditor
                       step={step}
-                      targets={drilledStage.steps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id }))}
+                      stageSteps={mergedSteps}
+                      targets={mergedSteps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id }))}
                       onChange={next => { updateStep(drilledStage.id, step.id, next) }}
                       onRemove={() => { removeStep(drilledStage.id, step.id) }}
                       t={t}
@@ -894,20 +1119,22 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEdito
         </aside>
       </div>
 
-      {/* YAML 预览折叠 */}
-      <DisclosureRow
-        icon={<IconChevronRightOutline14 />}
-        title={t('editor.preview')}
+      {/* 预览弹窗：展示与保存一致的工作流 YAML（宽高放大）。 */}
+      <Modal
         open={previewOpen}
-        expandable
-        onToggle={() => { setPreviewOpen(current => !current) }}
-        previewChevron={false}
-        rowClassName={css.previewHeader}
+        onClose={() => { setPreviewOpen(false) }}
+        title={t('editor.preview')}
+        closeLabel={t('overlay.close')}
+        className={css.previewModal ?? ''}
+        contentClassName={css.previewModalBody ?? ''}
       >
-        <div className={css.previewBody}>
-          <CodeBlock code={preview} lang="yaml" copyLabel={t('editor.preview')} />
-        </div>
-      </DisclosureRow>
+        <CodeBlock code={preview} lang="yaml" copyLabel={t('editor.preview')} />
+      </Modal>
+
+      {/* 保存成功轻提示：顶部居中临时横幅，4s 自动淡出；key=seq 使重复保存重启动画。 */}
+      {toast !== undefined && (
+        <Toast key={toast.seq} text={toast.message} onDone={() => { setToast(undefined) }} />
+      )}
     </section>
   )
 }

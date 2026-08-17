@@ -10,6 +10,27 @@ import type {
   CommandConfig, DagBranch, InputFromItem, OutputToItem, PassThroughVar, WorkflowDefinition, WorkflowStage, WorkflowStep,
 } from '@deepseek-ai/dsh-sandore-workflow/schema'
 
+/**
+ * 合并视图 Step（V2 分离式）：Stage 流控位（`{id, branches?}`）与顶层定义
+ * （`definition.steps[id]` 全字段）按 id 合并，供画布/编辑器读取完整字段。
+ */
+export type MergedStep = WorkflowStep & { branches?: DagBranch[] }
+
+/**
+ * 构造某 Stage 的合并 Step 视图：`definition.steps[id]` 定义字段 + `stage.steps[id].branches`
+ * 流控字段。顶层缺定义（旧数据/未同步）时退回 `{id}` 骨架。
+ * @param definition - 工作流定义（含顶层 steps[]）。
+ * @param stage - 目标 Stage（含流控位 steps[]）。
+ * @returns 合并 Step 列表（顺序 = Stage 流控位顺序）。
+ */
+export function mergedStepsOf(definition: WorkflowDefinition, stage: WorkflowStage): MergedStep[] {
+  const byId = new Map((definition.steps ?? []).map(step => [step.id, step] as const))
+  return stage.steps.map(slot => ({
+    ...(byId.get(slot.id) ?? { id: slot.id }),
+    ...(slot.branches === undefined ? {} : { branches: slot.branches }),
+  }))
+}
+
 /** 五类型命令判别字段（对齐 `CommandConfig` discriminated union）。 */
 export type CommandType = CommandConfig['type']
 
@@ -151,7 +172,7 @@ export function stageNodeHeight(stepCount: number): number {
 }
 
 /** 单个 Step 的流出目标（branches[].next + branches[].loop.next，去空）。 */
-export function stepTargetsOf(step: WorkflowStep): string[] {
+export function stepTargetsOf(step: MergedStep): string[] {
   const targets: string[] = []
   for (const branch of step.branches ?? []) {
     if (branch.next !== undefined && branch.next !== '') targets.push(branch.next)
@@ -250,10 +271,10 @@ export function stageFlowEdges(stages: readonly WorkflowStage[]): FlowEdgeSpec[]
  * Step 层流控边（微流程：并行/条件 branches + **循环回边分支 loop**）。
  * 条件分支（有 condition）琥珀虚线带 label；循环分支（有 loop）`loop.next` 红色虚线
  * 回边；无 condition/loop 的并行分支默认灰实线。
- * @param steps - 某 Stage 内的 Step 列表。
+ * @param steps - 某 Stage 内的合并 Step 列表（含 branches 流控）。
  * @returns 去重后的流控边。
  */
-export function stepFlowEdges(steps: readonly WorkflowStep[]): FlowEdgeSpec[] {
+export function stepFlowEdges(steps: readonly MergedStep[]): FlowEdgeSpec[] {
   const byId = new Set(steps.map(step => step.id))
   const edges: FlowEdgeSpec[] = []
   const emitted = new Set<string>()

@@ -704,13 +704,19 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         if (stepDef === undefined) {
             return undefined;
         }
+        // 分离式合并：stage.steps 仅流控位（id + branches），完整定义（command/映射等）
+        // 在顶层 definition.steps，按 id 取合并视图供续跑（resumeSubagentStep 需要 command）。
+        const definitionStep = active.definition.steps?.find(step => step.id === stepDef.id);
+        const mergedStep = definitionStep === undefined
+            ? { id: stepDef.id }
+            : { ...definitionStep };
         return {
             // 快照 executedSteps 为 schema 派生类型（可选字段 `| undefined`），此处收窄为
             // StageExecutor 内部的 browser-safe ExecutedStepDefault（与 onPersist 桥接一致）。
             completedSteps: stageSteps
                 .filter(step => step.id !== resumeStep.id && step.status === 'completed'),
             resumeSubagent: {
-                step: stepDef,
+                step: mergedStep,
                 executed: resumeStep,
                 childId: resumeStep.sessionMeta?.childId ?? resumeStep.id,
             },

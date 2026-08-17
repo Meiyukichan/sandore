@@ -57,6 +57,7 @@ export type {
   CreateDefinitionInput,
   UpdateDefinitionInput,
   CreateJobInput,
+  ListJobsInput,
   UpdateJobInput,
   StartInstanceInput,
   ReplyQuestionInput,

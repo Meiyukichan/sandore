@@ -1,8 +1,8 @@
 import { type WorkflowDefinition } from './schema.ts';
 /**
  * 检测 V1 三级结构（`stages[].scenarios[]`）并自动转换为 V2 两级结构
- * （`stages[].steps[]`）。同一 Stage 同时含 `steps[]` 与 `scenarios[]` 视为混合格式，
- * 抛 `WorkflowYamlError('DEFINITION_INVALID')`。
+ * （`stages[].steps[]` 流控 + 顶层 `steps[]` 完整定义）。同一 Stage 同时含
+ * `steps[]` 与 `scenarios[]` 视为混合格式，抛 `WorkflowYamlError('DEFINITION_INVALID')`。
  */
 export declare function convertLegacyToV2(raw: unknown): unknown;
 /**

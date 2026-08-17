@@ -246,52 +246,28 @@ export function idMatches(actualId: string, targetId: string): boolean {
   return actualId === targetId || actualId.startsWith(`${targetId}-`);
 }
 
-/** 判断某条已执行 Step 是否匹配 `stageId.stepId`（对 `stepId ?? id` 做后缀匹配）。 */
-function matchesStep(step: ExecutedStepDefault, stageId: string, stepId: string): boolean {
-  if (step.stageId !== stageId) return false;
+/** 判断某条已执行 Step 是否匹配 stepId（对 `stepId ?? id` 做后缀匹配）。 */
+function matchesStepId(step: ExecutedStepDefault, stepId: string): boolean {
   return idMatches(step.stepId ?? step.id, stepId);
 }
 
 /**
  * 按 `path` 就近匹配已执行 Step。
  *
- * 支持三种路径：`stg-xxx`（Stage 级，倒序最近优先）、`stg-xxx.step-xxx`
- * （Step 级，自当前条目前一条起往前最近匹配，`idMatches` 支持循环后缀 id）、
- * `stg-xxx.step-xxx.opt-xxx`（OutputTo 级，先定位 Step 再过滤特定 outputTo）。
+ * 简化格式：`path` 直接为 Step id（单段），自执行列表末尾往前最近匹配同名 Step
+ * （`idMatches` 支持循环后缀 id）；不再支持 `stageId.stepId` / `stageId.stepId.opt-xxx`。
  * @param executedSteps - 扁平已执行 Step（含循环迭代条目）。
- * @param currentIndex - 当前 Step 在 `executedSteps` 中的索引。
- * @param path - `stageId[.stepId[.outputToId]]` 引用路径。
+ * @param _currentIndex - 保留参数（兼容调用方）。
+ * @param path - 引用的 Step id。
  */
 export function resolvePathSegments(
   executedSteps: readonly ExecutedStepDefault[],
-  currentIndex: number,
+  _currentIndex: number,
   path: string,
 ): ExecutedStepDefault[] {
-  const segments = path.split('.');
-  if (segments.length === 1) {
-    const stageId = segments[0]!;
-    const matched = executedSteps.filter(step => step.stageId === stageId);
-    return matched.reverse();
-  }
-  if (segments.length === 2) {
-    const stageId = segments[0]!;
-    const stepId = segments[1]!;
-    for (let i = currentIndex - 1; i >= 0; i--) {
-      const step = executedSteps[i]!;
-      if (matchesStep(step, stageId, stepId)) return [step];
-    }
-    return [];
-  }
-  if (segments.length === 3) {
-    const stageId = segments[0]!;
-    const stepId = segments[1]!;
-    const outputToId = segments[2]!;
-    for (let i = currentIndex - 1; i >= 0; i--) {
-      const step = executedSteps[i]!;
-      if (!matchesStep(step, stageId, stepId)) continue;
-      if ((step.outputTo ?? []).some(outputTo => outputTo.id === outputToId)) return [step];
-    }
-    return [];
+  for (let i = executedSteps.length - 1; i >= 0; i--) {
+    const step = executedSteps[i]!;
+    if (matchesStepId(step, path)) return [step];
   }
   return [];
 }

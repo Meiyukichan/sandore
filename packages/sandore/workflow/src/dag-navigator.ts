@@ -23,13 +23,16 @@ import type { StageContract } from './types.ts';
 /** 已保存 Stage 契约的运行时形状（与快照 `stageContracts` 值严格一致）。 */
 type StageContractValue = WorkflowTaskState['stageContracts'][string];
 
+/** 分离式合并后的完整 Step（顶层定义 + 流控 branches）。 */
+export type MergedStepRef = WorkflowStep & { readonly branches?: DagBranch[] | undefined };
+
 /** Stage 与 Step 在 DAG 调度层的统一节点视图（出边统一在 branches）。 */
 export interface DagNodeRef {
   readonly kind: 'stage' | 'step';
   /** 所属 Stage（始终可用）。 */
   readonly stage: WorkflowStage;
-  /** 仅 kind === 'step' 时存在。 */
-  readonly step?: WorkflowStep | undefined;
+  /** 仅 kind === 'step' 时存在（合并后的完整 Step）。 */
+  readonly step?: MergedStepRef | undefined;
   readonly id: string;
   readonly name: string;
   readonly branches?: DagBranch[] | undefined;
@@ -330,6 +333,7 @@ export class WorkflowDagNavigator {
   }
 
   private buildNodeIndex(definition: WorkflowDefinition): void {
+    const definitions = new Map((definition.steps ?? []).map(step => [step.id, step] as const));
     for (const stage of definition.stages) {
       this.nodeIndex.set(stage.id, {
         kind: 'stage',
@@ -339,13 +343,18 @@ export class WorkflowDagNavigator {
         branches: stage.branches,
       });
       for (const step of stage.steps) {
+        // 分离式合并：stage.steps 提供 id + 流控（branches），definition.steps 提供完整定义。
+        const definitionStep = definitions.get(step.id);
+        const merged: MergedStepRef = definitionStep === undefined
+          ? step as MergedStepRef
+          : { ...definitionStep, ...(step.branches === undefined ? {} : { branches: step.branches }) };
         this.nodeIndex.set(step.id, {
           kind: 'step',
           stage,
-          step,
+          step: merged,
           id: step.id,
-          name: step.name ?? step.id,
-          branches: step.branches,
+          name: merged.name ?? step.id,
+          branches: merged.branches,
         });
       }
     }

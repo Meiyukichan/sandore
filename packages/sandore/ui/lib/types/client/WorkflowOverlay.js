@@ -1,19 +1,19 @@
-import { jsxs as _jsxs, jsx as _jsx } from "react/jsx-runtime";
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 /**
  * WorkflowOverlay：shell.overlay 全局工作流 UI（root scope，不挂会话）。
  *
- * 覆盖 conversation/details 列（sidebar 保持可见可点）：header（标题/刷新/关闭）+
- * 双栏工作台（左 WorkflowList + 分隔条 + 右 EditorPane）。sidebar 实测宽经
- * ResizeObserver 同步到 `--wf-left`，overlay 内容永远从 sidebar 右缘开始。
+ * 覆盖 conversation/details 列（sidebar 保持可见可点）：双栏工作台
+ * （左 WorkflowList + 分隔条 + 右 EditorPane）。无顶部栏——关闭经侧边栏
+ * 入口按钮再次点击（toggle）完成。sidebar 实测宽经 ResizeObserver 同步到
+ * `--wf-left`，overlay 内容永远从 sidebar 右缘开始。
  * 打开/关闭/选中态全部在 `workflow-store`。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowOverlay
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { IconCloseOutline16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { WorkflowList } from "./WorkflowList.js";
 import { EditorPane } from "./EditorPane.js";
 import { DragHandle } from "./DragHandle.js";
-import { closeWorkflowOverlay, getWorkflowState, resizeListWidth, subscribeWorkflowState, } from "./workflow-store.js";
+import { getWorkflowState, resizeListWidth, subscribeWorkflowState, } from "./workflow-store.js";
 import css from './WorkflowOverlay.module.css';
 /** 渲染 shell.overlay 全局工作流 UI（关闭时渲染 null）。 */
 export function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions, listJobs, createJob, startInstance, deleteDefinition, getYaml, save, remote, openSession, t, }) {
@@ -55,6 +55,6 @@ export function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions,
         listInstances, listDefinitions, listJobs, createJob, startInstance,
         deleteDefinition, getYaml, save, remote, openSession,
     };
-    return (_jsx("div", { className: css.layer, ref: layerRef, "data-sandore-overlay-layer": true, children: _jsxs("div", { className: css.overlay, "data-sandore-overlay": true, children: [_jsxs("header", { className: css.header, children: [_jsxs("span", { className: css.headerTitle, children: ["\uD83D\uDD00 ", t('panel.title')] }), _jsx("span", { className: css.spacer }), _jsx("button", { type: "button", className: css.iconBtn, "aria-label": t('overlay.refresh'), title: t('overlay.refresh'), onClick: () => { setRefreshKey(key => key + 1); }, children: _jsx(IconRefreshOutline16, {}) }), _jsx("button", { type: "button", className: css.iconBtn, "aria-label": t('overlay.close'), title: t('overlay.close'), "data-sandore-overlay-close": true, onClick: closeWorkflowOverlay, children: _jsx(IconCloseOutline16, {}) })] }), _jsxs("div", { className: css.body, children: [_jsx(WorkflowList, { t: t, workspaces: workspaces, face: face, refreshKey: refreshKey, width: listWidth }), _jsx(DragHandle, { side: "list", className: css.dragHandle, onDrag: resizeListWidth }), _jsx(EditorPane, { t: t, face: face, onSaved: () => { setRefreshKey(key => key + 1); } })] })] }) }));
+    return (_jsx("div", { className: css.layer, ref: layerRef, "data-sandore-overlay-layer": true, children: _jsx("div", { className: css.overlay, "data-sandore-overlay": true, children: _jsxs("div", { className: css.body, children: [_jsx(WorkflowList, { t: t, workspaces: workspaces, face: face, refreshKey: refreshKey, width: listWidth }), _jsx(DragHandle, { side: "list", className: css.dragHandle, onDrag: resizeListWidth }), _jsx(EditorPane, { t: t, face: face, onSaved: () => { setRefreshKey(key => key + 1); } })] }) }) }));
 }
 //# sourceMappingURL=WorkflowOverlay.js.map

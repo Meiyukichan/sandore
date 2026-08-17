@@ -33,6 +33,7 @@ export declare const zh: {
     'editor.save.success': string;
     'editor.save.failed': string;
     'editor.preview': string;
+    'editor.export': string;
     'editor.steps.count': string;
     'editor.steps.empty': string;
     'editor.step.add': string;
@@ -53,6 +54,8 @@ export declare const zh: {
     'editor.field.id': string;
     'editor.field.path': string;
     'editor.field.regex': string;
+    'editor.field.stepName': string;
+    'editor.field.relativePath': string;
     'editor.field.name': string;
     'editor.field.value': string;
     'editor.field.description': string;
@@ -149,8 +152,12 @@ export declare const zh: {
     'overlay.refresh': string;
     'list.mode.instance': string;
     'list.mode.definition': string;
+    'list.mode.switch': string;
     'editor.mode.dag': string;
     'editor.mode.run': string;
+    'editor.chatCreate': string;
+    'editor.chatCreate.hint': string;
+    'editor.test': string;
     'editor.testRun': string;
     'editor.autoLayout': string;
     'editor.zoomIn': string;
@@ -245,6 +252,7 @@ export declare const en: {
     'editor.save.success': string;
     'editor.save.failed': string;
     'editor.preview': string;
+    'editor.export': string;
     'editor.steps.count': string;
     'editor.steps.empty': string;
     'editor.step.add': string;
@@ -265,6 +273,8 @@ export declare const en: {
     'editor.field.id': string;
     'editor.field.path': string;
     'editor.field.regex': string;
+    'editor.field.stepName': string;
+    'editor.field.relativePath': string;
     'editor.field.name': string;
     'editor.field.value': string;
     'editor.field.description': string;
@@ -361,8 +371,12 @@ export declare const en: {
     'overlay.refresh': string;
     'list.mode.instance': string;
     'list.mode.definition': string;
+    'list.mode.switch': string;
     'editor.mode.dag': string;
     'editor.mode.run': string;
+    'editor.chatCreate': string;
+    'editor.chatCreate.hint': string;
+    'editor.test': string;
     'editor.testRun': string;
     'editor.autoLayout': string;
     'editor.zoomIn': string;

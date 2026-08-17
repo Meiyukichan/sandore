@@ -290,10 +290,9 @@ function buildFillParamsPrompt(
   return sections.join('\n');
 }
 
-/** 从 `inputFrom` 的 `stageId.stepId[.outputToId]` 路径取 Step 段 id。 */
+/** 从 `inputFrom` 的 `path` 取 Step id（简化格式：path 直接为 stepId，单段）。 */
 function stepIdFromPath(path: string): string {
-  const segments = path.split('.');
-  return segments[1] ?? segments[0] ?? path;
+  return path;
 }
 
 /** 解析 shell Step 的 stdin：`inputFrom` 命中前置输出时返回 JSON 序列化，否则 undefined。 */

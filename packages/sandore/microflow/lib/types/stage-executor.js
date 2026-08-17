@@ -5,10 +5,10 @@ function synthesizeChildId(stepId) {
     const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
     return `step-${stepId}-${execId}`;
 }
-/** 收集 Stage 内全部 Step 定义的透传变量。 */
-function collectPassThroughVars(stageDef) {
+/** 收集 Stage 内全部 Step 定义的透传变量（steps 为合并后的完整 Step）。 */
+function collectPassThroughVars(steps) {
     const result = {};
-    for (const step of stageDef.steps) {
+    for (const step of steps) {
         for (const passThroughVar of step.passThroughVars ?? []) {
             result[passThroughVar.name] = toPassThroughValue(passThroughVar);
         }
@@ -85,9 +85,20 @@ export class StageExecutor {
     runState;
     /** step.id → 真实子代理 SessionId（经 onChildStarted 记录，取消类错误判定暂停用）。 */
     realChildIds = new Map();
+    /** 本 Stage 的完整 Step（按 id 合并 stages[].steps 流控 + 顶层 steps 完整定义，含 branches）。 */
+    steps;
     constructor(options) {
         this.options = options;
         this.runner = new StepRunner(options.ctx, this.trackChildStarted(options.runnerConfig));
+        // 分离式合并：stage.steps 提供 id + 流控（branches），definition.steps 提供完整定义
+        // （command/映射/gates 等），按 id 合并成执行用的完整 WorkflowStep。
+        const definitions = new Map((options.workflowDef.steps ?? []).map(step => [step.id, step]));
+        this.steps = options.stageDef.steps.map(flowStep => {
+            const definition = definitions.get(flowStep.id);
+            return definition === undefined
+                ? flowStep
+                : { ...definition, ...(flowStep.branches === undefined ? {} : { branches: flowStep.branches }) };
+        });
     }
     /** 包装 onChildStarted：记录真实 childId（供取消类错误查暂停登记表），再透传原回调。 */
     trackChildStarted(runnerConfig) {
@@ -139,14 +150,14 @@ export class StageExecutor {
     }
     /** 初始化断点续跑状态（首次调用 execute 时）。 */
     initState() {
-        const { stageDef, input } = this.options;
+        const { input } = this.options;
         const stepIndex = new Map();
-        for (const step of stageDef.steps) {
+        for (const step of this.steps) {
             stepIndex.set(step.id, step);
         }
         const passThroughVars = {
             ...input.passThroughVars,
-            ...collectPassThroughVars(stageDef),
+            ...collectPassThroughVars(this.steps),
         };
         // 崩溃恢复/重试续跑播种：跳过已完成 Step，续跑指定子代理 Step（原 executed 条目复用）。
         const resumeFrom = this.options.resumeFrom;
@@ -173,7 +184,7 @@ export class StageExecutor {
             };
         }
         const batch = [];
-        const firstStep = stageDef.steps[0];
+        const firstStep = this.steps[0];
         if (firstStep !== undefined) {
             batch.push(firstStep.id);
         }

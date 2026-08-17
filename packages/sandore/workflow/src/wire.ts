@@ -64,6 +64,11 @@ export const CreateJobInputSchema = z.object({
   cwd: z.string().optional(),
 })
 
+/** `listJobs` 入参：可选按 workflowId 过滤（RPC 面统一对象入参，避免可选参数退化）。 */
+export const ListJobsInputSchema = z.object({
+  workflowId: z.string().optional(),
+})
+
 /** `updateJob` 入参。 */
 export const UpdateJobInputSchema = z.object({
   name: z.string().optional(),
@@ -138,6 +143,7 @@ export const RetryStepInputSchema = z.object({
 export type CreateDefinitionInput = z.infer<typeof CreateDefinitionInputSchema>
 export type UpdateDefinitionInput = z.infer<typeof UpdateDefinitionInputSchema>
 export type CreateJobInput = z.infer<typeof CreateJobInputSchema>
+export type ListJobsInput = z.infer<typeof ListJobsInputSchema>
 export type UpdateJobInput = z.infer<typeof UpdateJobInputSchema>
 export type StartInstanceInput = z.infer<typeof StartInstanceInputSchema>
 export type ReplyQuestionInput = z.infer<typeof ReplyQuestionInputSchema>

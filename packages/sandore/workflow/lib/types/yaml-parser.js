@@ -50,32 +50,36 @@ function convertTaskToStep(task) {
     return { ...rest };
 }
 /**
- * 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`：同一 Scenario 内相邻 Task 依次接
- * `next`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个 Step（指向下一
- * Scenario 的首个 Task）。显式 `next` 不被覆盖。
+ * 将单个 Stage 的 `scenarios[]` 展平为分离式输出：
+ * - Stage 的 `steps[]` 只保留流控位 `{ id, branches? }`；
+ * - 完整 Task 定义（name/command/映射等，**不含 branches**）收集到 `definitions`，
+ *   由 `convertLegacyToV2` 汇总进顶层 `steps[]`（V2 分离式按 id 交叉引用）。
+ * 同一 Scenario 内相邻 Task 依次接 `branches: [{ next }]`（tsk-a→tsk-b→tsk-c），
+ * Scenario 的 `next` 落到其最后一个 Step（指向下一 Scenario 的首个 Task）。
+ * 显式 `branches` 不被覆盖。
  */
 function convertStage(stage) {
     const scenarios = stage.scenarios;
     if (!Array.isArray(scenarios))
-        return stage;
-    const steps = [];
+        return { stage, definitions: [] };
+    const converted = [];
     const scenarioSteps = new Map();
     for (const scenario of scenarios) {
         if (!isRecord(scenario))
             continue;
         const tasks = Array.isArray(scenario.tasks) ? scenario.tasks : [];
-        const converted = tasks.map(convertTaskToStep);
-        // 同一 Scenario 内相邻 Task 依次设 next，形成线性链。
-        for (let index = 0; index + 1 < converted.length; index++) {
-            const current = converted[index];
-            const following = converted[index + 1];
+        const list = tasks.map(convertTaskToStep);
+        // 同一 Scenario 内相邻 Task 依次设 branches（线性链）。
+        for (let index = 0; index + 1 < list.length; index++) {
+            const current = list[index];
+            const following = list[index + 1];
             if (current === undefined || following === undefined)
                 continue;
-            if (current.next === undefined)
-                current.next = following.id;
+            if (current.branches === undefined)
+                current.branches = [{ next: following.id }];
         }
-        scenarioSteps.set(String(scenario.id), converted);
-        steps.push(...converted);
+        scenarioSteps.set(String(scenario.id), list);
+        converted.push(...list);
     }
     // Scenario.next 指向下一个 Scenario：解析为其首个 Task（Step），落到当前 Scenario 的最后一个 Step。
     for (const scenario of scenarios) {
@@ -90,17 +94,25 @@ function convertStage(stage) {
             continue;
         const last = own[own.length - 1];
         const firstTarget = target[0];
-        if (isRecord(last) && isRecord(firstTarget) && last.next === undefined) {
-            last.next = firstTarget.id;
+        if (isRecord(last) && isRecord(firstTarget) && last.branches === undefined) {
+            last.branches = [{ next: firstTarget.id }];
         }
     }
+    // 分离式拆分：流控位（id + branches）留 Stage，完整定义（剥离 branches）收顶层 steps[]。
+    const steps = [];
+    const definitions = [];
+    for (const task of converted) {
+        const { branches, ...definition } = task;
+        steps.push(branches === undefined ? { id: task.id } : { id: task.id, branches });
+        definitions.push(definition);
+    }
     const rest = Object.fromEntries(Object.entries(stage).filter(([key]) => key !== 'scenarios'));
-    return { ...rest, steps };
+    return { stage: { ...rest, steps }, definitions };
 }
 /**
  * 检测 V1 三级结构（`stages[].scenarios[]`）并自动转换为 V2 两级结构
- * （`stages[].steps[]`）。同一 Stage 同时含 `steps[]` 与 `scenarios[]` 视为混合格式，
- * 抛 `WorkflowYamlError('DEFINITION_INVALID')`。
+ * （`stages[].steps[]` 流控 + 顶层 `steps[]` 完整定义）。同一 Stage 同时含
+ * `steps[]` 与 `scenarios[]` 视为混合格式，抛 `WorkflowYamlError('DEFINITION_INVALID')`。
  */
 export function convertLegacyToV2(raw) {
     if (!isRecord(raw))
@@ -122,7 +134,17 @@ export function convertLegacyToV2(raw) {
     }
     if (!hasScenarios)
         return raw;
-    return { ...raw, stages: stages.map(stage => (isRecord(stage) ? convertStage(stage) : stage)) };
+    const definitions = [];
+    const convertedStages = stages.map(stage => {
+        if (!isRecord(stage))
+            return stage;
+        const { stage: converted, definitions: stageDefs } = convertStage(stage);
+        definitions.push(...stageDefs);
+        return converted;
+    });
+    // 汇总全部完整 Task 定义进顶层 steps[]（若原 raw 已有顶层 steps 则合并）。
+    const existingSteps = Array.isArray(raw.steps) ? raw.steps : [];
+    return { ...raw, stages: convertedStages, steps: [...existingSteps, ...definitions] };
 }
 /**
  * 校验节点 ID 引用完整性：
@@ -185,19 +207,16 @@ function validateReferences(definition) {
     }
     for (const step of definition.steps ?? [])
         checkNode(step, 'step');
-    const allSteps = [...(definition.steps ?? []), ...definition.stages.flatMap(stage => stage.steps)];
-    for (const step of allSteps) {
+    // inputFrom 校验：完整定义在顶层 steps[]（分离式；stage.steps 仅流控无 inputFrom）。
+    for (const step of definition.steps ?? []) {
         for (const input of step.inputFrom ?? []) {
             const path = input.path;
             // 契约引用（`${stage.xxx.artifact}`）与缺失的 path 不参与节点校验。
             if (path === undefined || path.startsWith('${'))
                 continue;
-            const [stageId, stepId] = path.split('.');
-            if (stageId !== undefined && !stageIds.has(stageId)) {
-                throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing stage '${stageId}'`, 'DEFINITION_INVALID');
-            }
-            if (stepId !== undefined && !stepIds.has(stepId)) {
-                throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${stepId}'`, 'DEFINITION_INVALID');
+            // 简化格式：path 直接为引用的 step id（单段），不再支持 stageId.stepId 两段。
+            if (!stepIds.has(path)) {
+                throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${path}'`, 'DEFINITION_INVALID');
             }
         }
     }

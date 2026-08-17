@@ -71,26 +71,33 @@ function convertTaskToStep(task) {
 	return { ...rest };
 }
 /**
-* 将单个 Stage 的 `scenarios[]` 展平为 `steps[]`：同一 Scenario 内相邻 Task 依次接
-* `next`（tsk-a→tsk-b→tsk-c），Scenario 的 `next` 落到其最后一个 Step（指向下一
-* Scenario 的首个 Task）。显式 `next` 不被覆盖。
+* 将单个 Stage 的 `scenarios[]` 展平为分离式输出：
+* - Stage 的 `steps[]` 只保留流控位 `{ id, branches? }`；
+* - 完整 Task 定义（name/command/映射等，**不含 branches**）收集到 `definitions`，
+*   由 `convertLegacyToV2` 汇总进顶层 `steps[]`（V2 分离式按 id 交叉引用）。
+* 同一 Scenario 内相邻 Task 依次接 `branches: [{ next }]`（tsk-a→tsk-b→tsk-c），
+* Scenario 的 `next` 落到其最后一个 Step（指向下一 Scenario 的首个 Task）。
+* 显式 `branches` 不被覆盖。
 */
 function convertStage(stage) {
 	const scenarios = stage.scenarios;
-	if (!Array.isArray(scenarios)) return stage;
-	const steps = [];
+	if (!Array.isArray(scenarios)) return {
+		stage,
+		definitions: []
+	};
+	const converted = [];
 	const scenarioSteps = /* @__PURE__ */ new Map();
 	for (const scenario of scenarios) {
 		if (!isRecord(scenario)) continue;
-		const converted = (Array.isArray(scenario.tasks) ? scenario.tasks : []).map(convertTaskToStep);
-		for (let index = 0; index + 1 < converted.length; index++) {
-			const current = converted[index];
-			const following = converted[index + 1];
+		const list = (Array.isArray(scenario.tasks) ? scenario.tasks : []).map(convertTaskToStep);
+		for (let index = 0; index + 1 < list.length; index++) {
+			const current = list[index];
+			const following = list[index + 1];
 			if (current === void 0 || following === void 0) continue;
-			if (current.next === void 0) current.next = following.id;
+			if (current.branches === void 0) current.branches = [{ next: following.id }];
 		}
-		scenarioSteps.set(String(scenario.id), converted);
-		steps.push(...converted);
+		scenarioSteps.set(String(scenario.id), list);
+		converted.push(...list);
 	}
 	for (const scenario of scenarios) {
 		if (!isRecord(scenario)) continue;
@@ -101,17 +108,30 @@ function convertStage(stage) {
 		if (own === void 0 || own.length === 0 || target === void 0 || target.length === 0) continue;
 		const last = own[own.length - 1];
 		const firstTarget = target[0];
-		if (isRecord(last) && isRecord(firstTarget) && last.next === void 0) last.next = firstTarget.id;
+		if (isRecord(last) && isRecord(firstTarget) && last.branches === void 0) last.branches = [{ next: firstTarget.id }];
+	}
+	const steps = [];
+	const definitions = [];
+	for (const task of converted) {
+		const { branches, ...definition } = task;
+		steps.push(branches === void 0 ? { id: task.id } : {
+			id: task.id,
+			branches
+		});
+		definitions.push(definition);
 	}
 	return {
-		...Object.fromEntries(Object.entries(stage).filter(([key]) => key !== "scenarios")),
-		steps
+		stage: {
+			...Object.fromEntries(Object.entries(stage).filter(([key]) => key !== "scenarios")),
+			steps
+		},
+		definitions
 	};
 }
 /**
 * 检测 V1 三级结构（`stages[].scenarios[]`）并自动转换为 V2 两级结构
-* （`stages[].steps[]`）。同一 Stage 同时含 `steps[]` 与 `scenarios[]` 视为混合格式，
-* 抛 `WorkflowYamlError('DEFINITION_INVALID')`。
+* （`stages[].steps[]` 流控 + 顶层 `steps[]` 完整定义）。同一 Stage 同时含
+* `steps[]` 与 `scenarios[]` 视为混合格式，抛 `WorkflowYamlError('DEFINITION_INVALID')`。
 */
 function convertLegacyToV2(raw) {
 	if (!isRecord(raw)) return raw;
@@ -126,15 +146,23 @@ function convertLegacyToV2(raw) {
 		if (hasScen) hasScenarios = true;
 	}
 	if (!hasScenarios) return raw;
+	const definitions = [];
+	const convertedStages = stages.map((stage) => {
+		if (!isRecord(stage)) return stage;
+		const { stage: converted, definitions: stageDefs } = convertStage(stage);
+		definitions.push(...stageDefs);
+		return converted;
+	});
+	const existingSteps = Array.isArray(raw.steps) ? raw.steps : [];
 	return {
 		...raw,
-		stages: stages.map((stage) => isRecord(stage) ? convertStage(stage) : stage)
+		stages: convertedStages,
+		steps: [...existingSteps, ...definitions]
 	};
 }
 /**
 * 校验节点 ID 引用完整性：
-* - `next`（含 `branches[].next`、`loop.next`、`loop.exitTo`）引用的节点 ID 均存在；
-* - `stage.next` 必须指向 Stage 节点（Step 节点会被 DAG 导航静默跳过）；
+* - `branches[].next`、`branches[].loop.next`、`branches[].loop.exitTo` 引用的节点 ID 均存在；
 * - `inputFrom[].path` 的 `stageId[.stepId[.outputToId]]` 前两段（Stage/Step 节点 ID）存在。
 * 不满足时抛 `WorkflowYamlError('DEFINITION_INVALID')`。
 */
@@ -163,26 +191,23 @@ function validateReferences(definition) {
 		if (target !== void 0 && !nodeIds.has(target)) throw new WorkflowYamlError(`${where} references missing node '${target}'`, "DEFINITION_INVALID");
 	};
 	const checkNode = (node, kind) => {
-		checkTarget(node.next, `${kind} '${node.id}'.next`);
-		for (const branch of node.branches ?? []) checkTarget(branch.next, `${kind} '${node.id}'.branches.next`);
-		if (node.loop !== void 0) {
-			checkTarget(node.loop.next, `${kind} '${node.id}'.loop.next`);
-			checkTarget(node.loop.exitTo, `${kind} '${node.id}'.loop.exitTo`);
+		for (const branch of node.branches ?? []) {
+			checkTarget(branch.next, `${kind} '${node.id}'.branches.next`);
+			if (branch.loop !== void 0) {
+				checkTarget(branch.loop.next, `${kind} '${node.id}'.branches.loop.next`);
+				checkTarget(branch.loop.exitTo, `${kind} '${node.id}'.branches.loop.exitTo`);
+			}
 		}
 	};
 	for (const stage of definition.stages) {
 		checkNode(stage, "stage");
-		if (stage.next !== void 0 && !stageIds.has(stage.next)) throw new WorkflowYamlError(`stage '${stage.id}'.next must reference a stage, got '${stage.next}'`, "DEFINITION_INVALID");
 		for (const step of stage.steps) checkNode(step, "step");
 	}
 	for (const step of definition.steps ?? []) checkNode(step, "step");
-	const allSteps = [...definition.steps ?? [], ...definition.stages.flatMap((stage) => stage.steps)];
-	for (const step of allSteps) for (const input of step.inputFrom ?? []) {
+	for (const step of definition.steps ?? []) for (const input of step.inputFrom ?? []) {
 		const path = input.path;
 		if (path === void 0 || path.startsWith("${")) continue;
-		const [stageId, stepId] = path.split(".");
-		if (stageId !== void 0 && !stageIds.has(stageId)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing stage '${stageId}'`, "DEFINITION_INVALID");
-		if (stepId !== void 0 && !stepIds.has(stepId)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${stepId}'`, "DEFINITION_INVALID");
+		if (!stepIds.has(path)) throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${path}'`, "DEFINITION_INVALID");
 	}
 }
 /**

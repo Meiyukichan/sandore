@@ -45,7 +45,7 @@ describe('WorkflowDefinitionSchema', () => {
     version: '1.0.0',
     description: 'shell -> prompt',
     stages: [
-      { id: 'stg-1', name: '分析', steps: [{ id: 'step-1', next: 'step-2' }] },
+      { id: 'stg-1', name: '分析', steps: [{ id: 'step-1' }] },
       { id: 'stg-2', name: '推理', steps: [{ id: 'step-2' }] },
     ],
     steps: [

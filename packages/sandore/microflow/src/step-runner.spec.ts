@@ -37,7 +37,7 @@ function shellStepWithInputFrom(command: string): WorkflowStep {
   return {
     id: 'step-sh',
     command: { type: 'shell', value: { command } },
-    inputFrom: [{ id: 'in-1', path: 'stg-x.step-p' }],
+    inputFrom: [{ id: 'in-1', path: 'step-p' }],
   };
 }
 

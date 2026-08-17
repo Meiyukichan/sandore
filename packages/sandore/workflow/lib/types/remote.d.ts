@@ -13,7 +13,7 @@ import type { LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type { DagRun } from './types.ts';
 import type { WorkflowTaskState } from './schema.ts';
-import type { ArtifactEntry, CreateDefinitionInput, CreateJobInput, InstanceSummary, JobEntry, PauseAllInput, PauseStepInput, PingResponse, ReplyPermissionInput, ReplyQuestionInput, ResumeAllInput, ResumeStepInput, RetryStepInput, StartInstanceInput, UpdateDefinitionInput, UpdateJobInput, WorkflowDefinitionEntry } from './wire.ts';
+import type { ArtifactEntry, CreateDefinitionInput, CreateJobInput, InstanceSummary, JobEntry, ListJobsInput, PauseAllInput, PauseStepInput, PingResponse, ReplyPermissionInput, ReplyQuestionInput, ResumeAllInput, ResumeStepInput, RetryStepInput, StartInstanceInput, UpdateDefinitionInput, UpdateJobInput, WorkflowDefinitionEntry } from './wire.ts';
 /**
  * sandore 的 Host RPC 服务。
  *
@@ -39,10 +39,11 @@ export declare class SandoreRemote extends TypertRemoteService {
     deleteDefinition(id: string): Promise<boolean>;
     /** 读取定义的原始 YAML 文本。 */
     getYaml(id: string): string;
-    /** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。 */
+    /** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。
+     *  元数据（name/version/description）从新 YAML 解析同步，保证列表展示与内容一致。 */
     updateYaml(id: string, yaml: string): Promise<WorkflowDefinitionEntry>;
-    /** 列出 Job，可选按 workflowId 过滤。 */
-    listJobs(workflowId?: string): JobEntry[];
+    /** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
+    listJobs(input: ListJobsInput): JobEntry[];
     /** 创建 Job：校验 workflowId 存在（否则抛 `INVALID_OPERATION`），自动生成 jobId。 */
     createJob(input: CreateJobInput): Promise<JobEntry>;
     /** 按 id 读取单个 Job。 */
