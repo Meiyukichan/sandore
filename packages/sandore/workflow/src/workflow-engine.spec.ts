@@ -19,7 +19,7 @@ import { FakeSubagents } from '../tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
 import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
 import { SandoreError } from './errors.ts';
-import SandoreEngineRuntime, { SandoreEngineStub } from './index.ts';
+import { SandoreEngineRuntime, SandoreEngineStub } from './index.ts';
 import type { SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
 import { SandorePersistence } from './persistence.ts';
 import type { ShellExecutor } from './shell.ts';

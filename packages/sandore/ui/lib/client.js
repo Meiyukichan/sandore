@@ -5,7 +5,39 @@ window.__ModuleLoader__.load({
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		//#region \0rolldown/runtime.js
+		var __defProp = Object.defineProperty;
+		var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+		var __getOwnPropNames = Object.getOwnPropertyNames;
+		var __hasOwnProp = Object.prototype.hasOwnProperty;
+		var __esmMin = (fn, res, err) => () => {
+			if (err) throw err[0];
+			try {
+				return fn && (res = fn(fn = 0)), res;
+			} catch (e) {
+				throw err = [e], e;
+			}
+		};
 		var __commonJSMin = (cb, mod) => () => (mod || (cb((mod = { exports: {} }).exports, mod), cb = null), mod.exports);
+		var __exportAll = (all, no_symbols) => {
+			let target = {};
+			for (var name in all) __defProp(target, name, {
+				get: all[name],
+				enumerable: true
+			});
+			if (!no_symbols) __defProp(target, Symbol.toStringTag, { value: "Module" });
+			return target;
+		};
+		var __copyProps = (to, from, except, desc) => {
+			if (from && typeof from === "object" || typeof from === "function") for (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) {
+				key = keys[i];
+				if (!__hasOwnProp.call(to, key) && key !== except) __defProp(to, key, {
+					get: ((k) => from[k]).bind(null, key),
+					enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable
+				});
+			}
+			return to;
+		};
+		var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 		//#endregion
 		let react_jsx_runtime = require("react/jsx-runtime");
 		let react = require("react");
@@ -2899,7 +2931,7 @@ window.__ModuleLoader__.load({
 				external: params?.external ?? void 0
 			};
 		}
-		function process(schema, ctx, _params = {
+		function process$1(schema, ctx, _params = {
 			path: [],
 			schemaPath: []
 		}) {
@@ -2936,7 +2968,7 @@ window.__ModuleLoader__.load({
 				const parent = schema._zod.parent;
 				if (parent) {
 					if (!result.ref) result.ref = parent;
-					process(parent, ctx, params);
+					process$1(parent, ctx, params);
 					ctx.seen.get(parent).isParent = true;
 				}
 			}
@@ -3158,7 +3190,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				...params,
 				processors
 			});
-			process(schema, ctx);
+			process$1(schema, ctx);
 			extractDefs(ctx, schema);
 			return finalize(ctx, schema);
 		};
@@ -3170,7 +3202,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				io,
 				processors
 			});
-			process(schema, ctx);
+			process$1(schema, ctx);
 			extractDefs(ctx, schema);
 			return finalize(ctx, schema);
 		};
@@ -3277,7 +3309,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			if (typeof minimum === "number") json.minItems = minimum;
 			if (typeof maximum === "number") json.maxItems = maximum;
 			json.type = "array";
-			json.items = process(def.element, ctx, {
+			json.items = process$1(def.element, ctx, {
 				...params,
 				path: [...params.path, "items"]
 			});
@@ -3288,7 +3320,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			json.type = "object";
 			json.properties = {};
 			const shape = def.shape;
-			for (const key in shape) json.properties[key] = process(shape[key], ctx, {
+			for (const key in shape) json.properties[key] = process$1(shape[key], ctx, {
 				...params,
 				path: [
 					...params.path,
@@ -3306,7 +3338,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			if (def.catchall?._zod.def.type === "never") json.additionalProperties = false;
 			else if (!def.catchall) {
 				if (ctx.io === "output") json.additionalProperties = false;
-			} else if (def.catchall) json.additionalProperties = process(def.catchall, ctx, {
+			} else if (def.catchall) json.additionalProperties = process$1(def.catchall, ctx, {
 				...params,
 				path: [...params.path, "additionalProperties"]
 			});
@@ -3314,7 +3346,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		const unionProcessor = (schema, ctx, json, params) => {
 			const def = schema._zod.def;
 			const isExclusive = def.inclusive === false;
-			const options = def.options.map((x, i) => process(x, ctx, {
+			const options = def.options.map((x, i) => process$1(x, ctx, {
 				...params,
 				path: [
 					...params.path,
@@ -3327,7 +3359,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		};
 		const intersectionProcessor = (schema, ctx, json, params) => {
 			const def = schema._zod.def;
-			const a = process(def.left, ctx, {
+			const a = process$1(def.left, ctx, {
 				...params,
 				path: [
 					...params.path,
@@ -3335,7 +3367,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					0
 				]
 			});
-			const b = process(def.right, ctx, {
+			const b = process$1(def.right, ctx, {
 				...params,
 				path: [
 					...params.path,
@@ -3353,7 +3385,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const keyType = def.keyType;
 			const patterns = keyType._zod.bag?.patterns;
 			if (def.mode === "loose" && patterns && patterns.size > 0) {
-				const valueSchema = process(def.valueType, ctx, {
+				const valueSchema = process$1(def.valueType, ctx, {
 					...params,
 					path: [
 						...params.path,
@@ -3364,11 +3396,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				json.patternProperties = {};
 				for (const pattern of patterns) json.patternProperties[pattern.source] = valueSchema;
 			} else {
-				if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") json.propertyNames = process(def.keyType, ctx, {
+				if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") json.propertyNames = process$1(def.keyType, ctx, {
 					...params,
 					path: [...params.path, "propertyNames"]
 				});
-				json.additionalProperties = process(def.valueType, ctx, {
+				json.additionalProperties = process$1(def.valueType, ctx, {
 					...params,
 					path: [...params.path, "additionalProperties"]
 				});
@@ -3381,7 +3413,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		};
 		const nullableProcessor = (schema, ctx, json, params) => {
 			const def = schema._zod.def;
-			const inner = process(def.innerType, ctx, params);
+			const inner = process$1(def.innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			if (ctx.target === "openapi-3.0") {
 				seen.ref = def.innerType;
@@ -3390,27 +3422,27 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		};
 		const nonoptionalProcessor = (schema, ctx, _json, params) => {
 			const def = schema._zod.def;
-			process(def.innerType, ctx, params);
+			process$1(def.innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			seen.ref = def.innerType;
 		};
 		const defaultProcessor = (schema, ctx, json, params) => {
 			const def = schema._zod.def;
-			process(def.innerType, ctx, params);
+			process$1(def.innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			seen.ref = def.innerType;
 			json.default = JSON.parse(JSON.stringify(def.defaultValue));
 		};
 		const prefaultProcessor = (schema, ctx, json, params) => {
 			const def = schema._zod.def;
-			process(def.innerType, ctx, params);
+			process$1(def.innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			seen.ref = def.innerType;
 			if (ctx.io === "input") json._prefault = JSON.parse(JSON.stringify(def.defaultValue));
 		};
 		const catchProcessor = (schema, ctx, json, params) => {
 			const def = schema._zod.def;
-			process(def.innerType, ctx, params);
+			process$1(def.innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			seen.ref = def.innerType;
 			let catchValue;
@@ -3425,20 +3457,20 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const def = schema._zod.def;
 			const inIsTransform = def.in._zod.traits.has("$ZodTransform");
 			const innerType = ctx.io === "input" ? inIsTransform ? def.out : def.in : def.out;
-			process(innerType, ctx, params);
+			process$1(innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			seen.ref = innerType;
 		};
 		const readonlyProcessor = (schema, ctx, json, params) => {
 			const def = schema._zod.def;
-			process(def.innerType, ctx, params);
+			process$1(def.innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			seen.ref = def.innerType;
 			json.readOnly = true;
 		};
 		const optionalProcessor = (schema, ctx, _json, params) => {
 			const def = schema._zod.def;
-			process(def.innerType, ctx, params);
+			process$1(def.innerType, ctx, params);
 			const seen = ctx.seen.get(schema);
 			seen.ref = def.innerType;
 		};
@@ -5248,6 +5280,26 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			};
 		}
 		//#endregion
+		//#region \0sandore-node-shim:process
+		var _sandore_node_shim_process_exports = /* @__PURE__ */ __exportAll({ default: () => process });
+		var process;
+		var init__sandore_node_shim_process = __esmMin((() => {
+			process = {
+				env: {},
+				platform: "browser",
+				version: "",
+				versions: {},
+				browser: true,
+				argv: [],
+				emitWarning: () => {},
+				nextTick: (fn) => {
+					if (typeof queueMicrotask === "function") queueMicrotask(fn);
+					else Promise.resolve().then(fn);
+				},
+				cwd: () => "/"
+			};
+		}));
+		//#endregion
 		//#region ../../../node_modules/.pnpm/yaml@2.9.0/node_modules/yaml/dist/nodes/identity.js
 		var require_identity = /* @__PURE__ */ __commonJSMin(((exports) => {
 			const ALIAS = Symbol.for("yaml.alias");
@@ -6709,13 +6761,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region ../../../node_modules/.pnpm/yaml@2.9.0/node_modules/yaml/dist/log.js
 		var require_log = /* @__PURE__ */ __commonJSMin(((exports) => {
-			var node_process$2 = require("process");
+			var node_process = (init__sandore_node_shim_process(), __toCommonJS(_sandore_node_shim_process_exports));
 			function debug(logLevel, ...messages) {
 				if (logLevel === "debug") console.log(...messages);
 			}
 			function warn(logLevel, warning) {
 				if (logLevel === "debug" || logLevel === "warn") {
-					if (typeof node_process$2.emitWarning === "function") node_process$2.emitWarning(warning);
+					if (typeof node_process.emitWarning === "function") node_process.emitWarning(warning);
 					else console.warn(warning);
 				}
 			}
@@ -7455,9 +7507,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			});
 		}));
 		//#endregion
+		//#region \0sandore-node-shim:buffer
+		var _sandore_node_shim_buffer_exports = /* @__PURE__ */ __exportAll({ default: () => _sandore_node_shim_buffer_default });
+		var _sandore_node_shim_buffer_default;
+		var init__sandore_node_shim_buffer = __esmMin((() => {
+			_sandore_node_shim_buffer_default = { Buffer: void 0 };
+		}));
+		//#endregion
 		//#region ../../../node_modules/.pnpm/yaml@2.9.0/node_modules/yaml/dist/schema/yaml-1.1/binary.js
 		var require_binary = /* @__PURE__ */ __commonJSMin(((exports) => {
-			var node_buffer = require("buffer");
+			var node_buffer = (init__sandore_node_shim_buffer(), __toCommonJS(_sandore_node_shim_buffer_exports));
 			var Scalar = require_Scalar();
 			var stringifyString = require_stringifyString();
 			exports.binary = {
@@ -9633,7 +9692,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region ../../../node_modules/.pnpm/yaml@2.9.0/node_modules/yaml/dist/compose/composer.js
 		var require_composer = /* @__PURE__ */ __commonJSMin(((exports) => {
-			var node_process$1 = require("process");
+			var node_process = (init__sandore_node_shim_process(), __toCommonJS(_sandore_node_shim_process_exports));
 			var directives = require_directives();
 			var Document = require_Document();
 			var errors = require_errors();
@@ -9750,7 +9809,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				}
 				/** Advance the composer by one CST token. */
 				*next(token) {
-					if (node_process$1.env.LOG_STREAM) console.dir(token, { depth: null });
+					if (node_process.env.LOG_STREAM) console.dir(token, { depth: null });
 					switch (token.type) {
 						case "directive":
 							this.directives.add(token.source, (offset, message, warning) => {
@@ -10899,7 +10958,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region ../../../node_modules/.pnpm/yaml@2.9.0/node_modules/yaml/dist/parse/parser.js
 		var require_parser = /* @__PURE__ */ __commonJSMin(((exports) => {
-			var node_process = require("process");
+			var node_process = (init__sandore_node_shim_process(), __toCommonJS(_sandore_node_shim_process_exports));
 			var cst = require_cst();
 			var lexer = require_lexer();
 			function includesToken(list, type) {

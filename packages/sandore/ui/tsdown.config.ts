@@ -41,6 +41,59 @@ const CLIENT_EXTERNALS = [
 const CSS_VIRTUAL_PREFIX = '\0sandore-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
 
+/** Node builtin shim 虚拟 id 前缀：拦截被内联依赖（如 yaml 的 Node dist）的 require。 */
+const NODE_SHIM_PREFIX = '\0sandore-node-shim:'
+
+/**
+ * Node builtin shim 插件。
+ *
+ * `format: 'cjs'` 会让 tsdown 把 platform 视作 node（tsdown 的 cjs 分支强制
+ * `platform = node`），于是被内联的依赖（`yaml` 包经 workflow 的 `./yaml` 子路径
+ * 进入 client bundle）解析到 Node dist，其 `require("process")` / `require("buffer")`
+ * 会以 external 形式残留，而浏览器模块表无这两者，启动即抛
+ * `require("process") missed the module table`。
+ *
+ * 本插件在 resolveId 阶段拦截 `process` / `buffer`（及 `node:` 前缀），替换为
+ * 浏览器安全的 shim：
+ * - `process`：提供 `emitWarning`（yaml 的 warn 降级路径）等无副作用方法；
+ * - `buffer`：`Buffer` 置为 `undefined`，让 yaml 的 binary 类型回退到浏览器原生
+ *   `atob`（`typeof Buffer === "function"` 判否）。
+ * sandore 的工作流 YAML 不涉及 binary tag，此 shim 仅保证加载不炸、语义等价。
+ */
+function nodeBuiltinsShimPlugin(): NonNullable<UserConfig['plugins']>[number] {
+  const processShim = [
+    'const process = {',
+    '  env: {},',
+    '  platform: "browser",',
+    '  version: "",',
+    '  versions: {},',
+    '  browser: true,',
+    '  argv: [],',
+    '  emitWarning: () => {},',
+    '  nextTick: (fn) => { if (typeof queueMicrotask === "function") queueMicrotask(fn); else Promise.resolve().then(fn); },',
+    '  cwd: () => "/",',
+    '};',
+    'export default process;',
+  ].join('\n')
+  const bufferShim = [
+    // Buffer 置 undefined：yaml binary 类型据此回退到浏览器原生 atob。
+    'export default { Buffer: undefined };',
+  ].join('\n')
+  return {
+    name: 'sandore-node-builtins-shim',
+    resolveId(source: string) {
+      if (source === 'process' || source === 'node:process') return NODE_SHIM_PREFIX + 'process'
+      if (source === 'buffer' || source === 'node:buffer') return NODE_SHIM_PREFIX + 'buffer'
+      return null
+    },
+    load(id: string) {
+      if (id === NODE_SHIM_PREFIX + 'process') return processShim
+      if (id === NODE_SHIM_PREFIX + 'buffer') return bufferShim
+      return null
+    },
+  }
+}
+
 /** 把 emit 的 lib-relative 资源回映到 src 源码树（tsc 不拷贝 `.css`）。 */
 function sourceAssetPath(source: string, importer: string | undefined): string {
   const emitted = importer === undefined ? source : resolvePath(dirname(importer), source)
@@ -107,7 +160,7 @@ export default defineConfig([
     clean: false,
     external: [...CLIENT_EXTERNALS],
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id as (typeof CLIENT_EXTERNALS)[number]) ? undefined : true),
-    plugins: [cssModulesPlugin()],
+    plugins: [nodeBuiltinsShimPlugin(), cssModulesPlugin()],
     outputOptions: {
       entryFileNames: 'client.js',
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PLUGIN_ID)}, factory: (require) => {`,

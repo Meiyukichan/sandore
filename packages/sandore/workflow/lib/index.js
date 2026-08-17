@@ -3348,7 +3348,92 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 	}
 };
 //#endregion
-//#region src/index.ts
-var src_default = SandoreEngineRuntime;
+//#region src/persistence.ts
+/**
+* sandore 存储域持久化 Provider。
+*
+* `SandorePersistence` 在 `[Service.init]` 中打开 `sandore` 域（三表
+* `definitions`/`jobs`/`state`），用 `ctx.effect` 挂 `Domain.close()` 释放，
+* 并暴露三表 `KvTable` 句柄与 `saveWorkflowState`（`state.put(taskId, state)`
+* 全量覆盖）。`SandoreRemote` 通过 `ctx.sandorePersistence` 访问这些句柄。
+* @module @deepseek-ai/dsh-sandore-workflow/src/persistence
+*/
+/** sandore 存储域持久化 Provider。 */
+var SandorePersistence = class extends Service {
+	static inject = ["storageDomain"];
+	definitionsTable;
+	jobsTable;
+	stateTable;
+	constructor(ctx) {
+		super(ctx, "sandorePersistence");
+	}
+	async [Service.init]() {
+		const domain = await this.ctx.storageDomain.open(sandoreDomainSpec);
+		this.ctx.effect(() => () => domain.close(), "sandore.domainClose");
+		this.definitionsTable = domain.table("definitions");
+		this.jobsTable = domain.table("jobs");
+		this.stateTable = domain.table("state");
+	}
+	/** `definitions` 表句柄（key = workflowId）。 */
+	get definitions() {
+		return this.requireTable(this.definitionsTable, "definitions");
+	}
+	/** `jobs` 表句柄（key = jobId）。 */
+	get jobs() {
+		return this.requireTable(this.jobsTable, "jobs");
+	}
+	/** `state` 表句柄（key = instanceId）。 */
+	get state() {
+		return this.requireTable(this.stateTable, "state");
+	}
+	/**
+	* 全量覆盖写入实例状态快照。
+	* @param state - 完整运行时状态快照；以 `state.taskId`（instanceId）为键。
+	*/
+	async saveWorkflowState(state) {
+		await this.state.put(state.taskId, state);
+	}
+	requireTable(table, name) {
+		if (table === void 0) throw new Error(`sandore persistence is not initialized ('${name}' table unavailable)`);
+		return table;
+	}
+};
 //#endregion
-export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SandoreEngine, SandoreEngineRuntime, SandoreEngineStub, SandoreError, SandoreRemote, SessionMessageSchema, StageContractSchema, StageInfoSchema, StepSessionMetaSchema, WorkflowDagNavigator, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema, WorkflowYamlError, convertLegacyToV2, src_default as default, isFatalSandoreError, parseWorkflowYaml, sandoreDomainSpec, serializeWorkflowYaml };
+//#region src/plugin.ts
+/**
+* sandore workflow 包的复合插件（默认导出）。
+*
+* `workflow` 包由三个独立 Service 组成一条依赖链：
+*
+* ```
+* storageDomain ──▶ SandorePersistence   (sandorePersistence)
+* sandorePersistence + sessions + … ──▶ SandoreEngineRuntime (sandoreEngine)
+* sandorePersistence + sandoreEngine + llm ──▶ SandoreRemote (sandore RPC)
+* ```
+*
+* 单元测试里三者经 `ctx.plugin(...)` 逐个注册，但生产 cordis.yml 只加载包默认
+* 导出。因此本复合插件在 `[Service.init]` 中按拓扑序依次 `ctx.plugin(...)` 注册
+* 三个子服务，使 `sandorePersistence` / `sandoreEngine` / `sandore` RPC 全部对
+* 宿主可用；自身不 `inject` 任何子服务（它们各自声明依赖），Config 透传
+* `SandoreEngineRuntime.Config`。
+*
+* @module @deepseek-ai/dsh-sandore-workflow/plugin
+*/
+var SandoreWorkflowPlugin = class extends Service {
+	config;
+	static Config = SandoreEngineRuntime.Config;
+	constructor(ctx, config) {
+		super(ctx, "sandoreWorkflow");
+		this.config = config;
+	}
+	async [Service.init]() {
+		await this.ctx.plugin(SandorePersistence);
+		await this.ctx.plugin(SandoreEngineRuntime, this.config);
+		await this.ctx.plugin(SandoreRemote);
+	}
+};
+//#endregion
+//#region src/index.ts
+var src_default = SandoreWorkflowPlugin;
+//#endregion
+export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SandoreEngine, SandoreEngineRuntime, SandoreEngineStub, SandoreError, SandoreRemote, SandoreWorkflowPlugin, SessionMessageSchema, StageContractSchema, StageInfoSchema, StepSessionMetaSchema, WorkflowDagNavigator, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema, WorkflowYamlError, convertLegacyToV2, src_default as default, isFatalSandoreError, parseWorkflowYaml, sandoreDomainSpec, serializeWorkflowYaml };

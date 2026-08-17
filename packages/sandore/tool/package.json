@@ -4,14 +4,17 @@
   "description": "sandore workflow engine model tools (orchestrator sandore_* tools)",
   "license": "MIT",
   "type": "module",
-  "main": "lib/index.js",
+  "main": "lib/types/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
     ".": {
       "types": "./lib/types/index.d.ts",
-      "default": "./lib/index.js"
+      "default": "./lib/types/index.js"
     },
-    "./src/*": "./src/*.ts",
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./lib/types/*.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -20,7 +23,8 @@
     "lib/types/**/*.d.ts"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -b"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-llm": "0.1.0-rc.6",

@@ -6,6 +6,7 @@ export * from "./seam.js";
 export * from "./dag-navigator.js";
 export * from "./remote.js";
 import SandoreEngineRuntime from "./workflow-engine.js";
-export { SandoreEngineRuntime };
-export default SandoreEngineRuntime;
+import SandoreWorkflowPlugin from "./plugin.js";
+export { SandoreEngineRuntime, SandoreWorkflowPlugin };
+export default SandoreWorkflowPlugin;
 //# sourceMappingURL=index.js.map

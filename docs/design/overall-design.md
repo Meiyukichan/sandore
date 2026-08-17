@@ -219,15 +219,15 @@ Task 3（完整 DAG）
 | `sandore/start` | — | `execute()` 开始 | Task 2 |
 | `sandore/stage-start` | `stageId: string` | Stage 开始执行 | Task 2 |
 | `sandore/stage-completed` | `stageId: string, contract: StageContract` | Stage 执行完成，StageContract 组装完毕 | Task 2 |
-| `sandore/step-start` | `stepId: string, childId: string` | Step 开始执行（childId = 子代理 SessionId） | Task 2 |
-| `sandore/step-completed` | `stepId: string, childId: string, output: ContentBlock[]` | Step 执行完成（output = 子代理最终结果，内联展示用） | Task 2 |
-| `sandore/step-failed` | `stepId: string, childId: string, error: string` | Step 执行失败 | Task 2 |
+| `sandore/step-start` | `stepId: string, childId: string, name: string, loopIteration?: number[]` | Step 开始执行（childId = 子代理 SessionId） | Task 2 |
+| `sandore/step-completed` | `stepId: string, childId: string, output: ContentBlock[], name: string, loopIteration?: number[]` | Step 执行完成（output = 子代理最终结果，内联展示用） | Task 2 |
+| `sandore/step-failed` | `stepId: string, childId: string, error: string, name: string, loopIteration?: number[]` | Step 执行失败 | Task 2 |
 | `sandore/question` | `question: PendingQuestion` | 问答请求（SDK Agent 执行中或 FinalizeAssessor ask 判定） | Task 4 |
 | `sandore/permission` | `permission: PendingPermission` | 权限请求 | Task 4 |
 | `sandore/end` | `result: DagResultInfo` | 工作流结束（completed/failed/aborted） | Task 2 |
-| `sandore/step-paused` | `stepId: string, childId: string` | Step 暂停（引擎登记表记录） | Task 4 |
-| `sandore/step-resumed` | `stepId: string, childId: string, resumePrompt?: string` | Step 恢复 | Task 4 |
-| `sandore/step-retried` | `stepId: string, mode: string` | Step 重试开始 | Task 4 |
+| `sandore/step-paused` | `stepId: string, childId: string, name: string, loopIteration?: number[]` | Step 暂停（引擎登记表记录） | Task 4 |
+| `sandore/step-resumed` | `stepId: string, childId: string, resumePrompt: string \| undefined, name: string, loopIteration?: number[]` | Step 恢复 | Task 4 |
+| `sandore/step-retried` | `stepId: string, mode: string, name: string, loopIteration?: number[]` | Step 重试开始 | Task 4 |
 | `sandore/aborted` | — | 工作流被中止 | Task 4 |
 
 > **关键（经探索确认）**：这些 `sandore/*` 是 **Session 事件**（`session.append('sandore/…', data)` 写入宿主 Session log，经 `declare module '@deepseek-ai/dsh-session/types'` 合并 `SessionEventMap`），**不是纯 Cordis 事件**。只有 append 到 log 的事件才会被 `ConversationNodeDefinition`（D8 讨论面板）折叠、被 apiproxy `session/event` 帧透传。`ctx.emit` 同名 Cordis 事件仅作引擎内部可选触发源，不能替代 Session 事件。

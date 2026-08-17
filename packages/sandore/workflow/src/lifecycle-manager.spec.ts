@@ -18,7 +18,7 @@ import { MemoryStorageDomain } from '../tests/mocks/storage-domain.ts';
 import { FakeSubagents } from '../tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
 import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
-import SandoreEngineRuntime, { SandoreError } from './index.ts';
+import { SandoreEngineRuntime, SandoreError } from './index.ts';
 import type { SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
 import { LifecycleManager } from './lifecycle-manager.ts';
 import { SandorePersistence } from './persistence.ts';
