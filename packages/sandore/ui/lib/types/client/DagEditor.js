@@ -60,7 +60,7 @@ function StageNode({ stage, expanded, onToggle, onAddStep, onUpdateStage, onRemo
     return (_jsx(DisclosureRow, { icon: _jsx(IconChevronRightOutline14, {}), title: stage.name, open: expanded, expandable: true, onToggle: onToggle, expandOnRowClick: true, previewChevron: false, rowClassName: css.stageHeader, collapsedContent: _jsx("span", { className: css.stepCount, children: t('editor.steps.count', { count: stage.steps.length }) }), children: _jsxs("div", { className: css.steps, children: [stage.steps.length === 0 ? (_jsx("span", { className: css.empty, children: t('editor.steps.empty') })) : (stage.steps.map(step => (_jsx(StepEditor, { step: step, onChange: next => { onUpdateStage({ ...stage, steps: stage.steps.map(s => (s.id === step.id ? next : s)) }); }, onRemove: () => { onUpdateStage({ ...stage, steps: stage.steps.filter(s => s.id !== step.id) }); }, t: t }, step.id)))), _jsxs("div", { className: css.stepActions, children: [_jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconPlusOutline16, {}), onClick: onAddStep, children: t('editor.step.add') }), _jsx(Button, { variant: "ghost", size: "sm", icon: _jsx(IconTrashOutline16, {}), onClick: onRemoveStage, children: t('editor.remove.item') })] })] }) }));
 }
 /** 渲染 DagEditor。 */
-export function DagEditor({ t, initialYaml, initialId, save }) {
+export function DagEditor({ t, initialYaml, initialId, save, onSaved }) {
     const [definition, setDefinition] = useState(() => initialYaml === undefined ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
     const [id, setId] = useState(initialId);
     const [expandedStageId, setExpandedStageId] = useState(undefined);
@@ -92,6 +92,7 @@ export function DagEditor({ t, initialYaml, initialId, save }) {
         try {
             const savedId = await save(id, serializeWorkflowYaml(definition));
             setId(savedId);
+            onSaved?.(savedId);
             // 回填保存后的真实 id 进编辑态模型，使 YAML 预览基线反映已保存内容。
             setDefinition(current => withDefinitionId(current, savedId));
             setSaveState({ kind: 'ok' });

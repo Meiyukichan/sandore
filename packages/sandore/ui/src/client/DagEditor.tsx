@@ -39,6 +39,8 @@ export interface DagEditorProps {
   initialId?: string | undefined
   /** 保存回调：`id` 为 `undefined` 时走 `createDefinition`，否则走 `updateYaml`；返回持久化后的 id。 */
   save: SaveDefinition
+  /** 保存成功回调（携带持久化后的 id），供宿主刷新定义列表等。 */
+  onSaved?: (id: string) => void
 }
 
 /** 保存流程本地状态。 */
@@ -329,7 +331,7 @@ function StageNode({ stage, expanded, onToggle, onAddStep, onUpdateStage, onRemo
 }
 
 /** 渲染 DagEditor。 */
-export function DagEditor({ t, initialYaml, initialId, save }: DagEditorProps) {
+export function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEditorProps) {
   const [definition, setDefinition] = useState<WorkflowDefinition>(() =>
     initialYaml === undefined ? createBlankDefinition() : parseWorkflowYaml(initialYaml))
   const [id, setId] = useState<string | undefined>(initialId)
@@ -370,6 +372,7 @@ export function DagEditor({ t, initialYaml, initialId, save }: DagEditorProps) {
     try {
       const savedId = await save(id, serializeWorkflowYaml(definition))
       setId(savedId)
+      onSaved?.(savedId)
       // 回填保存后的真实 id 进编辑态模型，使 YAML 预览基线反映已保存内容。
       setDefinition(current => withDefinitionId(current, savedId))
       setSaveState({ kind: 'ok' })

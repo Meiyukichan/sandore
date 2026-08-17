@@ -137,6 +137,9 @@ export declare const zh: {
     'step.retry.submit': string;
     'step.retry.cancel': string;
     'step.retry.failed': string;
+    'view.workflow': string;
+    'view.placeholder': string;
+    'view.editor.error': string;
 };
 /** sandore 字典键表。 */
 export type SandoreKey = keyof typeof zh;
@@ -282,5 +285,8 @@ export declare const en: {
     'step.retry.submit': string;
     'step.retry.cancel': string;
     'step.retry.failed': string;
+    'view.workflow': string;
+    'view.placeholder': string;
+    'view.editor.error': string;
 };
 //# sourceMappingURL=locales.d.ts.map

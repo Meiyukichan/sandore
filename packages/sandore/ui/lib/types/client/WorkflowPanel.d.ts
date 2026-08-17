@@ -1,10 +1,16 @@
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots';
 import type { WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client';
 import type { InstanceSummary, WorkflowDefinitionEntry } from '@deepseek-ai/dsh-sandore-workflow/remote';
-import type { RunViewRemote } from './RunView.tsx';
-import type { SaveDefinition } from './sandore-save.ts';
-import type { OpenDiscussion } from './open-discussion.ts';
-/** WorkflowPanel 接收的普通业务 props（由 WorkflowButton 从 slot face 与 owner 组装）。 */
+/** 工作流打开目标：实例（RunView）或定义（DagEditor）。 */
+export type WorkflowOpenTarget = {
+    readonly kind: 'instance';
+    readonly instanceId: string;
+} | {
+    readonly kind: 'definition';
+    readonly definitionId?: string;
+    readonly initialYaml?: string;
+};
+/** WorkflowPanel 接收的普通业务 props。 */
 export interface WorkflowPanelProps {
     /** 类型化的翻译函数（sandore 命名空间）。 */
     t: TranslateNS<'sandore'>;
@@ -16,13 +22,9 @@ export interface WorkflowPanelProps {
     listDefinitions(): Promise<WorkflowDefinitionEntry[]>;
     /** 删除定义（RPC 已解包）。 */
     deleteDefinition(id: string): Promise<boolean>;
-    /** DagEditor 保存回调（由 createSandoreSave 产出）。 */
-    save: SaveDefinition;
-    /** 按 instanceId 生成 RunView 的「打开讨论」回调（由 createOpenDiscussion 产出）。 */
-    openDiscussion(instanceId: string): OpenDiscussion;
-    /** RunView 所需的最小 RPC 访问面。 */
-    remote: RunViewRemote;
+    /** 点击工作流项 → 打开右侧编辑区（宿主会话 + 工作流 tab）。 */
+    onOpen(target: WorkflowOpenTarget): void;
 }
-/** 渲染 WorkflowPanel。 */
-export declare function WorkflowPanel({ t, workspaces, listInstances, listDefinitions, deleteDefinition, save, openDiscussion, remote }: WorkflowPanelProps): import("react").JSX.Element;
+/** 渲染 WorkflowPanel（sidebar 内列表）。 */
+export declare function WorkflowPanel({ t, workspaces, listInstances, listDefinitions, deleteDefinition, onOpen }: WorkflowPanelProps): import("react").JSX.Element;
 //# sourceMappingURL=WorkflowPanel.d.ts.map

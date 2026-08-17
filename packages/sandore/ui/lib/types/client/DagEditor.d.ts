@@ -10,7 +10,9 @@ export interface DagEditorProps {
     initialId?: string | undefined;
     /** 保存回调：`id` 为 `undefined` 时走 `createDefinition`，否则走 `updateYaml`；返回持久化后的 id。 */
     save: SaveDefinition;
+    /** 保存成功回调（携带持久化后的 id），供宿主刷新定义列表等。 */
+    onSaved?: (id: string) => void;
 }
 /** 渲染 DagEditor。 */
-export declare function DagEditor({ t, initialYaml, initialId, save }: DagEditorProps): import("react").JSX.Element;
+export declare function DagEditor({ t, initialYaml, initialId, save, onSaved }: DagEditorProps): import("react").JSX.Element;
 //# sourceMappingURL=DagEditor.d.ts.map

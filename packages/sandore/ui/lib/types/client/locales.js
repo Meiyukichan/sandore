@@ -137,6 +137,9 @@ export const zh = {
     'step.retry.submit': '提交重试',
     'step.retry.cancel': '取消',
     'step.retry.failed': '重试失败：{message}',
+    'view.workflow': '工作流',
+    'view.placeholder': '从左侧选择一个工作流进行查看或编辑',
+    'view.editor.error': '加载定义失败：{message}',
 };
 /** 英文文案（与 zh 逐键对齐，缺一即编译错）。 */
 export const en = {
@@ -274,5 +277,8 @@ export const en = {
     'step.retry.submit': 'Retry',
     'step.retry.cancel': 'Cancel',
     'step.retry.failed': 'Retry failed: {message}',
+    'view.workflow': 'Workflow',
+    'view.placeholder': 'Select a workflow on the left to view or edit',
+    'view.editor.error': 'Failed to load definition: {message}',
 };
 //# sourceMappingURL=locales.js.map
