@@ -536,6 +536,7 @@ ui 包（Client）：
 > - **手写 `lib/typert.remote-client.js`**（27 个 RPC 的 `InvocationDescriptor`，结构见 `gateway.client.spec.ts` 的 `directDescriptor()`）+ `lib/typert.remote-client.d.ts`（类型声明），`typeSymbol`/`schema` 引用 workflow 的 `./types` 导出，**静态保留**（改 `@Remote` 方法时手动同步，typecheck + `$mount` 挂载 + 27 RPC 类型化作为验收兜底）；
 > - **ui 包正常跑 clientBundle**（`import sandoreRemote from '.../remote'` + `$mount`）。
 > - **不 vendor protocol**（避免复制 ~800 行 protocol 源码进 sandore 带来的包名冲突、运行时解析改指 vendor 版、长期同步维护）。
+> - **「构建 vs 安装」澄清**：typert 的 wire 拆分发生在 **sandore 仓库 build 阶段**（第三方仓库，generator 无法跑通 → 手写）；「通过 dsh web 安装」是 **npm add + cordis.yml**，读的是 sandore 已 build 的 lib 产物，**不重新构建 Host 包**——所以手写生成物对 DSH web 完全透明，安装到哪都不改变「手写」的必要性。唯一「不用手写」是 sandore 作为 DSH monorepo 一部分（workspace 内 build），但违反「纯插件分发、不改 DSH 源码」硬约束。
 
 ### 6.1 端到端数据流（以「执行一个工作流」为例）
 

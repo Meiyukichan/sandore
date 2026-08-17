@@ -492,7 +492,7 @@ export function RunView({ t, instanceId, openDiscussion, remote }: RunViewProps)
         remote.getInstanceState(instanceId),
         remote.getArtifacts(instanceId),
       ])
-      // 生成的 wire 面把 getInstanceState 标为 unknown，Host 实际返回 WorkflowTaskState。
+      // RunViewRemote 最小接口把 getInstanceState 标为 unknown，Host 实际返回 WorkflowTaskState。
       const state = unwrap(stateResult) as WorkflowTaskState
       const artifacts = unwrap(artifactsResult)
       setLoadState({ kind: 'ready', state, artifacts })

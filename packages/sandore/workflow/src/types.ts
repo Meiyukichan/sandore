@@ -22,6 +22,7 @@ import type {
   RetryRecord,
   SessionMessage,
   StepSessionMeta,
+  WorkflowTaskState,
 } from './schema.ts'
 
 export type {
@@ -39,6 +40,7 @@ export type {
   RetryRecord,
   SessionMessage,
   StepSessionMeta,
+  WorkflowTaskState,
 }
 
 // ── RPC wire 类型（重导出自 remote.ts，供 typert 生成物 .d.ts 引用） ────────────

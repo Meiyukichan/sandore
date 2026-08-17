@@ -1,1 +1,0 @@
-{ "name": "@scope/pkgb", "exports": { ".": "./lib/index.d.ts", "./src/*": "./src/*" } }

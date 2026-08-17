@@ -1,0 +1,308 @@
+[
+  {
+    "id": "rpc-01",
+    "category": "rpc-wiring",
+    "function": "Typert RPC 客户端接线（./remote 导出 + $mount + 桩移除）",
+    "description": "为 workflow 包提供 Typert 远程客户端贡献的 ./remote 子路径导出（tsdown + typert generator 从 SandoreRemote 的 @Remote 装饰器生成 lib/typert.remote-client.js + .d.ts），并让 ui Client 插件在 apply(ctx) 内 ctx.remote.$mount(sandoreRemote)（disposer 经 ctx.effect 生命周期管理），以 ctx.remote.sandore.* 调用全部 27 个 RPC。同时删除 Task 1 的本地 JSON 桩（ui/src/client/host.ts 的 sandore.ping 字面量实现），并新增 RemoteResult 解包薄封装（ok:true 取 value，ok:false 呈现错误，不静默吞错）。inject 数组补 'remote'，dsh.client.inject 补 @deepseek-ai/dsh-api-remotes。此为全部 ui 数据调用的基础，无上游依赖。",
+    "acceptance_criteria": [
+      "packages/sandore/workflow 提供 lib/typert.remote-client.js（本 feature 以手写 TypertRemoteContribution 描述符为中间态基线——./remote 可解析、$mount 可挂载、typecheck 全绿；typert 构建真正跑通由 static-01 完成跨包导入重构后覆盖）",
+      "workflow/package.json 的 exports 含 ./remote 条目，files 含生成物路径",
+      "ui 插件 apply 完成后 ctx.remote.sandore 命名空间就绪，ctx.remote.sandore.ping() 返回 RemoteResult 形态",
+      "ui 插件卸载时 $mount 返回的 disposer 被执行",
+      "packages/sandore/ui/src 内无 sandore.ping 字面量桩实现（ping 仅作为真实 RPC 方法名出现于调用处）",
+      "任一 ctx.remote.sandore.* 返回 {ok:false,error} 时 UI 呈现错误提示，不渲染伪造数据"
+    ],
+    "tasks": [
+      "1.1 workflow/package.json 增加 ./remote 导出条目、files 生成物路径与 build 脚本",
+      "1.2 新增 workflow/tsdown.config.ts（tsdown + typert generator，产出 lib/typert.remote-client.js 与类型）",
+      "1.3 ui/src/client/remote.ts 新增 RemoteResult 解包薄封装与 sandore 调用面",
+      "1.4 ui/src/client/index.ts 引入 $mount 挂载、inject 补 'remote'、移除 host 桩接线",
+      "1.5 删除 ui/src/client/host.ts 本地 JSON 桩",
+      "1.6 ui/package.json 的 dsh.client.inject 与 peerDependencies/devDependencies 补 @deepseek-ai/dsh-api-remotes",
+      "1.7 pnpm -r typecheck 全绿"
+    ],
+    "files": [
+      "packages/sandore/workflow/package.json",
+      "packages/sandore/workflow/tsdown.config.ts",
+      "packages/sandore/ui/src/client/remote.ts",
+      "packages/sandore/ui/src/client/index.ts",
+      "packages/sandore/ui/src/client/host.ts",
+      "packages/sandore/ui/package.json"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/rpc-wiring/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-1"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "event-01",
+    "category": "event-payload-enrichment",
+    "function": "step-* 事件 payload 补 name/loopIteration",
+    "description": "6 个 sandore/step-* Session 事件（step-start/step-completed/step-failed/step-paused/step-resumed/step-retried）payload 追加必填字段 name: string（来自引擎闭包内被执行 Step 定义的 name）与可选末尾字段 loopIteration?: number[]（来自循环迭代路径，非循环 Step 省略）。改动点：workflow-engine.ts 的 emitStep* 系列签名与 append payload、seam.ts 的 Cordis Events 与 SessionEventMap 双声明、既有测试断言。向后兼容的纯加法，使前端 sandore-step 讨论节点折叠态自包含（零 RPC 补偿）。",
+    "acceptance_criteria": [
+      "引擎 append 任一 sandore/step-* 事件时 payload 含非空 name 字段，与被执行 Step 定义的 name 一致",
+      "循环内 Step 事件 payload 含 loopIteration（如 [2] 或嵌套完整路径数组）；非循环 Step 事件 payload 不含 loopIteration 键",
+      "seam.ts 的 Cordis Events 与 SessionEventMap 两种声明中 6 个事件的 payload 类型均含 name: string 与 loopIteration?: number[]",
+      "workflow 包 vitest 中 step 事件相关断言覆盖 name（及循环场景的 loopIteration）且全绿"
+    ],
+    "tasks": [
+      "2.1 workflow-engine.ts 的 emitStepStart/emitStepCompleted/emitStepFailed/emitStepPaused/emitStepResumed/emitStepRetried 签名与 safeAppend payload 补 name 与 loopIteration",
+      "2.2 seam.ts 的 SessionEventMap 与 Cordis Events 双声明同步更新 payload 类型",
+      "2.3 更新 workflow-engine.spec.ts 既有事件断言以覆盖新字段（含循环场景）",
+      "2.4 pnpm -r typecheck + workflow 包 vitest 全绿"
+    ],
+    "files": [
+      "packages/sandore/workflow/src/workflow-engine.ts",
+      "packages/sandore/workflow/src/seam.ts",
+      "packages/sandore/workflow/src/workflow-engine.spec.ts"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/event-payload-enrichment/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-2"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "title-01",
+    "category": "host-session-title",
+    "function": "宿主会话标题补设（sessionTitle.rename）",
+    "description": "workflow 包在 startInstance 创建宿主 Session 后调用 ctx.sessionTitle.rename(handle.session, '工作流实例 ${instanceId}')，使宿主会话在 DSH 侧边栏显示明确标题（source=user 优先于 fallback 自动摘要）。static inject 补 'sessionTitle'（runtime 与 stub 两处），package.json peerDependencies/devDependencies 补 @deepseek-ai/dsh-session-title。rename 调用失败仅记录 warn 日志，不得使 startInstance 失败或中断实例执行。",
+    "acceptance_criteria": [
+      "startInstance 成功创建宿主 Session 后该 Session 标题为 '工作流实例 <instanceId>'（user-source）",
+      "SandoreEngineRuntime 与 SandoreEngineStub 的 static inject 数组含 'sessionTitle'，类型可用",
+      "sessionTitle.rename 抛出异常时实例照常创建并执行，startInstance 返回成功（记录 warn）",
+      "workflow 包 vitest 含 sessionTitle 调用断言（stub sessionTitle 服务）且全绿"
+    ],
+    "tasks": [
+      "3.1 workflow-engine.ts 的 SandoreEngineRuntime static inject 补 'sessionTitle'，startInstance 内 try/catch 包裹 rename 调用",
+      "3.2 seam.ts 的 SandoreEngineStub static inject 同步补 'sessionTitle'",
+      "3.3 workflow/package.json peerDependencies/devDependencies 补 @deepseek-ai/dsh-session-title",
+      "3.4 workflow-engine.spec.ts 新增/更新 sessionTitle 调用断言（含 rename 抛错不阻塞启动）",
+      "3.5 pnpm -r typecheck + workflow 包 vitest 全绿"
+    ],
+    "files": [
+      "packages/sandore/workflow/src/workflow-engine.ts",
+      "packages/sandore/workflow/src/seam.ts",
+      "packages/sandore/workflow/src/workflow-engine.spec.ts",
+      "packages/sandore/workflow/package.json"
+    ],
+    "dependencies": [],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/host-session-title/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-3"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "editor-01",
+    "category": "dag-editor",
+    "function": "DagEditor 编排器（Stage DAG 可视化 + Step 编辑 + YAML 预览/保存）",
+    "description": "新增 DagEditor 组件：以 ui-primitives 简化形式渲染工作流定义的 Stage DAG（Stage 节点列表 + 连线示意，不引入 React Flow/@xyflow）；经浏览器安全的 workflow schema/yaml 导出把 listDefinitions 返回的原始 yaml 解析为编辑态定义模型，选中 Stage 展示 Step 列表并支持编辑字段（名称、command 类型 prompt/shell/agent/skill/mcp、inputFrom/outputTo、passThroughVars、gates、branches/loop 流控）；提供由编辑态定义模型序列化的 YAML 预览（与 workflow/src/yaml-parser.ts 往返一致），保存经 ctx.remote.sandore.updateYaml(id, yaml)，保存失败呈现校验错误、成功提示并刷新基线。支持新建定义（首次保存走 createDefinition，后续走 updateYaml）。组件以独立 props（定义 + 保存回调）提供，供 WorkflowPanel 下钻承载。",
+    "acceptance_criteria": [
+      "进入某定义 DagEditor 时按定义顺序渲染各 Stage 节点（名称 + 所含 Step 数），Stage 间有连线示意",
+      "点击 Stage 展开显示 Step 列表（名称、命令类型与关键映射字段），修改字段后编辑态模型与 YAML 预览同步更新",
+      "点击保存且 updateYaml 返回 {ok:true} 时呈现成功提示并更新编辑基线",
+      "updateYaml 因 YAML/schema 校验失败返回 {ok:false} 时呈现错误信息（含校验详情），编辑态保留未保存内容",
+      "新建定义首次保存调用 createDefinition（生成 wfl-{uuid}），后续保存走 updateYaml",
+      "未引入 @xyflow/react/@dagrejs/dagre 等第三方 DAG 库，pnpm -r typecheck 全绿"
+    ],
+    "tasks": [
+      "4.0 workflow 包将定义层 zod schema 拆分为浏览器安全模块（去掉 Node 侧 dsh-storage-domain 依赖），以 ./schema 与 ./yaml 子路径导出 WorkflowDefinitionSchema 与 parseWorkflowYaml/serializeWorkflowYaml",
+      "4.1 新增 DagEditor.tsx（Stage DAG 简化可视化 + Stage 展开 + Step 列表）",
+      "4.2 新增 Step 字段编辑（command 类型/输入输出映射/passThroughVars/gates/branches/loop）",
+      "4.3 DagEditor 经浏览器安全导出把 listDefinitions 的原始 yaml 解析为编辑态模型，并实现模型到 YAML 的序列化预览（与 workflow/src/yaml-parser.ts 往返一致）",
+      "4.4 经 ctx.remote.sandore.updateYaml/createDefinition 保存（含失败提示与成功基线刷新）",
+      "4.5 新增 DagEditor.module.css 并扩充 locales.ts 文案",
+      "4.6 pnpm -r typecheck 全绿"
+    ],
+    "files": [
+      "packages/sandore/workflow/src/schema.ts",
+      "packages/sandore/workflow/src/yaml-parser.ts",
+      "packages/sandore/workflow/package.json",
+      "packages/sandore/ui/src/client/DagEditor.tsx",
+      "packages/sandore/ui/src/client/DagEditor.module.css",
+      "packages/sandore/ui/src/client/locales.ts"
+    ],
+    "dependencies": [
+      "rpc-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/dag-editor/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-4"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "run-01",
+    "category": "run-view",
+    "function": "RunView 执行详情（轨迹/产物/交互控件/打开讨论）",
+    "description": "新增 RunView 组件：经 ctx.remote.sandore.getInstanceState(instanceId) 拉取状态，按 stageInfos 分组只读渲染 executedSteps（每 Step 状态图标 7 态、名称、访问计数徽章、错误信息）；产物面板经 getArtifacts(instanceId, stageId?) 拉取（运行中 5s 轮询、终态停止）分层显示；提供实例级（abortInstance/pauseAll/resumeAll）与 Step 级（pauseStep/resumeStep/retryStep 三模式）交互控件，动作后立即手动刷新；pendingInteractions 中的问答/权限渲染卡片并经 replyQuestion/replyPermission 应答；头部提供「打开讨论」按钮经 ctx.sessions.open(instanceId) 跳宿主会话。组件以独立 props（instanceId + 打开讨论回调）提供，供 WorkflowPanel 下钻承载。",
+    "acceptance_criteria": [
+      "进入某实例 RunView 时按 Stage 分组展示各 Step（状态、名称、visitCount 徽章；failed Step 附 error），全部只读",
+      "实例状态为 running/interacting 且 RunView 打开时每 5s 调用 getArtifacts 刷新产物；终态或离开 RunView 后停止",
+      "对运行中 Step 点击暂停后调用 pauseStep 并立即刷新 getInstanceState，该 Step 状态变 paused",
+      "存在待答问题且用户提交答案后调用 replyQuestion 成功，该待办从 pendingInteractions 消失",
+      "对 failed Step 选择 revert 模式重试并填写 message 后调用 retryStep({mode:'revert',message})，成功后轨迹刷新",
+      "提供「打开讨论」按钮（onClick 绑定 openDiscussion 回调）+ createOpenDiscussion(sessions, instanceId) adapter（ui 包内可执行，内部调用 ctx.sessions.open(instanceId)，有单测覆盖）；端到端 view 栈挂载 RunView 并注入该回调归 panel-01"
+    ],
+    "tasks": [
+      "5.1 新增 RunView.tsx（头部状态徽章 + 打开讨论按钮 + 执行轨迹只读视图）",
+      "5.2 实现产物面板（getArtifacts 分层显示 + 运行中 5s 轮询）",
+      "5.3 实现实例级/Step 级交互控件（暂停/恢复/中止/重试三模式）与动作后刷新",
+      "5.4 实现问答/权限卡片（复用 PendingQuestion/审批卡片）与 replyQuestion/replyPermission 应答",
+      "5.5 新增 RunView.module.css 并扩充 locales.ts 文案",
+      "5.6 pnpm -r typecheck 全绿"
+    ],
+    "files": [
+      "packages/sandore/ui/src/client/RunView.tsx",
+      "packages/sandore/ui/src/client/RunView.module.css",
+      "packages/sandore/ui/src/client/locales.ts"
+    ],
+    "dependencies": [
+      "rpc-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/run-view/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-4"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "panel-01",
+    "category": "workflow-panel",
+    "function": "WorkflowPanel 展开面板 + 两级下钻 + 三态列表",
+    "description": "重写 WorkflowPanel 并新增 InstanceList/DefinitionList：header 提供搜索（客户端过滤）、编排 toggle（默认态↔编排态）、新增按钮（默认态新增实例/编排态新增定义）；内部维护 view 状态栈 list↔editor(DagEditor)↔run(RunView)，下钻态以宽展开 layer 渲染（wide ? css.layer : css.rail），返回按钮回退；默认态 InstanceList 经 listInstances 拉取并按工作区分组（useWorkspaces 取 workspace.sessionIds 成员表，未命中归「未分组」，3s 轮询）；编排态 DefinitionList 经 listDefinitions 平铺（删除需确认后 deleteDefinition）；三态 loading/empty/error。WorkflowButton 微调接入面板 store 与新增/下钻回调；inject 补 sessions/workspaces。",
+    "acceptance_criteria": [
+      "点击「工作流」footer 按钮展开 WorkflowPanel（首次进入默认态列表），rail 窄态仍可点且面板以宽展开 layer 弹出",
+      "切换编排 toggle 时列表切换为 DefinitionList，新增语义变为新增定义；搜索框按名称/ID 客户端过滤当前列表",
+      "编排态点定义下钻为 DagEditor 宽展开态；默认态点实例下钻为 RunView 宽展开态；返回按钮回退并保留编排 toggle/搜索状态",
+      "实例 A 的 instanceId 命中 workspace W1 的 sessionIds、实例 B 不属于任何 workspace 时，列表在 W1 分组显示 A、未分组显示 B",
+      "面板打开且默认态时每 3s 调用 listInstances 刷新（收起面板/卸载即停止）",
+      "listInstances 返回空数组显示空态引导；listDefinitions 返回 {ok:false} 显示错误提示与重试；删除定义经确认后 deleteDefinition",
+      "view 栈 reducer 纯函数单测全绿，pnpm -r typecheck 全绿"
+    ],
+    "tasks": [
+      "6.1 新增 view-stack.ts（list/editor/run 状态栈 reducer，纯函数）+ view-stack.spec.ts 单测",
+      "6.2 重写 WorkflowPanel.tsx（header 搜索/编排/新增 + view 栈 + 宽展开 layer 双态）",
+      "6.3 新增 InstanceList.tsx（listInstances + useWorkspaces 分组 + 3s 轮询 + 三态）",
+      "6.4 新增 DefinitionList.tsx（listDefinitions 平铺 + 删除确认 + 三态）",
+      "6.5 微调 WorkflowButton.tsx 接入面板 store 与下钻回调，index.ts inject 补 sessions/workspaces",
+      "6.6 扩充 locales.ts 文案并更新 WorkflowPanel.module.css",
+      "6.7 pnpm -r typecheck 全绿",
+      "6.x 下钻到 RunView 时用 createOpenDiscussion(ctx.sessions, instanceId) 生成 openDiscussion 回调并注入 RunView（闭合 AC-6 端到端）；下钻到 DagEditor 时用 createSandoreSave(ctx.remote.sandore) 生成 save 回调并注入 DagEditor"
+    ],
+    "files": [
+      "packages/sandore/ui/src/client/WorkflowPanel.tsx",
+      "packages/sandore/ui/src/client/WorkflowPanel.module.css",
+      "packages/sandore/ui/src/client/InstanceList.tsx",
+      "packages/sandore/ui/src/client/DefinitionList.tsx",
+      "packages/sandore/ui/src/client/WorkflowButton.tsx",
+      "packages/sandore/ui/src/client/view-stack.ts",
+      "packages/sandore/ui/src/client/view-stack.spec.ts",
+      "packages/sandore/ui/src/client/index.ts",
+      "packages/sandore/ui/src/client/locales.ts"
+    ],
+    "dependencies": [
+      "rpc-01",
+      "editor-01",
+      "run-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/workflow-panel/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-4",
+      "furina/changes/task-5-frontend/design.md#D-6",
+      "furina/changes/task-5-frontend/design.md#D-7"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "step-01",
+    "category": "sandore-step-node",
+    "function": "sandore-step 讨论节点（conversation.chat.node keyed 三件套）",
+    "description": "新增 sandore-step 讨论节点，照抄 ui-workflow-run 三件套：ConversationNodeDefinition（kind:'sandore-step'，target:'chat'）match 命中 6 个 sandore/step-* Session 事件，start/update 将同一 Step 多事件折叠为单节点状态（{stepId, childId, name, status, loopIteration?, output?, error?}），循环多次迭代按 stepId + loopIteration 路径派生独立节点 id；ctx.slots.inject('conversation.chat.node', key:'sandore-step') 注册 DagStepNodeView（inject 提供 openSession）；declare module 扩展 ChatNodeDataMap。DagStepNodeView 按状态渲染（running 无结果/completed 内联 output 经 MessageText/MarkdownText/failed 红框+paused 琥珀框），显示 name 与循环迭代标签（#1.2），点击 openSession(childId) 跳子会话，并提供节点级重试控件（continue/revert/fork 经 retryStep）。inject 补 conversationEvents。",
+    "acceptance_criteria": [
+      "宿主 Session 事件日志含某 Step 的 step-start→step-completed 序列时折叠为单个 sandore-step 节点，状态 completed 且内联 output",
+      "循环 Step 两次迭代各触发 start/completed 时产生两个独立节点（可按 #1/#2 迭代标签区分）",
+      "ui 插件 apply 完成后宿主 Session chat 视图内 sandore-step 类节点由 DagStepNodeView 渲染（keyed 分派生效）",
+      "completed 态节点内联渲染结果消息；failed 态呈现错误样式与 error 文本；paused 态呈现琥珀样式",
+      "点击 completed 节点调用 openSession(childId) 跳子会话页",
+      "failed/completed 节点提供重试控件，选择模式提交后调用 retryStep({instanceId,stepId,mode,message})",
+      "折叠状态机 match/start/update 纯函数单测全绿，pnpm -r typecheck 全绿"
+    ],
+    "tasks": [
+      "7.1 新增 sandore-step-definition.ts（ConversationNodeDefinition match/start/update/buildViewNode + ChatNodeDataMap 声明合并）",
+      "7.2 新增 sandore-step-definition.spec.ts（折叠状态机 match/start/update 纯函数单测，含循环迭代去重）",
+      "7.3 新增 DagStepNodeView.tsx（状态渲染 + 内联结果 + 重试控件 + 点击跳转）",
+      "7.4 index.ts 注册 conversationEvents.register + conversation.chat.node keyed 渲染器，inject 补 conversationEvents",
+      "7.5 扩充 locales.ts 文案并新增 DagStepNodeView.module.css",
+      "7.6 pnpm -r typecheck 全绿"
+    ],
+    "files": [
+      "packages/sandore/ui/src/client/sandore-step-definition.ts",
+      "packages/sandore/ui/src/client/sandore-step-definition.spec.ts",
+      "packages/sandore/ui/src/client/DagStepNodeView.tsx",
+      "packages/sandore/ui/src/client/DagStepNodeView.module.css",
+      "packages/sandore/ui/src/client/index.ts",
+      "packages/sandore/ui/src/client/locales.ts"
+    ],
+    "dependencies": [
+      "rpc-01",
+      "event-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/sandore-step-node/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-5"
+    ],
+    "status": "done"
+  },
+  {
+    "id": "static-01",
+    "category": "static-composition",
+    "function": "cordis.yml 静态组合固化 + ui 包声明补全 + 构建配置",
+    "description": "仓库根新建 cordis.yml，以 - insert: 块静态组合 4 包（workflow + microflow + tool + ui，workflow config 含 defaultTimeoutMs:7200000 与 maxConcurrentSteps:0）；补全 ui 包 package.json 的 dsh.client.inject（runtime/api-remotes/locale/ui-sidebar/ui-slots/ui-conversation，ui-primitives 保持 peerDependencies 不入 inject）与 peerDependencies 一致性；新增 ui 包 client bundle 构建配置（tsdown，照 DSH clientBundle() 形态）产出 exports[./client] 指向的 browser 产物；最终清扫验证：仓库内无 host.call 字面桩、harness.handle、cordis_define/cordis_run 动态插件原型残留，插件加载仅经 cordis.yml 静态组合。 并完成 typert 构建前置的跨包导入重构（workflow 11 文件将 ../../microflow/src/*、../../tool/src/* 相对导入改为显式包导入 @deepseek-ai/dsh-sandore-microflow/src/*、@deepseek-ai/dsh-sandore-tool/src/*，workflow 补 tool 依赖声明），以及 wire 类型面拆分（PingResponse/WorkflowDefinitionEntry/JobEntry 等从 remote.ts 根导出拆分到 ./types 非根子路径导出，供 typert 生成物 .d.ts 引用），最终用真实 typert 构建覆盖手写生成物基线。",
+    "acceptance_criteria": [
+      "解析仓库根 cordis.yml：YAML 语法合法，insert 列表恰含 workflow/microflow/tool/ui 4 个插件行（id/name/config 正确）",
+      "packages/sandore/ui/package.json 的 dsh.client.inject 覆盖 ui 组件实际 inject 的全部客户端服务来源包，peerDependencies 对应存在，platform:'web' 与 exports[./client] 保持",
+      "workflow 与 ui 包分别执行构建无错误：workflow = tsc -b tsconfig.host.json + tsdown 普通打包产出 lib/**（typert 生成物 lib/typert.remote-client.js/.d.ts 为手写 TypertRemoteContribution 静态产物，引用 ./types，因 typert generator 假设 monorepo workspace 结构、第三方仓库用 npm 发布版 protocol 无法识别 @Remote，按 design D-1 回退，不跑 typertPlugin）；ui = clientBundle 形态产出 exports[./client] 指向的 browser 产物",
+      "4 个 sandore 包分别执行 tsc --noEmit 全部无类型错误",
+      "在 packages/sandore 内搜索动态插件原型标识（host.call 字面桩/harness.handle/cordis_define/cordis_run）无命中"
+    ],
+    "tasks": [
+      "8.0a workflow 跨包导入重构：将 workflow/src 下 11 个文件的 ../../microflow/src/*、../../tool/src/* 相对导入改为显式包导入 @deepseek-ai/dsh-sandore-microflow/src/*、@deepseek-ai/dsh-sandore-tool/src/*；workflow package.json peerDependencies/devDependencies 补 @deepseek-ai/dsh-sandore-tool: workspace:*",
+      "8.0b wire 类型面拆分：将 PingResponse/WorkflowDefinitionEntry/JobEntry/InstanceSummary/ArtifactEntry 及各 Input wire 类型从 remote.ts 根导出拆分/重导出到 ./types 非根子路径（typert 生成物 .d.ts 引用 @deepseek-ai/dsh-sandore-workflow/types）",
+      "8.0c workflow 构建管线：移除 typertPlugin（typert generator 假设 monorepo workspace 结构，第三方仓库用 npm 发布版 protocol 无法识别 @Remote 装饰器，build 无法跑通），tsdown.config.ts 改为 tsc+tsdown 普通打包；手写 lib/typert.remote-client.js/.d.ts 更新为引用 @deepseek-ai/dsh-sandore-workflow/types（8.0b 拆分后的 wire 类型），静态保留不重新生成，build 无错误",
+      "8.1 仓库根新建 cordis.yml（- insert: 4 包，workflow config 含 defaultTimeoutMs/maxConcurrentSteps）",
+      "8.2 ui/package.json 补全 dsh.client.inject（api-remotes/ui-slots/ui-conversation 等，ui-primitives 保持 peerDependencies 不入 inject）与 peerDependencies/devDependencies 一致性",
+      "8.3 新增 ui/tsdown.config.ts（clientBundle() 形态产出 browser client bundle）并补 build 脚本",
+      "8.4 全量清扫验证动态插件原型残留（host.call/harness.handle/cordis_define/cordis_run）",
+      "8.5 pnpm -r typecheck + pnpm -r build + vitest 全绿 + cordis.yml YAML 语法校验"
+    ],
+    "files": [
+      "cordis.yml",
+      "packages/sandore/ui/package.json",
+      "packages/sandore/ui/tsdown.config.ts",
+      "packages/sandore/workflow/src/*.ts",
+      "packages/sandore/workflow/package.json",
+      "packages/sandore/workflow/tsconfig.json",
+      "packages/sandore/microflow/package.json",
+      "packages/sandore/tool/package.json"
+    ],
+    "dependencies": [
+      "rpc-01",
+      "event-01",
+      "title-01",
+      "editor-01",
+      "run-01",
+      "panel-01",
+      "step-01"
+    ],
+    "spec_refs": [
+      "furina/changes/task-5-frontend/specs/static-composition/spec.md",
+      "furina/changes/task-5-frontend/design.md#D-8"
+    ],
+    "status": "done"
+  }
+]
