@@ -92,6 +92,9 @@ export declare const zh: {
     'run.status.failed': string;
     'run.status.aborted': string;
     'run.status.paused': string;
+    'run.status.blocked': string;
+    'run.status.ready': string;
+    'run.members': string;
     'run.abort': string;
     'run.pauseAll': string;
     'run.resumeAll': string;
@@ -311,6 +314,9 @@ export declare const en: {
     'run.status.failed': string;
     'run.status.aborted': string;
     'run.status.paused': string;
+    'run.status.blocked': string;
+    'run.status.ready': string;
+    'run.members': string;
     'run.abort': string;
     'run.pauseAll': string;
     'run.resumeAll': string;

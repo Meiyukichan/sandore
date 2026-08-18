@@ -376,6 +376,8 @@ export const WorkflowTaskStateSchema = z.object({
   taskId: z.string(),
   jobId: z.string(),
   workflowId: z.string(),
+  /** 工作流名称（启动时从定义写入；持久化快照携带，供 UI 树标题展示）。 */
+  workflowName: z.string().optional(),
   cwd: z.string(),
   status: DagRunStatusSchema,
   originalInput: z.string(),

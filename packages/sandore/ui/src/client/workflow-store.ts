@@ -61,7 +61,7 @@ const INITIAL: WorkflowUiState = {
   creatingNew: false,
   preview: null,
   listWidth: 300,
-  treeWidth: 240,
+  treeWidth: 360,
   previewWidth: 380,
 }
 

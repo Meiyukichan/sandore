@@ -118,6 +118,7 @@ function makeInitialState(options: {
     taskId: instanceId,
     jobId: request.jobId,
     workflowId: request.workflowId,
+    workflowName: definition.name,
     cwd,
     status: 'pending',
     originalInput: request.originalInput,

@@ -1,79 +1,183 @@
-/* TreeNav 执行态左栏树形导航（DSH DisclosureRow 风格）。 */
+/* TreeNav 执行态树形导航（照 DSH ui-workflow-run WorkflowRunPanel 风格）。 */
 
 .root {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--dsw-alias-bg-elevated);
   overflow: hidden;
 }
 
-.header {
+/* 左上角标题栏。 */
+.titleBar {
   flex: none;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-}
-
-.title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
-}
-
-.body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 4px 6px 12px;
+  padding: 12px 12px 4px;
   box-sizing: border-box;
 }
 
-.node {
-  display: flex;
-  flex-direction: column;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  user-select: none;
-}
-
-.row:hover {
-  background: var(--dsw-alias-bg-hover);
-}
-
-.chevron {
-  flex: none;
-  width: 12px;
-  text-align: center;
-  font-size: 10px;
-  color: var(--dsw-alias-label-caption);
-  transition: transform 0.15s;
-}
-
-.nodeCollapsed > .row .chevron {
-  transform: rotate(-90deg);
-}
-
-.label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.row:hover .label {
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
   color: var(--dsw-alias-label-primary);
 }
 
+/* 滚动容器：内容超出时滚动。 */
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 树身：顶部对齐（垂直居中去掉），上方留较大留白。 */
+.body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 16px 6px 12px;
+  box-sizing: border-box;
+}
+
+/* ── Workflow 根行（照 .runHeader） ──────────────────────────────────────── */
+
+.workflow {
+  min-width: 0;
+}
+
+.workflowHeader {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-module-platform);
+  cursor: pointer;
+}
+
+.workflowLeading {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.workflowTitle {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  font-weight: 510;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Stage 行（照 .phaseHeader） ──────────────────────────────────────────── */
+
+.stage {
+  min-width: 0;
+}
+
+.stageHeader {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  cursor: pointer;
+}
+
+.stageLeading {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.stageTitle {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stageList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 0 0 16px;
+}
+
+/* ── Step 行（照 .memberRow / .memberButton） ─────────────────────────────── */
+
+.memberList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  /* step 行自带 chevron 槽，本级只需 16px 缩进（与 stageList 一致）。 */
+  padding: 0 0 0 16px;
+}
+
+/* Step 行（member）：24px，chevron + 状态点 + 名称。 */
+.memberHeader {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.memberHeader:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.memberLeading {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.memberLabel {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* running step 的跳子会话按钮（行尾，hover 浮现）。 */
 .jump {
   flex: none;
   display: inline-flex;
@@ -91,7 +195,7 @@
   cursor: pointer;
 }
 
-.row:hover .jump {
+.memberHeader:hover .jump {
   opacity: 1;
 }
 
@@ -99,46 +203,78 @@
   background: var(--dsw-alias-accent-bg);
 }
 
-.children {
-  display: flex;
-  flex-direction: column;
+.dotSlot {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
 
-.leaf {
+/* 无子节点行的 chevron 占位（保持状态点与有子节点行对齐）。 */
+.chevronPlaceholder {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+}
+
+/* ── 叶子（result/artifact）：次级缩进，点击打开预览 ─────────────────────── */
+
+.leafList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.leafRow {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 11px;
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  /* 图标与 step 状态点同列：实测对齐（memberList 16 + chevron 槽 + 点居中补偿）。 */
+  padding: 0 8px 0 25px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.leaf:hover {
-  background: var(--dsw-alias-bg-hover);
+.leafRow:hover,
+.leafRow.leafActive {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.leafActive {
-  background: var(--dsw-alias-accent-bg);
-  color: var(--dsw-alias-accent-primary);
+.leafRow.leafActive {
+  color: var(--dsw-alias-label-primary);
 }
 
 .leafIcon {
   flex: none;
   font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .leafLabel {
+  overflow: hidden;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .leafMeta {
   flex: none;
-  font-size: 10px;
-  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
 }

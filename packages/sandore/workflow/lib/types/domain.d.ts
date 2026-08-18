@@ -23,7 +23,7 @@ export declare const sandoreDomainSpec: {
             jobId: string;
             workflowId: string;
             cwd: string;
-            status: "pending" | "running" | "interacting" | "completed" | "failed" | "aborted" | "paused";
+            status: "pending" | "completed" | "running" | "failed" | "interacting" | "paused" | "aborted";
             originalInput: string;
             currentStageId: string;
             executedSteps: {
@@ -31,7 +31,7 @@ export declare const sandoreDomainSpec: {
                 id: string;
                 stageId: string;
                 name: string;
-                status: "running" | "interacting" | "completed" | "failed" | "paused" | "blocked" | "ready";
+                status: "completed" | "running" | "failed" | "blocked" | "ready" | "interacting" | "paused";
                 visitCount: number;
                 stepId?: string | undefined;
                 command?: {
@@ -85,11 +85,11 @@ export declare const sandoreDomainSpec: {
                 sessionMeta?: {
                     childId: string;
                     synthetic: boolean;
-                    command: "shell" | "agent" | "prompt" | "skill" | "mcp";
+                    command: "agent" | "prompt" | "shell" | "skill" | "mcp";
                     hostSessionId?: string | undefined;
                 } | undefined;
                 finalizeMeta?: {
-                    status: "completed" | "evaluating" | "ask";
+                    status: "completed" | "ask" | "evaluating";
                     sessionId?: string | undefined;
                     gateSessionId?: string | undefined;
                     directory?: string | undefined;
@@ -146,7 +146,7 @@ export declare const sandoreDomainSpec: {
                 resumedAt?: string | undefined;
                 resumePrompt?: string | undefined;
                 sessionMessages?: {
-                    type: "text" | "tool" | "reasoning";
+                    type: "tool" | "text" | "reasoning";
                     text?: string | undefined;
                     tool?: string | undefined;
                     args?: unknown;
@@ -165,7 +165,7 @@ export declare const sandoreDomainSpec: {
                     mode: "continue" | "revert" | "fork";
                     timestamp: string;
                     userMessage: string;
-                    result: "running" | "completed" | "failed";
+                    result: "completed" | "running" | "failed";
                     revertMessageId?: string | undefined;
                 }[] | undefined;
                 parentSessionId?: string | undefined;
@@ -177,7 +177,7 @@ export declare const sandoreDomainSpec: {
             stageInfos: {
                 id: string;
                 name: string;
-                status: "running" | "interacting" | "completed" | "failed" | "paused" | "blocked" | "ready";
+                status: "completed" | "running" | "failed" | "blocked" | "ready" | "interacting" | "paused";
             }[];
             pendingInteractions: ({
                 id: string;
@@ -232,7 +232,7 @@ export declare const sandoreDomainSpec: {
             stageContracts: Record<string, {
                 stageId: string;
                 stageName: string;
-                status: "running" | "interacting" | "completed" | "failed" | "paused" | "blocked" | "ready";
+                status: "completed" | "running" | "failed" | "blocked" | "ready" | "interacting" | "paused";
                 artifacts: {
                     stepId: string;
                     outputToId: string;
@@ -250,6 +250,7 @@ export declare const sandoreDomainSpec: {
             }>;
             createdAt: string;
             updatedAt: string;
+            workflowName?: string | undefined;
         }>;
     };
 };

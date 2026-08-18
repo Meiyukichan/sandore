@@ -186,7 +186,7 @@ export function buildRunTree(state) {
     });
     return [{
             id: state.workflowId,
-            name: state.workflowId,
+            name: state.workflowName ?? state.workflowId,
             type: 'workflow',
             status: state.status,
             children: stageNodes,

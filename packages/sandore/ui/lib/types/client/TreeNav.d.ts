@@ -20,9 +20,9 @@ export interface TreeNavProps {
     activePreviewId: string | null;
     /** 点击叶子 → 打开右栏预览。 */
     onSelectLeaf(selection: TreeLeafSelection): void;
-    /** 跳子代理会话（Step 行 ↗）。 */
+    /** 跳子代理会话（Step 行）。 */
     onOpenChild(childId: string): void;
 }
-/** 渲染树形导航。 */
+/** 渲染树形导航（照 DSH WorkflowRunPanel；左上角标题 + 树身顶部留白）。 */
 export declare function TreeNav({ t, tree, activePreviewId, onSelectLeaf, onOpenChild }: TreeNavProps): import("react").JSX.Element;
 //# sourceMappingURL=TreeNav.d.ts.map

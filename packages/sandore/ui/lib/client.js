@@ -5001,6 +5001,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"run.status.failed": "失败",
 			"run.status.aborted": "已中止",
 			"run.status.paused": "已暂停",
+			"run.status.blocked": "已阻塞",
+			"run.status.ready": "就绪",
+			"run.members": "{count} 个成员",
 			"run.abort": "中止",
 			"run.pauseAll": "全部暂停",
 			"run.resumeAll": "全部恢复",
@@ -5076,7 +5079,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.stepDag": "Step DAG",
 			"editor.newDefinition": "新建定义",
 			"editor.stage.placeholder": "未命名阶段",
-			"run.nav": "导航",
+			"run.nav": "工作流导航",
 			"run.preview": "文件预览",
 			"run.preview.close": "关闭",
 			"run.result": "返回结果",
@@ -5212,6 +5215,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"run.status.failed": "Failed",
 			"run.status.aborted": "Aborted",
 			"run.status.paused": "Paused",
+			"run.status.blocked": "Blocked",
+			"run.status.ready": "Ready",
+			"run.members": "{count} members",
 			"run.abort": "Abort",
 			"run.pauseAll": "Pause all",
 			"run.resumeAll": "Resume all",
@@ -5287,7 +5293,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"editor.stepDag": "Step DAG",
 			"editor.newDefinition": "New definition",
 			"editor.stage.placeholder": "Untitled stage",
-			"run.nav": "Navigation",
+			"run.nav": "Workflow navigation",
 			"run.preview": "Preview",
 			"run.preview.close": "Close",
 			"run.result": "Result",
@@ -5343,7 +5349,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			creatingNew: false,
 			preview: null,
 			listWidth: 300,
-			treeWidth: 240,
+			treeWidth: 360,
 			previewWidth: 380
 		};
 		const listeners = /* @__PURE__ */ new Set();
@@ -5406,10 +5412,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		/** 更新列表列宽（拖拽分隔条，带边界钳制）。 */
 		function resizeListWidth(delta) {
 			setWorkflowState({ listWidth: clamp$1(state.listWidth + delta, 200, 520) });
-		}
-		/** 更新树形导航列宽（拖拽分隔条，带边界钳制）。 */
-		function resizeTreeWidth(delta) {
-			setWorkflowState({ treeWidth: clamp$1(state.treeWidth + delta, 180, 420) });
 		}
 		/** 更新预览列宽（拖拽分隔条，带边界钳制）。 */
 		function resizePreviewWidth(delta) {
@@ -5717,7 +5719,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			});
 			return [{
 				id: state.workflowId,
-				name: state.workflowId,
+				name: state.workflowName ?? state.workflowId,
 				type: "workflow",
 				status: state.status,
 				children: stageNodes
@@ -24256,6 +24258,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			taskId: string(),
 			jobId: string(),
 			workflowId: string(),
+			/** 工作流名称（启动时从定义写入；持久化快照携带，供 UI 树标题展示）。 */
+			workflowName: string().optional(),
 			cwd: string(),
 			status: DagRunStatusSchema,
 			originalInput: string(),
@@ -30038,7 +30042,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\tree-nav.module.css.mjs
-		const css$5 = "/* TreeNav 执行态左栏树形导航（DSH DisclosureRow 风格）。 */\n\n.s1pefx_root {\n  display: flex;\n  flex-direction: column;\n  min-height: 0;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1pefx_header {\n  flex: none;\n  padding: 10px 12px;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1pefx_title {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1pefx_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 4px 6px 12px;\n  box-sizing: border-box;\n}\n\n.s1pefx_node {\n  display: flex;\n  flex-direction: column;\n}\n\n.s1pefx_row {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 4px 8px;\n  border-radius: 6px;\n  cursor: pointer;\n  font-size: 12px;\n  user-select: none;\n}\n\n.s1pefx_row:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1pefx_chevron {\n  flex: none;\n  width: 12px;\n  text-align: center;\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n  transition: transform 0.15s;\n}\n\n.s1pefx_nodeCollapsed > .s1pefx_row .s1pefx_chevron {\n  transform: rotate(-90deg);\n}\n\n.s1pefx_label {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1pefx_row:hover .s1pefx_label {\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1pefx_jump {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 20px;\n  height: 20px;\n  padding: 0;\n  border: none;\n  border-radius: 4px;\n  background: transparent;\n  font-size: 12px;\n  color: var(--dsw-alias-accent-primary);\n  opacity: 0;\n  cursor: pointer;\n}\n\n.s1pefx_row:hover .s1pefx_jump {\n  opacity: 1;\n}\n\n.s1pefx_jump:hover {\n  background: var(--dsw-alias-accent-bg);\n}\n\n.s1pefx_children {\n  display: flex;\n  flex-direction: column;\n}\n\n.s1pefx_leaf {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  padding: 4px 8px;\n  border-radius: 6px;\n  cursor: pointer;\n  font-size: 11px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1pefx_leaf:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1pefx_leafActive {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1pefx_leafIcon {\n  flex: none;\n  font-size: 12px;\n}\n\n.s1pefx_leafLabel {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1pefx_leafMeta {\n  flex: none;\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n}\n";
+		const css$5 = "/* TreeNav 执行态树形导航（照 DSH ui-workflow-run WorkflowRunPanel 风格）。 */\n\n.s1pefx_root {\n  display: flex;\n  flex-direction: column;\n  min-height: 0;\n  overflow: hidden;\n}\n\n/* 左上角标题栏。 */\n.s1pefx_titleBar {\n  flex: none;\n  padding: 12px 12px 4px;\n  box-sizing: border-box;\n}\n\n.s1pefx_title {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n/* 滚动容器：内容超出时滚动。 */\n.s1pefx_scroll {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n}\n\n/* 树身：顶部对齐（垂直居中去掉），上方留较大留白。 */\n.s1pefx_body {\n  display: flex;\n  flex-direction: column;\n  min-height: 100%;\n  padding: 16px 6px 12px;\n  box-sizing: border-box;\n}\n\n/* ── Workflow 根行（照 .s1pefx_runHeader） ──────────────────────────────────────── */\n\n.s1pefx_workflow {\n  min-width: 0;\n}\n\n.s1pefx_workflowHeader {\n  box-sizing: border-box;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-width: 0;\n  height: 32px;\n  padding: 0 8px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-module-platform);\n  cursor: pointer;\n}\n\n.s1pefx_workflowLeading {\n  display: inline-flex;\n  flex: none;\n  width: 16px;\n  height: 16px;\n  align-items: center;\n  justify-content: center;\n  margin-right: 0;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.s1pefx_workflowTitle {\n  overflow: hidden;\n  flex: 1;\n  min-width: 0;\n  color: var(--dsw-alias-label-secondary);\n  font-size: 14px;\n  font-weight: 510;\n  line-height: 24px;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* ── Stage 行（照 .s1pefx_phaseHeader） ──────────────────────────────────────────── */\n\n.s1pefx_stage {\n  min-width: 0;\n}\n\n.s1pefx_stageHeader {\n  box-sizing: border-box;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-width: 0;\n  height: 32px;\n  cursor: pointer;\n}\n\n.s1pefx_stageLeading {\n  display: inline-flex;\n  flex: none;\n  width: 16px;\n  height: 16px;\n  align-items: center;\n  justify-content: center;\n  margin-right: 0;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.s1pefx_stageTitle {\n  overflow: hidden;\n  flex: 1;\n  min-width: 0;\n  color: var(--dsw-alias-label-secondary);\n  font-size: 14px;\n  line-height: 24px;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1pefx_stageList {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n  min-width: 0;\n  padding: 4px 0 0 16px;\n}\n\n/* ── Step 行（照 .s1pefx_memberRow / .s1pefx_memberButton） ─────────────────────────────── */\n\n.s1pefx_memberList {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n  min-width: 0;\n  /* step 行自带 chevron 槽，本级只需 16px 缩进（与 stageList 一致）。 */\n  padding: 0 0 0 16px;\n}\n\n/* Step 行（member）：24px，chevron + 状态点 + 名称。 */\n.s1pefx_memberHeader {\n  box-sizing: border-box;\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-width: 0;\n  height: 24px;\n  border-radius: 4px;\n  cursor: pointer;\n}\n\n.s1pefx_memberHeader:hover {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s1pefx_memberLeading {\n  display: inline-flex;\n  flex: none;\n  width: 16px;\n  height: 16px;\n  align-items: center;\n  justify-content: center;\n  margin-right: 0;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.s1pefx_memberLabel {\n  overflow: hidden;\n  flex: 1;\n  min-width: 0;\n  color: var(--dsw-alias-label-secondary);\n  font-size: 14px;\n  line-height: 24px;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n/* running step 的跳子会话按钮（行尾，hover 浮现）。 */\n.s1pefx_jump {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 20px;\n  height: 20px;\n  padding: 0;\n  border: none;\n  border-radius: 4px;\n  background: transparent;\n  font-size: 12px;\n  color: var(--dsw-alias-accent-primary);\n  opacity: 0;\n  cursor: pointer;\n}\n\n.s1pefx_memberHeader:hover .s1pefx_jump {\n  opacity: 1;\n}\n\n.s1pefx_jump:hover {\n  background: var(--dsw-alias-accent-bg);\n}\n\n.s1pefx_dotSlot {\n  display: inline-flex;\n  flex: none;\n  width: 16px;\n  height: 24px;\n  align-items: center;\n  justify-content: center;\n  overflow: hidden;\n}\n\n/* 无子节点行的 chevron 占位（保持状态点与有子节点行对齐）。 */\n.s1pefx_chevronPlaceholder {\n  display: inline-block;\n  width: 16px;\n  height: 16px;\n}\n\n/* ── 叶子（result/artifact）：次级缩进，点击打开预览 ─────────────────────── */\n\n.s1pefx_leafList {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n  min-width: 0;\n}\n\n.s1pefx_leafRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  width: 100%;\n  min-width: 0;\n  min-height: 24px;\n  /* 图标与 step 状态点同列：实测对齐（memberList 16 + chevron 槽 + 点居中补偿）。 */\n  padding: 0 8px 0 25px;\n  box-sizing: border-box;\n  border: 0;\n  border-radius: 4px;\n  background: transparent;\n  color: var(--dsw-alias-label-secondary);\n  font: inherit;\n  text-align: left;\n  cursor: pointer;\n}\n\n.s1pefx_leafRow:hover,\n.s1pefx_leafRow.s1pefx_leafActive {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s1pefx_leafRow.s1pefx_leafActive {\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1pefx_leafIcon {\n  flex: none;\n  font-size: 12px;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.s1pefx_leafLabel {\n  overflow: hidden;\n  flex: 1;\n  min-width: 0;\n  font-size: 13px;\n  line-height: 20px;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1pefx_leafMeta {\n  flex: none;\n  font-size: 11px;\n  color: var(--dsw-alias-label-tertiary);\n}\n";
 		const tagId$5 = "@deepseek-ai/dsh-client-ui-sandore/tree-nav.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$5) + "]") === null) {
 			const tag = document.createElement("style");
@@ -30051,15 +30055,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region lib/types/client/TreeNav.js
 		/**
-		* TreeNav：执行态左栏树形导航（workflow → stage → step → result/artifact 叶子）。
+		* TreeNav：执行态左栏树形导航（workflow → stage → step → result/artifact）。
 		*
-		* DSH DisclosureRow 风格：chevron + 状态点 + 缩进 + 折叠。todo 态 Stage/Step 默认
-		* 折叠；result/artifact 叶子点击 → `onSelectLeaf` 打开右栏预览；Step 行有子代理
-		* 会话时 hover 显示 ↗ 跳转按钮。
+		* 风格照 DSH `ui-workflow-run` WorkflowRunPanel：32px run/phase 行、24px
+		* member 行、细线 chevron（IconChevronRightOutline14 / Down）、16px 逐级缩进。
+		* 状态一律用**左侧状态点**（chevron 后、标题前），右侧无任何文字。默认全部
+		* 展开；result/artifact 叶子点击 → 打开右栏预览；running Step 可点跳子会话。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/TreeNav
 		*/
 		/** 状态 → StateDotState（DagRun/Step 7+7 态统一折入四态；缺省折入 warning）。 */
-		function treeDotState(status) {
+		function dotState$1(status) {
 			switch (status) {
 				case "completed": return "done";
 				case "failed": return "error";
@@ -30073,78 +30078,179 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				case "ready": return "warning";
 			}
 		}
-		/** 单行渲染（含子节点递归）。 */
-		function TreeRow({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t }) {
-			const children = node.children ?? [];
-			const hasChildren = children.length > 0;
-			const [collapsed, setCollapsed] = (0, react.useState)(node.type === "stage" || node.type === "step" ? node.status !== "running" && node.status !== "interacting" && node.status !== "failed" && node.status !== "paused" : false);
-			if (node.type === "result" || node.type === "artifact") {
-				const active = activePreviewId === node.id;
-				return (0, react_jsx_runtime.jsxs)("div", {
-					className: `${tree_nav_module_css_default.leaf} ${active ? tree_nav_module_css_default.leafActive : ""}`,
-					style: { paddingLeft: 8 + depth * 16 + 16 },
-					"data-tree-leaf": true,
-					onClick: () => {
-						onSelectLeaf({
-							leafId: node.id,
-							kind: node.type === "result" ? "result" : "artifact",
-							stepId: node.stepId ?? "",
-							name: node.name === "" ? t("run.result") : node.name,
-							meta: node.meta,
-							text: node.text
-						});
-					},
-					children: [
-						(0, react_jsx_runtime.jsx)("span", {
-							className: tree_nav_module_css_default.leafIcon,
-							children: node.type === "result" ? "📝" : "📄"
-						}),
-						(0, react_jsx_runtime.jsx)("span", {
-							className: tree_nav_module_css_default.leafLabel,
-							children: node.name === "" ? t("run.result") : node.name
-						}),
-						node.meta !== void 0 && (0, react_jsx_runtime.jsx)("span", {
-							className: tree_nav_module_css_default.leafMeta,
-							children: node.meta
-						})
-					]
-				});
-			}
-			const status = node.type === "workflow" || node.type === "stage" || node.type === "step" ? node.status : void 0;
+		/** 可折叠行：chevron + 状态点 + 标题 +（可选行尾按钮），点击整行展开/折叠。 */
+		function DisclosureRow({ node, className, headerClassName, leadingClassName, titleClassName, trailing, children }) {
+			const hasChildren = (node.children ?? []).length > 0;
+			const [open, setOpen] = (0, react.useState)(true);
 			return (0, react_jsx_runtime.jsxs)("div", {
-				className: `${tree_nav_module_css_default.node} ${collapsed ? tree_nav_module_css_default.nodeCollapsed : ""}`,
+				className,
+				"data-open": open || void 0,
 				children: [(0, react_jsx_runtime.jsxs)("div", {
-					className: tree_nav_module_css_default.row,
-					style: { paddingLeft: 8 + depth * 16 },
-					"data-tree-row": true,
+					className: headerClassName,
+					"data-disclosure-row": true,
+					"data-expandable": hasChildren || void 0,
+					role: "button",
+					tabIndex: 0,
+					"aria-expanded": open,
 					onClick: () => {
-						if (hasChildren) setCollapsed((value) => !value);
+						setOpen((value) => !value);
+					},
+					onKeyDown: (event) => {
+						if (event.key === "Enter" || event.key === " ") {
+							event.preventDefault();
+							setOpen((value) => !value);
+						}
 					},
 					children: [
 						(0, react_jsx_runtime.jsx)("span", {
-							className: tree_nav_module_css_default.chevron,
-							children: hasChildren ? "▼" : ""
+							className: leadingClassName,
+							children: hasChildren ? open ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {}) : (0, react_jsx_runtime.jsx)("span", { className: tree_nav_module_css_default.chevronPlaceholder })
 						}),
-						(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: treeDotState(status) }),
 						(0, react_jsx_runtime.jsx)("span", {
-							className: tree_nav_module_css_default.label,
+							className: tree_nav_module_css_default.dotSlot,
+							children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: dotState$1(node.status) })
+						}),
+						(0, react_jsx_runtime.jsx)("span", {
+							className: titleClassName,
 							children: node.name
 						}),
-						node.type === "step" && node.childId !== void 0 && (0, react_jsx_runtime.jsx)("button", {
-							type: "button",
-							className: tree_nav_module_css_default.jump,
-							title: t("step.open", { name: node.name }),
-							"aria-label": t("step.open", { name: node.name }),
-							onClick: (event) => {
-								event.stopPropagation();
-								onOpenChild(node.childId);
-							},
-							children: "↗"
-						})
+						trailing
 					]
-				}), hasChildren && !collapsed && (0, react_jsx_runtime.jsx)("div", {
-					className: tree_nav_module_css_default.children,
-					children: children.map((child) => (0, react_jsx_runtime.jsx)(TreeRow, {
+				}), open && children]
+			});
+		}
+		/** Workflow 根行：32px、模块底色、chevron + 状态点 + 名称。 */
+		function WorkflowRow({ node, children }) {
+			return (0, react_jsx_runtime.jsx)(DisclosureRow, {
+				node,
+				className: tree_nav_module_css_default.workflow,
+				headerClassName: tree_nav_module_css_default.workflowHeader,
+				leadingClassName: tree_nav_module_css_default.workflowLeading,
+				titleClassName: tree_nav_module_css_default.workflowTitle,
+				children
+			});
+		}
+		/** Stage 行：32px、无底、缩进；chevron + 状态点 + 名称。 */
+		function StageRow({ node, children }) {
+			return (0, react_jsx_runtime.jsx)(DisclosureRow, {
+				node,
+				className: tree_nav_module_css_default.stage,
+				headerClassName: tree_nav_module_css_default.stageHeader,
+				leadingClassName: tree_nav_module_css_default.stageLeading,
+				titleClassName: tree_nav_module_css_default.stageTitle,
+				children
+			});
+		}
+		/** Step 行：24px、chevron + 状态点 + 名称 +（running 跳子会话按钮），叶子随展开。 */
+		function StepRow({ node, onOpenChild, t, children }) {
+			const navigable = node.status === "running" && node.childId !== void 0;
+			return (0, react_jsx_runtime.jsx)(DisclosureRow, {
+				node,
+				headerClassName: tree_nav_module_css_default.memberHeader,
+				leadingClassName: tree_nav_module_css_default.memberLeading,
+				titleClassName: tree_nav_module_css_default.memberLabel,
+				trailing: navigable ? (0, react_jsx_runtime.jsx)("button", {
+					type: "button",
+					className: tree_nav_module_css_default.jump,
+					title: t("step.open", { name: node.name }),
+					"aria-label": t("step.open", { name: node.name }),
+					onClick: (event) => {
+						event.stopPropagation();
+						onOpenChild(node.childId);
+					},
+					children: "↗"
+				}) : void 0,
+				children
+			});
+		}
+		/** result 叶子图标：文本行（简单线框 SVG，currentColor）。 */
+		function ResultGlyph() {
+			return (0, react_jsx_runtime.jsxs)("svg", {
+				width: "12",
+				height: "12",
+				viewBox: "0 0 12 12",
+				fill: "none",
+				xmlns: "http://www.w3.org/2000/svg",
+				"aria-hidden": true,
+				children: [(0, react_jsx_runtime.jsx)("rect", {
+					x: "1",
+					y: "1",
+					width: "10",
+					height: "10",
+					rx: "2",
+					stroke: "currentColor",
+					strokeWidth: "1.2"
+				}), (0, react_jsx_runtime.jsx)("path", {
+					d: "M3 4.5h6M3 7h4",
+					stroke: "currentColor",
+					strokeWidth: "1.2",
+					strokeLinecap: "round"
+				})]
+			});
+		}
+		/** artifact 叶子图标：文件方块（简单线框 SVG，currentColor）。 */
+		function ArtifactGlyph() {
+			return (0, react_jsx_runtime.jsxs)("svg", {
+				width: "12",
+				height: "12",
+				viewBox: "0 0 12 12",
+				fill: "none",
+				xmlns: "http://www.w3.org/2000/svg",
+				"aria-hidden": true,
+				children: [(0, react_jsx_runtime.jsx)("path", {
+					d: "M2.5 1h5L10 3.5v7a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 2 10.5v-9A.5.5 0 0 1 2.5 1Z",
+					stroke: "currentColor",
+					strokeWidth: "1.2",
+					strokeLinejoin: "round"
+				}), (0, react_jsx_runtime.jsx)("path", {
+					d: "M7.5 1v2.5H10",
+					stroke: "currentColor",
+					strokeWidth: "1.2",
+					strokeLinejoin: "round"
+				})]
+			});
+		}
+		/** 叶子（result/artifact）：图标与 step 状态点同列对齐，点击打开右栏预览。 */
+		function LeafRow({ node, activePreviewId, onSelectLeaf, t }) {
+			const active = activePreviewId === node.id;
+			return (0, react_jsx_runtime.jsxs)("button", {
+				type: "button",
+				className: `${tree_nav_module_css_default.leafRow} ${active ? tree_nav_module_css_default.leafActive : ""}`,
+				"data-tree-leaf": true,
+				onClick: () => {
+					onSelectLeaf({
+						leafId: node.id,
+						kind: node.type === "result" ? "result" : "artifact",
+						stepId: node.stepId ?? "",
+						name: node.name === "" ? t("run.result") : node.name,
+						meta: node.meta,
+						text: node.text
+					});
+				},
+				children: [
+					(0, react_jsx_runtime.jsx)("span", {
+						className: tree_nav_module_css_default.leafIcon,
+						children: node.type === "result" ? (0, react_jsx_runtime.jsx)(ResultGlyph, {}) : (0, react_jsx_runtime.jsx)(ArtifactGlyph, {})
+					}),
+					(0, react_jsx_runtime.jsx)("span", {
+						className: tree_nav_module_css_default.leafLabel,
+						children: node.name === "" ? t("run.result") : node.name
+					}),
+					node.meta !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+						className: tree_nav_module_css_default.leafMeta,
+						children: node.meta
+					})
+				]
+			});
+		}
+		/** 递归渲染：workflow → stage → step → 叶子。 */
+		function RenderNode({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t }) {
+			const children = node.children ?? [];
+			if (node.type === "workflow") return (0, react_jsx_runtime.jsx)(WorkflowRow, {
+				node,
+				children: (0, react_jsx_runtime.jsx)("div", {
+					className: tree_nav_module_css_default.stageList,
+					children: children.map((child) => (0, react_jsx_runtime.jsx)(RenderNode, {
 						node: child,
 						depth: depth + 1,
 						activePreviewId,
@@ -30152,31 +30258,66 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						onOpenChild,
 						t
 					}, child.id))
-				})]
+				})
 			});
+			if (node.type === "stage") return (0, react_jsx_runtime.jsx)(StageRow, {
+				node,
+				children: (0, react_jsx_runtime.jsx)("div", {
+					className: tree_nav_module_css_default.memberList,
+					children: children.map((child) => (0, react_jsx_runtime.jsx)(RenderNode, {
+						node: child,
+						depth: depth + 1,
+						activePreviewId,
+						onSelectLeaf,
+						onOpenChild,
+						t
+					}, child.id))
+				})
+			});
+			if (node.type === "step") {
+				const leaves = children;
+				return (0, react_jsx_runtime.jsx)(StepRow, {
+					node,
+					onOpenChild,
+					t,
+					children: leaves.length > 0 && (0, react_jsx_runtime.jsx)("div", {
+						className: tree_nav_module_css_default.leafList,
+						children: leaves.map((leaf) => (0, react_jsx_runtime.jsx)(LeafRow, {
+							node: leaf,
+							activePreviewId,
+							onSelectLeaf,
+							t
+						}, leaf.id))
+					})
+				});
+			}
+			return null;
 		}
-		/** 渲染树形导航。 */
+		/** 渲染树形导航（照 DSH WorkflowRunPanel；左上角标题 + 树身顶部留白）。 */
 		function TreeNav({ t, tree, activePreviewId, onSelectLeaf, onOpenChild }) {
 			return (0, react_jsx_runtime.jsxs)("nav", {
 				className: tree_nav_module_css_default.root,
 				"aria-label": t("run.nav"),
 				"data-sandore-tree-nav": true,
 				children: [(0, react_jsx_runtime.jsx)("div", {
-					className: tree_nav_module_css_default.header,
+					className: tree_nav_module_css_default.titleBar,
 					children: (0, react_jsx_runtime.jsx)("span", {
 						className: tree_nav_module_css_default.title,
 						children: t("run.nav")
 					})
 				}), (0, react_jsx_runtime.jsx)("div", {
-					className: tree_nav_module_css_default.body,
-					children: tree.map((node) => (0, react_jsx_runtime.jsx)(TreeRow, {
-						node,
-						depth: 0,
-						activePreviewId,
-						onSelectLeaf,
-						onOpenChild,
-						t
-					}, node.id))
+					className: tree_nav_module_css_default.scroll,
+					children: (0, react_jsx_runtime.jsx)("div", {
+						className: tree_nav_module_css_default.body,
+						children: tree.map((node) => (0, react_jsx_runtime.jsx)(RenderNode, {
+							node,
+							depth: 0,
+							activePreviewId,
+							onSelectLeaf,
+							onOpenChild,
+							t
+						}, node.id))
+					})
 				})]
 			});
 		}
@@ -30995,11 +31136,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 								onSelectLeaf: selectLeaf,
 								onOpenChild: openSession
 							})
-						}),
-						(0, react_jsx_runtime.jsx)(DragHandle, {
-							side: "tree",
-							className: RunView_module_css_default.dragHandle,
-							onDrag: resizeTreeWidth
 						}),
 						(0, react_jsx_runtime.jsxs)("div", {
 							className: RunView_module_css_default.mainCol,

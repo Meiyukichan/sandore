@@ -284,7 +284,7 @@ export function buildRunTree(state: WorkflowTaskState): RunTreeNode[] {
 
   return [{
     id: state.workflowId,
-    name: state.workflowId,
+    name: state.workflowName ?? state.workflowId,
     type: 'workflow' as const,
     status: state.status,
     children: stageNodes,

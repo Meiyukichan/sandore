@@ -1245,6 +1245,7 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
     taskId: z.ZodString;
     jobId: z.ZodString;
     workflowId: z.ZodString;
+    workflowName: z.ZodOptional<z.ZodString>;
     cwd: z.ZodString;
     status: z.ZodEnum<{
         pending: "pending";

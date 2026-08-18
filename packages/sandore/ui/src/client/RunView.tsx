@@ -321,7 +321,7 @@ export function RunView({ t, instanceId, openSession, remote }: RunViewProps) {
             onOpenChild={openSession}
           />
         </aside>
-        <DragHandle side="tree" className={css.dragHandle} onDrag={resizeTreeWidth} />
+        {/* 树与执行详情之间的可拉伸分隔条已按需求去掉。 */}
         <div className={css.mainCol}>
           <header className={css.header}>
             <span className={css.title}>{t('run.title')}</span>

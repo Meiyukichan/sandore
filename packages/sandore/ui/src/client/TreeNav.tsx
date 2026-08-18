@@ -1,14 +1,17 @@
 /**
- * TreeNav：执行态左栏树形导航（workflow → stage → step → result/artifact 叶子）。
+ * TreeNav：执行态左栏树形导航（workflow → stage → step → result/artifact）。
  *
- * DSH DisclosureRow 风格：chevron + 状态点 + 缩进 + 折叠。todo 态 Stage/Step 默认
- * 折叠；result/artifact 叶子点击 → `onSelectLeaf` 打开右栏预览；Step 行有子代理
- * 会话时 hover 显示 ↗ 跳转按钮。
+ * 风格照 DSH `ui-workflow-run` WorkflowRunPanel：32px run/phase 行、24px
+ * member 行、细线 chevron（IconChevronRightOutline14 / Down）、16px 逐级缩进。
+ * 状态一律用**左侧状态点**（chevron 后、标题前），右侧无任何文字。默认全部
+ * 展开；result/artifact 叶子点击 → 打开右栏预览；running Step 可点跳子会话。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/TreeNav
  */
 import { useState } from 'react'
-import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconChevronDownOutline14, IconChevronRightOutline14, StateDot,
+  type StateDotState,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 
 import type { RunTreeNode } from './run-view-model.ts'
@@ -35,12 +38,12 @@ export interface TreeNavProps {
   activePreviewId: string | null
   /** 点击叶子 → 打开右栏预览。 */
   onSelectLeaf(selection: TreeLeafSelection): void
-  /** 跳子代理会话（Step 行 ↗）。 */
+  /** 跳子代理会话（Step 行）。 */
   onOpenChild(childId: string): void
 }
 
 /** 状态 → StateDotState（DagRun/Step 7+7 态统一折入四态；缺省折入 warning）。 */
-function treeDotState(status: RunTreeNode['status']): StateDotState {
+function dotState(status: RunTreeNode['status']): StateDotState {
   switch (status) {
     case 'completed':
       return 'done'
@@ -59,8 +62,176 @@ function treeDotState(status: RunTreeNode['status']): StateDotState {
   }
 }
 
-/** 单行渲染（含子节点递归）。 */
-function TreeRow({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t }: {
+/** 可折叠行：chevron + 状态点 + 标题 +（可选行尾按钮），点击整行展开/折叠。 */
+function DisclosureRow({ node, className, headerClassName, leadingClassName, titleClassName, trailing, children }: {
+  readonly node: RunTreeNode
+  readonly className?: string | undefined
+  readonly headerClassName: string | undefined
+  readonly leadingClassName: string | undefined
+  readonly titleClassName: string | undefined
+  /** 行尾元素（如 running step 的跳子会话按钮）。 */
+  readonly trailing?: React.ReactNode
+  readonly children?: React.ReactNode
+}) {
+  const hasChildren = (node.children ?? []).length > 0
+  // 默认全部展开（用户要求）；workflow/stage/step 均可点击整行切换展开/折叠。
+  const [open, setOpen] = useState(true)
+  return (
+    <div className={className} data-open={open || undefined}>
+      <div
+        className={headerClassName}
+        data-disclosure-row
+        data-expandable={hasChildren || undefined}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => { setOpen(value => !value) }}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setOpen(value => !value)
+          }
+        }}
+      >
+        {/* 最左：chevron（展开变向下；无子节点用占位保持对齐） */}
+        <span className={leadingClassName}>
+          {hasChildren
+            ? (open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />)
+            : <span className={css.chevronPlaceholder} />}
+        </span>
+        {/* 状态点（左侧，紧随 chevron） */}
+        <span className={css.dotSlot}><StateDot state={dotState(node.status)} /></span>
+        <span className={titleClassName}>{node.name}</span>
+        {trailing}
+      </div>
+      {open && children}
+    </div>
+  )
+}
+
+/** Workflow 根行：32px、模块底色、chevron + 状态点 + 名称。 */
+function WorkflowRow({ node, children }: {
+  readonly node: RunTreeNode
+  readonly children: React.ReactNode
+}) {
+  return (
+    <DisclosureRow
+      node={node}
+      className={css.workflow}
+      headerClassName={css.workflowHeader}
+      leadingClassName={css.workflowLeading}
+      titleClassName={css.workflowTitle}
+    >
+      {children}
+    </DisclosureRow>
+  )
+}
+
+/** Stage 行：32px、无底、缩进；chevron + 状态点 + 名称。 */
+function StageRow({ node, children }: {
+  readonly node: RunTreeNode
+  readonly children: React.ReactNode
+}) {
+  return (
+    <DisclosureRow
+      node={node}
+      className={css.stage}
+      headerClassName={css.stageHeader}
+      leadingClassName={css.stageLeading}
+      titleClassName={css.stageTitle}
+    >
+      {children}
+    </DisclosureRow>
+  )
+}
+
+/** Step 行：24px、chevron + 状态点 + 名称 +（running 跳子会话按钮），叶子随展开。 */
+function StepRow({ node, onOpenChild, t, children }: {
+  readonly node: RunTreeNode
+  readonly onOpenChild: (childId: string) => void
+  readonly t: TranslateNS<'sandore'>
+  readonly children?: React.ReactNode
+}) {
+  const navigable = node.status === 'running' && node.childId !== undefined
+  return (
+    <DisclosureRow
+      node={node}
+      headerClassName={css.memberHeader}
+      leadingClassName={css.memberLeading}
+      titleClassName={css.memberLabel}
+      trailing={navigable ? (
+        <button
+          type="button"
+          className={css.jump}
+          title={t('step.open', { name: node.name })}
+          aria-label={t('step.open', { name: node.name })}
+          onClick={event => {
+            event.stopPropagation()
+            onOpenChild(node.childId as string)
+          }}
+        >
+          ↗
+        </button>
+      ) : undefined}
+    >
+      {children}
+    </DisclosureRow>
+  )
+}
+
+/** result 叶子图标：文本行（简单线框 SVG，currentColor）。 */
+function ResultGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <rect x="1" y="1" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M3 4.5h6M3 7h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** artifact 叶子图标：文件方块（简单线框 SVG，currentColor）。 */
+function ArtifactGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <path d="M2.5 1h5L10 3.5v7a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 2 10.5v-9A.5.5 0 0 1 2.5 1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M7.5 1v2.5H10" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/** 叶子（result/artifact）：图标与 step 状态点同列对齐，点击打开右栏预览。 */
+function LeafRow({ node, activePreviewId, onSelectLeaf, t }: {
+  readonly node: RunTreeNode
+  readonly activePreviewId: string | null
+  readonly onSelectLeaf: (selection: TreeLeafSelection) => void
+  readonly t: TranslateNS<'sandore'>
+}) {
+  const active = activePreviewId === node.id
+  return (
+    <button
+      type="button"
+      className={`${css.leafRow} ${active ? css.leafActive : ''}`}
+      data-tree-leaf
+      onClick={() => {
+        onSelectLeaf({
+          leafId: node.id,
+          kind: node.type === 'result' ? 'result' : 'artifact',
+          stepId: node.stepId ?? '',
+          name: node.name === '' ? t('run.result') : node.name,
+          meta: node.meta,
+          text: node.text,
+        })
+      }}
+    >
+      <span className={css.leafIcon}>{node.type === 'result' ? <ResultGlyph /> : <ArtifactGlyph />}</span>
+      <span className={css.leafLabel}>{node.name === '' ? t('run.result') : node.name}</span>
+      {node.meta !== undefined && <span className={css.leafMeta}>{node.meta}</span>}
+    </button>
+  )
+}
+
+/** 递归渲染：workflow → stage → step → 叶子。 */
+function RenderNode({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t }: {
   readonly node: RunTreeNode
   readonly depth: number
   readonly activePreviewId: string | null
@@ -69,105 +240,58 @@ function TreeRow({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t }:
   readonly t: TranslateNS<'sandore'>
 }) {
   const children = node.children ?? []
-  const hasChildren = children.length > 0
-  // 默认折叠：未开始（ready/blocked）与已完成（completed）的 Stage/Step 收起；
-  // 运行中/待交互/失败/暂停展开；workflow 根与叶子不折叠。
-  const [collapsed, setCollapsed] = useState(
-    (node.type === 'stage' || node.type === 'step')
-      ? (node.status !== 'running' && node.status !== 'interacting' && node.status !== 'failed' && node.status !== 'paused')
-      : false,
-  )
-
-  if (node.type === 'result' || node.type === 'artifact') {
-    const active = activePreviewId === node.id
+  if (node.type === 'workflow') {
     return (
-      <div
-        className={`${css.leaf} ${active ? css.leafActive : ''}`}
-        style={{ paddingLeft: 8 + depth * 16 + 16 }}
-        data-tree-leaf
-        onClick={() => {
-          onSelectLeaf({
-            leafId: node.id,
-            kind: node.type === 'result' ? 'result' : 'artifact',
-            stepId: node.stepId ?? '',
-            name: node.name === '' ? t('run.result') : node.name,
-            meta: node.meta,
-            text: node.text,
-          })
-        }}
-      >
-        <span className={css.leafIcon}>{node.type === 'result' ? '📝' : '📄'}</span>
-        <span className={css.leafLabel}>{node.name === '' ? t('run.result') : node.name}</span>
-        {node.meta !== undefined && <span className={css.leafMeta}>{node.meta}</span>}
-      </div>
-    )
-  }
-
-  const status = node.type === 'workflow' || node.type === 'stage' || node.type === 'step' ? node.status : undefined
-  return (
-    <div className={`${css.node} ${collapsed ? css.nodeCollapsed : ''}`}>
-      <div
-        className={css.row}
-        style={{ paddingLeft: 8 + depth * 16 }}
-        data-tree-row
-        onClick={() => { if (hasChildren) setCollapsed(value => !value) }}
-      >
-        <span className={css.chevron}>{hasChildren ? '▼' : ''}</span>
-        <StateDot state={treeDotState(status)} />
-        <span className={css.label}>{node.name}</span>
-        {node.type === 'step' && node.childId !== undefined && (
-          <button
-            type="button"
-            className={css.jump}
-            title={t('step.open', { name: node.name })}
-            aria-label={t('step.open', { name: node.name })}
-            onClick={event => {
-              event.stopPropagation()
-              onOpenChild(node.childId as string)
-            }}
-          >
-            ↗
-          </button>
-        )}
-      </div>
-      {hasChildren && !collapsed && (
-        <div className={css.children}>
+      <WorkflowRow node={node}>
+        <div className={css.stageList}>
           {children.map(child => (
-            <TreeRow
-              key={child.id}
-              node={child}
-              depth={depth + 1}
-              activePreviewId={activePreviewId}
-              onSelectLeaf={onSelectLeaf}
-              onOpenChild={onOpenChild}
-              t={t}
-            />
+            <RenderNode key={child.id} node={child} depth={depth + 1} activePreviewId={activePreviewId} onSelectLeaf={onSelectLeaf} onOpenChild={onOpenChild} t={t} />
           ))}
         </div>
-      )}
-    </div>
-  )
+      </WorkflowRow>
+    )
+  }
+  if (node.type === 'stage') {
+    return (
+      <StageRow node={node}>
+        <div className={css.memberList}>
+          {children.map(child => (
+            <RenderNode key={child.id} node={child} depth={depth + 1} activePreviewId={activePreviewId} onSelectLeaf={onSelectLeaf} onOpenChild={onOpenChild} t={t} />
+          ))}
+        </div>
+      </StageRow>
+    )
+  }
+  if (node.type === 'step') {
+    const leaves = children
+    return (
+      <StepRow node={node} onOpenChild={onOpenChild} t={t}>
+        {leaves.length > 0 && (
+          <div className={css.leafList}>
+            {leaves.map(leaf => (
+              <LeafRow key={leaf.id} node={leaf} activePreviewId={activePreviewId} onSelectLeaf={onSelectLeaf} t={t} />
+            ))}
+          </div>
+        )}
+      </StepRow>
+    )
+  }
+  return null
 }
 
-/** 渲染树形导航。 */
+/** 渲染树形导航（照 DSH WorkflowRunPanel；左上角标题 + 树身顶部留白）。 */
 export function TreeNav({ t, tree, activePreviewId, onSelectLeaf, onOpenChild }: TreeNavProps) {
   return (
     <nav className={css.root} aria-label={t('run.nav')} data-sandore-tree-nav>
-      <div className={css.header}>
+      <div className={css.titleBar}>
         <span className={css.title}>{t('run.nav')}</span>
       </div>
-      <div className={css.body}>
-        {tree.map(node => (
-          <TreeRow
-            key={node.id}
-            node={node}
-            depth={0}
-            activePreviewId={activePreviewId}
-            onSelectLeaf={onSelectLeaf}
-            onOpenChild={onOpenChild}
-            t={t}
-          />
-        ))}
+      <div className={css.scroll}>
+        <div className={css.body}>
+          {tree.map(node => (
+            <RenderNode key={node.id} node={node} depth={0} activePreviewId={activePreviewId} onSelectLeaf={onSelectLeaf} onOpenChild={onOpenChild} t={t} />
+          ))}
+        </div>
       </div>
     </nav>
   )
