@@ -1,0 +1,229 @@
+diff --git a/packages/sandore/microflow/src/branch-evaluator.spec.ts b/packages/sandore/microflow/src/branch-evaluator.spec.ts
+index f92cfd0..43b3206 100644
+--- a/packages/sandore/microflow/src/branch-evaluator.spec.ts
++++ b/packages/sandore/microflow/src/branch-evaluator.spec.ts
+@@ -73,22 +73,42 @@ describe('extractBreakResult', () => {
+     expect(extractBreakResult('  keep going  ')).toBe('keep going');
+   });
+ });
+ 
+ describe('matchesExpectation', () => {
+-  it('matches an exact string expectation', () => {
++  it('matches an exact string expectation case-insensitively', () => {
+     expect(matchesExpectation('lint-clean', 'lint-clean')).toBe(true);
++    expect(matchesExpectation('LINT-CLEAN', 'lint-clean')).toBe(true);
+     expect(matchesExpectation('lint-clean', 'lint-dirty')).toBe(false);
+   });
+ 
+-  it('matches a regex expectation', () => {
+-    expect(matchesExpectation('build-ok', 'build-.*')).toBe(true);
+-    expect(matchesExpectation('build-fail', 'build-(ok|pass)')).toBe(false);
++  it('matches when the output contains the expectation (case-insensitive)', () => {
++    expect(matchesExpectation('build succeeded: 100%', '100%')).toBe(true);
++    expect(matchesExpectation('v1.2.3 released', 'v1.2.3')).toBe(true);
++    expect(matchesExpectation('ALL GOOD', 'good')).toBe(true);
++    expect(matchesExpectation('nothing here', 'absent')).toBe(false);
+   });
+-  it('falls back to false for an invalid regex expectation', () => {
+-    expect(matchesExpectation('anything', '[')).toBe(false);
++  it('treats regex metacharacters as literals when no /.../ delimiter is present', () => {
++    // 字面量含正则元字符（`\`、`%`、`.`、括号）但未用定界符 → 走包含匹配，
++    // 不被旧 hasRegexMetacharacters 启发式误判为正则。
++    expect(matchesExpectation('path is C:\\dir\\file', 'C:\\dir\\file')).toBe(true);
++    expect(matchesExpectation('rate is (high)', '(high)')).toBe(true);
++  });
++
++  it('matches an explicit /regex/ expectation delimited by slashes', () => {
++    expect(matchesExpectation('build-42', '/build-.*/')).toBe(true);
++    expect(matchesExpectation('build-ok', '/build-(ok|pass)/')).toBe(true);
++    expect(matchesExpectation('build-fail', '/^build-ok$/')).toBe(false);
++  });
++
++  it('returns false for an invalid explicit regex expectation', () => {
++    expect(matchesExpectation('anything', '/[/')).toBe(false);
++  });
++
++  it('returns false for an undefined expectation', () => {
++    expect(matchesExpectation('anything', undefined)).toBe(false);
+   });
+ });
+ 
+ describe('BranchEvaluator two-phase', () => {
+   it('runs an agent condition through a temp session with a non-null sessionHandle', async () => {
+diff --git a/packages/sandore/microflow/src/branch-evaluator.ts b/packages/sandore/microflow/src/branch-evaluator.ts
+index 56c0e40..1545357 100644
+--- a/packages/sandore/microflow/src/branch-evaluator.ts
++++ b/packages/sandore/microflow/src/branch-evaluator.ts
+@@ -6,11 +6,12 @@
+  * 经 `ctx.shell.run()`（简单命令）或 `ctx.subprocess.spawn()`（透传变量替换 →
+  * 环境变量注入 → stdin 注入）直接执行（`sessionHandle = null`）。`collect(partial)`
+  * 聚合 AI 输出文本（shell 直接返回 stdout）；`evaluate()` 一步完成两阶段。
+  *
+  * 另提供纯函数 `extractExpectation`（三级解析）、`extractBreakResult`（public，
+- * 供 LoopManager 复用）与 `matchesExpectation`（regex 或字符串相等匹配）。
++ * 供 LoopManager 复用）与 `matchesExpectation`（大小写不敏感+包含匹配；显式
++ * `/.../ ` 定界时走正则）。
+  * @module @deepseek-ai/dsh-sandore-microflow/src/branch-evaluator
+  */
+ import type { Context } from '@deepseek-ai/cordis';
+ import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
+ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
+@@ -185,30 +186,40 @@ export function extractBreakResult(raw: string): string {
+     return extracted.toLowerCase();
+   }
+   return raw.trim();
+ }
+ 
+-/** 含 regex 元字符时判定 expectation 为正则，否则视为字面字符串。 */
+-function hasRegexMetacharacters(value: string): boolean {
+-  return /[\\^$.*+?()[\]{}|]/.test(value);
+-}
+-
+ /**
+- * 判定分支评估结果是否匹配 expectation：expectation 含 regex 特征时做正则匹配
+- * （正则非法视为不匹配），否则字符串相等比较。
++ * 判定分支评估结果是否匹配 expectation。
++ *
++ * 语义对齐基准 `workflow-engine-helpers.matchesExpectation`：默认大小写不敏感 +
++ * 包含匹配（宽松，便于迁移工作流）。需正则时用**显式定界符**——expectation 以
++ * `/` 起始且以 `/` 结尾（如 `/build-[0-9]+/`）才视为正则，取中间 inner 用
++ * `new RegExp(inner)` 匹配；非法正则返回 false。无定界符一律走包含匹配，此时
++ * 字面量含 `.`、`\`、`%`、括号等不会被启发式误判为正则（废除旧
++ * `hasRegexMetacharacters` 启发式）。expectation 为 undefined 时返回 false（守卫，
++ * 避免静默变并行分支）。
+  */
+-export function matchesExpectation(result: string, expectation: string): boolean {
+-  if (hasRegexMetacharacters(expectation)) {
++export function matchesExpectation(result: string, expectation: string | undefined): boolean {
++  if (expectation === undefined) {
++    return false;
++  }
++  // 显式正则：`/pattern/` 定界（首尾均为 `/` 且长度 ≥ 2）。仅此形态走正则路径。
++  if (expectation.length >= 2 && expectation.startsWith('/') && expectation.endsWith('/')) {
++    const inner = expectation.slice(1, -1);
+     let regex: RegExp;
+     try {
+-      regex = new RegExp(expectation);
++      regex = new RegExp(inner);
+     } catch {
+       return false;
+     }
+     return regex.test(result);
+   }
+-  return result === expectation;
++  // 默认路径：大小写不敏感 + 包含匹配（与基准一致）。
++  const normalizedOutput = result.trim().toLowerCase();
++  const normalizedExpectation = expectation.trim().toLowerCase();
++  return normalizedOutput === normalizedExpectation || normalizedOutput.includes(normalizedExpectation);
+ }
+ 
+ /**
+  * 分支条件两阶段评估器。
+  *
+diff --git a/packages/sandore/microflow/src/loop-manager.spec.ts b/packages/sandore/microflow/src/loop-manager.spec.ts
+index bae1d07..5c52655 100644
+--- a/packages/sandore/microflow/src/loop-manager.spec.ts
++++ b/packages/sandore/microflow/src/loop-manager.spec.ts
+@@ -191,6 +191,81 @@ describe('LoopManager checkLoopBreak', () => {
+     await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
+ 
+     // breakCondition 统一经 ctx.shell 执行（branch-evaluator 新实现），env 随请求携带。
+     expect(shell.specs[0]?.env).toEqual({ 'in-loop-turn': '1', 'all-loop-turn': '5' });
+   });
++
++  // 以下用例端到端覆盖重写后的 matchesExpectation 新语义（经 checkLoopBreak →
++  // decideBreak → matchesExpectation），确认 shell breakCondition 不再受旧 regex
++  // 元字符启发式与大小写敏感精确匹配的静默分歧影响。
++
++  it('breaks a shell breakCondition via case-insensitive contains match', async () => {
++    const { shell, manager } = harness();
++    shell.runHandler = async spec => successResult(spec, 'BUILD SUCCEEDED: 100%');
++    const node: LoopNode = {
++      id: 'loop-1',
++      loop: {
++        maxIterations: 5,
++        breakCondition: { type: 'shell', value: { command: 'check' } },
++        breakExpectation: '100%',
++      },
++    };
++
++    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
++
++    expect(outcome.shouldBreak).toBe(true);
++  });
++
++  it('breaks a shell breakCondition via an explicit /regex/ expectation', async () => {
++    const { shell, manager } = harness();
++    shell.runHandler = async spec => successResult(spec, 'build-42');
++    const node: LoopNode = {
++      id: 'loop-1',
++      loop: {
++        maxIterations: 5,
++        breakCondition: { type: 'shell', value: { command: 'check' } },
++        breakExpectation: '/build-.*/',
++      },
++    };
++
++    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
++
++    expect(outcome.shouldBreak).toBe(true);
++  });
++
++  it('does not break when an explicit regex expectation is invalid', async () => {
++    const { shell, manager } = harness();
++    shell.runHandler = async spec => successResult(spec, 'anything');
++    const node: LoopNode = {
++      id: 'loop-1',
++      loop: {
++        maxIterations: 5,
++        breakCondition: { type: 'shell', value: { command: 'check' } },
++        breakExpectation: '/[/',
++      },
++    };
++
++    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
++
++    // 非法正则 → 不匹配 → 不跳出；loopMeta 仍按完成态写入。
++    expect(outcome.shouldBreak).toBe(false);
++    expect(outcome.loopMeta?.status).toBe('completed');
++  });
++
++  it('treats a literal breakExpectation with regex metacharacters as a literal (not regex)', async () => {
++    const { shell, manager } = harness();
++    shell.runHandler = async spec => successResult(spec, 'rate is (high)');
++    const node: LoopNode = {
++      id: 'loop-1',
++      loop: {
++        maxIterations: 5,
++        breakCondition: { type: 'shell', value: { command: 'check' } },
++        // 含括号元字符但无 /.../ 定界 → 旧启发式会误判为正则；新语义走字面包含。
++        breakExpectation: '(high)',
++      },
++    };
++
++    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
++
++    expect(outcome.shouldBreak).toBe(true);
++  });
+ });
+diff --git a/packages/sandore/workflow/src/yaml-parser.ts b/packages/sandore/workflow/src/yaml-parser.ts
+index 0bad956..831a887 100644
+--- a/packages/sandore/workflow/src/yaml-parser.ts
++++ b/packages/sandore/workflow/src/yaml-parser.ts
+@@ -248,10 +248,16 @@ export function parseWorkflowYaml(text: string): WorkflowDefinition {
+     const detail = document.errors.map(describeYamlError).join('; ')
+     throw new WorkflowYamlError(`invalid YAML: ${detail}`, 'YAML_PARSE')
+   }
+ 
+   const data = convertLegacyToV2(document.toJS())
++  // TODO(缺陷 1 point 4, 附带建议)：DagBranchSchema 未开 `.strict()`，基准遗留的
++  // `branch.expectation` 字段会被 zod 静默剥离 → 该分支变并行（始终执行）而非
++  // 条件分支。迁移工作流时应把 `expectation` 改写为 `condition`（shell 命令） +
++  // `label`（匹配目标）。如需更安全的迁移防护，可在 convertLegacyToV2 转换层
++  // 预扫 branches 上的 `expectation` 键并 console.warn（或拒绝 DEFINITION_INVALID）。
++  // 此处暂不实现，避免在浏览器安全解析层引入副作用。
+   let definition: WorkflowDefinition
+   try {
+     definition = WorkflowDefinitionSchema.parse(data)
+   } catch (error) {
+     throw new WorkflowYamlError(`invalid workflow definition: ${describeError(error)}`, 'DEFINITION_INVALID', { cause: error })

@@ -20,17 +20,17 @@
   2. 真实分歧在循环跳出 shell 场景（breakCondition shell + breakExpectation 同字段同数据流）：基准大小写不敏感包含 vs sandore 大小写敏感精确/正则，迁移工作流静默分歧。
   3. sandore 当前语义的静默陷阱：regex 元字符启发式误判字面量（版本号 v1.2.3、路径 `\`、100%、括号等）、非法正则静默 false、大小写敏感脆弱；label 兼作显示名与 shell 匹配目标（语义复用歧义）；UI 无 label/breakExpectation 编辑框（FlowEditor 只能手写 YAML 才带这两个字段）；zod 默认剥离未知字段会把基准 YAML 的 branch.expectation 静默丢弃→分支变并行（始终执行）。
   4. 定位说明：sandore 为全新设计，匹配语义有意对齐基准宽松行为。
-- **修复计划**（具体、可执行，含文件级改动方向）：
+- **修复计划**（具体、可执行，含文件级改动方向；与缺陷 2/4 分场景字段方案对齐）：
   1. `branch-evaluator.ts` 重写 `matchesExpectation`：
      - 默认路径：`const o = result.trim().toLowerCase(); const e = expectation.trim().toLowerCase(); return o === e || o.includes(e);`（大小写不敏感 + 包含匹配，宽松）。
      - regex 显式化：废除 `hasRegexMetacharacters` 启发式；改为显式定界符（如 expectation 以 `/` 开头结尾 → 视为正则，如 `/build-.*/`；或新增选项 `regex?: boolean`）。带定界符时 `new RegExp(inner)` 匹配（非法正则返回 false），无定界符一律走包含匹配（此时字面量含 `.` 等不会被误判）。
      - 同步更新 `branch-evaluator.spec.ts` 对应用例（精确匹配用例改为包含匹配语义；新增大小写不敏感、包含、显式正则、非法正则用例）。
-  2. `loop-manager.ts` `decideBreak`：保持调用 matchesExpectation，语义随修复自动对齐；补充 shell breakCondition 集成测试（当前无端到端覆盖）。
-  3. `dag-navigator.ts` `decideCondition`：shell 分支保持传 branch.label 走 matchesExpectation（含 `expectation === undefined → false` 守卫）；AI 分支的 `=== 'true'` 布尔检查与本缺陷无关（属缺陷 2 范畴，此处不展开）。
+  2. `loop-manager.ts` `decideBreak`：**shell 分支**保持调用 matchesExpectation，语义随修复自动对齐；补充 shell breakCondition 集成测试（当前无端到端覆盖）。**AI 分支不属本缺陷**——走缺陷 4 的 shouldBreak 专用模板（含 I/O 块 + `{"shouldBreak": true/false}`），与 matchesExpectation 无关。
+  3. `dag-navigator.ts` `decideCondition`：**shell 分支**保持传 branch.label 走 matchesExpectation（含 `expectation === undefined → false` 守卫）；**AI 分支**不属本缺陷——走缺陷 2 的 shouldExecute 提取函数（`{"shouldExecute": true/false}`），此处不展开。
   4. schema 静默剥字段问题：`DagBranchSchema` 对基准遗留的未知 `expectation` 字段——在 yaml-parser 转换层显式告警或拒绝（避免静默变并行），或文档明确「迁移时需把 expectation 改写成 condition + label」。此点作为附带建议记录。
   5. UI 缺口（可选，后续）：FlowEditor 增加 label 编辑框（条件分支显示名/匹配目标）与循环 breakExpectation 编辑框；在未提供时给出默认 label 或提示。
   - 每项标注改动文件与方向即可，**不要实际修改代码**（本任务只写文档）。
-- **修复计划状态**：待实施（需用户批准后另行执行）
+- **修复计划状态**：待实施（需用户批准后另行执行；与缺陷 2/4 分场景字段方案联动——shell 匹配走本缺陷 matchesExpectation，AI 判定分别走缺陷 2 shouldExecute / 缺陷 4 shouldBreak）
 
 ---
 

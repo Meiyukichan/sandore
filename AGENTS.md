@@ -4,6 +4,7 @@
 - 所有代码参考DSH的代码风格
 - 不要创建分支，直接在main分支上开发
 - 永远用中文回答
+- DSH 源码路径 = `D:\projects-code\llm\sandore`
 
 # 测试启动（开发/生产端口隔离）
 - 生产实例（`dsh --profile web`，端口 3080）不加载 sandore 插件，保持干净
