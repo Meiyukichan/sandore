@@ -28,11 +28,11 @@ export function formatTimestamp(value: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-/** 关键词过滤实例：大小写不敏感匹配 instanceId 或 jobId。 */
+/** 关键词过滤实例：大小写不敏感匹配 originalInput 或 workflowId。 */
 export function matchesInstanceQuery(instance: InstanceSummary, query: string): boolean {
   if (query === '') return true
   const needle = query.toLowerCase()
-  return instance.instanceId.toLowerCase().includes(needle) || instance.jobId.toLowerCase().includes(needle)
+  return instance.originalInput.toLowerCase().includes(needle) || instance.workflowId.toLowerCase().includes(needle)
 }
 
 /** 关键词过滤定义：大小写不敏感匹配 name 或 id。 */

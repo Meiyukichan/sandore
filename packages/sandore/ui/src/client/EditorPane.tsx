@@ -46,8 +46,6 @@ export function EditorPane({ t, face, onSaved }: EditorPaneProps) {
               initialId={selectedDefinition?.id}
               save={face.save}
               onSaved={onSaved}
-              listJobs={face.listJobs}
-              createJob={face.createJob}
               startInstance={face.startInstance}
             />
           )
@@ -60,6 +58,10 @@ export function EditorPane({ t, face, onSaved }: EditorPaneProps) {
             instanceId={selectedInstanceId}
             remote={face.remote}
             openSession={face.openSession}
+            modelDirectory={face.modelDirectory}
+            permissions={face.permissions}
+            runCommand={face.runCommand}
+            queryPermission={face.queryPermission}
           />
         )}
       </div>

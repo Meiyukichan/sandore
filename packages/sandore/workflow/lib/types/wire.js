@@ -20,26 +20,19 @@ export const UpdateDefinitionInputSchema = z.object({
     version: z.string().optional(),
     description: z.string().optional(),
 });
-/** `createJob` 入参。 */
-export const CreateJobInputSchema = z.object({
-    name: z.string(),
-    workflowId: z.string(),
-    cwd: z.string().optional(),
+/** 创建实例时选择的模型（对齐 DSH `ModelSelection`）。 */
+export const StartModelSelectionSchema = z.object({
+    provider: z.string(),
+    model: z.string(),
+    reasoningEffort: z.string().optional(),
 });
-/** `listJobs` 入参：可选按 workflowId 过滤（RPC 面统一对象入参，避免可选参数退化）。 */
-export const ListJobsInputSchema = z.object({
-    workflowId: z.string().optional(),
-});
-/** `updateJob` 入参。 */
-export const UpdateJobInputSchema = z.object({
-    name: z.string().optional(),
-    cwd: z.string().optional(),
-});
-/** `startInstance` 入参。 */
+/** `startInstance` 入参（去 job 概念：直接绑定工作流定义 + 工作目录 + 模型/权限）。 */
 export const StartInstanceInputSchema = z.object({
-    jobId: z.string(),
+    workflowId: z.string(),
     originalInput: z.string(),
     cwd: z.string().optional(),
+    model: StartModelSelectionSchema.optional(),
+    permission: z.string().optional(),
 });
 /** 单个问题回答的 zod 校验（对齐 DSH `AskUserQuestionAnswerItem`）。 */
 export const AskUserQuestionAnswerItemSchema = z.object({

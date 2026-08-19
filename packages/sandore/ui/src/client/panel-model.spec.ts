@@ -13,11 +13,11 @@ import {
 } from './panel-model.ts'
 
 /** 构造一个最小实例摘要。 */
-function instance(id: string, jobId: string, overrides: Partial<InstanceSummary> = {}): InstanceSummary {
+function instance(id: string, workflowId: string, overrides: Partial<InstanceSummary> = {}): InstanceSummary {
   return {
     instanceId: id,
-    jobId,
-    workflowId: 'wfl-1',
+    workflowId,
+    originalInput: `需求 ${id}`,
     status: 'completed',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -54,21 +54,21 @@ describe('deriveGroups', () => {
   it('assigns an instance to the workspace whose sessionIds contain its instanceId', () => {
     const workspaces = [workspace('ws-1', 'Alpha', ['inst-a', 'inst-b'])]
 
-    const groups = deriveGroups([instance('inst-a', 'job-a'), instance('inst-b', 'job-b')], workspaces, '未分组')
+    const groups = deriveGroups([instance('inst-a', 'wfl-a'), instance('inst-b', 'wfl-b')], workspaces, '未分组')
 
     expect(groups).toEqual([
-      { key: 'ws-1', title: 'Alpha', instances: [instance('inst-a', 'job-a'), instance('inst-b', 'job-b')] },
+      { key: 'ws-1', title: 'Alpha', instances: [instance('inst-a', 'wfl-a'), instance('inst-b', 'wfl-b')] },
     ])
   })
 
   it('puts instances matching no workspace into the ungrouped bucket last', () => {
     const workspaces = [workspace('ws-1', 'Alpha', ['inst-a'])]
 
-    const groups = deriveGroups([instance('inst-a', 'job-a'), instance('inst-x', 'job-x')], workspaces, '未分组')
+    const groups = deriveGroups([instance('inst-a', 'wfl-a'), instance('inst-x', 'wfl-x')], workspaces, '未分组')
 
     expect(groups).toEqual([
-      { key: 'ws-1', title: 'Alpha', instances: [instance('inst-a', 'job-a')] },
-      { key: UNGROUPED_KEY, title: '未分组', instances: [instance('inst-x', 'job-x')] },
+      { key: 'ws-1', title: 'Alpha', instances: [instance('inst-a', 'wfl-a')] },
+      { key: UNGROUPED_KEY, title: '未分组', instances: [instance('inst-x', 'wfl-x')] },
     ])
   })
 
@@ -78,7 +78,7 @@ describe('deriveGroups', () => {
       workspace('ws-2', 'Beta', ['inst-b']),
     ]
 
-    const groups = deriveGroups([instance('inst-a', 'job-a'), instance('inst-b', 'job-b')], workspaces, '未分组')
+    const groups = deriveGroups([instance('inst-a', 'wfl-a'), instance('inst-b', 'wfl-b')], workspaces, '未分组')
 
     expect(groups.map(group => group.key)).toEqual(['ws-1', 'ws-2'])
   })
@@ -86,7 +86,7 @@ describe('deriveGroups', () => {
   it('omits the group header for a workspace with no matching instances', () => {
     const workspaces = [workspace('ws-empty', 'Empty', []), workspace('ws-1', 'Alpha', ['inst-a'])]
 
-    const groups = deriveGroups([instance('inst-a', 'job-a')], workspaces, '未分组')
+    const groups = deriveGroups([instance('inst-a', 'wfl-a')], workspaces, '未分组')
 
     expect(groups.map(group => group.key)).toEqual(['ws-1'])
   })
@@ -94,9 +94,9 @@ describe('deriveGroups', () => {
   it('returns only the ungrouped bucket when no instance matches any workspace', () => {
     const workspaces = [workspace('ws-1', 'Alpha', ['inst-a'])]
 
-    const groups = deriveGroups([instance('inst-x', 'job-x')], workspaces, '未分组')
+    const groups = deriveGroups([instance('inst-x', 'wfl-x')], workspaces, '未分组')
 
-    expect(groups).toEqual([{ key: UNGROUPED_KEY, title: '未分组', instances: [instance('inst-x', 'job-x')] }])
+    expect(groups).toEqual([{ key: UNGROUPED_KEY, title: '未分组', instances: [instance('inst-x', 'wfl-x')] }])
   })
 
   it('returns an empty list when there are no instances', () => {
@@ -106,19 +106,19 @@ describe('deriveGroups', () => {
 
 describe('matchesInstanceQuery', () => {
   it('passes everything through for an empty query', () => {
-    expect(matchesInstanceQuery(instance('inst-a', 'job-a'), '')).toBe(true)
+    expect(matchesInstanceQuery(instance('inst-a', 'wfl-a'), '')).toBe(true)
   })
 
-  it('matches instanceId case-insensitively', () => {
-    expect(matchesInstanceQuery(instance('INST-A', 'job-a'), 'inst')).toBe(true)
+  it('matches originalInput case-insensitively', () => {
+    expect(matchesInstanceQuery(instance('inst-a', 'wfl-a', { originalInput: '整理报告' }), '报告')).toBe(true)
   })
 
-  it('matches jobId case-insensitively', () => {
-    expect(matchesInstanceQuery(instance('inst-a', 'JOB-A'), 'job')).toBe(true)
+  it('matches workflowId case-insensitively', () => {
+    expect(matchesInstanceQuery(instance('inst-a', 'WFL-A'), 'wfl')).toBe(true)
   })
 
-  it('returns false when neither id matches', () => {
-    expect(matchesInstanceQuery(instance('inst-a', 'job-a'), 'nomatch')).toBe(false)
+  it('returns false when neither field matches', () => {
+    expect(matchesInstanceQuery(instance('inst-a', 'wfl-a'), 'nomatch')).toBe(false)
   })
 })
 

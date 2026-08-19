@@ -330,14 +330,12 @@ function completedSnapshot(instanceId: string): WorkflowTaskState {
   const createdAt = new Date().toISOString();
   return {
     taskId: instanceId,
-    jobId: 'job-1',
     workflowId: 'wfl-linear',
     cwd: '/tmp',
     status: 'completed',
     originalInput: 'hello world',
     currentStageId: 'stg-1',
     executedSteps: [{
-      type: 'default',
       id: 'exec-1',
       stepId: 'step-abc',
       stageId: 'stg-1',
@@ -366,7 +364,6 @@ function runningSnapshot(instanceId: string, workflowId = 'wfl-linear'): Workflo
   const createdAt = new Date().toISOString();
   return {
     taskId: instanceId,
-    jobId: 'job-1',
     workflowId,
     cwd: '/tmp',
     status: 'running',
@@ -395,7 +392,6 @@ type SnapshotStep = WorkflowTaskState['executedSteps'][number];
 function agentStepSnapshot(status: 'running' | 'paused', childId = 'child-1'): SnapshotStep {
   const createdAt = new Date().toISOString();
   return {
-    type: 'default',
     id: 'exec-1',
     stepId: 'step-agent',
     stageId: 'stg-1',
@@ -411,7 +407,6 @@ function agentStepSnapshot(status: 'running' | 'paused', childId = 'child-1'): S
 /** 构造一条 shell 合成 Step 快照（synthetic，供「合成 session 标 failed」测试）。 */
 function shellStepSnapshot(status: 'running' = 'running'): SnapshotStep {
   return {
-    type: 'default',
     id: 'exec-1',
     stepId: 'step-shell',
     stageId: 'stg-1',
@@ -428,7 +423,6 @@ function stepSnapshot(instanceId: string, workflowId: string, step: SnapshotStep
   const createdAt = new Date().toISOString();
   return {
     taskId: instanceId,
-    jobId: 'job-1',
     workflowId,
     cwd: '/tmp',
     status,
@@ -519,6 +513,18 @@ function waitForEnd(ctx: Context): Promise<void> {
   });
 }
 
+/** 段模型定位：同 stepId 取 attemptIndex 最大（最后）的执行段（重试/续跑后新段）。 */
+function lastSegmentOf(
+  steps: readonly SnapshotStep[],
+  stepId: string,
+): SnapshotStep | undefined {
+  const matches = steps.filter(step => step.stepId === stepId);
+  if (matches.length === 0) {
+    return undefined;
+  }
+  return matches.sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0))[0];
+}
+
 /** 等待实例到达 aborted 终态（以 sandore/aborted 为信号）。 */
 function waitForAborted(ctx: Context): Promise<void> {
   return new Promise<void>(resolve => {
@@ -574,7 +580,7 @@ describe('SandoreEngineRuntime startInstance', () => {
   it('throws when the workflowId does not exist and leaves the state table empty', async () => {
     const { engine, persistence } = await harness();
     await expect(
-      engine.startInstance({ workflowId: 'wfl-none', jobId: 'job-1', originalInput: 'x' }),
+      engine.startInstance({ workflowId: 'wfl-none', originalInput: 'x' }),
     ).rejects.toBeInstanceOf(SandoreError);
     expect(persistence.state.size).toBe(0);
   });
@@ -583,7 +589,7 @@ describe('SandoreEngineRuntime startInstance', () => {
     const { engine, persistence } = await harness();
     await putDefinition(persistence, 'wfl-linear', linearYaml);
 
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'hello world' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'hello world' });
     expect(run.status).toBe('running');
 
     const state = engine.getState(run.instanceId);
@@ -595,7 +601,7 @@ describe('SandoreEngineRuntime startInstance', () => {
     const { engine, persistence, agents } = await harness();
     await putDefinition(persistence, 'wfl-linear', linearYaml);
 
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it', cwd: '/srv/app' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it', cwd: '/srv/app' });
 
     expect(agents.createCwds).toEqual(['/srv/app']);
     expect(agents.setupCount).toBe(1);
@@ -611,7 +617,7 @@ describe('SandoreEngineRuntime startInstance', () => {
     agents.setupError = new Error('setup boom');
 
     await expect(
-      engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' }),
+      engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' }),
     ).rejects.toThrow('setup boom');
     expect(persistence.state.size).toBe(0);
   });
@@ -620,7 +626,7 @@ describe('SandoreEngineRuntime startInstance', () => {
     const { engine, persistence, sessions, sessionTitle } = await harness();
     await putDefinition(persistence, 'wfl-linear', linearYaml);
 
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
 
     expect(sessionTitle.calls).toHaveLength(1);
     expect(sessionTitle.calls[0]?.title).toBe(`工作流实例 ${run.instanceId}`);
@@ -634,7 +640,7 @@ describe('SandoreEngineRuntime startInstance', () => {
     sessionTitle.renameError = new Error('title boom');
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-shell-only', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-shell-only', originalInput: 'do it' });
 
     expect(run.status).toBe('running');
     await ended;
@@ -680,7 +686,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
 
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
     await ended;
 
     expect(records.map(record => record.name)).toEqual([
@@ -740,7 +746,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     llm.streamHandler = () => textChunks('summary');
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-multi', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-multi', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -768,7 +774,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
     await ended;
 
     expect(persistence.state.get(run.instanceId)?.status).toBe('completed');
@@ -783,7 +789,7 @@ describe('SandoreEngineRuntime linear execution', () => {
     llm.streamHandler = () => textChunks('summary');
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -811,7 +817,7 @@ describe('SandoreEngineRuntime failure', () => {
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -839,7 +845,7 @@ describe('SandoreEngineRuntime failure', () => {
       });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-two-shell', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-two-shell', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -859,7 +865,7 @@ describe('SandoreEngineRuntime failure', () => {
     llm.streamHandler = () => textChunks('', { kind: 'error', failure: { message: 'model exploded', code: 'X' } });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -895,7 +901,7 @@ describe('SandoreEngineRuntime abort', () => {
     const aborted = waitForAborted(ctx);
     const stepStarted = waitForStepStart(ctx);
 
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
     await stepStarted;
     await engine.abortInstance(run.instanceId);
     await aborted;
@@ -914,7 +920,7 @@ describe('SandoreEngineRuntime abort', () => {
     llm.streamHandler = () => textChunks('summary');
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-linear', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
     await ended;
 
     await expect(engine.abortInstance(run.instanceId)).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
@@ -946,7 +952,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-dag', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-dag', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -980,10 +986,12 @@ describe('SandoreEngineRuntime DAG execution', () => {
     // hostAgent 注入：agent Step 的子代理 parent 即宿主主代理（id = instanceId）。
     expect(subagents.continuableStarts[0]?.request.parent.id).toBe(run.instanceId);
 
-    // 循环：3 次扁平迭代，loopIteration 嵌套路径 + 4 位 hex 后缀 id。
+    // 循环：3 次扁平迭代，loopIteration 嵌套路径；段 id 为纯 UUID（§3.3），
+    // 4 位 hex 后缀在 sessionMeta.childId（loopManager 合成占位）。
     const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
     expect(iterations.map(step => step.loopIteration)).toEqual([[1], [2], [3]]);
-    expect(iterations[0]?.id).toMatch(/^step-iter-[0-9a-f]{4}$/);
+    expect(iterations[0]?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(iterations[0]?.sessionMeta?.childId).toMatch(/^step-iter-[0-9a-f]{4}$/);
     expect(iterations[2]?.visitCount).toBe(3);
 
     // 透传变量回写：finalize 提取 projectName 并保留 description。
@@ -1021,7 +1029,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.streamHandler = () => textChunks('false');
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -1044,7 +1052,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-nested-loop', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-nested-loop', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -1069,7 +1077,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.streamHandler = () => textChunks('{"shouldBreak": true}');
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-loop-break', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-loop-break', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -1183,7 +1191,7 @@ describe('SandoreEngineRuntime interaction', () => {
     };
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it' });
     await ended;
 
     // ask 以 hostAgent（id = instanceId）身份发起。
@@ -1197,15 +1205,16 @@ describe('SandoreEngineRuntime interaction', () => {
     expect(fired.question.status).toBe('pending');
     expect(fired.question.payload.questions[0]?.id).toBe('q1');
 
-    // 回复后恢复：Step completed + 实例 completed + 条目终态化 replied。
+    // 回复后恢复：Step completed + 实例 completed + 条目不再持久化（pending 已清，
+    // 回答写入 userMessages kind:'answer'——交互管理器只持久化 pending，§3.6A）。
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
     expect(state?.executedSteps.find(step => step.stepId === 'step-ask')?.status).toBe('completed');
-    expect(state?.pendingInteractions).toHaveLength(1);
-    const entry = state?.pendingInteractions[0];
-    expect(entry?.kind).toBe('question');
-    expect(entry?.status).toBe('replied');
-    expect(entry?.answer).toEqual([['A']]);
+    expect(state?.pendingInteractions).toEqual([]);
+    const answers = state?.userMessages?.filter(message => message.kind === 'answer');
+    expect(answers).toHaveLength(1);
+    expect(answers?.[0]?.target).toBe('step-ask');
+    expect(answers?.[0]?.content).toBe('A');
   });
 
   it('supports the replyQuestion compat path when the card channel is unavailable', async () => {
@@ -1222,7 +1231,7 @@ describe('SandoreEngineRuntime interaction', () => {
     llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
 
     const question = waitForQuestion(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it' });
     const fired = await question;
     const requestId = (fired.question as { requestId: string }).requestId;
 
@@ -1232,9 +1241,11 @@ describe('SandoreEngineRuntime interaction', () => {
 
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
-    const entry = state?.pendingInteractions[0];
-    expect(entry?.status).toBe('replied');
-    expect(entry?.answer).toEqual([['B']]);
+    // 回答后 pending 已清（只持久化 pending），回答进 userMessages kind:'answer'。
+    expect(state?.pendingInteractions).toEqual([]);
+    const answers = state?.userMessages?.filter(message => message.kind === 'answer');
+    expect(answers).toHaveLength(1);
+    expect(answers?.[0]?.content).toBe('B');
   });
 
   it('resumes the remaining steps and re-runs the gate after a mid-stage ask', async () => {
@@ -1255,7 +1266,7 @@ describe('SandoreEngineRuntime interaction', () => {
     userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask-mid', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask-mid', originalInput: 'do it' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -1292,7 +1303,7 @@ describe('SandoreEngineRuntime delegated subagent ask', () => {
     userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-delegated', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-delegated', originalInput: 'do it' });
     await ended;
 
     // 引擎级 ask 以 hostAgent（id = instanceId）身份触发。
@@ -1322,7 +1333,7 @@ describe('SandoreEngineRuntime delegated subagent ask', () => {
     agents.register(child);
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-delegated', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-delegated', originalInput: 'do it' });
     await ended;
 
     // 非法标记块：不转接、不 ask、不 followup，按普通输出处理。
@@ -1407,7 +1418,7 @@ describe('SandoreEngineRuntime recovery', () => {
     agents.register(child);
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', originalInput: 'do it' });
     await ended;
     expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
 
@@ -1421,7 +1432,8 @@ describe('SandoreEngineRuntime recovery', () => {
 
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
-    const step = state?.executedSteps.find(item => item.stepId === 'step-agent');
+    // 段模型：重试追加新段（attemptIndex 1），断言取最后活跃段。
+    const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
     expect(step?.output).toEqual([{ type: 'text', text: 'retry output' }]);
     expect(step?.sessionMeta?.childId).toBe('child-1');
     expect(step?.retryHistory?.[0]?.mode).toBe('continue');
@@ -1444,7 +1456,7 @@ describe('SandoreEngineRuntime recovery', () => {
     agents.register(child);
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-multi-retry', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-multi-retry', originalInput: 'do it' });
     await ended;
 
     // 首跑：step-a 完成、step-b（agent 无输出）失败、step-c 未执行。
@@ -1459,12 +1471,18 @@ describe('SandoreEngineRuntime recovery', () => {
 
     state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
-    // 剩余 Step 不丢失：step-a / step-b / step-c 全部执行完毕。
-    expect(state?.executedSteps.map(step => step.stepId)).toEqual(['step-a', 'step-b', 'step-c']);
-    expect(state?.executedSteps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
-    expect(state?.executedSteps[1]?.output).toEqual([{ type: 'text', text: 'retry output' }]);
-    expect(state?.executedSteps[1]?.retryHistory?.[0]?.mode).toBe('continue');
-    expect(state?.executedSteps[1]?.retryHistory?.[0]?.result).toBe('completed');
+    // 段模型：step-b 重试追加新段（attemptIndex 1），旧 failed 段保留定格快照。
+    // 断言聚焦新段状态与输出（不假设 stepIds 顺序，旧 failed 段的存在单独验证）。
+    const stepIds = state?.executedSteps.map(step => step.stepId) ?? [];
+    expect(new Set(stepIds)).toEqual(new Set(['step-a', 'step-b', 'step-c']));
+    expect(stepIds.filter(id => id === 'step-b').length).toBe(2);
+    const retriedB = lastSegmentOf(state?.executedSteps ?? [], 'step-b');
+    expect(retriedB?.status).toBe('completed');
+    expect(retriedB?.output).toEqual([{ type: 'text', text: 'retry output' }]);
+    expect(retriedB?.retryHistory?.[0]?.mode).toBe('continue');
+    expect(retriedB?.retryHistory?.[0]?.result).toBe('completed');
+    const failedB = state?.executedSteps.find(step => step.stepId === 'step-b' && step.status === 'failed');
+    expect(failedB).toBeDefined();
   });
 
   it('preserves outputTo artifacts in the stage contract after retrying the producing step', async () => {
@@ -1478,7 +1496,7 @@ describe('SandoreEngineRuntime recovery', () => {
     agents.register(child);
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-multi-retry', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-multi-retry', originalInput: 'do it' });
     await ended;
     expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
 
@@ -1505,7 +1523,7 @@ describe('SandoreEngineRuntime recovery', () => {
     agents.register(child);
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', originalInput: 'do it' });
     await ended;
     expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
 
@@ -1517,7 +1535,8 @@ describe('SandoreEngineRuntime recovery', () => {
 
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
-    const step = state?.executedSteps.find(item => item.stepId === 'step-agent');
+    // 段模型：fork 新段（attemptIndex 1）承载新 childId/output/retryHistory。
+    const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
     expect(step?.output).toEqual([{ type: 'text', text: 'fork output' }]);
     // 新 childId（合成 session id）续跑，parentSessionId 记旧值。
     expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
@@ -1538,7 +1557,7 @@ describe('SandoreEngineRuntime recovery', () => {
     agents.register(child);
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', jobId: 'job-1', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', originalInput: 'do it' });
     await ended;
     expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
 
@@ -1552,7 +1571,7 @@ describe('SandoreEngineRuntime recovery', () => {
 
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
-    const step = state?.executedSteps.find(item => item.stepId === 'step-agent');
+    const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
     expect(step?.output).toEqual([{ type: 'text', text: 'revert output' }]);
     expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
     expect(step?.parentSessionId).toBe('child-1');

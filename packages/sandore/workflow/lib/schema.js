@@ -338,9 +338,25 @@ const RetryRecordSchema = z.object({
 		"failed"
 	])
 });
+/** 用户在执行过程中的消息（原始需求 / 恢复 / 重试，统一时间轴渲染）。 */
+const UserMessageRecordSchema = z.object({
+	id: z.string(),
+	/** 消息种类：input=原始需求 / resume=继续消息 / retry=重试消息 / answer=ask 回答。 */
+	kind: z.enum([
+		"input",
+		"resume",
+		"retry",
+		"answer"
+	]),
+	/** 目标：'broadcast'（广播）或 Step 定义 id（定点）；input 时为 ''。 */
+	target: z.string(),
+	/** 用户消息文本。 */
+	content: z.string(),
+	/** 消息时间（ISO；统一时间轴排序键）。 */
+	createdAt: z.string()
+});
 /** 已执行 Step 的默认实现快照。 */
 const ExecutedStepDefaultSchema = z.object({
-	type: z.literal("default"),
 	id: z.string(),
 	stepId: z.string().optional(),
 	stageId: z.string(),
@@ -353,11 +369,17 @@ const ExecutedStepDefaultSchema = z.object({
 	sessionMeta: StepSessionMetaSchema.optional(),
 	finalizeMeta: FinalizeMetaSchema.optional(),
 	visitCount: z.number(),
+	/** 本执行段开始时间（ISO；统一时间轴排序键，替代对 startedAt 的可选依赖）。 */
+	createdAt: z.string().optional(),
+	/** 执行段序号（同 stepId 第几次执行段；0-based，缺省 0 = 首次执行）。 */
+	attemptIndex: z.number().int().nonnegative().optional(),
+	/** Step 开始执行的时间（ISO；引擎写入，供 UI 展示相对时间）。 */
+	startedAt: z.string().optional(),
+	/** Step 最近一次状态变更的时间（ISO；running 后每次转态更新，供 UI 展示相对时间）。 */
+	updatedAt: z.string().optional(),
 	branchMeta: BranchMetaSchema.optional(),
 	error: z.string().optional(),
 	pausedAt: z.string().optional(),
-	resumedAt: z.string().optional(),
-	resumePrompt: z.string().optional(),
 	sessionMessages: z.array(SessionMessageSchema).optional(),
 	pauseEntryId: z.string().optional(),
 	loopIteration: z.array(z.number()).optional(),
@@ -391,10 +413,21 @@ const StageContractSchema = z.object({
 /** 工作流实例的持久化状态快照（存储域 `state` 表 value）。 */
 const WorkflowTaskStateSchema = z.object({
 	taskId: z.string(),
-	jobId: z.string(),
+	/** 兼容旧版 job 关联（去 job 概念后新实例不写；旧快照保留以通过校验）。 */
+	jobId: z.string().optional(),
 	workflowId: z.string(),
 	/** 工作流名称（启动时从定义写入；持久化快照携带，供 UI 树标题展示）。 */
 	workflowName: z.string().optional(),
+	/** 工作流描述（启动时从定义写入；供执行详情 head 展示，旧实例可能缺）。 */
+	description: z.string().optional(),
+	/** 创建实例时选择的模型（弹窗传入；作为该实例的 L2 默认模型路由）。 */
+	modelSelection: z.object({
+		provider: z.string(),
+		model: z.string(),
+		reasoningEffort: z.string().optional()
+	}).optional(),
+	/** 创建实例时选择的权限预设（read-only / workspace-write / danger-full-access）。 */
+	permission: z.string().optional(),
 	cwd: z.string(),
 	status: DagRunStatusSchema,
 	originalInput: z.string(),
@@ -409,6 +442,8 @@ const WorkflowTaskStateSchema = z.object({
 	activeLoopNodeId: z.string().nullable(),
 	activeLoopStack: z.array(z.string()),
 	pausedChildIds: z.array(z.string()),
+	/** 用户指令消息（恢复/重试；统一时间轴渲染，初始需求由 originalInput 承载）。 */
+	userMessages: z.array(UserMessageRecordSchema).optional(),
 	stageContracts: z.record(z.string(), StageContractSchema),
 	createdAt: z.string(),
 	updatedAt: z.string()
@@ -422,13 +457,5 @@ const WorkflowDefinitionRecordSchema = z.object({
 	createdAt: z.string(),
 	updatedAt: z.string()
 });
-/** Job 记录（`jobs` 表 value）。 */
-const JobRecordSchema = z.object({
-	name: z.string(),
-	workflowId: z.string(),
-	cwd: z.string().optional(),
-	createdAt: z.string(),
-	updatedAt: z.string()
-});
 //#endregion
-export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SessionMessageSchema, StageContractSchema, StageInfoSchema, StageStepSchema, StepSessionMetaSchema, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema };
+export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SessionMessageSchema, StageContractSchema, StageInfoSchema, StageStepSchema, StepSessionMetaSchema, UserMessageRecordSchema, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema };

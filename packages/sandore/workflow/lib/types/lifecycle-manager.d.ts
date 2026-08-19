@@ -22,6 +22,9 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { Agent, SubagentInterruptAuthority } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import type { WorkflowTaskState } from './schema.ts';
+import type { UserMessageRecord } from './schema.ts';
+/** 合成新子代理 SessionId（与 shell/prompt 的 `synthesizeChildId` 同规则）。 */
+export declare function synthesizeChildId(stepId: string): string;
 /** 生命周期协调器的依赖（全部经回调/选项注入，保持纯协调器可单测）。 */
 export interface LifecycleManagerOptions {
     /** 宿主主代理（interrupt 的 ancestor authority + followup 的 parent 三合一）。 */
@@ -40,6 +43,8 @@ export interface LifecycleManagerOptions {
     readonly readState: () => WorkflowTaskState;
     /** 不可变重建 + 持久化当前状态快照。 */
     readonly commitState: (next: WorkflowTaskState) => void;
+    /** 追加一条用户指令消息（写入 `state.userMessages` 并持久化；广播只记一条）。 */
+    readonly appendUserMessage: (record: UserMessageRecord) => void;
     /** 双发 `sandore/step-paused` 事件（含 Step 名称与可选循环迭代路径）。 */
     readonly emitStepPaused: (stepId: string, childId: string, name: string, loopIteration?: number[]) => void;
     /** 双发 `sandore/step-resumed` 事件（含 Step 名称与可选循环迭代路径）。 */
@@ -57,17 +62,39 @@ export declare class LifecycleManager {
     constructor(deps: LifecycleManagerOptions);
     /** 暂停登记表当前内容（子代理 SessionId 集合，仅只读投影）。 */
     get pausedIds(): readonly string[];
+    /**
+     * 子代理自然完成（interrupt 软信号未生效，Step 已 completed）时清理暂停登记表：
+     * 移除该 childId 并同步持久化。pause→完成竞态（pauseStep 先 interrupt+登记，但子代理
+     * 仍跑完）后，若不清登记会残留「段 completed + 登记表有值」的不一致，resume 将卡死。
+     * @param childId - 已完成的子代理 SessionId。
+     */
+    clearPausedOnCompletion(childId: string): void;
     /** 某子代理 SessionId 是否在暂停登记表中。 */
     hasPaused(childId: string): boolean;
     /** 暂停单个 Step（经 childId 反查 + interrupt + 登记表 add + 状态 paused + 事件）。 */
     pauseStep(stepId: string): void;
-    /** 恢复单个 Step（反查 childId + 移出登记表 + followup + 状态 running + 事件）。 */
+    /**
+     * 恢复单个 Step（反查 childId + 移出登记表 + followup + 追加新执行段 + 用户消息）。
+     *
+     * 段模型：被暂停段保持 paused 定格快照；恢复时以它为基底创建**新执行段**
+     * （新唯一执行 id + attemptIndex+1 + createdAt），followup 唤醒同一子代理续跑。
+     * 恢复消息不写入段（统一存 `userMessages`，避免广播时每段重复同一句话）。
+     */
     resumeStep(stepId: string, resumePrompt?: string): Promise<void>;
     /** 暂停实例内全部 running/interacting Step（completed/failed 与非子代理 Step 跳过）。 */
     pauseAllSteps(): void;
-    /** 恢复登记表内全部 Step（逐个 followup，完成后登记表清空）。 */
+    /**
+     * 恢复登记表内全部 Step（逐个 followup + 移表，完成后登记表清空）。
+     * 广播指令是实例级事件：只追加一条 `target:'broadcast'` 用户消息（不得复制进每个 Step）。
+     */
     resumeAllSteps(resumePrompt?: string): Promise<void>;
-    /** 按 stepId（定义 id 或唯一执行 id）在 executedSteps 中反查 Step。 */
+    /** 登记表变更后同步持久化（pausedChildIds + 实例 status；空表 → running）。 */
+    private commitPausedRegistry;
+    /**
+     * 按 stepId（定义 id 或唯一执行 id）反查"最后活跃段"（status running/interacting 中
+     * attemptIndex 最大者）；无活跃段时回退同 stepId 的任意段（再退唯一执行 id）。
+     * 段模型下同 step 可有多段（attempt0 paused + attempt1 running），暂停/恢复必须定位活跃段。
+     */
     private findStep;
     /** 按子代理 SessionId 反查 Step（`resumeAllSteps` 遍历登记表用）。 */
     private findStepByChildId;
@@ -79,5 +106,7 @@ export declare class LifecycleManager {
     private stepIdOf;
     /** 不可变重建状态：更新单个 Step 状态 + 同步登记表 + 持久化。 */
     private commitStepStatus;
+    /** 构造一条用户消息记录（统一时间轴）。 */
+    private userMessage;
 }
 //# sourceMappingURL=lifecycle-manager.d.ts.map

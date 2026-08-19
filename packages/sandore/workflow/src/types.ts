@@ -50,15 +50,11 @@ export type {
 // 以 `export type` 命名重导出，`resolveSymbol` 会解析到 remote.ts 中的同一 symbol。
 export type {
   WorkflowDefinitionEntry,
-  JobEntry,
   InstanceSummary,
   ArtifactEntry,
   PingResponse,
   CreateDefinitionInput,
   UpdateDefinitionInput,
-  CreateJobInput,
-  ListJobsInput,
-  UpdateJobInput,
   StartInstanceInput,
   ReplyQuestionInput,
   ReplyPermissionInput,
@@ -113,20 +109,27 @@ export interface DagRunInfo {
   taskId: string
   /** 工作流定义 ID。 */
   workflowId: string
-  /** Job ID。 */
-  jobId: string
 }
 
-/** 启动一个工作流实例的请求。 */
+/** 创建实例时选择的模型（对齐 DSH `ModelSelection`）。 */
+export interface StartModelSelection {
+  provider: string
+  model: string
+  reasoningEffort?: string
+}
+
+/** 启动一个工作流实例的请求（去 job 概念：直接绑定工作流定义）。 */
 export interface DagStartRequest {
   /** 工作流定义 ID。 */
   workflowId: string
-  /** Job ID。 */
-  jobId: string
   /** 用户原始需求。 */
   originalInput: string
   /** 可选工作目录。 */
   cwd?: string
+  /** 创建实例时选择的模型（作为该实例 L2 默认模型路由）。 */
+  model?: StartModelSelection
+  /** 创建实例时选择的权限预设（read-only / workspace-write / danger-full-access）。 */
+  permission?: string
 }
 
 /** 工作流实例的运行句柄。 */
@@ -141,7 +144,6 @@ export type DagRunStatus = 'pending' | 'running' | 'interacting' | 'completed' |
 /** 工作流实例的持久化状态快照。 */
 export interface DagInstanceState {
   taskId: string
-  jobId: string
   workflowId: string
   status: DagRunStatus
   originalInput: string
@@ -155,7 +157,6 @@ export interface DagInstanceState {
 
 /** 已执行 Step 的默认实现快照。 */
 export interface ExecutedStepDefault {
-  type: 'default'
   id: string
   stepId?: string
   stageId: string
@@ -168,11 +169,17 @@ export interface ExecutedStepDefault {
   sessionMeta?: StepSessionMeta
   finalizeMeta?: FinalizeMeta
   visitCount: number
+  /** 本执行段开始时间（ISO；统一时间轴排序键，与 schema 同步）。 */
+  createdAt?: string
+  /** 执行段序号（同 stepId 第几次执行段；0-based，缺省 0 = 首次执行）。 */
+  attemptIndex?: number
+  /** Step 开始执行的时间（ISO；引擎写入，供 UI 展示相对时间）。 */
+  startedAt?: string
+  /** Step 最近一次状态变更的时间（ISO；running 后每次转态更新，供 UI 展示相对时间）。 */
+  updatedAt?: string
   branchMeta?: BranchMeta
   error?: string
   pausedAt?: string
-  resumedAt?: string
-  resumePrompt?: string
   sessionMessages?: SessionMessage[]
   pauseEntryId?: string
   loopIteration?: number[]
@@ -225,7 +232,6 @@ export type FinalizeOutcome =
 /** 工作流实例结束时的最终结果信息。 */
 export interface DagResultInfo {
   taskId: string
-  jobId: string
   status: 'completed' | 'failed' | 'aborted'
   error?: string
 }

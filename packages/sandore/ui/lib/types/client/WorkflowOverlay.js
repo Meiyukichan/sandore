@@ -16,7 +16,7 @@ import { DragHandle } from "./DragHandle.js";
 import { getWorkflowState, resizeListWidth, subscribeWorkflowState, } from "./workflow-store.js";
 import css from './WorkflowOverlay.module.css';
 /** 渲染 shell.overlay 全局工作流 UI（关闭时渲染 null）。 */
-export function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions, listJobs, createJob, startInstance, deleteDefinition, getYaml, save, remote, openSession, t, }) {
+export function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions, startInstance, listModelDirectory, pickDirectory, deleteDefinition, deleteInstance, getYaml, save, remote, openSession, modelDirectory, permissions, runCommand, queryPermission, t, }) {
     const open = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().open);
     const listWidth = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().listWidth);
     const workspaces = useWorkspaces(state => state.items);
@@ -52,8 +52,8 @@ export function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions,
     if (!open)
         return null;
     const face = {
-        listInstances, listDefinitions, listJobs, createJob, startInstance,
-        deleteDefinition, getYaml, save, remote, openSession,
+        listInstances, listDefinitions, startInstance, listModelDirectory, pickDirectory,
+        deleteDefinition, deleteInstance, getYaml, save, remote, openSession, modelDirectory, permissions, runCommand, queryPermission,
     };
     return (_jsx("div", { className: css.layer, ref: layerRef, "data-sandore-overlay-layer": true, children: _jsx("div", { className: css.overlay, "data-sandore-overlay": true, children: _jsxs("div", { className: css.body, children: [_jsx(WorkflowList, { t: t, workspaces: workspaces, face: face, refreshKey: refreshKey, width: listWidth }), _jsx(DragHandle, { side: "list", className: css.dragHandle, onDrag: resizeListWidth }), _jsx(EditorPane, { t: t, face: face, onSaved: () => { setRefreshKey(key => key + 1); } })] }) }) }));
 }

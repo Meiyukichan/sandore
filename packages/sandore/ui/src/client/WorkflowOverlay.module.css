@@ -115,7 +115,7 @@
 
 .list {
   flex: none;
-  min-width: 200px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
   background: var(--dsw-alias-bg-elevated);

@@ -36,7 +36,6 @@ export interface PassThroughVarValue {
 /** Stage 共享状态。 */
 export interface StageSharedState {
     readonly cwd: string;
-    readonly jobId: string;
     readonly taskId: string;
 }
 /** Step 生命周期钩子（由引擎注入，用于发射 `sandore/step-*` 事件）。 */
@@ -121,7 +120,13 @@ export declare class StageExecutor {
      * 进入 executedSteps 时纳入（按唯一执行 id 去重），暂停续跑已在列表中则原地复用。
      */
     private finishCommandNode;
-    /** pause 后从断点续跑：重新收集子代理输出（whenIdle + final output），随后走公共收尾。 */
+    /**
+     * pause 后从断点续跑：基于被暂停段**新建执行段**（新 id + attemptIndex+1 + createdAt，
+     * sessionMeta 保持原 childId）后重新收集子代理输出 + 公共收尾。
+     *
+     * 段创建权归执行器（§3.5 定夺）：lifecycle 的 resumeStep 只负责 followup/登记表/消息/事件，
+     * 新段由这里创建——旧 paused 段保持定格快照，新段以新 id 走 finishCommandNode 追加。
+     */
     private resumePendingPaused;
     /** 崩溃恢复/重试续跑：重新收集子代理输出（whenIdle + final output），随后走公共收尾。 */
     private resumePendingResume;
@@ -129,7 +134,7 @@ export declare class StageExecutor {
     private resumeSubagentStep;
     /** 取消类错误下，Step 是否命中暂停登记表（真实 childId 已暂停 → 保持 paused）。 */
     private isPausedStep;
-    /** ask 回复后从断点续跑：重跑门禁审查，随后推进下一批节点。 */
+    /** ask 回复后从断点续跑：真实子代理先重收集新 output，随后重跑收尾并推进下一批。 */
     private resumePendingAsk;
     /** 组装 Stage 执行结果。 */
     private buildResult;

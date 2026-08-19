@@ -3,6 +3,11 @@ import { SandoreError } from "./errors.js";
 const TERMINAL_STEP_STATUSES = new Set(['completed', 'failed']);
 /** 恢复提示词的缺省值（`resumeStep`/`resumeAllSteps` 未显式提供时使用）。 */
 const DEFAULT_RESUME_PROMPT = '请继续完成当前任务。';
+/** 合成新子代理 SessionId（与 shell/prompt 的 `synthesizeChildId` 同规则）。 */
+export function synthesizeChildId(stepId) {
+    const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+    return `step-${stepId}-${execId}`;
+}
 /** 当前 ISO 时间戳。 */
 function now() {
     return new Date().toISOString();
@@ -23,6 +28,19 @@ export class LifecycleManager {
     /** 暂停登记表当前内容（子代理 SessionId 集合，仅只读投影）。 */
     get pausedIds() {
         return [...this.pausedChildIds];
+    }
+    /**
+     * 子代理自然完成（interrupt 软信号未生效，Step 已 completed）时清理暂停登记表：
+     * 移除该 childId 并同步持久化。pause→完成竞态（pauseStep 先 interrupt+登记，但子代理
+     * 仍跑完）后，若不清登记会残留「段 completed + 登记表有值」的不一致，resume 将卡死。
+     * @param childId - 已完成的子代理 SessionId。
+     */
+    clearPausedOnCompletion(childId) {
+        if (!this.pausedChildIds.has(childId)) {
+            return;
+        }
+        this.pausedChildIds.delete(childId);
+        this.commitPausedRegistry();
     }
     /** 某子代理 SessionId 是否在暂停登记表中。 */
     hasPaused(childId) {
@@ -58,7 +76,13 @@ export class LifecycleManager {
         this.commitStepStatus(step, 'paused', { pausedAt: now() });
         this.deps.emitStepPaused(this.stepIdOf(step), childId, step.name, step.loopIteration);
     }
-    /** 恢复单个 Step（反查 childId + 移出登记表 + followup + 状态 running + 事件）。 */
+    /**
+     * 恢复单个 Step（反查 childId + 移出登记表 + followup + 追加新执行段 + 用户消息）。
+     *
+     * 段模型：被暂停段保持 paused 定格快照；恢复时以它为基底创建**新执行段**
+     * （新唯一执行 id + attemptIndex+1 + createdAt），followup 唤醒同一子代理续跑。
+     * 恢复消息不写入段（统一存 `userMessages`，避免广播时每段重复同一句话）。
+     */
     async resumeStep(stepId, resumePrompt) {
         const step = this.findStep(stepId);
         if (step === undefined) {
@@ -71,10 +95,10 @@ export class LifecycleManager {
         const content = [{ type: 'text', text: resumePrompt ?? DEFAULT_RESUME_PROMPT }];
         await this.deps.followup(childId, content, this.deps.signal);
         this.pausedChildIds.delete(childId);
-        this.commitStepStatus(step, 'running', {
-            resumedAt: now(),
-            ...(resumePrompt === undefined ? {} : { resumePrompt }),
-        });
+        // 段创建权归执行器（stage-executor resumePendingPaused 基于旧段新建段对象）；
+        // lifecycle 只负责 followup + 登记表 + 用户消息 + 事件。段内不写 resumePrompt。
+        this.deps.appendUserMessage(this.userMessage('resume', this.stepIdOf(step), resumePrompt ?? DEFAULT_RESUME_PROMPT));
+        this.commitPausedRegistry();
         this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt, step.name, step.loopIteration);
     }
     /** 暂停实例内全部 running/interacting Step（completed/failed 与非子代理 Step 跳过）。 */
@@ -85,7 +109,10 @@ export class LifecycleManager {
             this.pauseStep(this.stepIdOf(step));
         }
     }
-    /** 恢复登记表内全部 Step（逐个 followup，完成后登记表清空）。 */
+    /**
+     * 恢复登记表内全部 Step（逐个 followup + 移表，完成后登记表清空）。
+     * 广播指令是实例级事件：只追加一条 `target:'broadcast'` 用户消息（不得复制进每个 Step）。
+     */
     async resumeAllSteps(resumePrompt) {
         const childIds = [...this.pausedChildIds];
         for (const childId of childIds) {
@@ -93,13 +120,43 @@ export class LifecycleManager {
             if (step === undefined) {
                 continue;
             }
-            await this.resumeStep(this.stepIdOf(step), resumePrompt);
+            const content = [{ type: 'text', text: resumePrompt ?? DEFAULT_RESUME_PROMPT }];
+            await this.deps.followup(childId, content, this.deps.signal);
+            this.pausedChildIds.delete(childId);
+            // 段创建由执行器续跑完成（resumePendingPaused）；此处只发事件（含 Step 名称）。
+            this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt, step.name, step.loopIteration);
+        }
+        if (childIds.length > 0) {
+            this.deps.appendUserMessage(this.userMessage('resume', 'broadcast', resumePrompt ?? DEFAULT_RESUME_PROMPT));
+            this.commitPausedRegistry();
         }
     }
-    /** 按 stepId（定义 id 或唯一执行 id）在 executedSteps 中反查 Step。 */
+    /** 登记表变更后同步持久化（pausedChildIds + 实例 status；空表 → running）。 */
+    commitPausedRegistry() {
+        const state = this.deps.readState();
+        const next = {
+            ...state,
+            status: this.pausedChildIds.size > 0 ? 'paused' : 'running',
+            pausedChildIds: [...this.pausedChildIds],
+            updatedAt: now(),
+        };
+        this.deps.commitState(next);
+    }
+    /**
+     * 按 stepId（定义 id 或唯一执行 id）反查"最后活跃段"（status running/interacting 中
+     * attemptIndex 最大者）；无活跃段时回退同 stepId 的任意段（再退唯一执行 id）。
+     * 段模型下同 step 可有多段（attempt0 paused + attempt1 running），暂停/恢复必须定位活跃段。
+     */
     findStep(stepId) {
         const steps = this.deps.readState().executedSteps;
-        return steps.find(step => step.stepId === stepId) ?? steps.find(step => step.id === stepId);
+        const byStep = steps.filter(step => step.stepId === stepId);
+        if (byStep.length > 0) {
+            const active = byStep
+                .filter(step => step.status === 'running' || step.status === 'interacting')
+                .sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0));
+            return active[0] ?? byStep[byStep.length - 1];
+        }
+        return steps.find(step => step.id === stepId);
     }
     /** 按子代理 SessionId 反查 Step（`resumeAllSteps` 遍历登记表用）。 */
     findStepByChildId(childId) {
@@ -133,14 +190,16 @@ export class LifecycleManager {
                     ...item,
                     status,
                     ...(extra.pausedAt === undefined ? {} : { pausedAt: extra.pausedAt }),
-                    ...(extra.resumedAt === undefined ? {} : { resumedAt: extra.resumedAt }),
-                    ...(extra.resumePrompt === undefined ? {} : { resumePrompt: extra.resumePrompt }),
                 };
             }),
             pausedChildIds: [...this.pausedChildIds],
             updatedAt: now(),
         };
         this.deps.commitState(next);
+    }
+    /** 构造一条用户消息记录（统一时间轴）。 */
+    userMessage(kind, target, content) {
+        return { id: `usr-${globalThis.crypto.randomUUID()}`, kind, target, content, createdAt: now() };
     }
 }
 //# sourceMappingURL=lifecycle-manager.js.map

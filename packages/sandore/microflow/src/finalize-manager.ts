@@ -241,7 +241,7 @@ function buildAssessPrompt(context: FinalizeStepContext, passThroughVars: readon
   sections.push('');
   sections.push('## 你的任务');
   sections.push('1. 判断当前 Step 是否真正完成（completionType: completed | ask）');
-  sections.push('2. 提取透传变量值（如有未解析变量）');
+  sections.push('2. 提取透传变量值：对每个列出的透传变量，从 <output> 中提取其值并写入 passThroughVars；若变量值就是 <output> 的完整文本，直接使用它。');
   sections.push('');
   sections.push('## 透传变量');
   if (passThroughVars.length === 0) {
@@ -326,9 +326,14 @@ export function parseSecondaryGate(raw: string): SecondaryGateParsed {
   };
 }
 
-/** 判定 command 类型是否走 session 会话（agent/prompt/skill/mcp）。 */
+/**
+ * 判定 command 类型是否走 session 会话（agent/skill/mcp）。
+ *
+ * 探索修正（2026-08）：'prompt' 无真实会话（sessionMeta 为合成占位，`synthetic:true`），
+ * 误入后 `sessions.fork(合成id)` 必抛 SESSION_NOT_FOUND → 每次收尾评估降级。
+ */
 function isSessionType(type: string | undefined): boolean {
-  return type === 'agent' || type === 'prompt' || type === 'skill' || type === 'mcp';
+  return type === 'agent' || type === 'skill' || type === 'mcp';
 }
 
 /** 判定 Step 是否含未解析透传变量（value 仍含 `${xxx}` 占位）。 */
@@ -688,7 +693,25 @@ export class FinalizeManager {
     gateResult: GateEvalResult | undefined,
   ): Promise<void> {
     executedStep.finalizeMeta = buildFinalizeMeta(assessResult, gateResult);
-    writeBackPassThroughVars(assessResult.passThroughVars, request.step, request.passThroughVars);
+    // 透传变量提取回退：AI 评估未提取（fork 降级/模型行为）且步骤仅声明一个
+    // 未解析变量、输出非空时，以输出文本为该变量值（对齐「变量值从步骤输出
+    // 提取」的文档语义，避免单变量场景下提取落空）。
+    const extracted: Record<string, string> = { ...assessResult.passThroughVars };
+    fillUnresolvedSingleVar(request.step, extracted, request.context.output);
+    writeBackPassThroughVars(extracted, request.step, request.passThroughVars);
     await request.onPersist?.(executedStep);
+  }
+}
+
+/** 单变量提取回退：AI 未提取且步骤仅声明一个未解析变量、输出非空时用输出文本。 */
+function fillUnresolvedSingleVar(
+  step: WorkflowStep,
+  extracted: Record<string, string>,
+  output: string | undefined,
+): void {
+  if (Object.keys(extracted).length > 0) return;
+  const unresolved = (step.passThroughVars ?? []).filter(variable => /\$\{[^}]+\}/.test(variable.value));
+  if (unresolved.length === 1 && output !== undefined && output.trim() !== '') {
+    extracted[unresolved[0]!.name] = output;
   }
 }

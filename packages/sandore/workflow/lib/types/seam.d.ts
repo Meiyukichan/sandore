@@ -38,7 +38,6 @@ declare module '@deepseek-ai/dsh-session/types' {
         'sandore/start': {
             taskId: string;
             workflowId: string;
-            jobId: string;
         };
         'sandore/stage-start': {
             taskId: string;
@@ -96,7 +95,6 @@ declare module '@deepseek-ai/dsh-session/types' {
         };
         'sandore/end': {
             taskId: string;
-            jobId: string;
             result: DagResultInfo;
         };
         'sandore/aborted': {

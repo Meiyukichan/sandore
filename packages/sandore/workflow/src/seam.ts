@@ -50,7 +50,7 @@ declare module '@deepseek-ai/cordis' {
 
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
-    'sandore/start': { taskId: string; workflowId: string; jobId: string };
+    'sandore/start': { taskId: string; workflowId: string };
     'sandore/stage-start': { taskId: string; stageId: string };
     'sandore/stage-completed': { taskId: string; stageId: string; stageContract: StageContract };
     'sandore/step-start': { stepId: string; childId: string; name: string; loopIteration?: number[] };
@@ -61,7 +61,7 @@ declare module '@deepseek-ai/dsh-session/types' {
     'sandore/step-retried': { stepId: string; mode: string; name: string; loopIteration?: number[] };
     'sandore/question': { question: PendingQuestionEntry };
     'sandore/permission': { permission: PendingPermissionEntry };
-    'sandore/end': { taskId: string; jobId: string; result: DagResultInfo };
+    'sandore/end': { taskId: string; result: DagResultInfo };
     'sandore/aborted': { taskId: string };
   }
 }

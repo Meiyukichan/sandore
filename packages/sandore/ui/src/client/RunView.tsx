@@ -1,16 +1,18 @@
 /**
- * RunView：执行态三栏视图（树形导航 + 统一时间线/输入区 + 文件预览）。
+ * RunView：执行态视图（树形导航 + 执行详情页）。
+ *
+ * 执行详情按 `docs/design/execution-detail-prototype.html` 原型实现：
+ * multica Issue 页面骨架（面包屑 header + 固定 head + 滚动 feed + 底部 composer）×
+ * DSH 多 agent 对话流（用户右气泡 + agent 左流式）× DSH composer 接管面板
+ * （权限申请 ApprovalPanel / 问题选择 QuestionComposer）。
  *
  * 数据源 = `getInstanceState` 轮询（运行中 5s，终态停）+ `getArtifacts` 初始化；
- * 树与时间线由纯函数从状态派生。交互：header（暂停全部/恢复全部/中止/刷新/打开讨论）、
- * 树叶子 → 右栏预览、输入区状态驱动（running 暂停 / paused 恢复 / failed 重试）、
- * 待处理问答/权限卡片在时间线下方。Step「查看详情」/树行 ↗ 跳子代理会话。
+ * 对话流与 agent 消息由纯函数从状态派生。agent 标题点击 → `openSession(childId)`
+ * 打开 DSH 现成的子代理会话页（复用，不重复实现）；暂停/恢复/重试/中止集中在
+ * 底部 composer（接管面板期间隐藏）；权限/问答待办以 composer 接管面板呈现。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/RunView
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import {
-  Button, IconRefreshOutline16, IconStopFill16, Input, StateDot,
-} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { ArtifactEntry } from '@deepseek-ai/dsh-sandore-workflow/remote'
@@ -18,30 +20,23 @@ import type { PendingPermissionEntry, PendingQuestionEntry, WorkflowTaskState } 
 
 import { unwrap } from './remote.ts'
 import { describeError } from './describe-error.ts'
-import type { SandoreKey } from './locales.ts'
 import {
-  buildTimeline, buildRunTree, isBlank, isRunningStatus, isTerminalStatus, partitionInteractions,
-  runDotState, type DagRunStatus, type ExecutedStep, type RetryMode,
+  buildTimeline, buildRunTree, isRunningStatus, lastActiveSegmentsOf, partitionInteractions,
+  type AnswerItem, type DagRunStatus, type RetryMode,
 } from './run-view-model.ts'
 import { TreeNav, type TreeLeafSelection } from './TreeNav.tsx'
 import { UnifiedTimeline } from './UnifiedTimeline.tsx'
 import { DiscussionInput } from './DiscussionInput.tsx'
+import type { ModelDirectoryFace, ObservableFace, PermissionSelectValue } from './model-faces.ts'
 import { PreviewPanel } from './PreviewPanel.tsx'
 import { DragHandle } from './DragHandle.tsx'
 import {
-  getWorkflowState, resizePreviewWidth, resizeTreeWidth, setWorkflowState, subscribeWorkflowState,
+  getWorkflowState, resizePreviewWidth, setWorkflowState, subscribeWorkflowState,
 } from './workflow-store.ts'
 import css from './RunView.module.css'
 
 /** 轮询间隔（毫秒）。 */
 const POLL_INTERVAL_MS = 5000
-
-/** replyQuestion 单个问题的回答（对齐 Host 的 `AskUserQuestionAnswerItem`）。 */
-interface AnswerItem {
-  readonly id: string
-  readonly selected: readonly string[]
-  readonly custom?: string
-}
 
 /** RunView 所需的最小 `ctx.remote.sandore` 访问面。 */
 export interface RunViewRemote {
@@ -63,10 +58,18 @@ export interface RunViewProps {
   t: TranslateNS<'sandore'>
   /** 目标工作流实例 id（宿主 Session id == instanceId）。 */
   instanceId: string
-  /** 跳会话回调（Step 详情/树行 → 子代理会话；打开讨论 → 宿主会话）。 */
+  /** 跳会话回调（agent 标题 → DSH 现成子代理会话页）。 */
   openSession(id: string): void
   /** `ctx.remote.sandore` 的最小 RPC 访问面（返回 `RemoteResult`，经 `unwrap` 解包）。 */
   remote: RunViewRemote
+  /** 某会话的共享模型目录（复用 DSH `ctx.modelDirectories`）。 */
+  modelDirectory(sessionId: string): ModelDirectoryFace
+  /** 某会话的权限投影（`projections.permissions`）。 */
+  permissions(sessionId: string): ObservableFace<PermissionSelectValue | undefined>
+  /** 对某会话执行一行命令（`/permission <id>`）。 */
+  runCommand(sessionId: string, line: string): Promise<boolean>
+  /** 权限投影缺失回退：经 `/permission`（无参）查询。 */
+  queryPermission(sessionId: string): Promise<PermissionSelectValue | undefined>
 }
 
 /** 数据加载状态（状态快照 + 产物，或加载中/错误）。 */
@@ -81,145 +84,11 @@ type ActionState =
   | { readonly kind: 'pending' }
   | { readonly kind: 'error'; readonly message: string }
 
-/** 实例生命周期状态 → 本地化标签键。 */
-const RUN_STATUS_KEYS: Record<DagRunStatus, SandoreKey> = {
-  pending: 'run.status.pending',
-  running: 'run.status.running',
-  interacting: 'run.status.interacting',
-  completed: 'run.status.completed',
-  failed: 'run.status.failed',
-  aborted: 'run.status.aborted',
-  paused: 'run.status.paused',
-}
-
-/** 单个待答问题条目：渲染各问题的选项（单选/多选）或自由文本输入，提交经 onReply。 */
-function QuestionCard({ entry, t, pending, onReply }: {
-  readonly entry: PendingQuestionEntry
-  readonly t: TranslateNS<'sandore'>
-  readonly pending: boolean
-  readonly onReply: (requestId: string, answers: AnswerItem[]) => void
-}) {
-  const questions = entry.payload.questions
-  const [selections, setSelections] = useState<Readonly<Record<string, readonly string[]>>>({})
-  const [customs, setCustoms] = useState<Readonly<Record<string, string>>>({})
-
-  const answered = questions.every(question => {
-    if (question.options !== undefined && question.options.length > 0) {
-      return (selections[question.id] ?? []).length > 0
-    }
-    return !isBlank(customs[question.id] ?? '')
-  })
-
-  const toggleOption = (questionId: string, label: string, multi: boolean): void => {
-    setSelections(current => {
-      const selected = current[questionId] ?? []
-      const next = multi
-        ? (selected.includes(label) ? selected.filter(item => item !== label) : [...selected, label])
-        : [label]
-      return { ...current, [questionId]: next }
-    })
-  }
-
-  const submit = (): void => {
-    const answers = questions.map(question => {
-      if (question.options !== undefined && question.options.length > 0) {
-        return { id: question.id, selected: [...(selections[question.id] ?? [])] }
-      }
-      const custom = customs[question.id] ?? ''
-      return { id: question.id, selected: [], ...(custom === '' ? {} : { custom }) }
-    })
-    onReply(entry.requestId, answers)
-  }
-
-  return (
-    <div className={css.card}>
-      {questions.map(question => (
-        <div key={question.id} className={css.question}>
-          {question.header !== undefined && <span className={css.questionHeader}>{question.header}</span>}
-          <span className={css.questionText}>{question.question}</span>
-          {question.options !== undefined && question.options.length > 0 ? (
-            <div className={css.options} role="group">
-              {question.options.map(option => {
-                const checked = (selections[question.id] ?? []).includes(option.label)
-                return (
-                  <label key={option.label} className={css.option}>
-                    <input
-                      type={question.multi_select === true ? 'checkbox' : 'radio'}
-                      name={question.id}
-                      checked={checked}
-                      onChange={() => { toggleOption(question.id, option.label, question.multi_select === true) }}
-                    />
-                    <span className={css.optionLabel}>{option.label}</span>
-                    {option.description !== undefined && <span className={css.optionDesc}>{option.description}</span>}
-                  </label>
-                )
-              })}
-            </div>
-          ) : (
-            <Input
-              value={customs[question.id] ?? ''}
-              onChange={event => { setCustoms(current => ({ ...current, [question.id]: event.target.value })) }}
-              placeholder={t('run.question.placeholder')}
-            />
-          )}
-        </div>
-      ))}
-      <Button size="sm" variant="primary" disabled={!answered || pending} onClick={submit}>
-        {t('run.question.submit')}
-      </Button>
-    </div>
-  )
-}
-
-/** 单个待批权限条目：展示权限/工具/路径模式，应答经 onReply（once/always/reject）。 */
-function PermissionCard({ entry, t, pending, onReply }: {
-  readonly entry: PendingPermissionEntry
-  readonly t: TranslateNS<'sandore'>
-  readonly pending: boolean
-  readonly onReply: (requestId: string, reply: 'once' | 'always' | 'reject') => void
-}) {
-  return (
-    <div className={css.card}>
-      <div className={css.cardHead}>
-        <span className={css.cardTitle}>{t('run.permission.title')}</span>
-      </div>
-      <div className={css.metaRow}>
-        <span className={css.metaLabel}>{t('run.permission.patterns')}</span>
-        <span>{entry.payload.permission}</span>
-      </div>
-      {entry.payload.tool !== undefined && (
-        <div className={css.metaRow}>
-          <span className={css.metaLabel}>{t('run.permission.tool')}</span>
-          <span>{entry.payload.tool}</span>
-        </div>
-      )}
-      {entry.payload.patterns !== undefined && entry.payload.patterns.length > 0 && (
-        <div className={css.metaRow}>
-          <span className={css.metaLabel}>{t('run.permission.patterns')}</span>
-          <span>{entry.payload.patterns.join(', ')}</span>
-        </div>
-      )}
-      <div className={css.permissionActions}>
-        <Button size="sm" variant="primary" disabled={pending} onClick={() => { onReply(entry.requestId, 'once') }}>
-          {t('run.permission.once')}
-        </Button>
-        <Button size="sm" variant="outline" disabled={pending} onClick={() => { onReply(entry.requestId, 'always') }}>
-          {t('run.permission.always')}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={pending} onClick={() => { onReply(entry.requestId, 'reject') }}>
-          {t('run.permission.reject')}
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** 渲染 RunView（三栏）。 */
-export function RunView({ t, instanceId, openSession, remote }: RunViewProps) {
+/** 渲染 RunView（树形导航 + 执行详情页）。 */
+export function RunView({ t, instanceId, openSession, remote, modelDirectory, permissions: sessionPermissionsOf, runCommand, queryPermission }: RunViewProps) {
   const [loadState, setLoadState] = useState<RunLoadState>({ kind: 'loading' })
   const [actionState, setActionState] = useState<ActionState>({ kind: 'idle' })
 
-  const treeWidth = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().treeWidth)
   const previewWidth = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().previewWidth)
   const preview = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().preview)
 
@@ -299,6 +168,13 @@ export function RunView({ t, instanceId, openSession, remote }: RunViewProps) {
     ? { questions: [], permissions: [] }
     : partitionInteractions(state.pendingInteractions)
 
+  // 「N 个正在工作」：已开始且未结束的 Step（running/interacting/paused）。
+  const workingCount = state === undefined
+    ? 0
+    : state.executedSteps.filter(step =>
+        step.status === 'running' || step.status === 'interacting' || step.status === 'paused',
+      ).length
+
   const selectLeaf = (selection: TreeLeafSelection): void => {
     setWorkflowState({ preview: selection })
   }
@@ -309,10 +185,39 @@ export function RunView({ t, instanceId, openSession, remote }: RunViewProps) {
 
   const pending = actionState.kind === 'pending'
 
+  // 会话权限投影面（绑定当前实例会话，供 composer 权限选择器订阅）。
+  const permissionsFace = useMemo(
+    () => sessionPermissionsOf(instanceId),
+    [sessionPermissionsOf, instanceId],
+  )
+
+  const workflowName = state?.workflowName ?? state?.workflowId ?? ''
+  const rawInput = state?.originalInput ?? ''
+
   return (
     <section className={css.runView} aria-label={t('run.title')} data-sandore-run-view>
-      <div className={css.columns}>
-        <aside style={{ width: treeWidth }} className={css.treeCol}>
+      {/* 顶部标题栏（横跨全宽）：面包屑 + agent 工作数 chip。 */}
+      <header className={css.pageHeader}>
+        <nav className={css.crumb}>
+          <span className={css.seg}><span className={css.crumbItem}>{workflowName}</span></span>
+          <span className={css.sep} aria-hidden>/</span>
+          <span className={css.seg}>
+            <span className={`${css.crumbItem} ${css.crumbCurrent}`} title={rawInput}>{rawInput}</span>
+          </span>
+        </nav>
+        <div className={css.headerActions}>
+          {state !== undefined && workingCount > 0 && (
+            <span className={css.agentChip}>
+              <span className={css.agentDot} aria-hidden />
+              {t('run.workingAgents', { count: workingCount })}
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* 左右分栏（无分割线）：左 = 工作流导航，右 = 对话消息列表。 */}
+      <div className={css.detailSplit}>
+        <div className={css.navCol}>
           <TreeNav
             t={t}
             tree={tree}
@@ -320,61 +225,49 @@ export function RunView({ t, instanceId, openSession, remote }: RunViewProps) {
             onSelectLeaf={selectLeaf}
             onOpenChild={openSession}
           />
-        </aside>
-        {/* 树与执行详情之间的可拉伸分隔条已按需求去掉。 */}
-        <div className={css.mainCol}>
-          <header className={css.header}>
-            <span className={css.title}>{t('run.title')}</span>
-            {state !== undefined && (
-              <span className={css.statusBadge}>
-                <StateDot state={runDotState(state.status)} />
-                <span>{t(RUN_STATUS_KEYS[state.status])}</span>
-              </span>
-            )}
-            <span className={css.spacer} />
-            {state !== undefined && isRunningStatus(state.status) && (
-              <Button size="sm" variant="ghost" disabled={pending} onClick={pauseAll}>{t('run.pauseAll')}</Button>
-            )}
-            {state !== undefined && state.status === 'paused' && (
-              <Button size="sm" variant="ghost" disabled={pending} onClick={() => { resumeAll('') }}>{t('run.resumeAll')}</Button>
-            )}
-            {state !== undefined && !isTerminalStatus(state.status) && (
-              <Button size="sm" variant="ghost" icon={<IconStopFill16 />} disabled={pending} onClick={abort} aria-label={t('run.abort')} />
-            )}
-            <Button size="sm" variant="ghost" icon={<IconRefreshOutline16 />} onClick={() => { void refreshAndSchedule() }} aria-label={t('run.refresh')} />
-            <Button size="sm" variant="outline" onClick={() => { openSession(instanceId) }}>{t('run.discuss')}</Button>
-          </header>
+        </div>
 
-          {loadState.kind === 'loading' && <p className={css.loading}>{t('run.loading')}</p>}
-          {loadState.kind === 'error' && <p className={css.error} role="alert">{t('run.error', { message: loadState.message })}</p>}
-          {actionState.kind === 'error' && <p className={css.error} role="alert">{actionState.message}</p>}
+        <div className={css.feedCol}>
+          {/* 消息滚动区（独立滚动）。 */}
+          <div className={css.feedScroll}>
+            <div className={css.column}>
+              {loadState.kind === 'loading' && <p className={css.loading}>{t('run.loading')}</p>}
+              {loadState.kind === 'error' && <p className={css.error} role="alert">{t('run.error', { message: loadState.message })}</p>}
+              {actionState.kind === 'error' && <p className={css.error} role="alert">{actionState.message}</p>}
 
-          {loadState.kind === 'ready' && state !== undefined && (
-            <>
-              <UnifiedTimeline t={t} items={timeline} openSession={openSession} />
-              {(questions.length > 0 || permissions.length > 0) && (
-                <div className={css.interactions}>
-                  {questions.map(entry => (
-                    <QuestionCard key={entry.id} entry={entry} t={t} pending={pending} onReply={replyQuestion} />
-                  ))}
-                  {permissions.map(entry => (
-                    <PermissionCard key={entry.id} entry={entry} t={t} pending={pending} onReply={replyPermission} />
-                  ))}
-                </div>
+              {loadState.kind === 'ready' && state !== undefined && (
+                <UnifiedTimeline t={t} items={timeline} openSession={openSession} />
               )}
+            </div>
+          </div>
+
+          {/* 输入框：固定在对话列最底部（照 DSH 主会话输入框位置），与消息区隔离。 */}
+          {loadState.kind === 'ready' && state !== undefined && (
+            <div className={css.composerWrap}>
               <DiscussionInput
                 t={t}
                 status={state.status}
-                steps={state.executedSteps}
+                steps={lastActiveSegmentsOf(state.executedSteps)}
+                questions={questions}
+                permissions={permissions}
                 pending={pending}
                 onPauseAll={pauseAll}
                 onResumeAll={resumeAll}
                 onResumeStep={resumeStep}
                 onRetryStep={retryStep}
+                onReplyQuestion={replyQuestion}
+                onReplyPermission={replyPermission}
+                onAbort={abort}
+                instanceId={instanceId}
+                modelDirectory={modelDirectory}
+                sessionPermissions={permissionsFace}
+                runCommand={runCommand}
+                queryPermission={() => queryPermission(instanceId)}
               />
-            </>
+            </div>
           )}
         </div>
+
         {preview !== null && (
           <>
             <DragHandle side="preview" className={css.dragHandle} onDrag={resizePreviewWidth} />

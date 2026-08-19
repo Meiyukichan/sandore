@@ -21,11 +21,10 @@ import {
   buildShellEnv,
   resolvePassThroughVars,
   resolveProviderModel as resolveModelRoute,
-  splitCommand,
   textSummary,
 } from './internal.ts';
 import type { CommandConfig, DagBranch } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
-import type { ShellExecRequest, ShellRunResult, SubprocessSpawnSpec } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
+import type { ShellExecRequest, ShellRunResult } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
 
 /** shell 命令变体。 */
 type ShellCommand = Extract<CommandConfig, { type: 'shell' }>;
@@ -310,58 +309,19 @@ export class BranchEvaluator {
     options: BranchEvalOptions,
     env: Record<string, string> | undefined,
   ): Promise<string> {
-    if (options.stdin === undefined && env === undefined) {
-      return await this.runShellSimple(command, options);
-    }
-    return await this.runShellSubprocess(command, options, env);
-  }
-
-  private async runShellSimple(command: string, options: BranchEvalOptions): Promise<string> {
+    // 统一经 `ctx.shell`（平台 shell 解释器）执行：env/stdin 由 ShellExecRequest
+    // 携带。不要用 `ctx.subprocess.spawn` 直接执行——subprocess 不做 shell 解释，
+    // PowerShell cmdlet 等内建命令不是可执行文件，条件命令会失败。
     const request: ShellExecRequest = {
       command,
       timeoutMs: this.config.defaultTimeoutMs,
       ...(options.workdir === undefined ? {} : { workdir: options.workdir }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+      ...(env === undefined ? {} : { env }),
     };
     const spec = this.ctx.shell.resolve(request);
     const result = await this.ctx.shell.run(spec);
-    return this.toStdout(result);
-  }
-
-  private async runShellSubprocess(
-    command: string,
-    options: BranchEvalOptions,
-    env: Record<string, string> | undefined,
-  ): Promise<string> {
-    const tokens = splitCommand(command);
-    const program = tokens[0] ?? command;
-    const args = tokens.slice(1);
-    const executable = await this.ctx.subprocess.resolveExecutable(program, env, options.signal);
-    const spec: SubprocessSpawnSpec = {
-      argv: [executable, ...args],
-      cwd: options.workdir ?? '',
-      stdio: {
-        stdin: options.stdin === undefined ? 'ignore' : { data: options.stdin },
-        stdout: { maxBytes: 1024 * 1024 },
-        stderr: { maxBytes: 1024 * 1024 },
-      },
-      graceMs: this.config.defaultTimeoutMs,
-      ...(env === undefined ? {} : { env }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    };
-    const handle = this.ctx.subprocess.spawn(spec);
-    const outcome = await handle.done;
-    const stdout = handle.collected.stdout?.readFrom(0);
-    const stderr = handle.collected.stderr?.readFrom(0);
-    const result: ShellRunResult = {
-      exitCode: outcome.exitCode,
-      signal: outcome.signal,
-      timedOut: outcome.timedOut ?? false,
-      aborted: options.signal?.aborted ?? false,
-      timeoutMs: this.config.defaultTimeoutMs,
-      stdout: { text: stdout?.text ?? '', truncated: stdout?.lossy ?? false },
-      stderr: { text: stderr?.text ?? '', truncated: stderr?.lossy ?? false },
-    };
     return this.toStdout(result);
   }
 

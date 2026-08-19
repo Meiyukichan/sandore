@@ -20,6 +20,12 @@ export type ExecutedStep = WorkflowTaskState['executedSteps'][number];
 export type StageInfo = WorkflowTaskState['stageInfos'][number];
 /** 重试模式（对齐 `retryStep` 入参 `mode` 的 zod 枚举）。 */
 export type RetryMode = 'continue' | 'revert' | 'fork';
+/** replyQuestion 单个问题的回答（对齐 Host 的 `AskUserQuestionAnswerItem`）。 */
+export interface AnswerItem {
+    readonly id: string;
+    readonly selected: readonly string[];
+    readonly custom?: string;
+}
 /** 三种重试模式（供重试表单下拉/选项渲染）。 */
 export declare const RETRY_MODES: readonly RetryMode[];
 /**
@@ -59,6 +65,9 @@ export interface PendingInteractionPartition {
 }
 /**
  * 按 `kind` 把 `pendingInteractions` 分为问答与权限两组。
+ *
+ * 探索修正（2026-08）：仅取 `status === 'pending'` 的条目——后端已只持久化 pending，
+ * 此处过滤是防御旧快照（含 replied/rejected 全量历史时避免讨论页复弹接管面板）。
  * @param interactions - 实例的 pending 交互列表。
  * @returns 问答与权限两个分组。
  */
@@ -110,6 +119,15 @@ export interface RunTreeNode {
     readonly text?: string | undefined;
     readonly children?: readonly RunTreeNode[] | undefined;
 }
+/** agent 内嵌消息框的展示行（who + 正文 + 类型）。 */
+export interface ChatLine {
+    /** 行归属（`{stepName} · agent` / `{stepName} · tool`）。 */
+    readonly who: string;
+    /** 行正文（pre-wrap）。 */
+    readonly text: string;
+    /** assistant 正文行 / tool mono 行。 */
+    readonly kind: 'assistant' | 'tool';
+}
 /** 统一时间线的 Step 卡片项。 */
 export interface TimelineStepItem {
     readonly kind: 'step';
@@ -118,21 +136,67 @@ export interface TimelineStepItem {
     readonly status: StepStatus;
     /** 循环迭代标签（如 `#1.2`）。 */
     readonly loopLabel?: string | undefined;
+    /** 段开始时间（ISO，createdAt 优先回退 updatedAt/startedAt；旧实例可能缺）。 */
+    readonly time?: string | undefined;
     /** completed 态输出文本（text 块拼接）。 */
     readonly outputText?: string | undefined;
     /** failed 态错误详情。 */
     readonly error?: string | undefined;
     /** 子代理会话 id（跳「查看详情」）。 */
     readonly childId?: string | undefined;
+    /** 是否合成会话（shell/prompt 无真实子代理，标题不可点击跳子代理页）。 */
+    readonly synthetic?: boolean | undefined;
+    /** sessionMessages 展示行（内嵌消息框 / 失败·暂停最近 N 条）。 */
+    readonly messages?: readonly ChatLine[] | undefined;
     readonly visitCount: number;
+    /** 执行段序号（同 stepId 第几次执行段；0-based，缺省 0 = 首次执行）。 */
+    readonly attemptIndex?: number | undefined;
+    /** 暂停定格时间（paused 段展示暂停提示时用）。 */
+    readonly pausedAt?: string | undefined;
 }
 /** 统一时间线的用户气泡项。 */
 export interface TimelineUserItem {
     readonly kind: 'user';
     readonly content: string;
+    /** 消息时间（ISO，createdAt）。 */
+    readonly time: string;
+    /** 消息种类（input/resume/retry/answer；旧实例可能缺，回退 input 语义）。 */
+    readonly messageKind?: string | undefined;
+    /** 目标：'broadcast' 或 Step 定义 id（定点）；input 时为 ''。 */
+    readonly target?: string | undefined;
 }
 /** 统一时间线条目（Step 卡片 / 用户气泡，按时间顺序）。 */
 export type TimelineItem = TimelineStepItem | TimelineUserItem;
+/** 相对时间展示结果（由组件用字典文案渲染）。 */
+export type RelativeTime = {
+    readonly kind: 'justNow';
+} | {
+    readonly kind: 'minutes';
+    readonly count: number;
+} | {
+    readonly kind: 'hours';
+    readonly count: number;
+} | {
+    readonly kind: 'days';
+    readonly count: number;
+} | {
+    readonly kind: 'date';
+    readonly text: string;
+};
+/**
+ * 计算相对时间（ISO → 刚刚 / N 分钟前 / N 小时前 / N 天前；跨 7 天回退短日期）。
+ * @param iso - 目标时间（ISO 串），undefined 返回 undefined。
+ * @param nowIso - 基准「现在」（ISO 串）。
+ * @returns 相对时间结果或 undefined。
+ */
+export declare function relativeTimeOf(iso: string | undefined, nowIso: string): RelativeTime | undefined;
+/**
+ * 把 step 的 sessionMessages 派生为展示行（agent 内嵌消息框 / 失败列表用）。
+ * tool 消息 → `┌ tool\n└ 输出摘要`（mono 行）；text/reasoning → 正文行。
+ * @param step - 已执行 Step 快照。
+ * @returns 展示行列表；无消息返回 undefined。
+ */
+export declare function chatLinesOf(step: ExecutedStep): ChatLine[] | undefined;
 /**
  * 把 `output: ContentBlock[]` 的 text 块拼接为纯文本（无 text 块返回 undefined）。
  * @param output - Step 执行输出块（引擎在 step-completed 事件/快照中内联）。
@@ -152,11 +216,26 @@ export declare function loopLabelOf(loopIteration: readonly number[] | undefined
  */
 export declare function buildRunTree(state: WorkflowTaskState): RunTreeNode[];
 /**
- * 从 `WorkflowTaskState` 构建统一时间线：初始输入 user 气泡 + 各 executedStep 卡片
- * （按执行顺序）。running 卡无实时消息流（引擎不写 sessionMessages、无 step-message
- * 事件），body 按状态展示输出文本 / 错误 / 运行中占位。
+ * 段模型下按「最后活跃段」聚合 Step 列表（DiscussionInput @Step 定点恢复用）。
+ *
+ * 同 stepId 多次执行段（暂停续跑/重试/ask 续问）只保留 attemptIndex 最大的段，
+ * 避免 @Step 选择器重复展示同一 Step 的多个执行段。
+ * @param steps - 实例的 executedSteps（可能含同 stepId 多段）。
+ * @returns 按 stepId 去重后的 Step 快照列表（取最后活跃段；非子代理 Step 原样保留）。
+ */
+export declare function lastActiveSegmentsOf(steps: readonly ExecutedStep[]): ExecutedStep[];
+/**
+ * 从 `WorkflowTaskState` 构建统一时间线（段模型 + 用户消息统一排序）。
+ *
+ * 三路来源严格按 `createdAt` 排序合并：
+ * 1. `userMessages`（input/resume/retry/answer，含原始需求——初始 input 消息
+ *    由引擎 makeInitialState 写入，前端不再单独拼 `state.originalInput` 气泡）
+ * 2. executedSteps 各**执行段**（`createdAt` 为段开始时间；同 stepId 多次执行段
+ *    各自成卡，`attemptIndex` 标注第几次）
+ * 3. running 卡无实时消息流（引擎不写 sessionMessages、无 step-message 事件），
+ *    body 按状态展示输出文本 / 错误 / 运行中占位。
  * @param state - 实例状态快照。
- * @returns 时间线条目列表。
+ * @returns 时间线条目列表（按 createdAt 升序）。
  */
 export declare function buildTimeline(state: WorkflowTaskState): TimelineItem[];
 //# sourceMappingURL=run-view-model.d.ts.map

@@ -9,21 +9,18 @@
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 
 import {
-  JobRecordSchema,
   WorkflowDefinitionRecordSchema,
   WorkflowTaskStateSchema,
-  type JobRecord,
   type WorkflowDefinitionRecord,
   type WorkflowTaskState,
 } from './schema.ts'
 
-/** sandore 存储域声明：三表 `definitions`/`jobs`/`state`，Zod 校验每一条记录。 */
+/** sandore 存储域声明：两表 `definitions`/`state`，Zod 校验每一条记录（去 job 概念）。 */
 export const sandoreDomainSpec = defineDomain({
   name: 'sandore',
   version: 1,
   tables: {
     definitions: domainTable<string, WorkflowDefinitionRecord>(WorkflowDefinitionRecordSchema),
-    jobs: domainTable<string, JobRecord>(JobRecordSchema),
     state: domainTable<string, WorkflowTaskState>(WorkflowTaskStateSchema),
   },
 })

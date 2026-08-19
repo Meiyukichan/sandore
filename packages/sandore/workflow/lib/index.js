@@ -8,7 +8,6 @@ import { BranchEvaluator, matchesExpectation } from "@deepseek-ai/dsh-sandore-mi
 import { LoopManager } from "@deepseek-ai/dsh-sandore-microflow/src/loop-manager";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { createSandoreTools } from "@deepseek-ai/dsh-sandore-tool/src/index";
 import { FinalizeManager } from "@deepseek-ai/dsh-sandore-microflow/src/finalize-manager";
 import { StageExecutor } from "@deepseek-ai/dsh-sandore-microflow/src/stage-executor";
 //#region src/yaml-error.ts
@@ -367,9 +366,25 @@ const RetryRecordSchema = z.object({
 		"failed"
 	])
 });
+/** 用户在执行过程中的消息（原始需求 / 恢复 / 重试，统一时间轴渲染）。 */
+const UserMessageRecordSchema = z.object({
+	id: z.string(),
+	/** 消息种类：input=原始需求 / resume=继续消息 / retry=重试消息 / answer=ask 回答。 */
+	kind: z.enum([
+		"input",
+		"resume",
+		"retry",
+		"answer"
+	]),
+	/** 目标：'broadcast'（广播）或 Step 定义 id（定点）；input 时为 ''。 */
+	target: z.string(),
+	/** 用户消息文本。 */
+	content: z.string(),
+	/** 消息时间（ISO；统一时间轴排序键）。 */
+	createdAt: z.string()
+});
 /** 已执行 Step 的默认实现快照。 */
 const ExecutedStepDefaultSchema = z.object({
-	type: z.literal("default"),
 	id: z.string(),
 	stepId: z.string().optional(),
 	stageId: z.string(),
@@ -382,11 +397,17 @@ const ExecutedStepDefaultSchema = z.object({
 	sessionMeta: StepSessionMetaSchema.optional(),
 	finalizeMeta: FinalizeMetaSchema.optional(),
 	visitCount: z.number(),
+	/** 本执行段开始时间（ISO；统一时间轴排序键，替代对 startedAt 的可选依赖）。 */
+	createdAt: z.string().optional(),
+	/** 执行段序号（同 stepId 第几次执行段；0-based，缺省 0 = 首次执行）。 */
+	attemptIndex: z.number().int().nonnegative().optional(),
+	/** Step 开始执行的时间（ISO；引擎写入，供 UI 展示相对时间）。 */
+	startedAt: z.string().optional(),
+	/** Step 最近一次状态变更的时间（ISO；running 后每次转态更新，供 UI 展示相对时间）。 */
+	updatedAt: z.string().optional(),
 	branchMeta: BranchMetaSchema.optional(),
 	error: z.string().optional(),
 	pausedAt: z.string().optional(),
-	resumedAt: z.string().optional(),
-	resumePrompt: z.string().optional(),
 	sessionMessages: z.array(SessionMessageSchema).optional(),
 	pauseEntryId: z.string().optional(),
 	loopIteration: z.array(z.number()).optional(),
@@ -420,10 +441,21 @@ const StageContractSchema = z.object({
 /** 工作流实例的持久化状态快照（存储域 `state` 表 value）。 */
 const WorkflowTaskStateSchema = z.object({
 	taskId: z.string(),
-	jobId: z.string(),
+	/** 兼容旧版 job 关联（去 job 概念后新实例不写；旧快照保留以通过校验）。 */
+	jobId: z.string().optional(),
 	workflowId: z.string(),
 	/** 工作流名称（启动时从定义写入；持久化快照携带，供 UI 树标题展示）。 */
 	workflowName: z.string().optional(),
+	/** 工作流描述（启动时从定义写入；供执行详情 head 展示，旧实例可能缺）。 */
+	description: z.string().optional(),
+	/** 创建实例时选择的模型（弹窗传入；作为该实例的 L2 默认模型路由）。 */
+	modelSelection: z.object({
+		provider: z.string(),
+		model: z.string(),
+		reasoningEffort: z.string().optional()
+	}).optional(),
+	/** 创建实例时选择的权限预设（read-only / workspace-write / danger-full-access）。 */
+	permission: z.string().optional(),
 	cwd: z.string(),
 	status: DagRunStatusSchema,
 	originalInput: z.string(),
@@ -438,6 +470,8 @@ const WorkflowTaskStateSchema = z.object({
 	activeLoopNodeId: z.string().nullable(),
 	activeLoopStack: z.array(z.string()),
 	pausedChildIds: z.array(z.string()),
+	/** 用户指令消息（恢复/重试；统一时间轴渲染，初始需求由 originalInput 承载）。 */
+	userMessages: z.array(UserMessageRecordSchema).optional(),
 	stageContracts: z.record(z.string(), StageContractSchema),
 	createdAt: z.string(),
 	updatedAt: z.string()
@@ -451,14 +485,6 @@ const WorkflowDefinitionRecordSchema = z.object({
 	createdAt: z.string(),
 	updatedAt: z.string()
 });
-/** Job 记录（`jobs` 表 value）。 */
-const JobRecordSchema = z.object({
-	name: z.string(),
-	workflowId: z.string(),
-	cwd: z.string().optional(),
-	createdAt: z.string(),
-	updatedAt: z.string()
-});
 //#endregion
 //#region src/domain.ts
 /**
@@ -469,13 +495,12 @@ const JobRecordSchema = z.object({
 * 在浏览器侧安全导入。定义/Job/状态三表的 value schema 仍来自 `./schema.ts`（纯 zod）。
 * @module @deepseek-ai/dsh-sandore-workflow/src/domain
 */
-/** sandore 存储域声明：三表 `definitions`/`jobs`/`state`，Zod 校验每一条记录。 */
+/** sandore 存储域声明：两表 `definitions`/`state`，Zod 校验每一条记录（去 job 概念）。 */
 const sandoreDomainSpec = defineDomain({
 	name: "sandore",
 	version: 1,
 	tables: {
 		definitions: domainTable(WorkflowDefinitionRecordSchema),
-		jobs: domainTable(JobRecordSchema),
 		state: domainTable(WorkflowTaskStateSchema)
 	}
 });
@@ -1033,24 +1058,19 @@ const UpdateDefinitionInputSchema = z.object({
 	version: z.string().optional(),
 	description: z.string().optional()
 });
-/** `createJob` 入参。 */
-const CreateJobInputSchema = z.object({
-	name: z.string(),
-	workflowId: z.string(),
-	cwd: z.string().optional()
+/** 创建实例时选择的模型（对齐 DSH `ModelSelection`）。 */
+const StartModelSelectionSchema = z.object({
+	provider: z.string(),
+	model: z.string(),
+	reasoningEffort: z.string().optional()
 });
-/** `listJobs` 入参：可选按 workflowId 过滤（RPC 面统一对象入参，避免可选参数退化）。 */
-const ListJobsInputSchema = z.object({ workflowId: z.string().optional() });
-/** `updateJob` 入参。 */
-const UpdateJobInputSchema = z.object({
-	name: z.string().optional(),
-	cwd: z.string().optional()
-});
-/** `startInstance` 入参。 */
+/** `startInstance` 入参（去 job 概念：直接绑定工作流定义 + 工作目录 + 模型/权限）。 */
 const StartInstanceInputSchema = z.object({
-	jobId: z.string(),
+	workflowId: z.string(),
 	originalInput: z.string(),
-	cwd: z.string().optional()
+	cwd: z.string().optional(),
+	model: StartModelSelectionSchema.optional(),
+	permission: z.string().optional()
 });
 /** 单个问题回答的 zod 校验（对齐 DSH `AskUserQuestionAnswerItem`）。 */
 const AskUserQuestionAnswerItemSchema = z.object({
@@ -1169,11 +1189,6 @@ let SandoreRemote = (() => {
 	let _deleteDefinition_decorators;
 	let _getYaml_decorators;
 	let _updateYaml_decorators;
-	let _listJobs_decorators;
-	let _createJob_decorators;
-	let _getJob_decorators;
-	let _updateJob_decorators;
-	let _deleteJob_decorators;
 	let _listInstances_decorators;
 	let _startInstance_decorators;
 	let _deleteInstance_decorators;
@@ -1199,11 +1214,6 @@ let SandoreRemote = (() => {
 			_deleteDefinition_decorators = [Remote("deleteDefinition")];
 			_getYaml_decorators = [Remote("getYaml")];
 			_updateYaml_decorators = [Remote("updateYaml")];
-			_listJobs_decorators = [Remote("listJobs")];
-			_createJob_decorators = [Remote("createJob")];
-			_getJob_decorators = [Remote("getJob")];
-			_updateJob_decorators = [Remote("updateJob")];
-			_deleteJob_decorators = [Remote("deleteJob")];
 			_listInstances_decorators = [Remote("listInstances")];
 			_startInstance_decorators = [Remote("startInstance")];
 			_deleteInstance_decorators = [Remote("deleteInstance")];
@@ -1293,61 +1303,6 @@ let SandoreRemote = (() => {
 				access: {
 					has: (obj) => "updateYaml" in obj,
 					get: (obj) => obj.updateYaml
-				},
-				metadata: _metadata
-			}, null, _instanceExtraInitializers);
-			__esDecorate(this, null, _listJobs_decorators, {
-				kind: "method",
-				name: "listJobs",
-				static: false,
-				private: false,
-				access: {
-					has: (obj) => "listJobs" in obj,
-					get: (obj) => obj.listJobs
-				},
-				metadata: _metadata
-			}, null, _instanceExtraInitializers);
-			__esDecorate(this, null, _createJob_decorators, {
-				kind: "method",
-				name: "createJob",
-				static: false,
-				private: false,
-				access: {
-					has: (obj) => "createJob" in obj,
-					get: (obj) => obj.createJob
-				},
-				metadata: _metadata
-			}, null, _instanceExtraInitializers);
-			__esDecorate(this, null, _getJob_decorators, {
-				kind: "method",
-				name: "getJob",
-				static: false,
-				private: false,
-				access: {
-					has: (obj) => "getJob" in obj,
-					get: (obj) => obj.getJob
-				},
-				metadata: _metadata
-			}, null, _instanceExtraInitializers);
-			__esDecorate(this, null, _updateJob_decorators, {
-				kind: "method",
-				name: "updateJob",
-				static: false,
-				private: false,
-				access: {
-					has: (obj) => "updateJob" in obj,
-					get: (obj) => obj.updateJob
-				},
-				metadata: _metadata
-			}, null, _instanceExtraInitializers);
-			__esDecorate(this, null, _deleteJob_decorators, {
-				kind: "method",
-				name: "deleteJob",
-				static: false,
-				private: false,
-				access: {
-					has: (obj) => "deleteJob" in obj,
-					get: (obj) => obj.deleteJob
 				},
 				metadata: _metadata
 			}, null, _instanceExtraInitializers);
@@ -1623,89 +1578,29 @@ let SandoreRemote = (() => {
 				...next
 			};
 		}
-		/** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
-		listJobs(input) {
-			const parsed = ListJobsInputSchema.parse(input);
-			const entries = [];
-			for (const [id, record] of this.ctx.sandorePersistence.jobs.entries()) {
-				if (parsed.workflowId !== void 0 && record.workflowId !== parsed.workflowId) continue;
-				entries.push({
-					id,
-					...record
-				});
-			}
-			return entries;
-		}
-		/** 创建 Job：校验 workflowId 存在（否则抛 `INVALID_OPERATION`），自动生成 jobId。 */
-		async createJob(input) {
-			const parsed = CreateJobInputSchema.parse(input);
-			if (this.ctx.sandorePersistence.definitions.get(parsed.workflowId) === void 0) throw new SandoreError(`workflow '${parsed.workflowId}' does not exist`, "INVALID_OPERATION");
-			const id = `job-${globalThis.crypto.randomUUID()}`;
-			const now = (/* @__PURE__ */ new Date()).toISOString();
-			const record = {
-				name: parsed.name,
-				workflowId: parsed.workflowId,
-				...parsed.cwd === void 0 ? {} : { cwd: parsed.cwd },
-				createdAt: now,
-				updatedAt: now
-			};
-			await this.ctx.sandorePersistence.jobs.put(id, record);
-			return {
-				id,
-				...record
-			};
-		}
-		/** 按 id 读取单个 Job。 */
-		getJob(id) {
-			return this.requireJob(id);
-		}
-		/** 更新 Job 元数据（name/cwd），保留 workflowId。 */
-		async updateJob(id, input) {
-			const parsed = UpdateJobInputSchema.parse(input);
-			const existing = this.requireJob(id);
-			const now = (/* @__PURE__ */ new Date()).toISOString();
-			const cwd = parsed.cwd ?? existing.cwd;
-			const next = {
-				name: parsed.name ?? existing.name,
-				workflowId: existing.workflowId,
-				...cwd === void 0 ? {} : { cwd },
-				createdAt: existing.createdAt,
-				updatedAt: now
-			};
-			await this.ctx.sandorePersistence.jobs.put(id, next);
-			return {
-				id,
-				...next
-			};
-		}
-		/** 删除 Job（不级联删除实例）；重复删除幂等（返回 false）。 */
-		async deleteJob(id) {
-			return await this.ctx.sandorePersistence.jobs.delete(id);
-		}
-		/** 列出实例摘要（从 `state` 表派生），可选按 jobId 过滤。 */
-		listInstances(jobId) {
+		/** 列出实例摘要（从 `state` 表派生，去 job 概念）。 */
+		listInstances() {
 			const summaries = [];
-			for (const [instanceId, state] of this.ctx.sandorePersistence.state.entries()) {
-				if (jobId !== void 0 && state.jobId !== jobId) continue;
-				summaries.push({
-					instanceId,
-					jobId: state.jobId,
-					workflowId: state.workflowId,
-					status: state.status,
-					createdAt: state.createdAt,
-					updatedAt: state.updatedAt
-				});
-			}
+			for (const [instanceId, state] of this.ctx.sandorePersistence.state.entries()) summaries.push({
+				instanceId,
+				workflowId: state.workflowId,
+				originalInput: state.originalInput,
+				status: state.status,
+				createdAt: state.createdAt,
+				updatedAt: state.updatedAt
+			});
 			return summaries;
 		}
-		/** 启动实例：解析 Job 的 workflowId 后转发 `ctx.sandoreEngine.startInstance`。 */
+		/** 启动实例：校验定义存在后转发 `ctx.sandoreEngine.startInstance`（去 job 概念）。 */
 		async startInstance(input) {
 			const parsed = StartInstanceInputSchema.parse(input);
+			if (this.ctx.sandorePersistence.definitions.get(parsed.workflowId) === void 0) throw new SandoreError(`workflow '${parsed.workflowId}' does not exist`, "INVALID_OPERATION");
 			const request = {
-				workflowId: this.requireJob(parsed.jobId).workflowId,
-				jobId: parsed.jobId,
+				workflowId: parsed.workflowId,
 				originalInput: parsed.originalInput,
-				...parsed.cwd === void 0 ? {} : { cwd: parsed.cwd }
+				...parsed.cwd === void 0 ? {} : { cwd: parsed.cwd },
+				...parsed.model === void 0 ? {} : { model: parsed.model },
+				...parsed.permission === void 0 ? {} : { permission: parsed.permission }
 			};
 			return await this.ctx.sandoreEngine.startInstance(request);
 		}
@@ -1792,14 +1687,6 @@ let SandoreRemote = (() => {
 				...record
 			};
 		}
-		requireJob(id) {
-			const record = this.ctx.sandorePersistence.jobs.get(id);
-			if (record === void 0) throw new SandoreError(`job '${id}' not found`, "NODE_NOT_FOUND");
-			return {
-				id,
-				...record
-			};
-		}
 		requireInstanceState(instanceId) {
 			const state = this.ctx.sandorePersistence.state.get(instanceId);
 			if (state === void 0) throw new SandoreError(`instance '${instanceId}' not found`, "NODE_NOT_FOUND");
@@ -1809,34 +1696,20 @@ let SandoreRemote = (() => {
 })();
 //#endregion
 //#region src/host-agent.ts
-/** 编排器角色说明的 system prompt section 名。 */
-const HOST_SECTION_NAME = "sandore-host";
-/** 编排器角色说明的 system prompt section 顺序（工具指引用 100–199）。 */
-const HOST_SECTION_ORDER = 116;
-/** 编排器角色说明文本（含 completed 后自然降级语义）。 */
-const HOST_SECTION_TEXT = "你是 sandore 工作流编排器主代理：通过 sandore_* 工具编排工作流实例的执行、暂停/恢复、重试与状态查询。实例进入 completed 终态后，resume/retry/pause 类工具对已完成实例返回无害 no-op，getState 始终可用。";
 /**
 * 创建宿主主代理的 setup 回调（create 与 resume 共用，保证注册行为一致）。
 *
-* 返回的 `AgentSetup` 在 agent/session 发布前执行：注册 8 个 `sandore_*` 工具
-* （闭包捕获 `instanceId`）并注入编排器角色 system prompt section。同一组
-* `options` 生成的 setup 行为一致，供 `agents.create` 与冷恢复的 `agents.resume`
-* 复用。
-* @param options - 实例 ID 与引擎实例。
+* 返回的 `AgentSetup` 在 agent/session 发布前执行：挂载 DSH 默认 agent preset。
+* `presets` 服务缺失时（无 preset 部署）跳过 mount，与 apiproxy `composeAgent` 的
+* `presets === undefined` 分支一致。
+* @param options - 实例 ID 与（可选的）agentPresets 服务。
 * @returns 宿主主代理的 setup 回调。
 */
 function createHostAgentSetup(options) {
-	const { instanceId, engine } = options;
-	return (agentCtx) => {
-		for (const tool of createSandoreTools({
-			instanceId,
-			engine
-		})) agentCtx.tools.register(tool);
-		agentCtx.systemPrompt.section({
-			name: HOST_SECTION_NAME,
-			order: HOST_SECTION_ORDER,
-			text: HOST_SECTION_TEXT
-		});
+	const { presets } = options;
+	return async (agentCtx) => {
+		if (presets === void 0) return;
+		await presets.mount(agentCtx);
 	};
 }
 //#endregion
@@ -1870,6 +1743,23 @@ function toAskItems(payload) {
 /** `AskUserQuestionAnswer` → 持久化条目 answer 的 `string[][]` 形状。 */
 function toAnswerArray(answer) {
 	return answer.answers.map((item) => item.selected);
+}
+/**
+* `AskUserQuestionAnswer` → 注回子代理/写 userMessages 的可读文本。
+*
+* 每题一行：选中项 `selected` 用 `、` 连接，`custom` 自由文本追加为「（补充：…）」；
+* 无选中项仅自由文本时输出自由文本本身。空答案条目跳过。
+* @param answer - 用户整批回答。
+* @returns 多行可读文本。
+*/
+function buildAnswerText(answer) {
+	return answer.answers.map((item) => {
+		const parts = [];
+		if (item.selected.length > 0) parts.push(item.selected.join("、"));
+		const custom = item.custom?.trim();
+		if (custom !== void 0 && custom !== "") parts.push(`补充：${custom}`);
+		return parts.length > 1 ? `${parts[0]}（${parts.slice(1).join("；")}）` : parts[0] ?? "";
+	}).filter((part) => part !== "").join("\n");
 }
 /**
 * 解析子代理 final result 中的保守标记块 `[[SANDORE_ASK]]{...json...}[[/SANDORE_ASK]]`。
@@ -2037,13 +1927,16 @@ var InteractionManager = class {
 		this.questionWaiters.delete(entry.requestId);
 		waiter?.reject(error);
 	}
-	/** 把活跃 pending + 终态历史全量镜像持久化到状态快照。 */
+	/**
+	* 把活跃 pending 条目镜像持久化到状态快照（**只含 pending**，不含终态历史）。
+	*
+	* 探索修正（2026-08）：原实现持久化 pending + resolvedEntries 全量历史，前端
+	* `partitionInteractions` 不筛 status → 回答/批准后 5s 轮询再次弹出接管面板，
+	* 二次提交抛 INVALID_OPERATION 无法关闭。终态条目不再进快照（历史由 userMessages
+	* 与 executedSteps 承载）；resolvedEntries 仅保留内存作审计。
+	*/
 	syncState() {
-		const entries = [
-			...this.pendingQuestions.values(),
-			...this.pendingPermissions.values(),
-			...this.resolvedEntries
-		];
+		const entries = [...this.pendingQuestions.values(), ...this.pendingPermissions.values()];
 		this.deps.persist(entries);
 	}
 };
@@ -2074,6 +1967,17 @@ var LifecycleManager = class {
 	get pausedIds() {
 		return [...this.pausedChildIds];
 	}
+	/**
+	* 子代理自然完成（interrupt 软信号未生效，Step 已 completed）时清理暂停登记表：
+	* 移除该 childId 并同步持久化。pause→完成竞态（pauseStep 先 interrupt+登记，但子代理
+	* 仍跑完）后，若不清登记会残留「段 completed + 登记表有值」的不一致，resume 将卡死。
+	* @param childId - 已完成的子代理 SessionId。
+	*/
+	clearPausedOnCompletion(childId) {
+		if (!this.pausedChildIds.has(childId)) return;
+		this.pausedChildIds.delete(childId);
+		this.commitPausedRegistry();
+	}
 	/** 某子代理 SessionId 是否在暂停登记表中。 */
 	hasPaused(childId) {
 		return this.pausedChildIds.has(childId);
@@ -2096,7 +2000,13 @@ var LifecycleManager = class {
 		this.commitStepStatus(step, "paused", { pausedAt: now$2() });
 		this.deps.emitStepPaused(this.stepIdOf(step), childId, step.name, step.loopIteration);
 	}
-	/** 恢复单个 Step（反查 childId + 移出登记表 + followup + 状态 running + 事件）。 */
+	/**
+	* 恢复单个 Step（反查 childId + 移出登记表 + followup + 追加新执行段 + 用户消息）。
+	*
+	* 段模型：被暂停段保持 paused 定格快照；恢复时以它为基底创建**新执行段**
+	* （新唯一执行 id + attemptIndex+1 + createdAt），followup 唤醒同一子代理续跑。
+	* 恢复消息不写入段（统一存 `userMessages`，避免广播时每段重复同一句话）。
+	*/
 	async resumeStep(stepId, resumePrompt) {
 		const step = this.findStep(stepId);
 		if (step === void 0) throw new SandoreError(`step '${stepId}' not found`, "INVALID_OPERATION");
@@ -2108,10 +2018,8 @@ var LifecycleManager = class {
 		}];
 		await this.deps.followup(childId, content, this.deps.signal);
 		this.pausedChildIds.delete(childId);
-		this.commitStepStatus(step, "running", {
-			resumedAt: now$2(),
-			...resumePrompt === void 0 ? {} : { resumePrompt }
-		});
+		this.deps.appendUserMessage(this.userMessage("resume", this.stepIdOf(step), resumePrompt ?? DEFAULT_RESUME_PROMPT));
+		this.commitPausedRegistry();
 		this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt, step.name, step.loopIteration);
 	}
 	/** 暂停实例内全部 running/interacting Step（completed/failed 与非子代理 Step 跳过）。 */
@@ -2119,19 +2027,48 @@ var LifecycleManager = class {
 		const targets = this.deps.readState().executedSteps.filter((step) => (step.status === "running" || step.status === "interacting") && !this.isNonSubagentCommand(step));
 		for (const step of targets) this.pauseStep(this.stepIdOf(step));
 	}
-	/** 恢复登记表内全部 Step（逐个 followup，完成后登记表清空）。 */
+	/**
+	* 恢复登记表内全部 Step（逐个 followup + 移表，完成后登记表清空）。
+	* 广播指令是实例级事件：只追加一条 `target:'broadcast'` 用户消息（不得复制进每个 Step）。
+	*/
 	async resumeAllSteps(resumePrompt) {
 		const childIds = [...this.pausedChildIds];
 		for (const childId of childIds) {
 			const step = this.findStepByChildId(childId);
 			if (step === void 0) continue;
-			await this.resumeStep(this.stepIdOf(step), resumePrompt);
+			const content = [{
+				type: "text",
+				text: resumePrompt ?? DEFAULT_RESUME_PROMPT
+			}];
+			await this.deps.followup(childId, content, this.deps.signal);
+			this.pausedChildIds.delete(childId);
+			this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt, step.name, step.loopIteration);
+		}
+		if (childIds.length > 0) {
+			this.deps.appendUserMessage(this.userMessage("resume", "broadcast", resumePrompt ?? DEFAULT_RESUME_PROMPT));
+			this.commitPausedRegistry();
 		}
 	}
-	/** 按 stepId（定义 id 或唯一执行 id）在 executedSteps 中反查 Step。 */
+	/** 登记表变更后同步持久化（pausedChildIds + 实例 status；空表 → running）。 */
+	commitPausedRegistry() {
+		const next = {
+			...this.deps.readState(),
+			status: this.pausedChildIds.size > 0 ? "paused" : "running",
+			pausedChildIds: [...this.pausedChildIds],
+			updatedAt: now$2()
+		};
+		this.deps.commitState(next);
+	}
+	/**
+	* 按 stepId（定义 id 或唯一执行 id）反查"最后活跃段"（status running/interacting 中
+	* attemptIndex 最大者）；无活跃段时回退同 stepId 的任意段（再退唯一执行 id）。
+	* 段模型下同 step 可有多段（attempt0 paused + attempt1 running），暂停/恢复必须定位活跃段。
+	*/
 	findStep(stepId) {
 		const steps = this.deps.readState().executedSteps;
-		return steps.find((step) => step.stepId === stepId) ?? steps.find((step) => step.id === stepId);
+		const byStep = steps.filter((step) => step.stepId === stepId);
+		if (byStep.length > 0) return byStep.filter((step) => step.status === "running" || step.status === "interacting").sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0))[0] ?? byStep[byStep.length - 1];
+		return steps.find((step) => step.id === stepId);
 	}
 	/** 按子代理 SessionId 反查 Step（`resumeAllSteps` 遍历登记表用）。 */
 	findStepByChildId(childId) {
@@ -2161,15 +2098,23 @@ var LifecycleManager = class {
 				return {
 					...item,
 					status,
-					...extra.pausedAt === void 0 ? {} : { pausedAt: extra.pausedAt },
-					...extra.resumedAt === void 0 ? {} : { resumedAt: extra.resumedAt },
-					...extra.resumePrompt === void 0 ? {} : { resumePrompt: extra.resumePrompt }
+					...extra.pausedAt === void 0 ? {} : { pausedAt: extra.pausedAt }
 				};
 			}),
 			pausedChildIds: [...this.pausedChildIds],
 			updatedAt: now$2()
 		};
 		this.deps.commitState(next);
+	}
+	/** 构造一条用户消息记录（统一时间轴）。 */
+	userMessage(kind, target, content) {
+		return {
+			id: `usr-${globalThis.crypto.randomUUID()}`,
+			kind,
+			target,
+			content,
+			createdAt: now$2()
+		};
 	}
 };
 //#endregion
@@ -2242,12 +2187,24 @@ var RecoveryManager = class {
 			result: "running"
 		};
 		const cleaned = cleanStepResidue(step);
+		const newSegmentId = globalThis.crypto.randomUUID();
 		let runningStep = {
 			...cleaned,
+			id: newSegmentId,
+			attemptIndex: (cleaned.attemptIndex ?? 0) + 1,
+			createdAt: now$1(),
+			startedAt: now$1(),
 			status: "running",
 			retryHistory: [...cleaned.retryHistory ?? [], retryRecord]
 		};
 		this.commitRunningStep(state, runningStep);
+		this.deps.appendUserMessage({
+			id: `usr-${globalThis.crypto.randomUUID()}`,
+			kind: "retry",
+			target: stepIdOf(step),
+			content: message,
+			createdAt: now$1()
+		});
 		this.deps.emitStepRetried(stepIdOf(step), mode, step.name, step.loopIteration);
 		let childId = childIdOf(step);
 		try {
@@ -2282,22 +2239,22 @@ var RecoveryManager = class {
 					sessionMeta,
 					parentSessionId: childId
 				};
-				this.commitRunningStep(this.deps.readState(), runningStep);
+				this.commitStep(this.deps.readState(), runningStep);
 				childId = newChildId;
 			}
 			await this.deps.followup(childId, textBlock(message), this.deps.signal);
 		} catch (error) {
-			this.failRetry(step.id);
+			this.failRetry(newSegmentId);
 			throw error;
 		}
 		try {
 			await this.deps.resumeExecution();
 		} catch (error) {
-			this.failRetry(step.id);
+			this.failRetry(newSegmentId);
 			throw error;
 		}
-		const result = findStep(this.deps.readState().executedSteps, step.id)?.status === "completed" ? "completed" : "failed";
-		this.setRetryResult(step.id, result);
+		const result = findStep(this.deps.readState().executedSteps, newSegmentId)?.status === "completed" ? "completed" : "failed";
+		this.setRetryResult(newSegmentId, result);
 	}
 	/**
 	* 单实例恢复例程的 Step 分类处理（崩溃恢复）。
@@ -2344,12 +2301,12 @@ var RecoveryManager = class {
 			updatedAt: now$1()
 		});
 	}
-	/** 重试发起：更新单个 Step 为 running 并置实例 running + updatedAt。 */
+	/** 重试发起：追加新执行段（保留旧 failed 段定格快照）并置实例 running + updatedAt。 */
 	commitRunningStep(prev, step) {
 		this.deps.commitState({
 			...prev,
 			status: "running",
-			executedSteps: prev.executedSteps.map((item) => item.id === step.id ? step : item),
+			executedSteps: [...prev.executedSteps, step],
 			updatedAt: now$1()
 		});
 	}
@@ -2403,9 +2360,9 @@ function isSubagentStep(step) {
 	const command = step.sessionMeta?.command ?? step.command?.type;
 	return command === "agent" || command === "skill" || command === "mcp";
 }
-/** 清除上一轮重试的残留字段（暂停/恢复/消息/门禁评估现场）。 */
+/** 清除上一轮重试的残留字段（暂停细节/门禁评估现场；保留 sessionMessages 供消息框展示）。 */
 function cleanStepResidue(step) {
-	const { pausedAt: _pausedAt, resumedAt: _resumedAt, resumePrompt: _resumePrompt, sessionMessages: _sessionMessages, pauseEntryId: _pauseEntryId, finalizeMeta: _finalizeMeta, ...rest } = step;
+	const { pausedAt: _pausedAt, pauseEntryId: _pauseEntryId, finalizeMeta: _finalizeMeta, ...rest } = step;
 	return rest;
 }
 /** 更新 retryHistory 末条记录的 result（返回新数组）。 */
@@ -2456,20 +2413,35 @@ function findAskStep(steps) {
 		};
 	}
 }
-/** 生成 `YYYYMMDD-HHmmss-xxx` 实例 ID。 */
+/** 生成实例 ID（UUID 格式，同时作为 state 表键、宿主会话 id 与 taskId）。 */
 function makeInstanceId() {
-	const date = /* @__PURE__ */ new Date();
-	const pad = (value) => String(value).padStart(2, "0");
-	return `${`${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`}-${`${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`}-${globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 3)}`;
+	return globalThis.crypto.randomUUID();
 }
+/** 权限预设 → sandbox 模式 + 审批策略（对齐 DSH permission-presets 的默认表）。 */
+const PERMISSION_SPECS = {
+	"read-only": {
+		sandbox: "read-only",
+		approval: "ask"
+	},
+	"workspace-write": {
+		sandbox: "workspace-write",
+		approval: "ask"
+	},
+	"danger-full-access": {
+		sandbox: "danger-full-access",
+		approval: "never"
+	}
+};
 /** 构造实例初始（pending）状态快照。 */
 function makeInitialState(options) {
 	const { instanceId, request, definition, createdAt, cwd } = options;
 	return {
 		taskId: instanceId,
-		jobId: request.jobId,
 		workflowId: request.workflowId,
 		workflowName: definition.name,
+		...definition.description === void 0 ? {} : { description: definition.description },
+		...request.model === void 0 ? {} : { modelSelection: request.model },
+		...request.permission === void 0 ? {} : { permission: request.permission },
 		cwd,
 		status: "pending",
 		originalInput: request.originalInput,
@@ -2488,6 +2460,13 @@ function makeInitialState(options) {
 		activeLoopNodeId: null,
 		activeLoopStack: [],
 		pausedChildIds: [],
+		userMessages: [{
+			id: `usr-${globalThis.crypto.randomUUID()}`,
+			kind: "input",
+			target: "",
+			content: request.originalInput,
+			createdAt
+		}],
 		stageContracts: {},
 		createdAt,
 		updatedAt: createdAt
@@ -2497,7 +2476,6 @@ function makeInitialState(options) {
 function toDagInstanceState(state) {
 	return {
 		taskId: state.taskId,
-		jobId: state.jobId,
 		workflowId: state.workflowId,
 		status: state.status,
 		originalInput: state.originalInput,
@@ -2531,6 +2509,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		"agents",
 		"llm",
 		"shell",
+		"subprocess",
 		"fs",
 		"storageDomain",
 		"sandorePersistence",
@@ -2564,12 +2543,17 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			cwd
 		});
 		const controller = new AbortController();
+		const presets = this.ctx.get("agentPresets");
+		const resolvedPresetId = presets === void 0 ? void 0 : (await presets.resolve())?.id;
 		const hostAgent = (await this.ctx.agents.create({
 			sessionId: SessionId(instanceId),
-			meta: { cwd },
+			meta: {
+				cwd,
+				...resolvedPresetId === void 0 ? {} : { agentPreset: resolvedPresetId }
+			},
 			setup: createHostAgentSetup({
 				instanceId,
-				engine: this
+				...presets === void 0 ? {} : { presets }
 			})
 		})).agent;
 		const session = this.ctx.sessions.get(SessionId(instanceId));
@@ -2579,6 +2563,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		} catch (error) {
 			this.ctx.logger.warn(`sandore: set host session title failed: ${renderError(error)}`);
 		}
+		if (request.permission !== void 0) this.applyPermission(session, hostAgent, request.permission);
 		const active = this.buildActiveInstance(controller, session, hostAgent, definition, state);
 		this.instances.set(instanceId, active);
 		this.persistState(active);
@@ -2587,6 +2572,28 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			instanceId,
 			status: "running"
 		};
+	}
+	/**
+	* 应用创建实例时选择的权限预设：宿主会话 sandbox 模式（`sandbox/mode` 事件，
+	* 对齐 `setSandboxMode`）+ 审批策略（`ctx.approval.setPolicy`）。失败仅记录 warn，
+	* 不得使 startInstance 失败；shell/子代理在后续调用时折叠会话模式生效。
+	*/
+	applyPermission(session, agent, permission) {
+		const spec = PERMISSION_SPECS[permission];
+		if (spec === void 0) {
+			this.ctx.logger.warn(`sandore: unknown permission preset '${permission}' ignored`);
+			return;
+		}
+		try {
+			session.append("sandbox/mode", { mode: spec.sandbox });
+		} catch (error) {
+			this.ctx.logger.warn(`sandore: apply sandbox mode failed: ${renderError(error)}`);
+		}
+		try {
+			this.ctx.get("approval")?.setPolicy(agent, spec.approval);
+		} catch (error) {
+			this.ctx.logger.warn(`sandore: apply approval policy failed: ${renderError(error)}`);
+		}
 	}
 	/** 查询实例的当前状态快照（内存活跃实例优先，state 表兜底读）。 */
 	getState(instanceId) {
@@ -2611,8 +2618,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		if (TERMINAL_STATUSES.has(active.state.status)) throw new SandoreError(`instance '${instanceId}' is already in terminal state '${active.state.status}'`, "INVALID_OPERATION");
 		const info = {
 			taskId: active.state.taskId,
-			workflowId: active.state.workflowId,
-			jobId: active.state.jobId
+			workflowId: active.state.workflowId
 		};
 		active.controller.abort();
 		for (const childId of active.lifecycle.pausedIds) this.ctx.subagents.interrupt(childId, {
@@ -2654,11 +2660,12 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		if (record === void 0) throw new SandoreError(`definition '${snapshot.workflowId}' not found`, "NODE_NOT_FOUND");
 		const definition = parseWorkflowYaml(record.yaml);
 		const controller = new AbortController();
+		const presets = this.ctx.get("agentPresets");
 		const hostAgent = (await this.ctx.agents.resume({
 			resumeSessionId: SessionId(instanceId),
 			setup: createHostAgentSetup({
 				instanceId,
-				engine: this
+				...presets === void 0 ? {} : { presets }
 			})
 		})).agent;
 		const session = this.ctx.sessions.get(SessionId(instanceId));
@@ -2788,12 +2795,10 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			await this.persistState(active);
 			const info = {
 				taskId: active.state.taskId,
-				workflowId: active.state.workflowId,
-				jobId: active.state.jobId
+				workflowId: active.state.workflowId
 			};
 			this.emitEnd(active.session, info, {
 				taskId: active.state.taskId,
-				jobId: active.state.jobId,
 				status: "failed",
 				error: renderError(error)
 			});
@@ -2804,8 +2809,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		const signal = controller.signal;
 		const info = {
 			taskId: active.state.taskId,
-			workflowId: active.state.workflowId,
-			jobId: active.state.jobId
+			workflowId: active.state.workflowId
 		};
 		if (!isResume) {
 			active.state = {
@@ -2855,7 +2859,6 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 				},
 				sharedState: {
 					cwd: active.state.cwd,
-					jobId: active.state.jobId,
 					taskId: active.state.taskId
 				},
 				runnerConfig,
@@ -2874,6 +2877,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 						executedSteps: index >= 0 ? active.state.executedSteps.map((item, i) => i === index ? entry : item) : [...active.state.executedSteps, entry],
 						updatedAt: now()
 					};
+					if (entry.status === "completed" && entry.sessionMeta?.synthetic === false) active.lifecycle.clearPausedOnCompletion(entry.sessionMeta.childId);
 					await this.persistState(active);
 				}
 			});
@@ -2900,10 +2904,30 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 						payload: ask.payload,
 						createdAt: now()
 					};
-					await active.interactions.ask({
+					const answerText = buildAnswerText(await active.interactions.ask({
 						entry,
 						...signal === void 0 ? {} : { signal }
+					}));
+					const childId = ask.step.sessionMeta?.childId;
+					if (childId !== void 0 && ask.step.sessionMeta?.synthetic === false) await this.ctx.subagents.followup(hostAgent, childId, [{
+						type: "text",
+						text: answerText
+					}], {
+						source: { kind: "user" },
+						signal: controller.signal
 					});
+					active.state = {
+						...active.state,
+						userMessages: [...active.state.userMessages ?? [], {
+							id: globalThis.crypto.randomUUID(),
+							kind: "answer",
+							target: ask.step.stepId ?? ask.step.id,
+							content: answerText,
+							createdAt: now()
+						}],
+						updatedAt: now()
+					};
+					await this.persistState(active);
 				} else await this.waitForResume(active);
 				if (signal.aborted) break;
 				result = await executor.execute();
@@ -2943,7 +2967,6 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 				await this.persistState(active);
 				this.emitEnd(session, info, {
 					taskId: info.taskId,
-					jobId: info.jobId,
 					status: "failed",
 					...result.errorDetail === void 0 ? {} : { error: result.errorDetail }
 				});
@@ -2974,7 +2997,6 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		await this.persistState(active);
 		this.emitEnd(session, info, {
 			taskId: info.taskId,
-			jobId: info.jobId,
 			status: "completed"
 		});
 	}
@@ -2988,16 +3010,21 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		};
 	}
 	runnerConfig(definition, hostAgent, active) {
+		const instanceModel = active.state.modelSelection;
 		return {
 			defaultTimeoutMs: this.config.defaultTimeoutMs ?? 72e5,
+			...instanceModel === void 0 ? {} : {
+				defaultProvider: instanceModel.provider,
+				defaultModel: instanceModel.model
+			},
 			...this.config.defaultProvider === void 0 ? {} : { defaultProvider: this.config.defaultProvider },
 			...this.config.defaultModel === void 0 ? {} : { defaultModel: this.config.defaultModel },
 			skills: definition.skills,
 			mcps: definition.mcps,
 			agents: definition.agents,
 			hostAgent,
-			onChildStarted: (stepId, childId) => {
-				const entry = active.state.executedSteps.find((item) => item.stepId === stepId && item.status === "running");
+			onChildStarted: async (stepId, childId) => {
+				const entry = active.state.executedSteps.filter((item) => item.stepId === stepId && item.status === "running").sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0))[0];
 				if (entry === void 0 || entry.sessionMeta === void 0) return;
 				const sessionMeta = {
 					...entry.sessionMeta,
@@ -3012,7 +3039,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 					} : item),
 					updatedAt: now()
 				};
-				this.persistState(active);
+				await this.persistState(active);
 			},
 			isPausedChild: (childId) => active.lifecycle.hasPaused(childId),
 			onDelegatedAsk: async ({ childId, output, stepId, stageId }) => {
@@ -3072,6 +3099,14 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 					active.state = next;
 					this.persistState(active);
 				},
+				appendUserMessage: (record) => {
+					active.state = {
+						...active.state,
+						userMessages: [...active.state.userMessages ?? [], record],
+						updatedAt: now()
+					};
+					this.persistState(active);
+				},
 				emitStepPaused: (stepId, childId, name, loopIteration) => this.emitStepPaused(session, active, stepId, childId, name, loopIteration),
 				emitStepResumed: (stepId, childId, resumePrompt, name, loopIteration) => this.emitStepResumed(session, active, stepId, childId, resumePrompt, name, loopIteration)
 			}),
@@ -3080,6 +3115,14 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 				readState: () => active.state,
 				commitState: (next) => {
 					active.state = next;
+					this.persistState(active);
+				},
+				appendUserMessage: (record) => {
+					active.state = {
+						...active.state,
+						userMessages: [...active.state.userMessages ?? [], record],
+						updatedAt: now()
+					};
 					this.persistState(active);
 				},
 				followup: async (childId, content, signal) => {
@@ -3109,14 +3152,18 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 	hasPausedStep(active) {
 		return active.state.executedSteps.some((step) => step.status === "paused");
 	}
+	/** 从段列表中取"最后活跃段"（status running/interacting 中 attemptIndex 最大者）。 */
+	findActiveSegment(steps) {
+		return steps.filter((step) => step.status === "running" || step.status === "interacting").sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0))[0];
+	}
 	/** 续跑执行位置的起始 Stage：running/interacting Step 所在 Stage，否则 currentStageId。 */
 	resumeStageId(active) {
-		return active.state.executedSteps.find((step) => step.status === "running" || step.status === "interacting")?.stageId ?? active.state.currentStageId;
+		return this.findActiveSegment(active.state.executedSteps)?.stageId ?? active.state.currentStageId;
 	}
 	/** 计算 Stage 续跑播种：跳过已完成 Step 并从 running/interacting 子代理 Step 续跑。 */
 	resumeInfo(active, stage) {
 		const stageSteps = active.state.executedSteps.filter((step) => step.stageId === stage.id);
-		const resumeStep = stageSteps.find((step) => step.status === "running" || step.status === "interacting");
+		const resumeStep = this.findActiveSegment(stageSteps);
 		if (resumeStep === void 0) return;
 		const stepDef = stage.steps.find((step) => step.id === (resumeStep.stepId ?? resumeStep.id));
 		if (stepDef === void 0) return;
@@ -3206,16 +3253,15 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 		this.emitContained("sandore/start", [info]);
 		this.safeAppend(() => session.append("sandore/start", {
 			taskId: info.taskId,
-			workflowId: info.workflowId,
-			jobId: info.jobId
-		}));
+			workflowId: info.workflowId
+		}, { ignorable: true }));
 	}
 	emitStageStart(session, info, stageId) {
 		this.emitContained("sandore/stage-start", [info, stageId]);
 		this.safeAppend(() => session.append("sandore/stage-start", {
 			taskId: info.taskId,
 			stageId
-		}));
+		}, { ignorable: true }));
 	}
 	emitStageCompleted(session, info, stageId, stageContract) {
 		this.emitContained("sandore/stage-completed", [
@@ -3227,7 +3273,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			taskId: info.taskId,
 			stageId,
 			stageContract
-		}));
+		}, { ignorable: true }));
 	}
 	emitStepStart(session, info, stepId, childId, name, loopIteration) {
 		this.emitContained("sandore/step-start", [
@@ -3242,7 +3288,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			childId,
 			name,
 			...loopIteration === void 0 ? {} : { loopIteration }
-		}));
+		}, { ignorable: true }));
 	}
 	emitStepCompleted(session, info, stepId, childId, output, name, loopIteration) {
 		this.emitContained("sandore/step-completed", [
@@ -3259,7 +3305,7 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			output,
 			name,
 			...loopIteration === void 0 ? {} : { loopIteration }
-		}));
+		}, { ignorable: true }));
 	}
 	emitStepFailed(session, info, stepId, childId, error, name, loopIteration) {
 		this.emitContained("sandore/step-failed", [
@@ -3276,13 +3322,12 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			error,
 			name,
 			...loopIteration === void 0 ? {} : { loopIteration }
-		}));
+		}, { ignorable: true }));
 	}
 	emitStepPaused(session, active, stepId, childId, name, loopIteration) {
 		const info = {
 			taskId: active.state.taskId,
-			workflowId: active.state.workflowId,
-			jobId: active.state.jobId
+			workflowId: active.state.workflowId
 		};
 		this.emitContained("sandore/step-paused", [
 			info,
@@ -3296,13 +3341,12 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			childId,
 			name,
 			...loopIteration === void 0 ? {} : { loopIteration }
-		}));
+		}, { ignorable: true }));
 	}
 	emitStepResumed(session, active, stepId, childId, resumePrompt, name, loopIteration) {
 		const info = {
 			taskId: active.state.taskId,
-			workflowId: active.state.workflowId,
-			jobId: active.state.jobId
+			workflowId: active.state.workflowId
 		};
 		this.emitContained("sandore/step-resumed", [
 			info,
@@ -3318,13 +3362,12 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			...resumePrompt === void 0 ? {} : { resumePrompt },
 			name,
 			...loopIteration === void 0 ? {} : { loopIteration }
-		}));
+		}, { ignorable: true }));
 	}
 	emitStepRetried(session, active, stepId, mode, name, loopIteration) {
 		const info = {
 			taskId: active.state.taskId,
-			workflowId: active.state.workflowId,
-			jobId: active.state.jobId
+			workflowId: active.state.workflowId
 		};
 		this.emitContained("sandore/step-retried", [
 			info,
@@ -3338,37 +3381,34 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 			mode,
 			name,
 			...loopIteration === void 0 ? {} : { loopIteration }
-		}));
+		}, { ignorable: true }));
 	}
 	emitEnd(session, info, result) {
 		this.emitContained("sandore/end", [info, result]);
 		this.safeAppend(() => session.append("sandore/end", {
 			taskId: info.taskId,
-			jobId: info.jobId,
 			result
-		}));
+		}, { ignorable: true }));
 	}
 	emitAborted(session, info) {
 		this.emitContained("sandore/aborted", [info]);
-		this.safeAppend(() => session.append("sandore/aborted", { taskId: info.taskId }));
+		this.safeAppend(() => session.append("sandore/aborted", { taskId: info.taskId }, { ignorable: true }));
 	}
 	emitQuestion(session, active, entry) {
 		const info = {
 			taskId: active.state.taskId,
-			workflowId: active.state.workflowId,
-			jobId: active.state.jobId
+			workflowId: active.state.workflowId
 		};
 		this.emitContained("sandore/question", [info, entry]);
-		this.safeAppend(() => session.append("sandore/question", { question: entry }));
+		this.safeAppend(() => session.append("sandore/question", { question: entry }, { ignorable: true }));
 	}
 	emitPermission(session, active, entry) {
 		const info = {
 			taskId: active.state.taskId,
-			workflowId: active.state.workflowId,
-			jobId: active.state.jobId
+			workflowId: active.state.workflowId
 		};
 		this.emitContained("sandore/permission", [info, entry]);
-		this.safeAppend(() => session.append("sandore/permission", { permission: entry }));
+		this.safeAppend(() => session.append("sandore/permission", { permission: entry }, { ignorable: true }));
 	}
 };
 //#endregion
@@ -3376,9 +3416,9 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 /**
 * sandore 存储域持久化 Provider。
 *
-* `SandorePersistence` 在 `[Service.init]` 中打开 `sandore` 域（三表
-* `definitions`/`jobs`/`state`），用 `ctx.effect` 挂 `Domain.close()` 释放，
-* 并暴露三表 `KvTable` 句柄与 `saveWorkflowState`（`state.put(taskId, state)`
+* `SandorePersistence` 在 `[Service.init]` 中打开 `sandore` 域（两表
+* `definitions`/`state`，去 job 概念），用 `ctx.effect` 挂 `Domain.close()` 释放，
+* 并暴露两表 `KvTable` 句柄与 `saveWorkflowState`（`state.put(taskId, state)`
 * 全量覆盖）。`SandoreRemote` 通过 `ctx.sandorePersistence` 访问这些句柄。
 * @module @deepseek-ai/dsh-sandore-workflow/src/persistence
 */
@@ -3386,7 +3426,6 @@ var SandoreEngineRuntime = class extends SandoreEngine {
 var SandorePersistence = class extends Service {
 	static inject = ["storageDomain"];
 	definitionsTable;
-	jobsTable;
 	stateTable;
 	constructor(ctx) {
 		super(ctx, "sandorePersistence");
@@ -3395,16 +3434,11 @@ var SandorePersistence = class extends Service {
 		const domain = await this.ctx.storageDomain.open(sandoreDomainSpec);
 		this.ctx.effect(() => () => domain.close(), "sandore.domainClose");
 		this.definitionsTable = domain.table("definitions");
-		this.jobsTable = domain.table("jobs");
 		this.stateTable = domain.table("state");
 	}
 	/** `definitions` 表句柄（key = workflowId）。 */
 	get definitions() {
 		return this.requireTable(this.definitionsTable, "definitions");
-	}
-	/** `jobs` 表句柄（key = jobId）。 */
-	get jobs() {
-		return this.requireTable(this.jobsTable, "jobs");
 	}
 	/** `state` 表句柄（key = instanceId）。 */
 	get state() {
@@ -3460,4 +3494,4 @@ var SandoreWorkflowPlugin = class extends Service {
 //#region src/index.ts
 var src_default = SandoreWorkflowPlugin;
 //#endregion
-export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, JobRecordSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SandoreEngine, SandoreEngineRuntime, SandoreEngineStub, SandoreError, SandoreRemote, SandoreWorkflowPlugin, SessionMessageSchema, StageContractSchema, StageInfoSchema, StageStepSchema, StepSessionMetaSchema, WorkflowDagNavigator, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema, WorkflowYamlError, convertLegacyToV2, src_default as default, isFatalSandoreError, parseWorkflowYaml, sandoreDomainSpec, serializeWorkflowYaml };
+export { AskUserQuestionPayloadSchema, BranchMetaSchema, CommandConfigSchema, DagBranchSchema, DagLoopSchema, ExecutedStepDefaultSchema, FinalizeAssessResultSchema, FinalizeMetaSchema, GateEvalResultSchema, GatesSchema, InputFromItemSchema, OutputToItemSchema, PassThroughVarSchema, PendingPermissionEntrySchema, PendingQuestionEntrySchema, RetryRecordSchema, SandoreEngine, SandoreEngineRuntime, SandoreEngineStub, SandoreError, SandoreRemote, SandoreWorkflowPlugin, SessionMessageSchema, StageContractSchema, StageInfoSchema, StageStepSchema, StepSessionMetaSchema, UserMessageRecordSchema, WorkflowDagNavigator, WorkflowDefinitionRecordSchema, WorkflowDefinitionSchema, WorkflowSettingsSchema, WorkflowStageSchema, WorkflowStepSchema, WorkflowTaskStateSchema, WorkflowYamlError, convertLegacyToV2, src_default as default, isFatalSandoreError, parseWorkflowYaml, sandoreDomainSpec, serializeWorkflowYaml };

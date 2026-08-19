@@ -794,9 +794,9 @@ export declare const StepSessionMetaSchema: z.ZodObject<{
     childId: z.ZodString;
     synthetic: z.ZodBoolean;
     command: z.ZodEnum<{
+        shell: "shell";
         agent: "agent";
         prompt: "prompt";
-        shell: "shell";
         skill: "skill";
         mcp: "mcp";
     }>;
@@ -916,8 +916,8 @@ export declare const GateEvalResultSchema: z.ZodObject<{
 export declare const FinalizeMetaSchema: z.ZodObject<{
     status: z.ZodEnum<{
         completed: "completed";
-        ask: "ask";
         evaluating: "evaluating";
+        ask: "ask";
     }>;
     sessionId: z.ZodOptional<z.ZodString>;
     gateSessionId: z.ZodOptional<z.ZodString>;
@@ -983,8 +983,8 @@ export declare const BranchMetaSchema: z.ZodObject<{
 /** 会话消息记录。 */
 export declare const SessionMessageSchema: z.ZodObject<{
     type: z.ZodEnum<{
-        tool: "tool";
         text: "text";
+        tool: "tool";
         reasoning: "reasoning";
     }>;
     text: z.ZodOptional<z.ZodString>;
@@ -1003,26 +1003,38 @@ export declare const RetryRecordSchema: z.ZodObject<{
     userMessage: z.ZodString;
     revertMessageId: z.ZodOptional<z.ZodString>;
     result: z.ZodEnum<{
-        completed: "completed";
         running: "running";
+        completed: "completed";
         failed: "failed";
     }>;
 }, z.core.$strip>;
+/** 用户在执行过程中的消息（原始需求 / 恢复 / 重试，统一时间轴渲染）。 */
+export declare const UserMessageRecordSchema: z.ZodObject<{
+    id: z.ZodString;
+    kind: z.ZodEnum<{
+        input: "input";
+        answer: "answer";
+        resume: "resume";
+        retry: "retry";
+    }>;
+    target: z.ZodString;
+    content: z.ZodString;
+    createdAt: z.ZodString;
+}, z.core.$strip>;
 /** 已执行 Step 的默认实现快照。 */
 export declare const ExecutedStepDefaultSchema: z.ZodObject<{
-    type: z.ZodLiteral<"default">;
     id: z.ZodString;
     stepId: z.ZodOptional<z.ZodString>;
     stageId: z.ZodString;
     name: z.ZodString;
     status: z.ZodEnum<{
-        completed: "completed";
         running: "running";
+        interacting: "interacting";
+        completed: "completed";
         failed: "failed";
+        paused: "paused";
         blocked: "blocked";
         ready: "ready";
-        interacting: "interacting";
-        paused: "paused";
     }>;
     command: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
         type: z.ZodLiteral<"agent">;
@@ -1076,9 +1088,9 @@ export declare const ExecutedStepDefaultSchema: z.ZodObject<{
         childId: z.ZodString;
         synthetic: z.ZodBoolean;
         command: z.ZodEnum<{
+            shell: "shell";
             agent: "agent";
             prompt: "prompt";
-            shell: "shell";
             skill: "skill";
             mcp: "mcp";
         }>;
@@ -1087,8 +1099,8 @@ export declare const ExecutedStepDefaultSchema: z.ZodObject<{
     finalizeMeta: z.ZodOptional<z.ZodObject<{
         status: z.ZodEnum<{
             completed: "completed";
-            ask: "ask";
             evaluating: "evaluating";
+            ask: "ask";
         }>;
         sessionId: z.ZodOptional<z.ZodString>;
         gateSessionId: z.ZodOptional<z.ZodString>;
@@ -1141,6 +1153,10 @@ export declare const ExecutedStepDefaultSchema: z.ZodObject<{
         }, z.core.$strip>>;
     }, z.core.$strip>>;
     visitCount: z.ZodNumber;
+    createdAt: z.ZodOptional<z.ZodString>;
+    attemptIndex: z.ZodOptional<z.ZodNumber>;
+    startedAt: z.ZodOptional<z.ZodString>;
+    updatedAt: z.ZodOptional<z.ZodString>;
     branchMeta: z.ZodOptional<z.ZodObject<{
         result: z.ZodOptional<z.ZodString>;
         sessionId: z.ZodOptional<z.ZodString>;
@@ -1153,12 +1169,10 @@ export declare const ExecutedStepDefaultSchema: z.ZodObject<{
     }, z.core.$strip>>;
     error: z.ZodOptional<z.ZodString>;
     pausedAt: z.ZodOptional<z.ZodString>;
-    resumedAt: z.ZodOptional<z.ZodString>;
-    resumePrompt: z.ZodOptional<z.ZodString>;
     sessionMessages: z.ZodOptional<z.ZodArray<z.ZodObject<{
         type: z.ZodEnum<{
-            tool: "tool";
             text: "text";
+            tool: "tool";
             reasoning: "reasoning";
         }>;
         text: z.ZodOptional<z.ZodString>;
@@ -1188,8 +1202,8 @@ export declare const ExecutedStepDefaultSchema: z.ZodObject<{
         userMessage: z.ZodString;
         revertMessageId: z.ZodOptional<z.ZodString>;
         result: z.ZodEnum<{
-            completed: "completed";
             running: "running";
+            completed: "completed";
             failed: "failed";
         }>;
     }, z.core.$strip>>>;
@@ -1203,13 +1217,13 @@ export declare const StageInfoSchema: z.ZodObject<{
     id: z.ZodString;
     name: z.ZodString;
     status: z.ZodEnum<{
-        completed: "completed";
         running: "running";
+        interacting: "interacting";
+        completed: "completed";
         failed: "failed";
+        paused: "paused";
         blocked: "blocked";
         ready: "ready";
-        interacting: "interacting";
-        paused: "paused";
     }>;
 }, z.core.$strip>;
 /** Stage 完成时对外暴露的产物契约。 */
@@ -1217,13 +1231,13 @@ export declare const StageContractSchema: z.ZodObject<{
     stageId: z.ZodString;
     stageName: z.ZodString;
     status: z.ZodEnum<{
-        completed: "completed";
         running: "running";
+        interacting: "interacting";
+        completed: "completed";
         failed: "failed";
+        paused: "paused";
         blocked: "blocked";
         ready: "ready";
-        interacting: "interacting";
-        paused: "paused";
     }>;
     artifacts: z.ZodArray<z.ZodObject<{
         stepId: z.ZodString;
@@ -1243,35 +1257,41 @@ export declare const StageContractSchema: z.ZodObject<{
 /** 工作流实例的持久化状态快照（存储域 `state` 表 value）。 */
 export declare const WorkflowTaskStateSchema: z.ZodObject<{
     taskId: z.ZodString;
-    jobId: z.ZodString;
+    jobId: z.ZodOptional<z.ZodString>;
     workflowId: z.ZodString;
     workflowName: z.ZodOptional<z.ZodString>;
+    description: z.ZodOptional<z.ZodString>;
+    modelSelection: z.ZodOptional<z.ZodObject<{
+        provider: z.ZodString;
+        model: z.ZodString;
+        reasoningEffort: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>>;
+    permission: z.ZodOptional<z.ZodString>;
     cwd: z.ZodString;
     status: z.ZodEnum<{
         pending: "pending";
-        completed: "completed";
         running: "running";
-        failed: "failed";
         interacting: "interacting";
-        paused: "paused";
+        completed: "completed";
+        failed: "failed";
         aborted: "aborted";
+        paused: "paused";
     }>;
     originalInput: z.ZodString;
     currentStageId: z.ZodString;
     executedSteps: z.ZodArray<z.ZodObject<{
-        type: z.ZodLiteral<"default">;
         id: z.ZodString;
         stepId: z.ZodOptional<z.ZodString>;
         stageId: z.ZodString;
         name: z.ZodString;
         status: z.ZodEnum<{
-            completed: "completed";
             running: "running";
+            interacting: "interacting";
+            completed: "completed";
             failed: "failed";
+            paused: "paused";
             blocked: "blocked";
             ready: "ready";
-            interacting: "interacting";
-            paused: "paused";
         }>;
         command: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
             type: z.ZodLiteral<"agent">;
@@ -1325,9 +1345,9 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
             childId: z.ZodString;
             synthetic: z.ZodBoolean;
             command: z.ZodEnum<{
+                shell: "shell";
                 agent: "agent";
                 prompt: "prompt";
-                shell: "shell";
                 skill: "skill";
                 mcp: "mcp";
             }>;
@@ -1336,8 +1356,8 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
         finalizeMeta: z.ZodOptional<z.ZodObject<{
             status: z.ZodEnum<{
                 completed: "completed";
-                ask: "ask";
                 evaluating: "evaluating";
+                ask: "ask";
             }>;
             sessionId: z.ZodOptional<z.ZodString>;
             gateSessionId: z.ZodOptional<z.ZodString>;
@@ -1390,6 +1410,10 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
             }, z.core.$strip>>;
         }, z.core.$strip>>;
         visitCount: z.ZodNumber;
+        createdAt: z.ZodOptional<z.ZodString>;
+        attemptIndex: z.ZodOptional<z.ZodNumber>;
+        startedAt: z.ZodOptional<z.ZodString>;
+        updatedAt: z.ZodOptional<z.ZodString>;
         branchMeta: z.ZodOptional<z.ZodObject<{
             result: z.ZodOptional<z.ZodString>;
             sessionId: z.ZodOptional<z.ZodString>;
@@ -1402,12 +1426,10 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
         }, z.core.$strip>>;
         error: z.ZodOptional<z.ZodString>;
         pausedAt: z.ZodOptional<z.ZodString>;
-        resumedAt: z.ZodOptional<z.ZodString>;
-        resumePrompt: z.ZodOptional<z.ZodString>;
         sessionMessages: z.ZodOptional<z.ZodArray<z.ZodObject<{
             type: z.ZodEnum<{
-                tool: "tool";
                 text: "text";
+                tool: "tool";
                 reasoning: "reasoning";
             }>;
             text: z.ZodOptional<z.ZodString>;
@@ -1437,8 +1459,8 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
             userMessage: z.ZodString;
             revertMessageId: z.ZodOptional<z.ZodString>;
             result: z.ZodEnum<{
-                completed: "completed";
                 running: "running";
+                completed: "completed";
                 failed: "failed";
             }>;
         }, z.core.$strip>>>;
@@ -1451,13 +1473,13 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
         id: z.ZodString;
         name: z.ZodString;
         status: z.ZodEnum<{
-            completed: "completed";
             running: "running";
+            interacting: "interacting";
+            completed: "completed";
             failed: "failed";
+            paused: "paused";
             blocked: "blocked";
             ready: "ready";
-            interacting: "interacting";
-            paused: "paused";
         }>;
     }, z.core.$strip>>;
     pendingInteractions: z.ZodArray<z.ZodUnion<readonly [z.ZodObject<{
@@ -1522,17 +1544,29 @@ export declare const WorkflowTaskStateSchema: z.ZodObject<{
     activeLoopNodeId: z.ZodNullable<z.ZodString>;
     activeLoopStack: z.ZodArray<z.ZodString>;
     pausedChildIds: z.ZodArray<z.ZodString>;
+    userMessages: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        kind: z.ZodEnum<{
+            input: "input";
+            answer: "answer";
+            resume: "resume";
+            retry: "retry";
+        }>;
+        target: z.ZodString;
+        content: z.ZodString;
+        createdAt: z.ZodString;
+    }, z.core.$strip>>>;
     stageContracts: z.ZodRecord<z.ZodString, z.ZodObject<{
         stageId: z.ZodString;
         stageName: z.ZodString;
         status: z.ZodEnum<{
-            completed: "completed";
             running: "running";
+            interacting: "interacting";
+            completed: "completed";
             failed: "failed";
+            paused: "paused";
             blocked: "blocked";
             ready: "ready";
-            interacting: "interacting";
-            paused: "paused";
         }>;
         artifacts: z.ZodArray<z.ZodObject<{
             stepId: z.ZodString;
@@ -1561,14 +1595,6 @@ export declare const WorkflowDefinitionRecordSchema: z.ZodObject<{
     createdAt: z.ZodString;
     updatedAt: z.ZodString;
 }, z.core.$strip>;
-/** Job 记录（`jobs` 表 value）。 */
-export declare const JobRecordSchema: z.ZodObject<{
-    name: z.ZodString;
-    workflowId: z.ZodString;
-    cwd: z.ZodOptional<z.ZodString>;
-    createdAt: z.ZodString;
-    updatedAt: z.ZodString;
-}, z.core.$strip>;
 export type CommandConfig = z.infer<typeof CommandConfigSchema>;
 export type InputFromItem = z.infer<typeof InputFromItemSchema>;
 export type OutputToItem = z.infer<typeof OutputToItemSchema>;
@@ -1590,7 +1616,7 @@ export type PendingPermissionEntry = z.infer<typeof PendingPermissionEntrySchema
 export type BranchMeta = z.infer<typeof BranchMetaSchema>;
 export type SessionMessage = z.infer<typeof SessionMessageSchema>;
 export type RetryRecord = z.infer<typeof RetryRecordSchema>;
+export type UserMessageRecord = z.infer<typeof UserMessageRecordSchema>;
 export type WorkflowTaskState = z.infer<typeof WorkflowTaskStateSchema>;
 export type WorkflowDefinitionRecord = z.infer<typeof WorkflowDefinitionRecordSchema>;
-export type JobRecord = z.infer<typeof JobRecordSchema>;
 //# sourceMappingURL=schema.d.ts.map

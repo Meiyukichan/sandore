@@ -7,15 +7,19 @@ export interface InstanceListProps {
     t: TranslateNS<'sandore'>;
     /** 工作区成员表（WorkspaceView[].sessionIds 为会话账号）。 */
     workspaces: readonly WorkspaceView[];
-    /** 客户端过滤关键词（匹配 instanceId / jobId）。 */
+    /** 客户端过滤关键词（匹配 instanceId / workflowId）。 */
     query: string;
     /** 当前选中实例 id（高亮行；缺省不高亮）。 */
     activeId?: string | undefined;
     /** 拉取实例摘要（RPC 已解包）。 */
     listInstances(): Promise<InstanceSummary[]>;
+    /** 删除实例（RPC 已解包；state 表行级删除）。 */
+    deleteInstance(instanceId: string): Promise<boolean>;
+    /** 删除成功后回调（宿主重挂载列表，立即刷新；不必等轮询）。 */
+    onInstanceDeleted?(): void;
     /** 点击实例行下钻 RunView。 */
     onOpen(instanceId: string): void;
 }
 /** 渲染 InstanceList。 */
-export declare function InstanceList({ t, workspaces, query, activeId, listInstances, onOpen }: InstanceListProps): import("react").JSX.Element;
+export declare function InstanceList({ t, workspaces, query, activeId, listInstances, deleteInstance, onInstanceDeleted, onOpen }: InstanceListProps): import("react").JSX.Element;
 //# sourceMappingURL=InstanceList.d.ts.map

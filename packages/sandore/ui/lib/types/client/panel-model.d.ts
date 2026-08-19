@@ -19,7 +19,7 @@ export interface InstanceGroup {
 }
 /** 把 ISO 时间戳格式化为 `YYYY-MM-DD HH:mm`（非法值原样返回）。 */
 export declare function formatTimestamp(value: string): string;
-/** 关键词过滤实例：大小写不敏感匹配 instanceId 或 jobId。 */
+/** 关键词过滤实例：大小写不敏感匹配 originalInput 或 workflowId。 */
 export declare function matchesInstanceQuery(instance: InstanceSummary, query: string): boolean;
 /** 关键词过滤定义：大小写不敏感匹配 name 或 id。 */
 export declare function matchesDefinitionQuery(definition: WorkflowDefinitionEntry, query: string): boolean;

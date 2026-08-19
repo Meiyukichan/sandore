@@ -1,9 +1,9 @@
 /**
  * sandore 存储域持久化 Provider。
  *
- * `SandorePersistence` 在 `[Service.init]` 中打开 `sandore` 域（三表
- * `definitions`/`jobs`/`state`），用 `ctx.effect` 挂 `Domain.close()` 释放，
- * 并暴露三表 `KvTable` 句柄与 `saveWorkflowState`（`state.put(taskId, state)`
+ * `SandorePersistence` 在 `[Service.init]` 中打开 `sandore` 域（两表
+ * `definitions`/`state`，去 job 概念），用 `ctx.effect` 挂 `Domain.close()` 释放，
+ * 并暴露两表 `KvTable` 句柄与 `saveWorkflowState`（`state.put(taskId, state)`
  * 全量覆盖）。`SandoreRemote` 通过 `ctx.sandorePersistence` 访问这些句柄。
  * @module @deepseek-ai/dsh-sandore-workflow/src/persistence
  */
@@ -11,7 +11,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import type { KvTable } from '@deepseek-ai/dsh-storage-domain'
 
 import { sandoreDomainSpec } from './domain.ts'
-import type { JobRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
+import type { WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -24,7 +24,6 @@ export class SandorePersistence extends Service {
   static inject = ['storageDomain']
 
   private definitionsTable?: KvTable<string, WorkflowDefinitionRecord>
-  private jobsTable?: KvTable<string, JobRecord>
   private stateTable?: KvTable<string, WorkflowTaskState>
 
   constructor(ctx: Context) {
@@ -35,18 +34,12 @@ export class SandorePersistence extends Service {
     const domain = await this.ctx.storageDomain.open(sandoreDomainSpec)
     this.ctx.effect(() => () => domain.close(), 'sandore.domainClose')
     this.definitionsTable = domain.table('definitions')
-    this.jobsTable = domain.table('jobs')
     this.stateTable = domain.table('state')
   }
 
   /** `definitions` 表句柄（key = workflowId）。 */
   get definitions(): KvTable<string, WorkflowDefinitionRecord> {
     return this.requireTable(this.definitionsTable, 'definitions')
-  }
-
-  /** `jobs` 表句柄（key = jobId）。 */
-  get jobs(): KvTable<string, JobRecord> {
-    return this.requireTable(this.jobsTable, 'jobs')
   }
 
   /** `state` 表句柄（key = instanceId）。 */

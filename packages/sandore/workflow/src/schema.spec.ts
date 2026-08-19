@@ -10,7 +10,6 @@ import { SandoreError, isFatalSandoreError } from './errors.ts'
 import { sandoreDomainSpec } from './domain.ts'
 import {
   CommandConfigSchema,
-  JobRecordSchema,
   StepSessionMetaSchema,
   WorkflowDefinitionRecordSchema,
   WorkflowDefinitionSchema,
@@ -223,7 +222,7 @@ describe('storage layer', () => {
   it('defines a sandore domain with valid names', () => {
     expect(sandoreDomainSpec.name).toBe('sandore')
     expect(sandoreDomainSpec.version).toBe(1)
-    expect(Object.keys(sandoreDomainSpec.tables)).toEqual(['definitions', 'jobs', 'state'])
+    expect(Object.keys(sandoreDomainSpec.tables)).toEqual(['definitions', 'state'])
     for (const name of [sandoreDomainSpec.name, ...Object.keys(sandoreDomainSpec.tables)]) {
       expect(name).toMatch(/^[a-z][a-z0-9_]*$/)
     }
@@ -238,10 +237,5 @@ describe('storage layer', () => {
       updatedAt: 't',
     }
     expect(() => WorkflowDefinitionRecordSchema.parse(record)).toThrow(z.ZodError)
-  })
-
-  it('accepts a valid JobRecord', () => {
-    const job = JobRecordSchema.parse({ name: 'j', workflowId: 'wfl-1', createdAt: 't', updatedAt: 't' })
-    expect(job.workflowId).toBe('wfl-1')
   })
 })

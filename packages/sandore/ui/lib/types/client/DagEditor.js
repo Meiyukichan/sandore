@@ -312,7 +312,7 @@ function GatesEditor({ gates, onChange, t }) {
 }
 // ── 主组件 ─────────────────────────────────────────────────────────────────
 /** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
-export function DagEditor({ t, initialYaml, initialId, save, onSaved, listJobs, createJob, startInstance }) {
+export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInstance }) {
     const [definition, setDefinition] = useState(() => initialYaml === undefined ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
     const [id, setId] = useState(initialId);
     const [saveState, setSaveState] = useState({ kind: 'idle' });
@@ -574,7 +574,7 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, listJobs, 
         anchor.click();
         URL.revokeObjectURL(url);
     };
-    /** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态并选中新实例。 */
+    /** ▶ 测试运行：直接以当前定义启动实例（无 job 概念），成功后切执行态并选中新实例。 */
     const runTest = async () => {
         const definitionId = id ?? definition.id;
         if (definitionId === undefined)
@@ -582,9 +582,7 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, listJobs, 
         setRunning(true);
         setRunError(undefined);
         try {
-            const jobs = await listJobs(definitionId);
-            const job = jobs[0] ?? await createJob({ name: `测试-${definitionId.slice(0, 8)}`, workflowId: definitionId });
-            const run = await startInstance({ jobId: job.id, originalInput: t('editor.testRun') });
+            const run = await startInstance({ workflowId: definitionId, originalInput: t('editor.testRun') });
             selectInstance(run.instanceId);
         }
         catch (error) {

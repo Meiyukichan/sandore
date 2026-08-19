@@ -28,7 +28,6 @@ function turnEndEvent(seq: number): DshSessionEvent {
 /** 构造一个 failed 的 agent 子代理 Step。 */
 function makeFailedStep(overrides: Partial<ExecutedStep> = {}): ExecutedStep {
   return {
-    type: 'default',
     id: 'exec-1',
     stepId: 'step-1',
     stageId: 'stg-1',
@@ -47,7 +46,6 @@ function makeState(step: ExecutedStep, status: WorkflowTaskState['status'] = 'fa
   const createdAt = '2026-08-16T00:00:00.000Z';
   return {
     taskId: 'task-1',
-    jobId: 'job-1',
     workflowId: 'wfl-1',
     cwd: '/tmp',
     status,
@@ -87,6 +85,15 @@ function makeAgent(id: string): Agent {
   };
 }
 
+/** 定位重试追加的新执行段（attemptIndex 最大的段；旧 failed 段 attemptIndex 0 保留）。 */
+function newSegmentOf(state: WorkflowTaskState): ExecutedStep | undefined {
+  const segments = state.executedSteps.filter(step => (step.attemptIndex ?? 0) > 0);
+  if (segments.length === 0) {
+    return undefined;
+  }
+  return segments.sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0))[0];
+}
+
 /** 测试 harness：注入 fakes 并暴露可断言的回调记录。 */
 function makeHarness(options?: {
   step?: ExecutedStep;
@@ -100,6 +107,7 @@ function makeHarness(options?: {
   const creates: CreateAgentOptions[] = [];
   const forks: Array<{ source: string; boundary: number | undefined }> = [];
   const retried: Array<{ stepId: string; mode: RetryMode; name: string; loopIteration?: number[] }> = [];
+  const userMessages: Array<{ kind: string; target: string; content: string }> = [];
   let resumeCount = 0;
   const sessions = options?.sessions ?? new Map<string, ForkSourceSession>();
   let forked = options?.forked ?? { events: [] as readonly DshSessionEvent[] };
@@ -113,6 +121,10 @@ function makeHarness(options?: {
     },
     followup: async (childId, content) => {
       followups.push({ childId, content });
+    },
+    appendUserMessage: (record) => {
+      userMessages.push({ kind: record.kind, target: record.target, content: record.content });
+      state = { ...state, userMessages: [...(state.userMessages ?? []), record], updatedAt: record.createdAt };
     },
     createAgent: async (createOptions) => {
       creates.push(createOptions);
@@ -142,6 +154,7 @@ function makeHarness(options?: {
     creates,
     forks,
     retried,
+    userMessages,
     getResumeCount: () => resumeCount,
     sessions,
     setForked: (events: readonly DshSessionEvent[]) => {
@@ -224,11 +237,13 @@ describe('RecoveryManager.retryStep continue mode', () => {
     expect(harness.followups[0]?.content).toEqual([{ type: 'text', text: 'please retry' }]);
     expect(harness.retried).toEqual([{ stepId: 'step-1', mode: 'continue', name: 'step-1' }]);
 
-    const step = harness.getState().executedSteps[0];
+    // 段模型：旧 failed 段保留定格快照，重试新段（attemptIndex 1）承载 retryHistory。
+    const step = newSegmentOf(harness.getState());
     expect(step?.sessionMeta?.childId).toBe('child-1');
     expect(step?.retryHistory?.[0]?.mode).toBe('continue');
     expect(step?.retryHistory?.[0]?.userMessage).toBe('please retry');
     expect(step?.parentSessionId).toBeUndefined();
+    expect(harness.userMessages).toEqual([{ kind: 'retry', target: 'step-1', content: 'please retry' }]);
     expect(harness.getResumeCount()).toBe(1);
   });
 
@@ -257,7 +272,7 @@ describe('RecoveryManager.retryStep revert mode', () => {
 
     const newChildId = harness.creates[0]?.sessionId;
     expect(newChildId).toMatch(/^step-step-1-[0-9a-f]{8}$/);
-    const step = harness.getState().executedSteps[0];
+    const step = newSegmentOf(harness.getState());
     expect(step?.sessionMeta?.childId).toBe(newChildId);
     expect(step?.sessionMeta?.synthetic).toBe(false);
     expect(step?.parentSessionId).toBe('child-1');
@@ -274,7 +289,7 @@ describe('RecoveryManager.retryStep revert mode', () => {
 
     const state = harness.getState();
     expect(state.status).toBe('failed');
-    const step = state.executedSteps[0];
+    const step = newSegmentOf(state);
     expect(step?.status).toBe('failed');
     expect(step?.retryHistory?.[0]?.mode).toBe('revert');
     expect(step?.retryHistory?.[0]?.result).toBe('failed');
@@ -294,7 +309,7 @@ describe('RecoveryManager.retryStep fork mode', () => {
     expect(harness.forks).toEqual([{ source: 'child-1', boundary: undefined }]);
     expect(harness.creates[0]?.seed).toEqual(forked.events);
     const newChildId = harness.creates[0]?.sessionId;
-    const step = harness.getState().executedSteps[0];
+    const step = newSegmentOf(harness.getState());
     expect(step?.sessionMeta?.childId).toBe(newChildId);
     expect(step?.parentSessionId).toBe('child-1');
     expect(step?.retryHistory?.[0]?.mode).toBe('fork');
@@ -305,21 +320,21 @@ describe('RecoveryManager.retryStep history result', () => {
   it('updates the last retryHistory record to completed when the resumed step completes', async () => {
     const harness = makeHarness({
       onResume: (state) => {
-        const step = state.executedSteps.find(item => item.id === 'exec-1');
+        const step = newSegmentOf(state);
         if (step !== undefined) {
           step.status = 'completed';
         }
       },
     });
     await harness.manager.retryStep('step-1', 'continue', 'msg');
-    expect(harness.getState().executedSteps[0]?.retryHistory?.[0]?.result).toBe('completed');
+    expect(newSegmentOf(harness.getState())?.retryHistory?.[0]?.result).toBe('completed');
   });
 
   it('updates the last retryHistory record to failed when the resumed step fails', async () => {
     const harness = makeHarness();
     await harness.manager.retryStep('step-1', 'continue', 'msg');
     // resumeExecution 未将 Step 置 completed，故 result 判为 failed。
-    expect(harness.getState().executedSteps[0]?.retryHistory?.[0]?.result).toBe('failed');
+    expect(newSegmentOf(harness.getState())?.retryHistory?.[0]?.result).toBe('failed');
   });
 });
 

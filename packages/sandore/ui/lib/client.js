@@ -4403,18 +4403,15 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			createdAt: string(),
 			updatedAt: string()
 		});
-		const jobEntry = object({
-			id: string(),
-			name: string(),
-			workflowId: string(),
-			cwd: string().optional(),
-			createdAt: string(),
-			updatedAt: string()
+		const startModelSelection = object({
+			provider: string(),
+			model: string(),
+			reasoningEffort: string().optional()
 		});
 		const instanceSummary = object({
 			instanceId: string(),
-			jobId: string(),
 			workflowId: string(),
+			originalInput: string(),
 			status: string(),
 			createdAt: string(),
 			updatedAt: string()
@@ -4557,88 +4554,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					result: json(definitionEntry, "@deepseek-ai/dsh-sandore-workflow/types#WorkflowDefinitionEntry")
 				},
 				{
-					id: "@deepseek-ai/dsh-sandore-workflow#sandore/listJobs",
-					service: "sandore",
-					namespace: "sandore",
-					method: "listJobs",
-					invocation: { kind: "direct" },
-					parameters: [{
-						name: "input",
-						wire: "input",
-						source: "json",
-						codec: json(object({ workflowId: string().optional() }), "@deepseek-ai/dsh-sandore-workflow/types#ListJobsInput")
-					}],
-					result: json(array$1(jobEntry), "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
-				},
-				{
-					id: "@deepseek-ai/dsh-sandore-workflow#sandore/createJob",
-					service: "sandore",
-					namespace: "sandore",
-					method: "createJob",
-					invocation: { kind: "direct" },
-					parameters: [{
-						name: "input",
-						wire: "input",
-						source: "json",
-						codec: json(object({
-							name: string(),
-							workflowId: string(),
-							cwd: string().optional()
-						}), "@deepseek-ai/dsh-sandore-workflow/types#CreateJobInput")
-					}],
-					result: json(jobEntry, "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
-				},
-				{
-					id: "@deepseek-ai/dsh-sandore-workflow#sandore/getJob",
-					service: "sandore",
-					namespace: "sandore",
-					method: "getJob",
-					invocation: { kind: "direct" },
-					parameters: [{
-						name: "id",
-						wire: "id",
-						source: "json",
-						codec: json(string(), "@deepseek-ai/dsh-sandore-workflow#sandore/getJob:id")
-					}],
-					result: json(jobEntry, "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
-				},
-				{
-					id: "@deepseek-ai/dsh-sandore-workflow#sandore/updateJob",
-					service: "sandore",
-					namespace: "sandore",
-					method: "updateJob",
-					invocation: { kind: "direct" },
-					parameters: [{
-						name: "id",
-						wire: "id",
-						source: "json",
-						codec: json(string(), "@deepseek-ai/dsh-sandore-workflow#sandore/updateJob:id")
-					}, {
-						name: "input",
-						wire: "input",
-						source: "json",
-						codec: json(object({
-							name: string().optional(),
-							cwd: string().optional()
-						}), "@deepseek-ai/dsh-sandore-workflow/types#UpdateJobInput")
-					}],
-					result: json(jobEntry, "@deepseek-ai/dsh-sandore-workflow/types#JobEntry")
-				},
-				{
-					id: "@deepseek-ai/dsh-sandore-workflow#sandore/deleteJob",
-					service: "sandore",
-					namespace: "sandore",
-					method: "deleteJob",
-					invocation: { kind: "direct" },
-					parameters: [{
-						name: "id",
-						wire: "id",
-						source: "json",
-						codec: json(string(), "@deepseek-ai/dsh-sandore-workflow#sandore/deleteJob:id")
-					}],
-					result: json(boolean(), "@deepseek-ai/dsh-sandore-workflow#sandore/deleteJob:result")
-				},
-				{
 					id: "@deepseek-ai/dsh-sandore-workflow#sandore/listInstances",
 					service: "sandore",
 					namespace: "sandore",
@@ -4658,9 +4573,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						wire: "input",
 						source: "json",
 						codec: json(object({
-							jobId: string(),
+							workflowId: string(),
 							originalInput: string(),
-							cwd: string().optional()
+							cwd: string().optional(),
+							model: startModelSelection.optional(),
+							permission: string().optional()
 						}), "@deepseek-ai/dsh-sandore-workflow/types#StartInstanceInput")
 					}],
 					result: json(dagRun, "@deepseek-ai/dsh-sandore-workflow/types#DagRun")
@@ -4918,7 +4835,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"panel.orchestrate": "编排",
 			"panel.search": "搜索",
 			"panel.add.instance": "新增实例",
-			"panel.add.instance.hint": "需先创建定义或 Job",
+			"panel.add.instance.hint": "直接绑定定义创建实例",
 			"panel.add.definition": "新增定义",
 			"panel.back": "返回",
 			"panel.ungrouped": "未分组",
@@ -4926,11 +4843,17 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"panel.error": "加载失败：{message}",
 			"panel.retry": "重试",
 			"panel.empty.instances": "暂无工作流实例",
-			"panel.empty.instances.hint": "需先创建定义或 Job，运行后生成实例",
+			"panel.empty.instances.hint": "点击「新增实例」绑定定义并填写需求后运行",
 			"panel.empty.definitions": "暂无工作流定义",
 			"panel.empty.definitions.hint": "点击「新增定义」开始创建",
 			"panel.empty.nomatch": "没有匹配的条目",
 			"panel.delete": "删除",
+			"panel.delete.instance": "删除实例",
+			"panel.delete.instance.confirm.title": "删除实例",
+			"panel.delete.instance.confirm.body": "确认删除实例「{id}」？此操作不可撤销。",
+			"panel.delete.instance.confirm.submit": "删除",
+			"panel.delete.instance.confirm.cancel": "取消",
+			"panel.delete.instance.failed": "删除失败：{message}",
 			"panel.delete.confirm.title": "删除定义",
 			"panel.delete.confirm.body": "确认删除「{name}」？此操作不可撤销。",
 			"panel.delete.confirm.submit": "删除",
@@ -5024,7 +4947,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"run.question.placeholder": "请输入回答",
 			"run.question.submit": "提交",
 			"run.permission.title": "权限请求",
-			"run.permission.once": "仅本次",
+			"run.permission.once": "允许一次",
 			"run.permission.always": "始终允许",
 			"run.permission.reject": "拒绝",
 			"run.permission.patterns": "路径模式",
@@ -5085,6 +5008,47 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"run.result": "返回结果",
 			"run.artifact": "产物",
 			"run.originalInput": "初始输入",
+			"run.workingAgents": "{count} 个正在工作",
+			"run.time.justNow": "刚刚",
+			"run.time.minutesAgo": "{count} 分钟前",
+			"run.time.hoursAgo": "{count} 小时前",
+			"run.time.daysAgo": "{count} 天前",
+			"run.time.you": "你",
+			"run.user.kind.input": "需求",
+			"run.user.kind.resume": "继续",
+			"run.user.kind.retry": "重试",
+			"run.user.kind.answer": "回答",
+			"run.step.attempt": "第 {n} 次执行",
+			"run.approval.waiting": "等待权限确认",
+			"run.approval.headline": "{step} 请求{permission}，需要你的批准",
+			"run.question.eyebrow": "{step} 需要确认",
+			"run.question.skip": "跳过",
+			"run.question.next": "下一步",
+			"run.question.unanswered": "请先回答当前问题",
+			"run.question.incomplete": "还有未回答的问题",
+			"run.question.recommended": "推荐",
+			"run.question.customPlaceholder": "自定义回答…",
+			"run.question.minimize": "收起",
+			"run.question.maximize": "展开",
+			"run.question.cancel": "取消",
+			"composer.model.fallback": "选择模型",
+			"composer.model.aria": "选择模型，当前 {model}",
+			"composer.model.ariaEffort": "选择模型，当前 {model}，推理等级 {effort}",
+			"composer.model.menu": "模型与推理等级",
+			"composer.model.title": "模型",
+			"composer.model.effort": "推理等级",
+			"composer.model.effortDefault": "Default",
+			"composer.model.loading": "正在刷新模型列表…",
+			"composer.model.error": "模型操作失败：{message}",
+			"composer.model.reload": "重新加载",
+			"composer.model.warning": "{name} 加载失败：{message}",
+			"composer.model.empty": "没有可用的模型。",
+			"composer.model.emptyEfforts": "当前模型未提供推理等级。",
+			"composer.permission.confirmTitle": "确认开启完全访问权限",
+			"composer.permission.confirmDesc": "完全访问权限将允许引擎访问工作区之外的路径，请确认你了解风险。",
+			"composer.permission.acknowledge": "我已了解风险",
+			"composer.permission.cancel": "取消",
+			"composer.permission.enable": "开启",
 			"input.placeholder.running": "点击暂停按钮以暂停执行…",
 			"input.placeholder.paused": "输入恢复指令，@step 定点恢复…",
 			"input.placeholder.failed": "输入消息，@step 重试失败步骤…",
@@ -5122,7 +5086,22 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"detail.maxConcurrentAgents": "最大并发代理数",
 			"detail.primaryGate": "一级门禁（primary）",
 			"detail.primaryGate.enabled": "启用",
-			"detail.edit": "进入编排"
+			"detail.edit": "进入编排",
+			"instance.create.title": "新增实例",
+			"instance.create.cancel": "取消",
+			"instance.create.submit": "创建",
+			"instance.create.submitting": "创建中…",
+			"instance.create.cwd": "工作目录",
+			"instance.create.cwd.placeholder": "未选择（默认 /tmp）",
+			"instance.create.browse": "浏览…",
+			"instance.create.requirement": "作业需求",
+			"instance.create.requirement.placeholder": "描述这次工作流实例要完成的任务…",
+			"instance.create.workflow": "绑定工作流",
+			"instance.create.workflow.placeholder": "选择要运行的工作流",
+			"instance.create.workflow.empty": "暂无可用定义，请先在「编排」中创建",
+			"instance.create.model": "模型",
+			"instance.create.permission": "权限策略",
+			"instance.create.permission.default": "Workspace write"
 		};
 		/** 英文文案（与 zh 逐键对齐，缺一即编译错）。 */
 		const en = {
@@ -5145,6 +5124,12 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"panel.empty.definitions.hint": "Click \"New definition\" to create one",
 			"panel.empty.nomatch": "No matching items",
 			"panel.delete": "Delete",
+			"panel.delete.instance": "Delete instance",
+			"panel.delete.instance.confirm.title": "Delete instance",
+			"panel.delete.instance.confirm.body": "Delete instance \"{id}\"? This cannot be undone.",
+			"panel.delete.instance.confirm.submit": "Delete",
+			"panel.delete.instance.confirm.cancel": "Cancel",
+			"panel.delete.instance.failed": "Delete failed: {message}",
 			"panel.delete.confirm.title": "Delete definition",
 			"panel.delete.confirm.body": "Delete \"{name}\"? This cannot be undone.",
 			"panel.delete.confirm.submit": "Delete",
@@ -5238,7 +5223,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"run.question.placeholder": "Type an answer",
 			"run.question.submit": "Submit",
 			"run.permission.title": "Permission request",
-			"run.permission.once": "This once",
+			"run.permission.once": "Allow once",
 			"run.permission.always": "Always allow",
 			"run.permission.reject": "Reject",
 			"run.permission.patterns": "Path patterns",
@@ -5299,6 +5284,47 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"run.result": "Result",
 			"run.artifact": "Artifact",
 			"run.originalInput": "Initial input",
+			"run.workingAgents": "{count} working",
+			"run.time.justNow": "just now",
+			"run.time.minutesAgo": "{count}m ago",
+			"run.time.hoursAgo": "{count}h ago",
+			"run.time.daysAgo": "{count}d ago",
+			"run.time.you": "you",
+			"run.user.kind.input": "Request",
+			"run.user.kind.resume": "Resume",
+			"run.user.kind.retry": "Retry",
+			"run.user.kind.answer": "Answer",
+			"run.step.attempt": "Attempt #{n}",
+			"run.approval.waiting": "Awaiting permission confirmation",
+			"run.approval.headline": "{step} requests {permission}, awaiting your approval",
+			"run.question.eyebrow": "{step} needs confirmation",
+			"run.question.skip": "Skip",
+			"run.question.next": "Next",
+			"run.question.unanswered": "Answer the current question first",
+			"run.question.incomplete": "Some questions are unanswered",
+			"run.question.recommended": "Recommended",
+			"run.question.customPlaceholder": "Custom answer…",
+			"run.question.minimize": "Minimize",
+			"run.question.maximize": "Expand",
+			"run.question.cancel": "Cancel",
+			"composer.model.fallback": "Select model",
+			"composer.model.aria": "Select model, current {model}",
+			"composer.model.ariaEffort": "Select model, current {model}, effort {effort}",
+			"composer.model.menu": "Model and reasoning effort",
+			"composer.model.title": "Model",
+			"composer.model.effort": "Effort",
+			"composer.model.effortDefault": "Default",
+			"composer.model.loading": "Refreshing model list…",
+			"composer.model.error": "Model operation failed: {message}",
+			"composer.model.reload": "Reload",
+			"composer.model.warning": "{name} failed to load: {message}",
+			"composer.model.empty": "No models available.",
+			"composer.model.emptyEfforts": "This model provides no effort levels.",
+			"composer.permission.confirmTitle": "Enable full access",
+			"composer.permission.confirmDesc": "Full access lets the engine reach paths outside the workspace. Please acknowledge the risk.",
+			"composer.permission.acknowledge": "I understand the risk",
+			"composer.permission.cancel": "Cancel",
+			"composer.permission.enable": "Enable",
 			"input.placeholder.running": "Click pause to pause the run…",
 			"input.placeholder.paused": "Type a resume message, @step to resume a specific step…",
 			"input.placeholder.failed": "Type a message, @step to retry the failed step…",
@@ -5336,7 +5362,22 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"detail.maxConcurrentAgents": "Max concurrent agents",
 			"detail.primaryGate": "Primary gate",
 			"detail.primaryGate.enabled": "Enabled",
-			"detail.edit": "Edit DAG"
+			"detail.edit": "Edit DAG",
+			"instance.create.title": "New instance",
+			"instance.create.cancel": "Cancel",
+			"instance.create.submit": "Create",
+			"instance.create.submitting": "Creating…",
+			"instance.create.cwd": "Working directory",
+			"instance.create.cwd.placeholder": "Not selected (default /tmp)",
+			"instance.create.browse": "Browse…",
+			"instance.create.requirement": "Requirement",
+			"instance.create.requirement.placeholder": "Describe the task this workflow instance should accomplish…",
+			"instance.create.workflow": "Workflow",
+			"instance.create.workflow.placeholder": "Select a workflow to run",
+			"instance.create.workflow.empty": "No definitions yet, create one in Orchestrate first",
+			"instance.create.model": "Model",
+			"instance.create.permission": "Permission",
+			"instance.create.permission.default": "Workspace write"
 		};
 		//#endregion
 		//#region lib/types/client/workflow-store.js
@@ -5348,7 +5389,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			selectedDefinition: void 0,
 			creatingNew: false,
 			preview: null,
-			listWidth: 300,
+			listWidth: 360,
 			treeWidth: 360,
 			previewWidth: 380
 		};
@@ -5411,7 +5452,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		/** 更新列表列宽（拖拽分隔条，带边界钳制）。 */
 		function resizeListWidth(delta) {
-			setWorkflowState({ listWidth: clamp$1(state.listWidth + delta, 200, 520) });
+			setWorkflowState({ listWidth: clamp$1(state.listWidth + delta, 240, 560) });
 		}
 		/** 更新预览列宽（拖拽分隔条，带边界钳制）。 */
 		function resizePreviewWidth(delta) {
@@ -5422,13 +5463,13 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowButton.module.css.mjs
-		const css$12 = "/* sidebar 底部工作流按钮（宽态行 / 窄 rail 仅图标）。 */\n\n.s1wzuf_layer {\n  position: relative;\n  flex: none;\n  display: flex;\n  align-items: center;\n  width: 100%;\n  height: 49px;\n  margin: 8px 0 0;\n}\n\n.s1wzuf_footerButtons {\n  display: flex;\n  align-items: center;\n  width: 100%;\n}\n\n.s1wzuf_badge {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  width: 100%;\n  height: 49px;\n  padding: 0 8px 0 6px;\n  border: none;\n  border-radius: 12px;\n  background: transparent;\n  color: var(--dsw-alias-label-primary);\n  font-family: inherit;\n  font-size: 14px;\n  cursor: pointer;\n  overflow: hidden;\n}\n\n.s1wzuf_badge:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n/* overlay 打开时按钮高亮（accent 底）。 */\n.s1wzuf_badgeActive,\n.s1wzuf_badgeActive:hover {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1wzuf_badgeLabel {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1wzuf_layer.s1wzuf_rail {\n  width: 36px;\n  height: 36px;\n  margin: 0;\n}\n\n.s1wzuf_rail .s1wzuf_badge {\n  justify-content: center;\n  gap: 0;\n  width: 36px;\n  height: 36px;\n  padding: 0;\n  border-radius: 50%;\n}\n\n.s1wzuf_rail .s1wzuf_footerButtons {\n  flex-direction: column;\n  gap: 2px;\n}\n";
-		const tagId$12 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowButton.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$12) + "]") === null) {
+		const css$14 = "/* sidebar 底部工作流按钮（宽态行 / 窄 rail 仅图标）。 */\n\n.s1wzuf_layer {\n  position: relative;\n  flex: none;\n  display: flex;\n  align-items: center;\n  width: 100%;\n  height: 49px;\n  margin: 8px 0 0;\n}\n\n.s1wzuf_footerButtons {\n  display: flex;\n  align-items: center;\n  width: 100%;\n}\n\n.s1wzuf_badge {\n  display: inline-flex;\n  align-items: center;\n  gap: 8px;\n  width: 100%;\n  height: 49px;\n  padding: 0 8px 0 6px;\n  border: none;\n  border-radius: 12px;\n  background: transparent;\n  color: var(--dsw-alias-label-primary);\n  font-family: inherit;\n  font-size: 14px;\n  cursor: pointer;\n  overflow: hidden;\n}\n\n.s1wzuf_badge:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n/* overlay 打开时按钮高亮（accent 底）。 */\n.s1wzuf_badgeActive,\n.s1wzuf_badgeActive:hover {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1wzuf_badgeLabel {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1wzuf_layer.s1wzuf_rail {\n  width: 36px;\n  height: 36px;\n  margin: 0;\n}\n\n.s1wzuf_rail .s1wzuf_badge {\n  justify-content: center;\n  gap: 0;\n  width: 36px;\n  height: 36px;\n  padding: 0;\n  border-radius: 50%;\n}\n\n.s1wzuf_rail .s1wzuf_footerButtons {\n  flex-direction: column;\n  gap: 2px;\n}\n";
+		const tagId$14 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowButton.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$14) + "]") === null) {
 			const tag = document.createElement("style");
 			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
-			tag.dataset.pluginCss = tagId$12;
-			tag.textContent = css$12;
+			tag.dataset.pluginCss = tagId$14;
+			tag.textContent = css$14;
 			document.head.appendChild(tag);
 		}
 		var WorkflowButton_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1wzuf_" + prop : void 0 });
@@ -5519,11 +5560,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const pad = (n) => String(n).padStart(2, "0");
 			return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 		}
-		/** 关键词过滤实例：大小写不敏感匹配 instanceId 或 jobId。 */
+		/** 关键词过滤实例：大小写不敏感匹配 originalInput 或 workflowId。 */
 		function matchesInstanceQuery(instance, query) {
 			if (query === "") return true;
 			const needle = query.toLowerCase();
-			return instance.instanceId.toLowerCase().includes(needle) || instance.jobId.toLowerCase().includes(needle);
+			return instance.originalInput.toLowerCase().includes(needle) || instance.workflowId.toLowerCase().includes(needle);
 		}
 		/** 关键词过滤定义：大小写不敏感匹配 name 或 id。 */
 		function matchesDefinitionQuery(definition, query) {
@@ -5609,23 +5650,21 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			return status === "running" || status === "interacting";
 		}
 		/**
-		* 实例是否已进入终态（`completed`/`failed`/`aborted`），终态停止轮询。
-		* @param status - 实例生命周期状态。
-		* @returns 终态为 true。
-		*/
-		function isTerminalStatus(status) {
-			return status === "completed" || status === "failed" || status === "aborted";
-		}
-		/**
 		* 按 `kind` 把 `pendingInteractions` 分为问答与权限两组。
+		*
+		* 探索修正（2026-08）：仅取 `status === 'pending'` 的条目——后端已只持久化 pending，
+		* 此处过滤是防御旧快照（含 replied/rejected 全量历史时避免讨论页复弹接管面板）。
 		* @param interactions - 实例的 pending 交互列表。
 		* @returns 问答与权限两个分组。
 		*/
 		function partitionInteractions(interactions) {
 			const questions = [];
 			const permissions = [];
-			for (const interaction of interactions) if (interaction.kind === "question") questions.push(interaction);
-			else permissions.push(interaction);
+			for (const interaction of interactions) {
+				if (interaction.status !== "pending") continue;
+				if (interaction.kind === "question") questions.push(interaction);
+				else permissions.push(interaction);
+			}
 			return {
 				questions,
 				permissions
@@ -5648,6 +5687,83 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		*/
 		function stepIdOf(step) {
 			return step.stepId ?? step.id;
+		}
+		/**
+		* 计算相对时间（ISO → 刚刚 / N 分钟前 / N 小时前 / N 天前；跨 7 天回退短日期）。
+		* @param iso - 目标时间（ISO 串），undefined 返回 undefined。
+		* @param nowIso - 基准「现在」（ISO 串）。
+		* @returns 相对时间结果或 undefined。
+		*/
+		function relativeTimeOf(iso, nowIso) {
+			if (iso === void 0) return void 0;
+			const then = Date.parse(iso);
+			const now = Date.parse(nowIso);
+			if (Number.isNaN(then) || Number.isNaN(now)) return void 0;
+			const diffMs = now - then;
+			if (diffMs < 6e4) return { kind: "justNow" };
+			const minutes = Math.floor(diffMs / 6e4);
+			if (minutes < 60) return {
+				kind: "minutes",
+				count: minutes
+			};
+			const hours = Math.floor(minutes / 60);
+			if (hours < 24) return {
+				kind: "hours",
+				count: hours
+			};
+			const days = Math.floor(hours / 24);
+			if (days < 7) return {
+				kind: "days",
+				count: days
+			};
+			const date = new Date(then);
+			const pad = (value) => String(value).padStart(2, "0");
+			return {
+				kind: "date",
+				text: `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+			};
+		}
+		/** 把任意载荷值缩略为单行文本（供 tool 消息行展示）。 */
+		function summarizeValue(value) {
+			if (value === void 0 || value === null) return void 0;
+			if (typeof value === "string") return value === "" ? void 0 : value;
+			if (typeof value === "number" || typeof value === "boolean") return String(value);
+			try {
+				const text = JSON.stringify(value);
+				if (text === void 0) return void 0;
+				return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+			} catch {
+				return String(value);
+			}
+		}
+		/**
+		* 把 step 的 sessionMessages 派生为展示行（agent 内嵌消息框 / 失败列表用）。
+		* tool 消息 → `┌ tool\n└ 输出摘要`（mono 行）；text/reasoning → 正文行。
+		* @param step - 已执行 Step 快照。
+		* @returns 展示行列表；无消息返回 undefined。
+		*/
+		function chatLinesOf(step) {
+			const messages = step.sessionMessages;
+			if (messages === void 0 || messages.length === 0) return void 0;
+			const lines = [];
+			for (const message of messages) if (message.type === "tool") {
+				const head = `┌ ${message.tool ?? "tool"}`;
+				const output = summarizeValue(message.output);
+				lines.push({
+					who: `${step.name} · tool`,
+					text: output === void 0 ? head : `${head}\n└ ${output}`,
+					kind: "tool"
+				});
+			} else {
+				const text = message.text;
+				if (text === void 0 || text === "") continue;
+				lines.push({
+					who: `${step.name} · agent`,
+					text,
+					kind: "assistant"
+				});
+			}
+			return lines.length === 0 ? void 0 : lines;
 		}
 		/**
 		* 把 `output: ContentBlock[]` 的 text 块拼接为纯文本（无 text 块返回 undefined）。
@@ -5697,13 +5813,20 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				}]);
 			}
 			const stageNodes = state.stageInfos.map((stage) => {
-				const steps = state.executedSteps.filter((step) => step.stageId === stage.id);
+				const steps = state.executedSteps.filter((step) => step.stageId === stage.id).sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0));
+				const seen = /* @__PURE__ */ new Set();
+				const uniqueSteps = steps.filter((step) => {
+					const key = stepIdOf(step);
+					if (seen.has(key)) return false;
+					seen.add(key);
+					return true;
+				});
 				return {
 					id: stage.id,
 					name: stage.name,
 					type: "stage",
 					status: stage.status,
-					children: steps.map((step) => {
+					children: uniqueSteps.map((step) => {
 						const key = stepIdOf(step);
 						return {
 							id: step.id,
@@ -5726,17 +5849,43 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			}];
 		}
 		/**
-		* 从 `WorkflowTaskState` 构建统一时间线：初始输入 user 气泡 + 各 executedStep 卡片
-		* （按执行顺序）。running 卡无实时消息流（引擎不写 sessionMessages、无 step-message
-		* 事件），body 按状态展示输出文本 / 错误 / 运行中占位。
+		* 段模型下按「最后活跃段」聚合 Step 列表（DiscussionInput @Step 定点恢复用）。
+		*
+		* 同 stepId 多次执行段（暂停续跑/重试/ask 续问）只保留 attemptIndex 最大的段，
+		* 避免 @Step 选择器重复展示同一 Step 的多个执行段。
+		* @param steps - 实例的 executedSteps（可能含同 stepId 多段）。
+		* @returns 按 stepId 去重后的 Step 快照列表（取最后活跃段；非子代理 Step 原样保留）。
+		*/
+		function lastActiveSegmentsOf(steps) {
+			const byStepId = /* @__PURE__ */ new Map();
+			for (const step of steps) {
+				const key = stepIdOf(step);
+				const current = byStepId.get(key);
+				if (current === void 0 || (step.attemptIndex ?? 0) >= (current.attemptIndex ?? 0)) byStepId.set(key, step);
+			}
+			return [...byStepId.values()];
+		}
+		/**
+		* 从 `WorkflowTaskState` 构建统一时间线（段模型 + 用户消息统一排序）。
+		*
+		* 三路来源严格按 `createdAt` 排序合并：
+		* 1. `userMessages`（input/resume/retry/answer，含原始需求——初始 input 消息
+		*    由引擎 makeInitialState 写入，前端不再单独拼 `state.originalInput` 气泡）
+		* 2. executedSteps 各**执行段**（`createdAt` 为段开始时间；同 stepId 多次执行段
+		*    各自成卡，`attemptIndex` 标注第几次）
+		* 3. running 卡无实时消息流（引擎不写 sessionMessages、无 step-message 事件），
+		*    body 按状态展示输出文本 / 错误 / 运行中占位。
 		* @param state - 实例状态快照。
-		* @returns 时间线条目列表。
+		* @returns 时间线条目列表（按 createdAt 升序）。
 		*/
 		function buildTimeline(state) {
 			const items = [];
-			if (state.originalInput !== "") items.push({
+			for (const message of state.userMessages ?? []) items.push({
 				kind: "user",
-				content: state.originalInput
+				content: message.content,
+				time: message.createdAt,
+				messageKind: message.kind,
+				target: message.target
 			});
 			for (const step of state.executedSteps) items.push({
 				kind: "step",
@@ -5744,22 +5893,32 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				name: step.name,
 				status: step.status,
 				loopLabel: loopLabelOf$1(step.loopIteration),
+				time: step.createdAt ?? step.updatedAt ?? step.startedAt,
 				outputText: outputTextOf(step.output),
 				error: step.error,
 				childId: step.sessionMeta?.childId,
-				visitCount: step.visitCount
+				synthetic: step.sessionMeta?.synthetic,
+				messages: chatLinesOf(step),
+				visitCount: step.visitCount,
+				attemptIndex: step.attemptIndex,
+				pausedAt: step.pausedAt
+			});
+			items.sort((a, b) => {
+				const ta = a.time === void 0 ? "" : a.time;
+				const tb = b.time === void 0 ? "" : b.time;
+				return ta < tb ? -1 : ta > tb ? 1 : 0;
 			});
 			return items;
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowPanel.module.css.mjs
-		const css$11 = "/* 从 sidebar 底部按钮上方展开的工作流列表（sidebar 内，占侧栏宽度，不覆盖主区）。 */\n\n.si0f3j_panel {\n  position: absolute;\n  left: 0;\n  right: 0;\n  bottom: 100%;\n  z-index: 30;\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  max-height: 60vh;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: var(--dsw-shadow-lv2);\n}\n\n/* 下钻态：给出确定高度，使 DagEditor/RunView 的 height:100% 可解析并在内部滚动。 */\n.si0f3j_panel.si0f3j_drill {\n  height: 60vh;\n}\n\n.si0f3j_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.si0f3j_title {\n  flex: none;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.si0f3j_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.si0f3j_search input {\n  width: 100%;\n}\n\n.si0f3j_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 4px 12px 12px;\n}\n\n.si0f3j_drillBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n.si0f3j_listGroups {\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n}\n\n.si0f3j_groupSection {\n  display: flex;\n  flex-direction: column;\n}\n\n.si0f3j_group {\n  margin: 8px 0 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.si0f3j_rows {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\n\n.si0f3j_row {\n  display: flex;\n  align-items: stretch;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n/* 选中行高亮（accent 底 + 主色描边）。 */\n.si0f3j_rowActive {\n  border-color: var(--dsw-alias-accent-primary);\n  background: var(--dsw-alias-accent-bg);\n}\n\n.si0f3j_rowActive .si0f3j_rowAction:hover {\n  background: var(--dsw-alias-accent-bg);\n}\n\n.si0f3j_rowAction {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 10px 12px;\n  border: none;\n  background: transparent;\n  color: inherit;\n  font-family: inherit;\n  font-size: inherit;\n  text-align: left;\n  cursor: pointer;\n}\n\n.si0f3j_rowAction:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n.si0f3j_rowBody {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.si0f3j_rowName {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.si0f3j_rowCaption {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.si0f3j_rowStatus {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  height: 20px;\n  padding: 0 6px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill);\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  white-space: nowrap;\n}\n\n.si0f3j_deleteButton {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  border: none;\n  background: transparent;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.si0f3j_deleteButton:hover {\n  color: var(--dsw-alias-state-error-primary);\n}\n\n.si0f3j_empty {\n  margin: 0;\n  padding: 12px 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.si0f3j_emptyBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 4px;\n  padding: 12px 0;\n}\n\n.si0f3j_emptyHint {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.si0f3j_error {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n.si0f3j_errorBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 8px;\n  padding: 12px 0;\n}\n\n.si0f3j_deleteConfirm {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.si0f3j_deleteConfirmText {\n  margin: 0;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  overflow-wrap: anywhere;\n}\n";
-		const tagId$11 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowPanel.module.css";
-		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$11) + "]") === null) {
+		const css$13 = "/* 从 sidebar 底部按钮上方展开的工作流列表（sidebar 内，占侧栏宽度，不覆盖主区）。 */\n\n.si0f3j_panel {\n  position: absolute;\n  left: 0;\n  right: 0;\n  bottom: 100%;\n  z-index: 30;\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  max-height: 60vh;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: var(--dsw-shadow-lv2);\n}\n\n/* 下钻态：给出确定高度，使 DagEditor/RunView 的 height:100% 可解析并在内部滚动。 */\n.si0f3j_panel.si0f3j_drill {\n  height: 60vh;\n}\n\n.si0f3j_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-base);\n}\n\n.si0f3j_title {\n  flex: none;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.si0f3j_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.si0f3j_search input {\n  width: 100%;\n}\n\n.si0f3j_body {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 4px 12px 12px;\n}\n\n.si0f3j_drillBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n.si0f3j_listGroups {\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n}\n\n.si0f3j_groupSection {\n  display: flex;\n  flex-direction: column;\n}\n\n.si0f3j_group {\n  margin: 8px 0 4px;\n  font-size: 11px;\n  font-weight: 500;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-transform: uppercase;\n  letter-spacing: 0.04em;\n}\n\n.si0f3j_rows {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  margin: 0;\n  padding: 0;\n  list-style: none;\n}\n\n.si0f3j_row {\n  display: flex;\n  align-items: stretch;\n  overflow: hidden;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px;\n  background: var(--dsw-alias-bg-base);\n}\n\n/* 选中行高亮（accent 底 + 主色描边）。 */\n.si0f3j_rowActive {\n  border-color: var(--dsw-alias-accent-primary);\n  background: var(--dsw-alias-accent-bg);\n}\n\n.si0f3j_rowActive .si0f3j_rowAction:hover {\n  background: var(--dsw-alias-accent-bg);\n}\n\n.si0f3j_rowAction {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 10px 12px;\n  border: none;\n  background: transparent;\n  color: inherit;\n  font-family: inherit;\n  font-size: inherit;\n  text-align: left;\n  cursor: pointer;\n}\n\n.si0f3j_rowAction:hover {\n  background: var(--dsw-alias-interactive-bg-hover-solid);\n}\n\n.si0f3j_rowBody {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.si0f3j_rowName {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 13px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.si0f3j_rowCaption {\n  min-width: 0;\n  overflow: hidden;\n  font-size: 11px;\n  line-height: 16px;\n  color: var(--dsw-alias-label-caption);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.si0f3j_rowStatus {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  height: 20px;\n  padding: 0 6px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill);\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  white-space: nowrap;\n}\n\n.si0f3j_deleteButton {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 32px;\n  border: none;\n  background: transparent;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.si0f3j_deleteButton:hover {\n  color: var(--dsw-alias-state-error-primary);\n}\n\n.si0f3j_empty {\n  margin: 0;\n  padding: 12px 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.si0f3j_emptyBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 4px;\n  padding: 12px 0;\n}\n\n.si0f3j_emptyHint {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.si0f3j_error {\n  margin: 0;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n.si0f3j_errorBox {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-start;\n  gap: 8px;\n  padding: 12px 0;\n}\n\n.si0f3j_deleteConfirm {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.si0f3j_deleteConfirmText {\n  margin: 0;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  overflow-wrap: anywhere;\n}\n";
+		const tagId$13 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowPanel.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$13) + "]") === null) {
 			const tag = document.createElement("style");
 			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
-			tag.dataset.pluginCss = tagId$11;
-			tag.textContent = css$11;
+			tag.dataset.pluginCss = tagId$13;
+			tag.textContent = css$13;
 			document.head.appendChild(tag);
 		}
 		var WorkflowPanel_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "si0f3j_" + prop : void 0 });
@@ -5771,12 +5930,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		* 经 `listInstances()` 拉取实例摘要，`useWorkspaces` 的 `WorkspaceView[].sessionIds`
 		* 成员表把实例按归属分组（instanceId 命中即归组，未命中归「未分组」）；打开期间
 		* 每 3s 递归 setTimeout 刷新（组件卸载即清理停止）。列表呈现三态：loading（加载中）、
-		* empty（空态引导）、error（RPC 失败提示 + 重试）。点击实例行经 `onOpen` 下钻 RunView。
+		* empty（空态引导）、error（RPC 失败提示 + 重试）。点击实例行经 `onOpen` 下钻 RunView；
+		* 每行删除按钮弹确认框，确认后 `deleteInstance(instanceId)`（state 表行级删除），
+		* 成功本地移除、失败内联呈现错误。
 		* 分组派生与关键词过滤抽至 `panel-model.ts`（纯函数，可单测）。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/InstanceList
 		*/
-		/** 实例列表轮询间隔（毫秒）。 */
-		const POLL_INTERVAL_MS$1 = 3e3;
+		/** 实例列表轮询间隔（毫秒）：1.5s 平衡及时性与 RPC 频率。 */
+		const POLL_INTERVAL_MS$1 = 1500;
 		/** 7 态实例生命周期状态词汇（用于把 wire 侧 string 安全收窄为 DagRunStatus）。 */
 		const DAG_RUN_STATUSES = [
 			"pending",
@@ -5805,9 +5966,47 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		function instanceDotState(status) {
 			return isDagRunStatus(status) ? runDotState(status) : "warning";
 		}
+		/** 删除实例确认对话框：展示实例 id，确认后回调 instanceId，删除失败内联呈现错误。 */
+		function DeleteInstanceModal({ target, deleting, errorMessage, t, onCancel, onConfirm }) {
+			return (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
+				open: true,
+				onClose: onCancel,
+				title: t("panel.delete.instance.confirm.title"),
+				closeLabel: t("panel.delete.instance.confirm.cancel"),
+				footer: (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+					variant: "ghost",
+					size: "sm",
+					disabled: deleting,
+					onClick: onCancel,
+					children: t("panel.delete.instance.confirm.cancel")
+				}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+					variant: "primary",
+					size: "sm",
+					disabled: deleting,
+					onClick: () => {
+						onConfirm(target.instanceId);
+					},
+					children: t("panel.delete.instance.confirm.submit")
+				})] }),
+				children: (0, react_jsx_runtime.jsxs)("div", {
+					className: WorkflowPanel_module_css_default.deleteConfirm,
+					children: [(0, react_jsx_runtime.jsx)("p", {
+						className: WorkflowPanel_module_css_default.deleteConfirmText,
+						children: t("panel.delete.instance.confirm.body", { id: target.instanceId })
+					}), errorMessage !== void 0 && (0, react_jsx_runtime.jsx)("p", {
+						className: WorkflowPanel_module_css_default.error,
+						role: "alert",
+						children: t("panel.delete.instance.failed", { message: errorMessage })
+					})]
+				})
+			});
+		}
 		/** 渲染 InstanceList。 */
-		function InstanceList({ t, workspaces, query, activeId, listInstances, onOpen }) {
+		function InstanceList({ t, workspaces, query, activeId, listInstances, deleteInstance, onInstanceDeleted, onOpen }) {
 			const [state, setState] = (0, react.useState)({ kind: "loading" });
+			const [confirmTarget, setConfirmTarget] = (0, react.useState)(void 0);
+			const [deleting, setDeleting] = (0, react.useState)(false);
+			const [deleteError, setDeleteError] = (0, react.useState)(void 0);
 			const timerRef = (0, react.useRef)(void 0);
 			const disposedRef = (0, react.useRef)(false);
 			const refresh = (0, react.useCallback)(async () => {
@@ -5843,6 +6042,24 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					}
 				};
 			}, [refreshAndSchedule]);
+			/** 删除实例：调 `deleteInstance`（state 表行级删除），成功本地移除、失败内联呈现。 */
+			const runDelete = async (instanceId) => {
+				setDeleting(true);
+				setDeleteError(void 0);
+				try {
+					await deleteInstance(instanceId);
+					setState((current) => current.kind === "ready" ? {
+						kind: "ready",
+						instances: current.instances.filter((instance) => instance.instanceId !== instanceId)
+					} : current);
+					setConfirmTarget(void 0);
+					onInstanceDeleted?.();
+				} catch (error) {
+					setDeleteError(describeError$1(error));
+				} finally {
+					setDeleting(false);
+				}
+			};
 			if (state.kind === "loading") return (0, react_jsx_runtime.jsx)("p", {
 				className: WorkflowPanel_module_css_default.empty,
 				children: t("panel.loading")
@@ -5877,7 +6094,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				className: WorkflowPanel_module_css_default.empty,
 				children: t("panel.empty.nomatch")
 			});
-			return (0, react_jsx_runtime.jsx)("div", {
+			return (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)("div", {
 				className: WorkflowPanel_module_css_default.listGroups,
 				children: groups.map((group) => (0, react_jsx_runtime.jsxs)("section", {
 					className: WorkflowPanel_module_css_default.groupSection,
@@ -5886,9 +6103,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						children: group.title
 					}), (0, react_jsx_runtime.jsx)("ul", {
 						className: WorkflowPanel_module_css_default.rows,
-						children: group.instances.map((instance) => (0, react_jsx_runtime.jsx)("li", {
+						children: group.instances.map((instance) => (0, react_jsx_runtime.jsxs)("li", {
 							className: WorkflowPanel_module_css_default.row,
-							children: (0, react_jsx_runtime.jsxs)("button", {
+							children: [(0, react_jsx_runtime.jsxs)("button", {
 								type: "button",
 								className: `${WorkflowPanel_module_css_default.rowAction} ${activeId === instance.instanceId ? WorkflowPanel_module_css_default.rowActive : ""}`,
 								onClick: () => {
@@ -5900,10 +6117,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 										className: WorkflowPanel_module_css_default.rowBody,
 										children: [(0, react_jsx_runtime.jsx)("span", {
 											className: WorkflowPanel_module_css_default.rowName,
-											children: instance.instanceId
+											title: instance.originalInput,
+											children: instance.originalInput
 										}), (0, react_jsx_runtime.jsx)("span", {
 											className: WorkflowPanel_module_css_default.rowCaption,
-											children: `${instance.jobId} · ${formatTimestamp(instance.updatedAt)}`
+											children: `${instance.workflowId} · ${formatTimestamp(instance.updatedAt)}`
 										})]
 									}),
 									(0, react_jsx_runtime.jsx)("span", {
@@ -5911,11 +6129,31 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 										children: isDagRunStatus(instance.status) ? t(STATUS_KEYS$1[instance.status]) : instance.status
 									})
 								]
-							})
+							}), (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: WorkflowPanel_module_css_default.deleteButton,
+								"aria-label": t("panel.delete.instance"),
+								onClick: () => {
+									setConfirmTarget(instance);
+									setDeleteError(void 0);
+								},
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconTrashOutline16, {})
+							})]
 						}, instance.instanceId))
 					})]
 				}, group.key))
-			});
+			}), confirmTarget !== void 0 && (0, react_jsx_runtime.jsx)(DeleteInstanceModal, {
+				target: confirmTarget,
+				deleting,
+				errorMessage: deleteError,
+				t,
+				onCancel: () => {
+					if (!deleting) setConfirmTarget(void 0);
+				},
+				onConfirm: (instanceId) => {
+					runDelete(instanceId);
+				}
+			})] });
 		}
 		//#endregion
 		//#region lib/types/client/DefinitionList.js
@@ -6085,8 +6323,623 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			})] });
 		}
 		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\NewInstanceDialog.module.css.mjs
+		const css$12 = "/* NewInstanceDialog：新增实例弹窗（工作目录 / 作业需求 / 绑定工作流 / 模型 / 权限）。\n   控件风格对齐 DSH Input/Menu：32px 高、8px 圆角、border-l2、bg-layer-1。 */\n\n/* Modal 卡片加宽：默认 Modal 380px 对 5 字段表单太窄；双类覆盖（照 DSH\n   DirectoryBrowser `.s1ny46_dialog.s1ny46_dialog` 惯例，无视样式表注入顺序）。\n   overflow: visible 让朝下展开的下拉菜单可以溢出卡片而不被截断（菜单自身\n   z-index 高于 mask，视觉浮于遮罩之上；卡片内容不溢出，圆角不受影响）。 */\n.s1ny46_dialog.s1ny46_dialog {\n  width: min(460px, calc(100vw - 48px));\n  overflow: visible;\n  gap: 0;\n  padding: 0;\n}\n\n/* headless 卡片自持布局：header / 表单 / footer 三段，间距自控。 */\n.s1ny46_card {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  min-width: 0;\n}\n\n.s1ny46_cardHeader {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n  padding: 20px 14px 12px 24px;\n  flex: none;\n}\n\n.s1ny46_cardTitle {\n  margin: 0;\n  font-size: 16px;\n  line-height: 24px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ny46_cardClose {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  border: none;\n  border-radius: 8px;\n  background: transparent;\n  cursor: pointer;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1ny46_cardClose:hover {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s1ny46_cardFooter {\n  display: flex;\n  align-items: center;\n  justify-content: flex-end;\n  gap: 8px;\n  padding: 16px 24px 24px;\n  flex: none;\n}\n\n.s1ny46_form {\n  display: flex;\n  flex-direction: column;\n  gap: 16px;\n  width: 100%;\n  box-sizing: border-box;\n  padding: 0 24px;\n}\n\n/* DSH 无全局 box-sizing reset，控件各自声明；这里统一 border-box 保证\n   width:100% 的控件（textarea/触发器/工作目录）左缘右缘与字段列完全对齐。 */\n.s1ny46_form input,\n.s1ny46_form textarea,\n.s1ny46_form button,\n.s1ny46_form .s1ny46_cwdInput {\n  box-sizing: border-box;\n}\n\n.s1ny46_field {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  min-width: 0;\n}\n\n.s1ny46_label {\n  color: var(--dsw-alias-label-secondary);\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 500;\n}\n\n/* ── 工作目录行：只读路径输入 + 浏览按钮 ─────────────────────────────────── */\n.s1ny46_cwdRow {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-width: 0;\n}\n\n.s1ny46_cwdInput {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1ny46_cwdInput input {\n  cursor: default;\n}\n\n/* 浏览按钮：与左侧只读路径框同高（32px）、同圆角（8px）、同字号（14px）。 */\n.s1ny46_browseBtn {\n  height: 32px;\n  padding: 0 12px;\n  border-radius: 8px;\n  font-size: 14px;\n  line-height: 22px;\n}\n\n/* ── 作业需求：多行文本输入（可换行；8px 圆角对齐 Input） ────────────────── */\n.s1ny46_textarea {\n  width: 100%;\n  min-height: 96px;\n  padding: 7px 8px;\n  resize: vertical;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  outline: none;\n  background: var(--dsw-alias-bg-layer-1);\n  color: var(--dsw-alias-label-primary);\n  font-family: inherit;\n  font-size: 14px;\n  line-height: 22px;\n}\n\n.s1ny46_textarea::placeholder {\n  color: var(--dsw-alias-label-dimmed);\n}\n\n.s1ny46_textarea:focus {\n  border-color: var(--dsw-alias-brand-primary);\n}\n\n/* ── 下拉触发器（对齐 DSH Input 外形；菜单选项仍用 composer 的 option 样式） ── */\n.s1ny46_selectRoot {\n  position: relative;\n  min-width: 0;\n  width: 100%;\n}\n\n.s1ny46_selectTrigger {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  width: 100%;\n  height: 32px;\n  padding: 0 8px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  outline: none;\n  background: var(--dsw-alias-bg-layer-1);\n  color: var(--dsw-alias-label-primary);\n  font-size: 14px;\n  line-height: 22px;\n  font-family: inherit;\n  text-align: left;\n  cursor: pointer;\n}\n\n.s1ny46_selectTrigger:hover:not(:disabled) {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s1ny46_selectTrigger:focus-visible {\n  border-color: var(--dsw-alias-brand-primary);\n}\n\n.s1ny46_selectTrigger:disabled {\n  color: var(--dsw-alias-label-dimmed);\n  cursor: default;\n}\n\n.s1ny46_selectTriggerLabel {\n  flex: 1;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ny46_selectTriggerIcon {\n  display: inline-flex;\n  flex: 0 0 auto;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1ny46_selectTriggerIcon svg {\n  width: 16px;\n  height: 16px;\n}\n\n.s1ny46_selectChevron {\n  display: inline-flex;\n  flex: 0 0 auto;\n  color: var(--dsw-alias-label-tertiary);\n  transition: transform 120ms ease;\n}\n\n.s1ny46_selectChevronOpen {\n  transform: rotate(180deg);\n}\n\n/* ── 弹窗下拉菜单（朝下展开，对齐触发器宽度；卡片 overflow:visible 保证\n   不截断；box-sizing:border-box 使 width:100% 与触发器严格同宽） ─────────── */\n.s1ny46_dialogMenu {\n  position: absolute;\n  top: calc(100% + 4px);\n  left: 0;\n  z-index: 30;\n  box-sizing: border-box;\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  max-height: min(300px, calc(100vh - 96px));\n  overflow: hidden;\n  padding: 4px;\n  border: 1px solid var(--dsw-alias-border-inverted);\n  border-radius: 12px;\n  background: var(--dsw-specific-menu);\n  box-shadow: var(--dsw-shadow-lv3);\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1ny46_error {\n  margin: 0;\n  color: var(--dsw-alias-state-error-primary);\n  font-size: 13px;\n  line-height: 20px;\n}\n";
+		const tagId$12 = "@deepseek-ai/dsh-client-ui-sandore/NewInstanceDialog.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$12) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$12;
+			tag.textContent = css$12;
+			document.head.appendChild(tag);
+		}
+		var NewInstanceDialog_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s1ny46_" + prop : void 0 });
+		//#endregion
+		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\composer-selects.module.css.mjs
+		const css$11 = "/* ComposerSelects：模型/权限选择器（照 DSH ModelSelect.s12pq1_module.s12pq1_css + PermissionSelect.s12pq1_module.s12pq1_css）。 */\n\n/* ── 通用（触发器 / 菜单材料） ───────────────────────────────────────────── */\n\n.s12pq1_msRoot {\n  position: relative;\n  min-width: 0;\n}\n\n.s12pq1_trigger {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  min-width: 0;\n  max-width: 220px;\n  height: 28px;\n  padding: 0 4px 0 8px;\n  border: none;\n  border-radius: 24px;\n  outline: none;\n  background: transparent;\n  color: var(--dsw-alias-label-secondary);\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 500;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s12pq1_trigger:hover:not(:disabled) {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s12pq1_trigger:focus-visible {\n  box-shadow: 0 0 0 2px var(--dsw-alias-border-l3);\n}\n\n.s12pq1_trigger:disabled {\n  color: var(--dsw-alias-label-dimmed);\n  cursor: default;\n}\n\n.s12pq1_triggerLabel {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s12pq1_triggerEffort {\n  flex: 0 0 auto;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s12pq1_triggerIcon {\n  display: inline-flex;\n  flex: 0 0 auto;\n}\n\n.s12pq1_triggerIcon svg {\n  width: 14px;\n  height: 14px;\n}\n\n.s12pq1_chevron {\n  display: inline-flex;\n  flex: 0 0 auto;\n  color: var(--dsw-alias-label-caption);\n  transition: transform 120ms ease;\n}\n\n.s12pq1_chevronOpen {\n  transform: rotate(180deg);\n}\n\n.s12pq1_menu {\n  position: absolute;\n  right: 0;\n  bottom: calc(100% + 8px);\n  z-index: 20;\n  display: flex;\n  flex-direction: column;\n  width: min(240px, calc(100vw - 32px));\n  max-height: min(360px, calc(100vh - 96px));\n  overflow: hidden;\n  padding: 4px;\n  border: 1px solid var(--dsw-alias-border-inverted);\n  border-radius: 12px;\n  background: var(--dsw-specific-menu);\n  box-shadow: var(--dsw-shadow-lv3);\n  color: var(--dsw-alias-label-primary);\n}\n\n.s12pq1_status,\n.s12pq1_empty {\n  padding: 10px;\n  color: var(--dsw-alias-label-tertiary);\n  font-size: 13px;\n  line-height: 20px;\n}\n\n.s12pq1_error,\n.s12pq1_warning {\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 8px;\n  margin-bottom: 4px;\n  padding: 7px 8px;\n  border-radius: 8px;\n  background: var(--dsw-alias-interactive-bg-hover-danger);\n  color: var(--dsw-alias-state-error-primary);\n  font-size: 12px;\n  line-height: 18px;\n}\n\n.s12pq1_warning {\n  background: var(--dsw-alias-bg-module-platform);\n  color: var(--dsw-alias-state-warn-label);\n}\n\n.s12pq1_retry {\n  flex: 0 0 auto;\n  padding: 0;\n  border: none;\n  background: transparent;\n  color: inherit;\n  font: inherit;\n  font-weight: 600;\n  cursor: pointer;\n}\n\n.s12pq1_groups {\n  min-height: 0;\n  overflow-y: auto;\n}\n\n.s12pq1_group + .s12pq1_group {\n  margin-top: 4px;\n}\n\n.s12pq1_groupTitle {\n  position: sticky;\n  top: 0;\n  z-index: 1;\n  padding: 5px 8px 3px;\n  background: var(--dsw-specific-menu);\n  color: var(--dsw-alias-label-tertiary);\n  font-size: 12px;\n  line-height: 18px;\n  font-weight: 500;\n}\n\n.s12pq1_option {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  width: 100%;\n  min-height: 38px;\n  padding: 6px 8px;\n  border: none;\n  border-radius: 10px;\n  outline: none;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s12pq1_option:hover:not(:disabled),\n.s12pq1_option:focus-visible {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s12pq1_option:disabled {\n  color: var(--dsw-alias-label-dimmed);\n  cursor: default;\n}\n\n.s12pq1_selected {\n  background: transparent;\n}\n\n.s12pq1_optionIcon {\n  display: inline-flex;\n  flex: 0 0 auto;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s12pq1_optionIcon svg {\n  width: 16px;\n  height: 16px;\n}\n\n.s12pq1_optionCopy {\n  display: flex;\n  flex: 1;\n  flex-direction: column;\n  min-width: 0;\n}\n\n.s12pq1_modelName {\n  overflow: hidden;\n  color: inherit;\n  font-size: 14px;\n  line-height: 20px;\n  font-weight: 500;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s12pq1_description {\n  overflow: hidden;\n  color: var(--dsw-alias-label-tertiary);\n  font-size: 12px;\n  line-height: 18px;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s12pq1_check {\n  display: grid;\n  place-items: center;\n  flex: 0 0 18px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s12pq1_check svg {\n  width: 14px;\n  height: 14px;\n}\n\n/* 两级菜单根单元格（模型 / 推理等级）。 */\n.s12pq1_cell {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  width: 100%;\n  height: 40px;\n  padding: 0 10px;\n  border: none;\n  border-radius: 10px;\n  background: transparent;\n  color: var(--dsw-alias-label-primary);\n  font-size: 14px;\n  line-height: 22px;\n  font-family: inherit;\n  cursor: pointer;\n  text-align: left;\n}\n\n.s12pq1_cell:hover {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s12pq1_cellLabel {\n  flex: 1 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s12pq1_cellValue {\n  flex: 0 1 auto;\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.s12pq1_cellChevron {\n  flex: 0 0 auto;\n  color: var(--dsw-alias-label-tertiary);\n}\n\n.s12pq1_cellChevron svg {\n  width: 14px;\n  height: 14px;\n}\n\n/* ── 完全访问风险确认（照 DSH RiskConfirmation 卡片） ────────────────────── */\n\n.s12pq1_riskMask {\n  position: fixed;\n  inset: 0;\n  z-index: 60;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: rgb(15 23 42 / 0.3);\n}\n\n.s12pq1_riskCard {\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n  width: min(380px, calc(100vw - 48px));\n  padding: 18px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 16px;\n  background: var(--dsw-alias-bg-elevated);\n  box-shadow: var(--dsw-shadow-lv3);\n  color: var(--dsw-alias-label-primary);\n}\n\n.s12pq1_riskTitle {\n  font-size: 15px;\n  font-weight: 600;\n  line-height: 22px;\n}\n\n.s12pq1_riskDesc {\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s12pq1_riskAck {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n  cursor: pointer;\n}\n\n.s12pq1_riskAck input {\n  accent-color: var(--dsw-alias-accent-primary);\n}\n\n.s12pq1_riskActions {\n  display: flex;\n  justify-content: flex-end;\n  gap: 8px;\n  margin-top: 4px;\n}\n\n.s12pq1_riskCancel,\n.s12pq1_riskConfirm {\n  height: 32px;\n  padding: 0 14px;\n  border-radius: 999px;\n  font-size: 13px;\n  font-weight: 500;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s12pq1_riskCancel {\n  border: 1px solid var(--dsw-alias-border-l2);\n  background: transparent;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s12pq1_riskCancel:hover {\n  background: var(--dsw-alias-interactive-bg-hover);\n}\n\n.s12pq1_riskConfirm {\n  border: none;\n  background: var(--dsw-alias-accent-primary);\n  color: var(--dsw-alias-label-invert);\n}\n\n.s12pq1_riskConfirm:hover:not(:disabled) {\n  opacity: 0.9;\n}\n\n.s12pq1_riskConfirm:disabled {\n  opacity: 0.5;\n  cursor: default;\n}\n";
+		const tagId$11 = "@deepseek-ai/dsh-client-ui-sandore/composer-selects.module.css";
+		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$11) + "]") === null) {
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "@deepseek-ai/dsh-client-ui-sandore";
+			tag.dataset.pluginCss = tagId$11;
+			tag.textContent = css$11;
+			document.head.appendChild(tag);
+		}
+		var composer_selects_module_css_default = new Proxy({}, { get: (_target, prop) => typeof prop === "string" ? "s12pq1_" + prop : void 0 });
+		//#endregion
+		//#region lib/types/client/NewInstanceDialog.js
+		/**
+		* NewInstanceDialog：新增工作流实例弹窗（去 job 概念：直接绑定定义启动）。
+		*
+		* 字段（自上而下，照用户要求顺序）：
+		* 1. 工作目录 —— DSH 原生目录选择器（`face.pickDirectory`，读路径后内联显示，可重选）。
+		* 2. 作业需求 —— 多行文本输入（textarea，可换行）。
+		* 3. 绑定工作流 —— 下拉选择已保存的定义（`face.listDefinitions`）。
+		* 4. 模型 —— 照对话输入框的模型下拉（provider 分组 + 模型项，`face.listModelDirectory`）。
+		* 5. 权限策略 —— 照对话输入框的权限下拉（read-only / workspace-write / danger-full-access
+		*    三个预设，本地选中；`danger-full-access` 需风险确认）。
+		* 确定 → `face.startInstance({ workflowId, originalInput, cwd?, model?, permission? })`，
+		* 成功后 `onCreated(run.instanceId)`（宿主切执行态并选中）。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/NewInstanceDialog
+		*/
+		/** 权限预设机器值 → 展示名（照 DSH PermissionSelect）。 */
+		const PERMISSION_OPTIONS = [
+			{
+				value: "read-only",
+				name: "Read only"
+			},
+			{
+				value: "workspace-write",
+				name: "Workspace write"
+			},
+			{
+				value: "danger-full-access",
+				name: "Full access"
+			}
+		];
+		/** 权限触发器 glyph（read-only=对勾 / workspace-write=铅笔 / full-access=感叹）。 */
+		function permissionGlyph$1(value) {
+			switch (value) {
+				case "read-only": return (0, react_jsx_runtime.jsxs)("svg", {
+					width: "16",
+					height: "16",
+					viewBox: "0 0 16 16",
+					fill: "none",
+					"aria-hidden": true,
+					children: [(0, react_jsx_runtime.jsx)("path", {
+						d: "M8.20554 0.899994L14.7901 3.36857V7.01026C14.7901 12 11.0466 14.2103 8.20554 15.3C5.36446 14.2103 1.62012 12 1.62012 7.01026V3.36857L8.20554 0.899994Z",
+						stroke: "currentColor",
+						strokeWidth: "1.31831",
+						strokeLinejoin: "round"
+					}), (0, react_jsx_runtime.jsx)("path", {
+						d: "M12.1654 5.7552L8.9447 9.41475C8.73044 9.65816 8.53628 9.8804 8.35774 10.0423C8.1713 10.2114 7.94235 10.3717 7.64016 10.4254C7.48207 10.4535 7.32 10.4552 7.16151 10.4294C6.85843 10.3801 6.62728 10.2223 6.43836 10.0559C6.25752 9.89653 6.06037 9.67732 5.84264 9.43705L4.72925 8.20897L5.63557 7.38707L6.74897 8.61594C6.98603 8.87755 7.12974 9.03533 7.24673 9.13839C7.31033 9.19443 7.34485 9.21476 7.35823 9.22122C7.38068 9.22484 7.40352 9.22515 7.42593 9.22122C7.40522 9.22502 7.42893 9.23294 7.53583 9.136C7.65132 9.03126 7.79316 8.87139 8.02643 8.60638L11.2479 4.94763L12.1654 5.7552Z",
+						fill: "currentColor"
+					})]
+				});
+				case "danger-full-access": return (0, react_jsx_runtime.jsxs)("svg", {
+					width: "16",
+					height: "16",
+					viewBox: "0 0 16 16",
+					fill: "none",
+					"aria-hidden": true,
+					children: [
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M8.20554 0.899994L14.7901 3.36857V7.01026C14.7901 12 11.0466 14.2103 8.20554 15.3C5.36446 14.2103 1.62012 12 1.62012 7.01026V3.36857L8.20554 0.899994Z",
+							stroke: "currentColor",
+							strokeWidth: "1.31831",
+							strokeLinejoin: "round"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M9.10094 4.5V8.75939H7.59888V4.5H9.10094Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M9.10094 9.8114V11.5H7.59888V9.8114H9.10094Z",
+							fill: "currentColor"
+						})
+					]
+				});
+				default: return (0, react_jsx_runtime.jsxs)("svg", {
+					width: "16",
+					height: "16",
+					viewBox: "0 0 16 16",
+					fill: "none",
+					"aria-hidden": true,
+					children: [
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M8.20554 0.899994L14.7901 3.36857V7.01026C14.7901 12 11.0466 14.2103 8.20554 15.3C5.36446 14.2103 1.62012 12 1.62012 7.01026V3.36857L8.20554 0.899994Z",
+							stroke: "currentColor",
+							strokeWidth: "1.31831",
+							strokeLinejoin: "round"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M11.3525 5.64688V6.85688H5V5.64688H11.3525Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M9.5824 8.29376V9.50376H5V8.29376H9.5824Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M14.6647 15.6852H10.0338C10.3878 15.3751 10.7567 15.0517 11.0772 14.7706C11.2531 14.6164 11.4144 14.4746 11.5511 14.3547H14.6647V15.6852Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M8.14852 14.1308L7.33925 15.4976C7.22458 15.6912 7.42245 15.9194 7.63037 15.8333L9.09785 15.2254L15.0399 10.0719L14.0905 8.97733L8.14852 14.1308Z",
+							fill: "currentColor"
+						})
+					]
+				});
+			}
+		}
+		/** 渲染「新增实例」弹窗。 */
+		function NewInstanceDialog({ t, face, onClose, onCreated }) {
+			const [cwd, setCwd] = (0, react.useState)(void 0);
+			const [requirement, setRequirement] = (0, react.useState)("");
+			const [workflowId, setWorkflowId] = (0, react.useState)(void 0);
+			const [model, setModel] = (0, react.useState)(void 0);
+			const [permission, setPermission] = (0, react.useState)("workspace-write");
+			const [definitions, setDefinitions] = (0, react.useState)(void 0);
+			const [models, setModels] = (0, react.useState)({ kind: "loading" });
+			const [submitting, setSubmitting] = (0, react.useState)(false);
+			const [errorMessage, setErrorMessage] = (0, react.useState)(void 0);
+			const [workflowOpen, setWorkflowOpen] = (0, react.useState)(false);
+			const [modelOpen, setModelOpen] = (0, react.useState)(false);
+			const [permissionOpen, setPermissionOpen] = (0, react.useState)(false);
+			const [fullAccessConfirm, setFullAccessConfirm] = (0, react.useState)(false);
+			const [acknowledged, setAcknowledged] = (0, react.useState)(false);
+			const [pendingPermission, setPendingPermission] = (0, react.useState)(void 0);
+			const rootRef = (0, react.useRef)(null);
+			(0, react.useEffect)(() => {
+				let alive = true;
+				face.listDefinitions().then((entries) => {
+					if (alive) setDefinitions(entries.map((entry) => ({
+						id: entry.id,
+						name: entry.name
+					})));
+				}, (error) => {
+					if (alive) setErrorMessage(describeError$1(error));
+				});
+				face.listModelDirectory().then((directory) => {
+					if (alive) setModels({
+						kind: "ready",
+						directory
+					});
+				}, (error) => {
+					if (alive) setModels({
+						kind: "error",
+						message: describeError$1(error)
+					});
+				});
+				return () => {
+					alive = false;
+				};
+			}, [face]);
+			(0, react.useEffect)(() => {
+				if (!workflowOpen && !modelOpen && !permissionOpen) return;
+				const closeOutside = (event) => {
+					if (!rootRef.current?.contains(event.target)) {
+						setWorkflowOpen(false);
+						setModelOpen(false);
+						setPermissionOpen(false);
+					}
+				};
+				document.addEventListener("mousedown", closeOutside);
+				return () => {
+					document.removeEventListener("mousedown", closeOutside);
+				};
+			}, [
+				workflowOpen,
+				modelOpen,
+				permissionOpen
+			]);
+			const selectedDefinition = definitions?.find((entry) => entry.id === workflowId);
+			const selectedModel = model === void 0 ? void 0 : models.kind === "ready" ? models.directory.flatMap((provider) => provider.models.map((m) => ({
+				provider,
+				m
+			}))).find((entry) => entry.provider.provider === model?.provider && entry.m.id === model.model) : void 0;
+			const modelLabel = selectedModel === void 0 ? t("composer.model.fallback") : selectedModel.m.name;
+			const canSubmit = submitting === false && workflowId !== void 0 && requirement.trim() !== "";
+			/** 打开 DSH 原生目录选择器，选中后回填（取消保持原值）。 */
+			const browse = async () => {
+				try {
+					const picked = await face.pickDirectory();
+					if (picked !== void 0) setCwd(picked);
+				} catch (error) {
+					setErrorMessage(describeError$1(error));
+				}
+			};
+			/** 确定：收集全部参数创建实例。 */
+			const submit = async () => {
+				if (!canSubmit) return;
+				setSubmitting(true);
+				setErrorMessage(void 0);
+				try {
+					const input = {
+						workflowId,
+						originalInput: requirement,
+						...cwd === void 0 ? {} : { cwd },
+						...model === void 0 ? {} : { model },
+						...permission === void 0 ? {} : { permission }
+					};
+					onCreated((await face.startInstance(input)).instanceId);
+				} catch (error) {
+					setErrorMessage(describeError$1(error));
+					setSubmitting(false);
+				}
+			};
+			const choosePermission = (value) => {
+				setPermissionOpen(false);
+				if (value === "danger-full-access") {
+					setAcknowledged(false);
+					setFullAccessConfirm(true);
+					return;
+				}
+				setPermission(value);
+			};
+			const confirmFullAccess = () => {
+				if (!acknowledged) return;
+				setFullAccessConfirm(false);
+				setPermission("danger-full-access");
+			};
+			return (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
+				open: true,
+				className: `${NewInstanceDialog_module_css_default.dialog}`,
+				onClose: () => {
+					if (!submitting) onClose();
+				},
+				title: t("instance.create.title"),
+				closeLabel: t("instance.create.cancel"),
+				headless: true,
+				children: [(0, react_jsx_runtime.jsxs)("div", {
+					className: NewInstanceDialog_module_css_default.card,
+					children: [
+						(0, react_jsx_runtime.jsxs)("div", {
+							className: NewInstanceDialog_module_css_default.cardHeader,
+							children: [(0, react_jsx_runtime.jsx)("h2", {
+								className: NewInstanceDialog_module_css_default.cardTitle,
+								children: t("instance.create.title")
+							}), (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: NewInstanceDialog_module_css_default.cardClose,
+								"aria-label": t("instance.create.cancel"),
+								onClick: () => {
+									if (!submitting) onClose();
+								},
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCloseOutline16, { size: 14 })
+							})]
+						}),
+						(0, react_jsx_runtime.jsxs)("div", {
+							className: NewInstanceDialog_module_css_default.form,
+							ref: rootRef,
+							children: [
+								(0, react_jsx_runtime.jsxs)("label", {
+									className: NewInstanceDialog_module_css_default.field,
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: NewInstanceDialog_module_css_default.label,
+										children: t("instance.create.cwd")
+									}), (0, react_jsx_runtime.jsxs)("div", {
+										className: NewInstanceDialog_module_css_default.cwdRow,
+										children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+											className: `${NewInstanceDialog_module_css_default.cwdInput}`,
+											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconFolderOpenOutline16, {}),
+											value: cwd ?? t("instance.create.cwd.placeholder"),
+											readOnly: true,
+											title: cwd
+										}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+											size: "sm",
+											variant: "outline",
+											className: `${NewInstanceDialog_module_css_default.browseBtn}`,
+											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconBrowseOutline16, {}),
+											onClick: () => {
+												browse();
+											},
+											children: t("instance.create.browse")
+										})]
+									})]
+								}),
+								(0, react_jsx_runtime.jsxs)("label", {
+									className: NewInstanceDialog_module_css_default.field,
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: NewInstanceDialog_module_css_default.label,
+										children: t("instance.create.requirement")
+									}), (0, react_jsx_runtime.jsx)("textarea", {
+										className: NewInstanceDialog_module_css_default.textarea,
+										value: requirement,
+										onChange: (event) => {
+											setRequirement(event.target.value);
+										},
+										placeholder: t("instance.create.requirement.placeholder"),
+										rows: 4,
+										disabled: submitting
+									})]
+								}),
+								(0, react_jsx_runtime.jsxs)("label", {
+									className: NewInstanceDialog_module_css_default.field,
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: NewInstanceDialog_module_css_default.label,
+										children: t("instance.create.workflow")
+									}), (0, react_jsx_runtime.jsxs)("div", {
+										className: `${composer_selects_module_css_default.msRoot} ${NewInstanceDialog_module_css_default.selectRoot}`,
+										children: [(0, react_jsx_runtime.jsxs)("button", {
+											type: "button",
+											className: NewInstanceDialog_module_css_default.selectTrigger,
+											"aria-haspopup": "menu",
+											"aria-expanded": workflowOpen,
+											disabled: definitions === void 0 || submitting,
+											onClick: () => {
+												setWorkflowOpen((current) => !current);
+											},
+											children: [(0, react_jsx_runtime.jsx)("span", {
+												className: NewInstanceDialog_module_css_default.selectTriggerLabel,
+												children: selectedDefinition?.name ?? t("instance.create.workflow.placeholder")
+											}), (0, react_jsx_runtime.jsx)("span", {
+												className: `${NewInstanceDialog_module_css_default.selectChevron} ${workflowOpen ? NewInstanceDialog_module_css_default.selectChevronOpen : ""}`,
+												"aria-hidden": true,
+												children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+											})]
+										}), workflowOpen && (0, react_jsx_runtime.jsx)("div", {
+											className: NewInstanceDialog_module_css_default.dialogMenu,
+											role: "menu",
+											"aria-label": t("instance.create.workflow"),
+											children: definitions === void 0 ? (0, react_jsx_runtime.jsx)("div", {
+												className: composer_selects_module_css_default.status,
+												children: t("panel.loading")
+											}) : definitions.length === 0 ? (0, react_jsx_runtime.jsx)("div", {
+												className: composer_selects_module_css_default.empty,
+												children: t("instance.create.workflow.empty")
+											}) : definitions.map((entry) => {
+												const selected = entry.id === workflowId;
+												return (0, react_jsx_runtime.jsxs)("button", {
+													type: "button",
+													role: "menuitemradio",
+													"aria-checked": selected,
+													className: `${composer_selects_module_css_default.option} ${selected ? composer_selects_module_css_default.selected : ""}`,
+													onClick: () => {
+														setWorkflowId(entry.id);
+														setWorkflowOpen(false);
+													},
+													children: [(0, react_jsx_runtime.jsx)("span", {
+														className: composer_selects_module_css_default.optionCopy,
+														children: (0, react_jsx_runtime.jsx)("span", {
+															className: composer_selects_module_css_default.modelName,
+															children: entry.name
+														})
+													}), (0, react_jsx_runtime.jsx)("span", {
+														className: composer_selects_module_css_default.check,
+														children: selected ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}) : null
+													})]
+												}, entry.id);
+											})
+										})]
+									})]
+								}),
+								(0, react_jsx_runtime.jsxs)("label", {
+									className: NewInstanceDialog_module_css_default.field,
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: NewInstanceDialog_module_css_default.label,
+										children: t("instance.create.model")
+									}), (0, react_jsx_runtime.jsxs)("div", {
+										className: `${composer_selects_module_css_default.msRoot} ${NewInstanceDialog_module_css_default.selectRoot}`,
+										children: [(0, react_jsx_runtime.jsxs)("button", {
+											type: "button",
+											className: NewInstanceDialog_module_css_default.selectTrigger,
+											"aria-haspopup": "menu",
+											"aria-expanded": modelOpen,
+											disabled: models.kind !== "ready" || submitting,
+											onClick: () => {
+												setModelOpen((current) => !current);
+											},
+											children: [(0, react_jsx_runtime.jsx)("span", {
+												className: NewInstanceDialog_module_css_default.selectTriggerLabel,
+												children: modelLabel
+											}), (0, react_jsx_runtime.jsx)("span", {
+												className: `${NewInstanceDialog_module_css_default.selectChevron} ${modelOpen ? NewInstanceDialog_module_css_default.selectChevronOpen : ""}`,
+												"aria-hidden": true,
+												children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+											})]
+										}), modelOpen && (0, react_jsx_runtime.jsxs)("div", {
+											className: NewInstanceDialog_module_css_default.dialogMenu,
+											role: "menu",
+											"aria-label": t("instance.create.model"),
+											children: [
+												models.kind === "loading" && (0, react_jsx_runtime.jsx)("div", {
+													className: composer_selects_module_css_default.status,
+													children: t("composer.model.loading")
+												}),
+												models.kind === "error" && (0, react_jsx_runtime.jsxs)("div", {
+													className: composer_selects_module_css_default.error,
+													children: [(0, react_jsx_runtime.jsx)("span", { children: t("composer.model.error", { message: models.message }) }), (0, react_jsx_runtime.jsx)("button", {
+														type: "button",
+														className: composer_selects_module_css_default.retry,
+														onClick: () => {
+															setModels({ kind: "loading" });
+															face.listModelDirectory().then((directory) => {
+																setModels({
+																	kind: "ready",
+																	directory
+																});
+															}, (error) => {
+																setModels({
+																	kind: "error",
+																	message: describeError$1(error)
+																});
+															});
+														},
+														children: t("composer.model.reload")
+													})]
+												}),
+												models.kind === "ready" && (0, react_jsx_runtime.jsxs)("div", {
+													className: composer_selects_module_css_default.groups,
+													children: [models.directory.map((provider) => (0, react_jsx_runtime.jsxs)("section", {
+														role: "group",
+														"aria-label": provider.providerName,
+														className: composer_selects_module_css_default.group,
+														children: [(0, react_jsx_runtime.jsx)("div", {
+															className: composer_selects_module_css_default.groupTitle,
+															children: provider.providerName
+														}), provider.models.map((entry) => {
+															const selected = model?.provider === provider.provider && model.model === entry.id;
+															return (0, react_jsx_runtime.jsxs)("button", {
+																type: "button",
+																role: "menuitemradio",
+																"aria-checked": selected,
+																className: `${composer_selects_module_css_default.option} ${selected ? composer_selects_module_css_default.selected : ""}`,
+																title: entry.name,
+																onClick: () => {
+																	setModel({
+																		provider: provider.provider,
+																		model: entry.id
+																	});
+																	setModelOpen(false);
+																},
+																children: [(0, react_jsx_runtime.jsx)("span", {
+																	className: composer_selects_module_css_default.optionCopy,
+																	children: (0, react_jsx_runtime.jsx)("span", {
+																		className: composer_selects_module_css_default.modelName,
+																		children: entry.name
+																	})
+																}), (0, react_jsx_runtime.jsx)("span", {
+																	className: composer_selects_module_css_default.check,
+																	children: selected ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}) : null
+																})]
+															}, entry.id);
+														})]
+													}, provider.provider)), models.directory.length === 0 && (0, react_jsx_runtime.jsx)("div", {
+														className: composer_selects_module_css_default.empty,
+														children: t("composer.model.empty")
+													})]
+												})
+											]
+										})]
+									})]
+								}),
+								(0, react_jsx_runtime.jsxs)("label", {
+									className: NewInstanceDialog_module_css_default.field,
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: NewInstanceDialog_module_css_default.label,
+										children: t("instance.create.permission")
+									}), (0, react_jsx_runtime.jsxs)("div", {
+										className: `${composer_selects_module_css_default.msRoot} ${NewInstanceDialog_module_css_default.selectRoot}`,
+										children: [(0, react_jsx_runtime.jsxs)("button", {
+											type: "button",
+											className: NewInstanceDialog_module_css_default.selectTrigger,
+											"aria-haspopup": "menu",
+											"aria-expanded": permissionOpen,
+											disabled: submitting,
+											onClick: () => {
+												setPermissionOpen((current) => !current);
+											},
+											children: [
+												(0, react_jsx_runtime.jsx)("span", {
+													className: NewInstanceDialog_module_css_default.selectTriggerIcon,
+													"aria-hidden": true,
+													children: permissionGlyph$1(permission ?? "workspace-write")
+												}),
+												(0, react_jsx_runtime.jsx)("span", {
+													className: NewInstanceDialog_module_css_default.selectTriggerLabel,
+													children: permission === void 0 ? t("instance.create.permission.default") : permission === "danger-full-access" ? "Full access" : permission === "read-only" ? "Read only" : "Workspace write"
+												}),
+												(0, react_jsx_runtime.jsx)("span", {
+													className: `${NewInstanceDialog_module_css_default.selectChevron} ${permissionOpen ? NewInstanceDialog_module_css_default.selectChevronOpen : ""}`,
+													"aria-hidden": true,
+													children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+												})
+											]
+										}), permissionOpen && (0, react_jsx_runtime.jsx)("div", {
+											className: NewInstanceDialog_module_css_default.dialogMenu,
+											role: "menu",
+											"aria-label": t("instance.create.permission"),
+											children: PERMISSION_OPTIONS.map((option) => {
+												const selected = (permission ?? "workspace-write") === option.value;
+												return (0, react_jsx_runtime.jsxs)("button", {
+													type: "button",
+													role: "menuitemradio",
+													"aria-checked": selected,
+													className: `${composer_selects_module_css_default.option} ${selected ? composer_selects_module_css_default.selected : ""}`,
+													onClick: () => {
+														choosePermission(option.value);
+													},
+													children: [
+														(0, react_jsx_runtime.jsx)("span", {
+															className: composer_selects_module_css_default.optionIcon,
+															"aria-hidden": true,
+															children: permissionGlyph$1(option.value)
+														}),
+														(0, react_jsx_runtime.jsx)("span", {
+															className: composer_selects_module_css_default.optionCopy,
+															children: (0, react_jsx_runtime.jsx)("span", {
+																className: composer_selects_module_css_default.modelName,
+																children: option.name
+															})
+														}),
+														(0, react_jsx_runtime.jsx)("span", {
+															className: composer_selects_module_css_default.check,
+															children: selected ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}) : null
+														})
+													]
+												}, option.value);
+											})
+										})]
+									})]
+								}),
+								errorMessage !== void 0 && (0, react_jsx_runtime.jsx)("p", {
+									className: NewInstanceDialog_module_css_default.error,
+									role: "alert",
+									children: t("panel.error", { message: errorMessage })
+								})
+							]
+						}),
+						(0, react_jsx_runtime.jsxs)("div", {
+							className: NewInstanceDialog_module_css_default.cardFooter,
+							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "ghost",
+								size: "sm",
+								disabled: submitting,
+								onClick: onClose,
+								children: t("instance.create.cancel")
+							}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								variant: "primary",
+								size: "sm",
+								disabled: !canSubmit,
+								onClick: () => {
+									submit();
+								},
+								children: submitting ? t("instance.create.submitting") : t("instance.create.submit")
+							})]
+						})
+					]
+				}), fullAccessConfirm && (0, react_jsx_runtime.jsx)("div", {
+					className: composer_selects_module_css_default.riskMask,
+					children: (0, react_jsx_runtime.jsxs)("div", {
+						className: composer_selects_module_css_default.riskCard,
+						role: "alertdialog",
+						"aria-modal": "true",
+						children: [
+							(0, react_jsx_runtime.jsx)("div", {
+								className: composer_selects_module_css_default.riskTitle,
+								children: t("composer.permission.confirmTitle")
+							}),
+							(0, react_jsx_runtime.jsx)("div", {
+								className: composer_selects_module_css_default.riskDesc,
+								children: t("composer.permission.confirmDesc")
+							}),
+							(0, react_jsx_runtime.jsxs)("label", {
+								className: composer_selects_module_css_default.riskAck,
+								children: [(0, react_jsx_runtime.jsx)("input", {
+									type: "checkbox",
+									checked: acknowledged,
+									onChange: (event) => {
+										setAcknowledged(event.target.checked);
+									}
+								}), (0, react_jsx_runtime.jsx)("span", { children: t("composer.permission.acknowledge") })]
+							}),
+							(0, react_jsx_runtime.jsxs)("div", {
+								className: composer_selects_module_css_default.riskActions,
+								children: [(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: composer_selects_module_css_default.riskCancel,
+									onClick: () => {
+										setFullAccessConfirm(false);
+										setAcknowledged(false);
+									},
+									children: t("composer.permission.cancel")
+								}), (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: composer_selects_module_css_default.riskConfirm,
+									disabled: !acknowledged,
+									onClick: confirmFullAccess,
+									children: t("composer.permission.enable")
+								})]
+							})
+						]
+					})
+				})]
+			});
+		}
+		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\WorkflowOverlay.module.css.mjs
-		const css$10 = "/* WorkflowOverlay：shell.s1mmu1_overlay 全局工作流 UI（覆盖 conversation/details 列，sidebar 可见）。 */\n\n.s1mmu1_layer {\n  position: absolute;\n  inset: 0;\n  z-index: 30;\n  pointer-events: none;\n}\n\n.s1mmu1_overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  left: var(--wf-left, 248px);\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.08);\n  pointer-events: auto;\n  animation: overlay-in 0.18s ease;\n}\n\n@keyframes overlay-in {\n  from {\n    transform: translateX(16px);\n    opacity: 0;\n  }\n  to {\n    transform: translateX(0);\n    opacity: 1;\n  }\n}\n\n.s1mmu1_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_headerTitle {\n  font-size: 14px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_spacer {\n  flex: 1;\n}\n\n.s1mmu1_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 8px;\n  background: transparent;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 双栏工作台 ─────────────────────────────────────────────────────────── */\n\n.s1mmu1_body {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1mmu1_drag-handle 观感）。 */\n.s1mmu1_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1mmu1_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1mmu1_dragHandle:hover::after,\n.s1mmu1_dragHandle.s1mmu1_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n/* ── 左栏列表 ────────────────────────────────────────────────────────────── */\n\n.s1mmu1_list {\n  flex: none;\n  min-width: 200px;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1mmu1_listHeader {\n  flex: none;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1mmu1_listTitleRow {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.s1mmu1_listTitle {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n/* 实例/编排 开关：紧凑黑白配色（白轨道 + 黑滑块）。滑块为选中侧，激活白字/未激活灰字。 */\n.s1mmu1_toggle {\n  position: relative;\n  display: inline-flex;\n  align-items: center;\n  border-radius: 999px;\n  background: #fff;\n  border: 1px solid rgba(0, 0, 0, 0.25);\n  padding: 2px;\n  width: 80px;\n  height: 22px;\n  box-sizing: border-box;\n}\n\n/* 滑块：黑色圆钮（选中侧），左右滑动。 */\n.s1mmu1_toggleThumb {\n  position: absolute;\n  top: 2px;\n  left: 2px;\n  width: calc(50% - 3px);\n  height: calc(100% - 4px);\n  border-radius: 999px;\n  background: #000;\n  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);\n  transition: left 0.18s ease;\n  pointer-events: none;\n}\n\n.s1mmu1_toggleThumb.s1mmu1_toggleThumbRight {\n  left: calc(50% + 1px);\n}\n\n.s1mmu1_toggle button {\n  position: relative;\n  z-index: 1;\n  flex: 1;\n  padding: 0 4px;\n  border: none;\n  background: transparent;\n  font-size: 11px;\n  line-height: 18px;\n  font-family: inherit;\n  text-align: center;\n  color: rgba(0, 0, 0, 0.5);\n  cursor: pointer;\n  transition: color 0.18s ease;\n}\n\n.s1mmu1_toggle button:hover {\n  color: rgba(0, 0, 0, 0.8);\n}\n\n.s1mmu1_toggle button.s1mmu1_toggleActive {\n  /* 黑滑块上用柔和浅色文字（纯白刺眼、主题深色不可见；浅灰居中）。 */\n  color: rgba(255, 255, 255, 0.92);\n  font-weight: 500;\n}\n\n\n\n\n\n\n\n.s1mmu1_listToolbar {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1mmu1_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1mmu1_search input {\n  width: 100%;\n}\n\n.s1mmu1_listBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 6px 10px 12px;\n  box-sizing: border-box;\n}\n\n/* ── 右栏编辑区 ──────────────────────────────────────────────────────────── */\n\n.s1mmu1_editorCol {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1mmu1_modeBar {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_editorTitle {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_modeSwitch {\n  display: inline-flex;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  padding: 2px;\n  gap: 1px;\n}\n\n.s1mmu1_modeSwitch button {\n  padding: 4px 12px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_modeSwitch button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1mmu1_modeSwitch button.s1mmu1_modeActive {\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  box-shadow: var(--dsw-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));\n  font-weight: 500;\n}\n\n.s1mmu1_runError {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n.s1mmu1_editorBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n.s1mmu1_editorPlaceholder {\n  flex: 1;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 24px;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n\n/* 内联错误提示（编辑器加载/保存失败等）。 */\n.s1mmu1_error {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n\n";
+		const css$10 = "/* WorkflowOverlay：shell.s1mmu1_overlay 全局工作流 UI（覆盖 conversation/details 列，sidebar 可见）。 */\n\n.s1mmu1_layer {\n  position: absolute;\n  inset: 0;\n  z-index: 30;\n  pointer-events: none;\n}\n\n.s1mmu1_overlay {\n  position: absolute;\n  top: 0;\n  right: 0;\n  bottom: 0;\n  left: var(--wf-left, 248px);\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n  background: var(--dsw-alias-bg-base);\n  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.08);\n  pointer-events: auto;\n  animation: overlay-in 0.18s ease;\n}\n\n@keyframes overlay-in {\n  from {\n    transform: translateX(16px);\n    opacity: 0;\n  }\n  to {\n    transform: translateX(0);\n    opacity: 1;\n  }\n}\n\n.s1mmu1_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l1);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_headerTitle {\n  font-size: 14px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_spacer {\n  flex: 1;\n}\n\n.s1mmu1_iconBtn {\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 8px;\n  background: transparent;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_iconBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n  color: var(--dsw-alias-label-secondary);\n}\n\n/* ── 双栏工作台 ─────────────────────────────────────────────────────────── */\n\n.s1mmu1_body {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1mmu1_drag-handle 观感）。 */\n.s1mmu1_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1mmu1_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1mmu1_dragHandle:hover::after,\n.s1mmu1_dragHandle.s1mmu1_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n/* ── 左栏列表 ────────────────────────────────────────────────────────────── */\n\n.s1mmu1_list {\n  flex: none;\n  min-width: 240px;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1mmu1_listHeader {\n  flex: none;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px 12px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1mmu1_listTitleRow {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 8px;\n}\n\n.s1mmu1_listTitle {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n/* 实例/编排 开关：紧凑黑白配色（白轨道 + 黑滑块）。滑块为选中侧，激活白字/未激活灰字。 */\n.s1mmu1_toggle {\n  position: relative;\n  display: inline-flex;\n  align-items: center;\n  border-radius: 999px;\n  background: #fff;\n  border: 1px solid rgba(0, 0, 0, 0.25);\n  padding: 2px;\n  width: 80px;\n  height: 22px;\n  box-sizing: border-box;\n}\n\n/* 滑块：黑色圆钮（选中侧），左右滑动。 */\n.s1mmu1_toggleThumb {\n  position: absolute;\n  top: 2px;\n  left: 2px;\n  width: calc(50% - 3px);\n  height: calc(100% - 4px);\n  border-radius: 999px;\n  background: #000;\n  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);\n  transition: left 0.18s ease;\n  pointer-events: none;\n}\n\n.s1mmu1_toggleThumb.s1mmu1_toggleThumbRight {\n  left: calc(50% + 1px);\n}\n\n.s1mmu1_toggle button {\n  position: relative;\n  z-index: 1;\n  flex: 1;\n  padding: 0 4px;\n  border: none;\n  background: transparent;\n  font-size: 11px;\n  line-height: 18px;\n  font-family: inherit;\n  text-align: center;\n  color: rgba(0, 0, 0, 0.5);\n  cursor: pointer;\n  transition: color 0.18s ease;\n}\n\n.s1mmu1_toggle button:hover {\n  color: rgba(0, 0, 0, 0.8);\n}\n\n.s1mmu1_toggle button.s1mmu1_toggleActive {\n  /* 黑滑块上用柔和浅色文字（纯白刺眼、主题深色不可见；浅灰居中）。 */\n  color: rgba(255, 255, 255, 0.92);\n  font-weight: 500;\n}\n\n\n\n\n\n\n\n.s1mmu1_listToolbar {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1mmu1_search {\n  flex: 1;\n  min-width: 0;\n}\n\n.s1mmu1_search input {\n  width: 100%;\n}\n\n.s1mmu1_listBody {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n  padding: 6px 10px 12px;\n  box-sizing: border-box;\n}\n\n/* ── 右栏编辑区 ──────────────────────────────────────────────────────────── */\n\n.s1mmu1_editorCol {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  background: var(--dsw-alias-bg-base);\n  overflow: hidden;\n}\n\n.s1mmu1_modeBar {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1mmu1_editorTitle {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1mmu1_modeSwitch {\n  display: inline-flex;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  padding: 2px;\n  gap: 1px;\n}\n\n.s1mmu1_modeSwitch button {\n  padding: 4px 12px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-caption);\n  cursor: pointer;\n}\n\n.s1mmu1_modeSwitch button:hover {\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1mmu1_modeSwitch button.s1mmu1_modeActive {\n  background: var(--dsw-alias-bg-base);\n  color: var(--dsw-alias-label-primary);\n  box-shadow: var(--dsw-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.05));\n  font-weight: 500;\n}\n\n.s1mmu1_runError {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n.s1mmu1_editorBody {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  position: relative;\n  overflow: hidden;\n}\n\n.s1mmu1_editorPlaceholder {\n  flex: 1;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  padding: 24px;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n\n/* 内联错误提示（编辑器加载/保存失败等）。 */\n.s1mmu1_error {\n  flex: none;\n  margin: 0;\n  padding: 6px 16px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  overflow-wrap: anywhere;\n}\n\n\n";
 		const tagId$10 = "@deepseek-ai/dsh-client-ui-sandore/WorkflowOverlay.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$10) + "]") === null) {
 			const tag = document.createElement("style");
@@ -6111,84 +6964,110 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const selectedInstanceId = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId);
 			const selectedDefinitionId = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().selectedDefinition?.id);
 			const [query, setQuery] = (0, react.useState)("");
+			/** 新增实例弹窗开关（实例模式下「+」按钮打开）。 */
+			const [creatingInstance, setCreatingInstance] = (0, react.useState)(false);
+			/** 实例列表即时刷新计数：新建/删除实例后 +1，重挂载 InstanceList 立即拉取
+			（不等 3s 轮询周期，新建后列表立即可见）。 */
+			const [instanceTick, setInstanceTick] = (0, react.useState)(0);
 			return (0, react_jsx_runtime.jsxs)("section", {
 				className: WorkflowOverlay_module_css_default.list,
 				style: { width },
 				"data-sandore-wf-list": true,
-				children: [(0, react_jsx_runtime.jsxs)("header", {
-					className: WorkflowOverlay_module_css_default.listHeader,
-					children: [(0, react_jsx_runtime.jsxs)("div", {
-						className: WorkflowOverlay_module_css_default.listTitleRow,
-						children: [(0, react_jsx_runtime.jsx)("span", {
-							className: WorkflowOverlay_module_css_default.listTitle,
-							children: t("panel.title")
+				children: [
+					(0, react_jsx_runtime.jsxs)("header", {
+						className: WorkflowOverlay_module_css_default.listHeader,
+						children: [(0, react_jsx_runtime.jsxs)("div", {
+							className: WorkflowOverlay_module_css_default.listTitleRow,
+							children: [(0, react_jsx_runtime.jsx)("span", {
+								className: WorkflowOverlay_module_css_default.listTitle,
+								children: t("panel.title")
+							}), (0, react_jsx_runtime.jsxs)("div", {
+								className: WorkflowOverlay_module_css_default.toggle,
+								role: "tablist",
+								"aria-label": t("list.mode.switch"),
+								children: [
+									(0, react_jsx_runtime.jsx)("span", { className: `${WorkflowOverlay_module_css_default.toggleThumb} ${listMode === "definition" ? WorkflowOverlay_module_css_default.toggleThumbRight : ""}` }),
+									(0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										role: "tab",
+										"aria-selected": listMode === "instance",
+										className: listMode === "instance" ? WorkflowOverlay_module_css_default.toggleActive : "",
+										onClick: () => {
+											setWorkflowState({ listMode: "instance" });
+										},
+										children: t("list.mode.instance")
+									}),
+									(0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										role: "tab",
+										"aria-selected": listMode === "definition",
+										className: listMode === "definition" ? WorkflowOverlay_module_css_default.toggleActive : "",
+										onClick: () => {
+											setWorkflowState({ listMode: "definition" });
+										},
+										children: t("list.mode.definition")
+									})
+								]
+							})]
 						}), (0, react_jsx_runtime.jsxs)("div", {
-							className: WorkflowOverlay_module_css_default.toggle,
-							role: "tablist",
-							"aria-label": t("list.mode.switch"),
-							children: [
-								(0, react_jsx_runtime.jsx)("span", { className: `${WorkflowOverlay_module_css_default.toggleThumb} ${listMode === "definition" ? WorkflowOverlay_module_css_default.toggleThumbRight : ""}` }),
-								(0, react_jsx_runtime.jsx)("button", {
-									type: "button",
-									role: "tab",
-									"aria-selected": listMode === "instance",
-									className: listMode === "instance" ? WorkflowOverlay_module_css_default.toggleActive : "",
-									onClick: () => {
-										setWorkflowState({ listMode: "instance" });
-									},
-									children: t("list.mode.instance")
-								}),
-								(0, react_jsx_runtime.jsx)("button", {
-									type: "button",
-									role: "tab",
-									"aria-selected": listMode === "definition",
-									className: listMode === "definition" ? WorkflowOverlay_module_css_default.toggleActive : "",
-									onClick: () => {
-										setWorkflowState({ listMode: "definition" });
-									},
-									children: t("list.mode.definition")
-								})
-							]
+							className: WorkflowOverlay_module_css_default.listToolbar,
+							children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+								className: WorkflowOverlay_module_css_default.search ?? "",
+								icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, {}),
+								value: query,
+								onChange: (event) => {
+									setQuery(event.target.value);
+								},
+								placeholder: t("panel.search"),
+								"aria-label": t("panel.search")
+							}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+								size: "sm",
+								variant: "primary",
+								icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
+								title: t("panel.add.instance.hint"),
+								onClick: () => {
+									if (listMode === "instance") setCreatingInstance(true);
+									else newDefinition();
+								},
+								children: listMode === "definition" ? t("panel.add.definition") : t("panel.add.instance")
+							})]
 						})]
-					}), (0, react_jsx_runtime.jsxs)("div", {
-						className: WorkflowOverlay_module_css_default.listToolbar,
-						children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-							className: WorkflowOverlay_module_css_default.search ?? "",
-							icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSearchOutline16, {}),
-							value: query,
-							onChange: (event) => {
-								setQuery(event.target.value);
-							},
-							placeholder: t("panel.search"),
-							"aria-label": t("panel.search")
-						}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-							size: "sm",
-							variant: "primary",
-							icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPlusOutline16, {}),
-							disabled: listMode === "instance",
-							title: listMode === "instance" ? t("panel.add.instance.hint") : void 0,
-							onClick: newDefinition,
-							children: listMode === "definition" ? t("panel.add.definition") : t("panel.add.instance")
-						})]
-					})]
-				}), (0, react_jsx_runtime.jsx)("div", {
-					className: WorkflowOverlay_module_css_default.listBody,
-					children: listMode === "definition" ? (0, react_jsx_runtime.jsx)(DefinitionList, {
+					}),
+					(0, react_jsx_runtime.jsx)("div", {
+						className: WorkflowOverlay_module_css_default.listBody,
+						children: listMode === "definition" ? (0, react_jsx_runtime.jsx)(DefinitionList, {
+							t,
+							query,
+							activeId: selectedDefinitionId,
+							listDefinitions: face.listDefinitions,
+							deleteDefinition: face.deleteDefinition,
+							onOpen: selectDefinition
+						}, `def-${refreshKey}`) : (0, react_jsx_runtime.jsx)(InstanceList, {
+							t,
+							workspaces,
+							query,
+							activeId: selectedInstanceId,
+							listInstances: face.listInstances,
+							deleteInstance: face.deleteInstance,
+							onOpen: selectInstance,
+							onInstanceDeleted: () => {
+								setInstanceTick((tick) => tick + 1);
+							}
+						}, `inst-${refreshKey}-${instanceTick}`)
+					}),
+					creatingInstance && (0, react_jsx_runtime.jsx)(NewInstanceDialog, {
 						t,
-						query,
-						activeId: selectedDefinitionId,
-						listDefinitions: face.listDefinitions,
-						deleteDefinition: face.deleteDefinition,
-						onOpen: selectDefinition
-					}, `def-${refreshKey}`) : (0, react_jsx_runtime.jsx)(InstanceList, {
-						t,
-						workspaces,
-						query,
-						activeId: selectedInstanceId,
-						listInstances: face.listInstances,
-						onOpen: selectInstance
-					}, `inst-${refreshKey}`)
-				})]
+						face,
+						onClose: () => {
+							setCreatingInstance(false);
+						},
+						onCreated: (instanceId) => {
+							setCreatingInstance(false);
+							selectInstance(instanceId);
+							setInstanceTick((tick) => tick + 1);
+						}
+					})
+				]
 			});
 		}
 		//#endregion
@@ -24204,9 +25083,25 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				"failed"
 			])
 		});
+		/** 用户在执行过程中的消息（原始需求 / 恢复 / 重试，统一时间轴渲染）。 */
+		const UserMessageRecordSchema = object({
+			id: string(),
+			/** 消息种类：input=原始需求 / resume=继续消息 / retry=重试消息 / answer=ask 回答。 */
+			kind: _enum([
+				"input",
+				"resume",
+				"retry",
+				"answer"
+			]),
+			/** 目标：'broadcast'（广播）或 Step 定义 id（定点）；input 时为 ''。 */
+			target: string(),
+			/** 用户消息文本。 */
+			content: string(),
+			/** 消息时间（ISO；统一时间轴排序键）。 */
+			createdAt: string()
+		});
 		/** 已执行 Step 的默认实现快照。 */
 		const ExecutedStepDefaultSchema = object({
-			type: literal("default"),
 			id: string(),
 			stepId: string().optional(),
 			stageId: string(),
@@ -24219,11 +25114,17 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			sessionMeta: StepSessionMetaSchema.optional(),
 			finalizeMeta: FinalizeMetaSchema.optional(),
 			visitCount: number(),
+			/** 本执行段开始时间（ISO；统一时间轴排序键，替代对 startedAt 的可选依赖）。 */
+			createdAt: string().optional(),
+			/** 执行段序号（同 stepId 第几次执行段；0-based，缺省 0 = 首次执行）。 */
+			attemptIndex: number().int().nonnegative().optional(),
+			/** Step 开始执行的时间（ISO；引擎写入，供 UI 展示相对时间）。 */
+			startedAt: string().optional(),
+			/** Step 最近一次状态变更的时间（ISO；running 后每次转态更新，供 UI 展示相对时间）。 */
+			updatedAt: string().optional(),
 			branchMeta: BranchMetaSchema.optional(),
 			error: string().optional(),
 			pausedAt: string().optional(),
-			resumedAt: string().optional(),
-			resumePrompt: string().optional(),
 			sessionMessages: array$1(SessionMessageSchema).optional(),
 			pauseEntryId: string().optional(),
 			loopIteration: array$1(number()).optional(),
@@ -24256,10 +25157,21 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		});
 		object({
 			taskId: string(),
-			jobId: string(),
+			/** 兼容旧版 job 关联（去 job 概念后新实例不写；旧快照保留以通过校验）。 */
+			jobId: string().optional(),
 			workflowId: string(),
 			/** 工作流名称（启动时从定义写入；持久化快照携带，供 UI 树标题展示）。 */
 			workflowName: string().optional(),
+			/** 工作流描述（启动时从定义写入；供执行详情 head 展示，旧实例可能缺）。 */
+			description: string().optional(),
+			/** 创建实例时选择的模型（弹窗传入；作为该实例的 L2 默认模型路由）。 */
+			modelSelection: object({
+				provider: string(),
+				model: string(),
+				reasoningEffort: string().optional()
+			}).optional(),
+			/** 创建实例时选择的权限预设（read-only / workspace-write / danger-full-access）。 */
+			permission: string().optional(),
 			cwd: string(),
 			status: DagRunStatusSchema,
 			originalInput: string(),
@@ -24274,6 +25186,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			activeLoopNodeId: string().nullable(),
 			activeLoopStack: array$1(string()),
 			pausedChildIds: array$1(string()),
+			/** 用户指令消息（恢复/重试；统一时间轴渲染，初始需求由 originalInput 承载）。 */
+			userMessages: array$1(UserMessageRecordSchema).optional(),
 			stageContracts: record(string(), StageContractSchema),
 			createdAt: string(),
 			updatedAt: string()
@@ -24283,13 +25197,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			name: string(),
 			version: string(),
 			description: string().optional(),
-			createdAt: string(),
-			updatedAt: string()
-		});
-		object({
-			name: string(),
-			workflowId: string(),
-			cwd: string().optional(),
 			createdAt: string(),
 			updatedAt: string()
 		});
@@ -27900,7 +28807,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					maxConcurrentAgents: 4
 				},
 				stages: [{
-					id: "stg-1",
+					id: newId("stg"),
 					name: "阶段 1",
 					steps: []
 				}]
@@ -29542,7 +30449,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			});
 		}
 		/** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
-		function DagEditor({ t, initialYaml, initialId, save, onSaved, listJobs, createJob, startInstance }) {
+		function DagEditor({ t, initialYaml, initialId, save, onSaved, startInstance }) {
 			const [definition, setDefinition] = (0, react.useState)(() => initialYaml === void 0 ? createBlankDefinition() : parseWorkflowYaml(initialYaml));
 			const [id, setId] = (0, react.useState)(initialId);
 			const [saveState, setSaveState] = (0, react.useState)({ kind: "idle" });
@@ -29813,7 +30720,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				anchor.click();
 				URL.revokeObjectURL(url);
 			};
-			/** ▶ 测试运行：对当前定义找/建 Job 后启动实例，成功后切执行态并选中新实例。 */
+			/** ▶ 测试运行：直接以当前定义启动实例（无 job 概念），成功后切执行态并选中新实例。 */
 			const runTest = async () => {
 				const definitionId = id ?? definition.id;
 				if (definitionId === void 0) return;
@@ -29821,10 +30728,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				setRunError(void 0);
 				try {
 					selectInstance((await startInstance({
-						jobId: ((await listJobs(definitionId))[0] ?? await createJob({
-							name: `测试-${definitionId.slice(0, 8)}`,
-							workflowId: definitionId
-						})).id,
+						workflowId: definitionId,
 						originalInput: t("editor.testRun")
 					})).instanceId);
 				} catch (error) {
@@ -30323,7 +31227,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\timeline.module.css.mjs
-		const css$4 = "/* UnifiedTimeline：step 卡片 + user 气泡（GitHub comment-card 风格，DSH token）。 */\n\n.s1j7pg_scroll {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n}\n\n.s1j7pg_timeline {\n  padding: 8px 12px 16px;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n}\n\n.s1j7pg_empty {\n  margin: 0;\n  padding: 16px;\n  font-size: 12px;\n  color: var(--dsw-alias-label-caption);\n  text-align: center;\n}\n\n/* ── Step 卡片 ───────────────────────────────────────────────────────────── */\n\n.s1j7pg_stepCard {\n  border: 1px solid var(--dsw-alias-border-l1);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-elevated);\n  overflow: hidden;\n}\n\n.s1j7pg_stepHeader {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 8px 12px;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1j7pg_avatar {\n  flex: none;\n  width: 24px;\n  height: 24px;\n  border-radius: 6px;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n.s1j7pg_avatarDone {\n  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));\n  color: var(--dsw-alias-state-success);\n}\n\n.s1j7pg_avatarRun {\n  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));\n  color: var(--dsw-alias-state-info);\n  animation: pulse 1.5s infinite;\n}\n\n.s1j7pg_avatarFail {\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  color: var(--dsw-alias-state-error);\n}\n\n.s1j7pg_avatarPaused {\n  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));\n  color: var(--dsw-alias-state-warning);\n}\n\n.s1j7pg_avatarTodo {\n  background: var(--dsw-alias-bg-active);\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_stepName {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n  cursor: pointer;\n}\n\n.s1j7pg_stepName:hover {\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1j7pg_loopLabel {\n  margin-left: 4px;\n  font-size: 10px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_badge {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  padding: 1px 6px;\n  border-radius: 99px;\n  font-size: 10px;\n  font-weight: 500;\n}\n\n.s1j7pg_badgeRun {\n  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));\n  color: var(--dsw-alias-state-info);\n}\n\n.s1j7pg_badgeDone {\n  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));\n  color: var(--dsw-alias-state-success);\n}\n\n.s1j7pg_badgeFail {\n  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));\n  color: var(--dsw-alias-state-error);\n}\n\n.s1j7pg_badgePaused {\n  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));\n  color: var(--dsw-alias-state-warning);\n}\n\n.s1j7pg_badgeDot {\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: currentColor;\n}\n\n.s1j7pg_badgeRun .s1j7pg_badgeDot {\n  animation: pulse 1.5s infinite;\n}\n\n.s1j7pg_visitCount {\n  margin-left: auto;\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_stepBody {\n  padding: 8px 12px 8px 44px;\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n}\n\n.s1j7pg_stepReturn {\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n  line-height: 1.6;\n}\n\n.s1j7pg_stepError {\n  font-size: 12px;\n  color: var(--dsw-alias-state-error);\n  line-height: 1.6;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1j7pg_stepPaused {\n  font-size: 12px;\n  color: var(--dsw-alias-state-warning);\n}\n\n.s1j7pg_stepRunning {\n  font-size: 12px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1j7pg_expandBtn {\n  align-self: flex-start;\n  border: none;\n  background: transparent;\n  padding: 0;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-accent-primary);\n  cursor: pointer;\n  display: inline-flex;\n  align-items: center;\n  gap: 2px;\n}\n\n.s1j7pg_expandBtn:hover {\n  text-decoration: underline;\n}\n\n/* ── 用户气泡 ────────────────────────────────────────────────────────────── */\n\n.s1j7pg_userBubble {\n  display: flex;\n  gap: 8px;\n  justify-content: flex-end;\n  align-items: center;\n  padding: 4px 12px;\n}\n\n.s1j7pg_userContent {\n  max-width: 85%;\n  padding: 8px 12px;\n  border-radius: 8px;\n  border-bottom-right-radius: 4px;\n  background: var(--dsw-alias-bg-sunken);\n  font-size: 12px;\n  color: var(--dsw-alias-label-primary);\n  line-height: 1.5;\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1j7pg_userAvatar {\n  flex: none;\n  width: 24px;\n  height: 24px;\n  border-radius: 6px;\n  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));\n  color: var(--dsw-alias-state-success);\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 12px;\n  font-weight: 600;\n}\n\n@keyframes pulse {\n  0%,\n  100% {\n    opacity: 1;\n  }\n  50% {\n    opacity: 0.4;\n  }\n}\n";
+		const css$4 = "/* 执行详情对话流（原型 execution-detail-prototype.s1j7pg_html 的 .s1j7pg_flow / .s1j7pg_md / .s1j7pg_agent-chat / .s1j7pg_agent-last-list）。 */\n\n/* ── 对话流 ─────────────────────────────────────────────────────────────── */\n\n.s1j7pg_flow {\n  display: flex;\n  flex-direction: column;\n  gap: 20px;\n  margin-top: 12px;\n}\n\n.s1j7pg_empty {\n  margin: 12px 0;\n  font-size: 12px;\n  color: var(--sd-muted-foreground);\n}\n\n/* 用户消息：右侧气泡（DSH UserStyleBubble） */\n.s1j7pg_userMsg {\n  display: flex;\n  flex-direction: column;\n  align-items: flex-end;\n}\n\n.s1j7pg_bubble {\n  max-width: 82%;\n  background: var(--sd-bubble);\n  border-radius: 22px;\n  padding: 10px 16px;\n  font-size: 15px;\n  line-height: 24px;\n  color: var(--sd-foreground);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1j7pg_userMeta {\n  display: flex;\n  justify-content: flex-end;\n  gap: 6px;\n  margin-top: 4px;\n  padding-right: 2px;\n}\n\n.s1j7pg_userMeta .s1j7pg_time {\n  font-size: 11px;\n  color: var(--sd-faint-foreground);\n}\n\n/* agent 消息：左侧，带头像行 + 正文 */\n.s1j7pg_agentMsg {\n  display: flex;\n  flex-direction: column;\n  min-width: 0;\n}\n\n.s1j7pg_agentHead {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  margin-bottom: 4px;\n  min-width: 0;\n}\n\n.s1j7pg_avatar {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  justify-content: center;\n  width: 24px;\n  height: 24px;\n  border-radius: 50%;\n  background: var(--sd-accent);\n  color: var(--sd-primary);\n  font-size: 11px;\n  font-weight: 600;\n}\n\n.s1j7pg_avatarAgent {\n  background: color-mix(in srgb, var(--sd-brand) 12%, transparent);\n  color: var(--sd-brand);\n}\n\n.s1j7pg_avatarAgent svg {\n  width: 15px;\n  height: 15px;\n}\n\n.s1j7pg_author {\n  font-size: 14px;\n  font-weight: 500;\n  color: var(--sd-foreground);\n}\n\n/* agent 标题：可点击进入 DSH 现成子代理会话页（hover 变蓝 + 下划线） */\n.s1j7pg_authorLink {\n  padding: 0;\n  border: none;\n  background: none;\n  font-family: inherit;\n  font-size: 14px;\n  font-weight: 500;\n  line-height: 20px;\n  color: var(--sd-foreground);\n  text-decoration: none;\n  cursor: pointer;\n}\n\n.s1j7pg_authorLink:hover {\n  color: var(--sd-brand);\n  text-decoration: underline;\n  text-underline-offset: 3px;\n}\n\n.s1j7pg_loopLabel {\n  flex: none;\n  font-size: 11px;\n  line-height: 16px;\n  font-weight: 500;\n  color: var(--sd-muted-foreground);\n  background: var(--sd-surface-hover);\n  border-radius: 6px;\n  padding: 1px 6px;\n}\n\n.s1j7pg_time {\n  flex: none;\n  font-size: 12px;\n  color: var(--sd-muted-foreground);\n  white-space: nowrap;\n}\n\n/* 状态图标 + 状态色 */\n.s1j7pg_st {\n  display: inline-flex;\n  align-items: center;\n  gap: 5px;\n  margin-left: 8px;\n  white-space: nowrap;\n}\n\n.s1j7pg_st svg {\n  width: 14px;\n  height: 14px;\n  flex: none;\n}\n\n.s1j7pg_stLbl {\n  font-size: 12px;\n}\n\n.s1j7pg_stInfo { color: var(--sd-info); }\n.s1j7pg_stSuccess { color: var(--sd-success); }\n.s1j7pg_stWarning { color: var(--sd-warning); }\n.s1j7pg_stDestructive { color: var(--sd-destructive); }\n\n/* 运行中正文占位 */\n.s1j7pg_agentBodyRun {\n  margin-left: 32px;\n  margin-right: 32px;\n  margin-top: 8px;\n  font-size: 13px;\n  color: var(--sd-muted-foreground);\n}\n\n/* 完成态：md 渲染内容块（DSH MarkdownText 风格） */\n.s1j7pg_md {\n  margin-left: 32px;\n  margin-right: 32px;\n  margin-top: 6px;\n  padding: 10px 12px;\n  border-radius: 8px;\n  background: var(--sd-surface-hover);\n  font-size: 14px;\n  line-height: 1.625;\n  color: var(--sd-foreground);\n  overflow-wrap: anywhere;\n}\n\n.s1j7pg_md p { margin: 8px 0; }\n.s1j7pg_md p:first-child { margin-top: 0; }\n.s1j7pg_md p:last-child { margin-bottom: 0; }\n.s1j7pg_md strong { font-weight: 600; }\n.s1j7pg_md h1, .s1j7pg_md h2, .s1j7pg_md h3, .s1j7pg_md h4 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; }\n.s1j7pg_md ul, .s1j7pg_md ol { margin: 8px 0; padding-left: 18px; }\n.s1j7pg_md li:not(:first-child) { margin-top: 4px; }\n.s1j7pg_md li::marker { color: var(--sd-muted-foreground); }\n.s1j7pg_md code {\n  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n  font-size: 0.875em;\n  background: color-mix(in srgb, var(--sd-foreground) 8%, transparent);\n  border-radius: 6px;\n  padding: 0 5px;\n}\n.s1j7pg_md pre {\n  margin: 8px 0;\n  padding: 8px 10px;\n  background: var(--sd-surface);\n  border-radius: 6px;\n  overflow: auto;\n  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n  font-size: 12.5px;\n  line-height: 1.5;\n}\n.s1j7pg_md pre code { background: none; padding: 0; font-size: inherit; }\n.s1j7pg_md a { color: var(--sd-brand); text-decoration: none; }\n.s1j7pg_md a:hover { text-decoration: underline; }\n.s1j7pg_md blockquote {\n  border-left: 2px solid var(--sd-faint-foreground);\n  margin: 8px 0;\n  padding-left: 12px;\n  color: var(--sd-muted-foreground);\n}\n\n/* 运行中：内嵌子代理消息框（可滚动） */\n.s1j7pg_agentChat {\n  margin-left: 32px;\n  margin-right: 32px;\n  margin-top: 8px;\n  border: 1px solid var(--sd-border);\n  border-radius: 10px;\n  background: var(--sd-surface);\n  overflow: hidden;\n  box-shadow: var(--sd-shadow);\n}\n\n.s1j7pg_agentChatScroll {\n  max-height: 220px;\n  overflow-y: auto;\n  padding: 10px 12px;\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n}\n\n/* 失败/暂停：子代理最近 N 条消息（可滚动列表） */\n.s1j7pg_agentLastList {\n  margin-left: 32px;\n  margin-right: 32px;\n  margin-top: 8px;\n  border: 1px solid var(--sd-border);\n  border-radius: 10px;\n  background: var(--sd-surface);\n  overflow: hidden;\n  box-shadow: var(--sd-shadow);\n}\n\n.s1j7pg_agentLastScroll {\n  max-height: 240px;\n  overflow-y: auto;\n  padding: 10px 12px;\n  display: flex;\n  flex-direction: column;\n  gap: 10px;\n}\n\n/* 消息行 */\n.s1j7pg_chatLine {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n  min-width: 0;\n}\n\n.s1j7pg_chatWho {\n  font-size: 11px;\n  font-weight: 500;\n  color: var(--sd-faint-foreground);\n}\n\n.s1j7pg_chatTxt {\n  font-size: 13px;\n  line-height: 1.55;\n  color: var(--sd-foreground);\n  white-space: pre-wrap;\n  overflow-wrap: anywhere;\n}\n\n.s1j7pg_chatLineAssistant .s1j7pg_chatTxt { color: var(--sd-muted-foreground); }\n\n.s1j7pg_chatLineTool .s1j7pg_chatTxt {\n  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n  font-size: 12px;\n  color: var(--sd-muted-foreground);\n  background: var(--sd-surface-hover);\n  border-radius: 6px;\n  padding: 6px 8px;\n}\n\n.s1j7pg_agentLastList .s1j7pg_chatTxt { color: var(--sd-muted-foreground); }\n.s1j7pg_agentLastListFailed .s1j7pg_chatLine:last-child .s1j7pg_chatTxt { color: var(--sd-destructive); }\n.s1j7pg_agentLastListPaused .s1j7pg_chatLine:last-child .s1j7pg_chatTxt { color: var(--sd-warning); }\n";
 		const tagId$4 = "@deepseek-ai/dsh-client-ui-sandore/timeline.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$4) + "]") === null) {
 			const tag = document.createElement("style");
@@ -30336,17 +31240,16 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region lib/types/client/UnifiedTimeline.js
 		/**
-		* UnifiedTimeline：执行态中栏统一时间线（step 卡片 + user 气泡交错）。
+		* UnifiedTimeline：执行详情对话流（按 execution-detail-prototype.html 原型）。
 		*
-		* 数据由 `buildTimeline` 从实例状态派生（轮询驱动，无实时消息流）。Step 卡片按
-		* 状态展示：completed → 输出文本（MessageText）+「查看详情」跳子会话；running →
-		* 运行中占位；failed → 错误详情；paused → 暂停提示。滑动窗口：初始可见 N 条，
-		* 滚动到顶部加载更多。
+		* multica Issue 评论流 × DSH 多 agent 对话流：用户输入 = 右侧气泡；每个
+		* executedStep = 一条 agent 消息（左对齐，头像 + 可点击标题 → openSession 打开
+		* DSH 现成子代理会话页 + 相对时间 + 状态图标）。正文按状态呈现：
+		* completed → md 渲染块（MessageText，原型 .md 样式）；running/interacting →
+		* 内嵌可滚动消息框（sessionMessages 行）；failed/paused → 最近 5 条消息列表
+		* （末条按失败/暂停色）。旧实例无时间戳时头部省略时间。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/UnifiedTimeline
 		*/
-		/** 初始可见消息数 / 每次滚动加载的增量。 */
-		const VISIBLE_COUNT = 50;
-		const VISIBLE_STEP = 50;
 		/** Step 执行状态 → 本地化标签键（7 态）。 */
 		const STEP_STATUS_KEYS = {
 			blocked: "run.step.status.blocked",
@@ -30357,141 +31260,888 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			failed: "run.step.status.failed",
 			paused: "run.step.status.paused"
 		};
-		/** Step 卡片头像字符与语义类。 */
-		function stepAvatar(status) {
+		/** 状态 → 展示色类（原型 .st 的 4 色）。 */
+		function statusClass(status) {
 			switch (status) {
-				case "completed": return {
-					glyph: "✓",
-					className: timeline_module_css_default.avatarDone ?? ""
-				};
-				case "running":
-				case "interacting": return {
-					glyph: "●",
-					className: timeline_module_css_default.avatarRun ?? ""
-				};
-				case "failed": return {
-					glyph: "✕",
-					className: timeline_module_css_default.avatarFail ?? ""
-				};
-				case "paused": return {
-					glyph: "⏸",
-					className: timeline_module_css_default.avatarPaused ?? ""
-				};
-				default: return {
-					glyph: "○",
-					className: timeline_module_css_default.avatarTodo ?? ""
-				};
+				case "completed": return timeline_module_css_default.stSuccess ?? "";
+				case "failed": return timeline_module_css_default.stDestructive ?? "";
+				case "paused": return timeline_module_css_default.stWarning ?? "";
+				default: return timeline_module_css_default.stInfo ?? "";
 			}
 		}
-		/** 单个 Step 卡片。 */
-		function StepCard({ item, t, openSession }) {
-			const avatar = stepAvatar(item.status);
-			const running = item.status === "running" || item.status === "interacting";
-			return (0, react_jsx_runtime.jsxs)("article", {
-				className: timeline_module_css_default.stepCard,
-				"data-tl-step": true,
-				children: [(0, react_jsx_runtime.jsxs)("header", {
-					className: timeline_module_css_default.stepHeader,
+		/** 状态 SVG 图标（照原型 4 种：成功对勾 / 运行转圈 / 失败叉 / 暂停叹号）。 */
+		function StatusIcon({ status }) {
+			switch (status) {
+				case "completed": return (0, react_jsx_runtime.jsxs)("svg", {
+					viewBox: "0 0 14 14",
+					fill: "none",
+					"aria-hidden": true,
+					children: [(0, react_jsx_runtime.jsx)("circle", {
+						cx: "7",
+						cy: "7",
+						r: "5.5",
+						stroke: "currentColor",
+						strokeWidth: "1.4",
+						fill: "currentColor"
+					}), (0, react_jsx_runtime.jsx)("path", {
+						d: "M4.6 7.2l1.6 1.6 3.2-3.4",
+						stroke: "#fff",
+						strokeWidth: "1.3",
+						fill: "none",
+						strokeLinecap: "round"
+					})]
+				});
+				case "failed": return (0, react_jsx_runtime.jsxs)("svg", {
+					viewBox: "0 0 14 14",
+					fill: "none",
+					"aria-hidden": true,
+					children: [(0, react_jsx_runtime.jsx)("circle", {
+						cx: "7",
+						cy: "7",
+						r: "5.5",
+						stroke: "currentColor",
+						strokeWidth: "1.4"
+					}), (0, react_jsx_runtime.jsx)("path", {
+						d: "M4.6 4.6l4.8 4.8M9.4 4.6l-4.8 4.8",
+						stroke: "currentColor",
+						strokeWidth: "1.3",
+						strokeLinecap: "round"
+					})]
+				});
+				case "paused": return (0, react_jsx_runtime.jsxs)("svg", {
+					viewBox: "0 0 14 14",
+					fill: "none",
+					"aria-hidden": true,
 					children: [
-						(0, react_jsx_runtime.jsx)("span", {
-							className: `${timeline_module_css_default.avatar} ${avatar.className}`,
-							"aria-hidden": true,
-							children: avatar.glyph
+						(0, react_jsx_runtime.jsx)("circle", {
+							cx: "7",
+							cy: "7",
+							r: "5.5",
+							stroke: "currentColor",
+							strokeWidth: "1.4"
 						}),
-						(0, react_jsx_runtime.jsxs)("span", {
-							className: timeline_module_css_default.stepName,
-							children: [item.name, item.loopLabel !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M7 4v3.2",
+							stroke: "currentColor",
+							strokeWidth: "1.4",
+							strokeLinecap: "round"
+						}),
+						(0, react_jsx_runtime.jsx)("circle", {
+							cx: "7",
+							cy: "10",
+							r: "0.7",
+							fill: "currentColor"
+						})
+					]
+				});
+				default: return (0, react_jsx_runtime.jsxs)("svg", {
+					viewBox: "0 0 14 14",
+					fill: "none",
+					"aria-hidden": true,
+					children: [(0, react_jsx_runtime.jsx)("circle", {
+						cx: "7",
+						cy: "7",
+						r: "5.5",
+						stroke: "currentColor",
+						strokeWidth: "1.4"
+					}), (0, react_jsx_runtime.jsx)("path", {
+						d: "M7 1.5a5.5 5.5 0 1 1-5.5 5.5",
+						stroke: "currentColor",
+						strokeWidth: "1.4",
+						strokeLinecap: "round"
+					})]
+				});
+			}
+		}
+		/** 相对时间 → 字典文案。 */
+		function formatTime(t, rel) {
+			if (rel === void 0) return "";
+			switch (rel.kind) {
+				case "justNow": return t("run.time.justNow");
+				case "minutes": return t("run.time.minutesAgo", { count: rel.count });
+				case "hours": return t("run.time.hoursAgo", { count: rel.count });
+				case "days": return t("run.time.daysAgo", { count: rel.count });
+				case "date": return rel.text;
+			}
+		}
+		/** 单行消息（agent 内嵌框 / 失败·暂停列表共用）。 */
+		function ChatLineRow({ line }) {
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: `${timeline_module_css_default.chatLine} ${line.kind === "tool" ? timeline_module_css_default.chatLineTool : timeline_module_css_default.chatLineAssistant}`,
+				children: [(0, react_jsx_runtime.jsx)("span", {
+					className: timeline_module_css_default.chatWho,
+					children: line.who
+				}), (0, react_jsx_runtime.jsx)("span", {
+					className: timeline_module_css_default.chatTxt,
+					children: line.text
+				})]
+			});
+		}
+		/** 最近 N 条消息列表（失败/暂停态）。 */
+		function LastMessages({ item, t }) {
+			const lines = item.messages ?? [];
+			const failed = item.status === "failed";
+			const listClass = failed ? timeline_module_css_default.agentLastListFailed : timeline_module_css_default.agentLastListPaused;
+			const fallback = failed ? item.error !== void 0 ? [{
+				who: `${item.name} · agent`,
+				text: item.error,
+				kind: "assistant"
+			}] : [] : [{
+				who: `${item.name} · agent`,
+				text: t("step.paused.hint"),
+				kind: "assistant"
+			}];
+			const shown = lines.length > 0 ? lines.slice(-5) : fallback;
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: `${timeline_module_css_default.agentLastList} ${listClass}`,
+				children: (0, react_jsx_runtime.jsx)("div", {
+					className: timeline_module_css_default.agentLastScroll,
+					children: shown.map((line, index) => (0, react_jsx_runtime.jsx)(ChatLineRow, { line }, index))
+				})
+			});
+		}
+		/** 单条 agent 消息（一个 executedStep）。 */
+		function AgentMsg({ item, t, nowIso, openSession }) {
+			const running = item.status === "running" || item.status === "interacting";
+			const rel = relativeTimeOf(item.time, nowIso);
+			const navigable = item.childId !== void 0 && item.synthetic !== true;
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: timeline_module_css_default.agentMsg,
+				"data-tl-step": true,
+				children: [
+					(0, react_jsx_runtime.jsxs)("div", {
+						className: timeline_module_css_default.agentHead,
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: `${timeline_module_css_default.avatar} ${timeline_module_css_default.avatarAgent}`,
+								"aria-hidden": true,
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconSparkle16, {})
+							}),
+							navigable ? (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: timeline_module_css_default.authorLink,
+								title: t("step.open", { name: item.name }),
+								onClick: () => {
+									openSession(item.childId);
+								},
+								children: item.name
+							}) : (0, react_jsx_runtime.jsx)("span", {
+								className: timeline_module_css_default.author,
+								children: item.name
+							}),
+							item.loopLabel !== void 0 && (0, react_jsx_runtime.jsx)("span", {
 								className: timeline_module_css_default.loopLabel,
 								children: item.loopLabel
-							})]
-						}),
-						(0, react_jsx_runtime.jsxs)("span", {
-							className: `${timeline_module_css_default.badge ?? ""} ${running ? timeline_module_css_default.badgeRun ?? "" : item.status === "completed" ? timeline_module_css_default.badgeDone ?? "" : item.status === "failed" ? timeline_module_css_default.badgeFail ?? "" : item.status === "paused" ? timeline_module_css_default.badgePaused ?? "" : ""}`,
-							children: [(0, react_jsx_runtime.jsx)("span", {
-								className: timeline_module_css_default.badgeDot ?? "",
-								"aria-hidden": true
-							}), t(STEP_STATUS_KEYS[item.status])]
-						}),
-						item.visitCount > 1 && (0, react_jsx_runtime.jsx)("span", {
-							className: timeline_module_css_default.visitCount,
-							children: t("run.visitCount", { count: item.visitCount })
+							}),
+							item.attemptIndex !== void 0 && item.attemptIndex > 0 && (0, react_jsx_runtime.jsx)("span", {
+								className: timeline_module_css_default.loopLabel,
+								children: t("run.step.attempt", { n: item.attemptIndex + 1 })
+							}),
+							rel !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+								className: timeline_module_css_default.time,
+								children: formatTime(t, rel)
+							}),
+							(0, react_jsx_runtime.jsxs)("span", {
+								className: `${timeline_module_css_default.st} ${statusClass(item.status)}`,
+								children: [(0, react_jsx_runtime.jsx)(StatusIcon, { status: item.status }), (0, react_jsx_runtime.jsx)("span", {
+									className: timeline_module_css_default.stLbl,
+									children: t(STEP_STATUS_KEYS[item.status])
+								})]
+							})
+						]
+					}),
+					item.status === "completed" && item.outputText !== void 0 && (0, react_jsx_runtime.jsx)("div", {
+						className: timeline_module_css_default.md,
+						children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MessageText, { text: item.outputText })
+					}),
+					running && (item.messages !== void 0 && item.messages.length > 0 ? (0, react_jsx_runtime.jsx)("div", {
+						className: timeline_module_css_default.agentChat,
+						children: (0, react_jsx_runtime.jsx)("div", {
+							className: timeline_module_css_default.agentChatScroll,
+							children: item.messages.map((line, index) => (0, react_jsx_runtime.jsx)(ChatLineRow, { line }, index))
 						})
-					]
-				}), (0, react_jsx_runtime.jsxs)("div", {
-					className: timeline_module_css_default.stepBody,
-					children: [
-						item.status === "completed" && item.outputText !== void 0 && (0, react_jsx_runtime.jsx)("div", {
-							className: timeline_module_css_default.stepReturn,
-							children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MessageText, { text: item.outputText })
-						}),
-						item.status === "failed" && item.error !== void 0 && (0, react_jsx_runtime.jsx)("div", {
-							className: timeline_module_css_default.stepError,
-							role: "alert",
-							children: item.error
-						}),
-						item.status === "paused" && (0, react_jsx_runtime.jsx)("div", {
-							className: timeline_module_css_default.stepPaused,
-							children: t("step.paused.hint")
-						}),
-						running && (0, react_jsx_runtime.jsxs)("div", {
-							className: timeline_module_css_default.stepRunning,
-							children: [t("run.step.status.running"), "…"]
-						}),
-						item.childId !== void 0 && (0, react_jsx_runtime.jsxs)("button", {
-							type: "button",
-							className: timeline_module_css_default.expandBtn,
-							onClick: () => {
-								openSession(item.childId);
-							},
-							children: ["▶ ", t("run.discuss")]
-						})
-					]
-				})]
+					}) : (0, react_jsx_runtime.jsxs)("div", {
+						className: timeline_module_css_default.agentBodyRun,
+						children: [t("run.step.status.running"), "…"]
+					})),
+					item.status === "failed" && (0, react_jsx_runtime.jsx)(LastMessages, {
+						item,
+						t
+					}),
+					item.status === "paused" && (0, react_jsx_runtime.jsx)(LastMessages, {
+						item,
+						t
+					})
+				]
 			});
 		}
-		/** 用户气泡。 */
-		function UserBubble({ content }) {
+		/** 用户消息：右侧气泡 + kind 徽标 + meta。 */
+		function UserMsg({ item, t, nowIso }) {
+			const rel = relativeTimeOf(item.time, nowIso);
+			const kindKey = item.messageKind === void 0 ? void 0 : item.messageKind === "input" ? "run.user.kind.input" : item.messageKind === "resume" ? "run.user.kind.resume" : item.messageKind === "retry" ? "run.user.kind.retry" : item.messageKind === "answer" ? "run.user.kind.answer" : void 0;
 			return (0, react_jsx_runtime.jsxs)("div", {
-				className: timeline_module_css_default.userBubble,
+				className: timeline_module_css_default.userMsg,
 				"data-tl-user": true,
 				children: [(0, react_jsx_runtime.jsx)("div", {
-					className: timeline_module_css_default.userContent,
-					children: content
-				}), (0, react_jsx_runtime.jsx)("div", {
-					className: timeline_module_css_default.userAvatar,
-					children: "你"
+					className: timeline_module_css_default.bubble,
+					children: item.content
+				}), (0, react_jsx_runtime.jsxs)("div", {
+					className: timeline_module_css_default.userMeta,
+					children: [kindKey !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+						className: timeline_module_css_default.loopLabel,
+						children: t(kindKey)
+					}), rel !== void 0 && (0, react_jsx_runtime.jsxs)("span", {
+						className: timeline_module_css_default.time,
+						children: [
+							formatTime(t, rel),
+							" · ",
+							t("run.time.you")
+						]
+					})]
 				})]
 			});
 		}
-		/** 渲染统一时间线。 */
+		/** 渲染执行详情对话流。 */
 		function UnifiedTimeline({ t, items, openSession }) {
-			const [visibleCount, setVisibleCount] = (0, react.useState)(VISIBLE_COUNT);
-			const scrollRef = (0, react.useRef)(null);
-			const visibleItems = (0, react.useMemo)(() => items.slice(-visibleCount), [items, visibleCount]);
-			const handleScroll = (event) => {
-				if (event.currentTarget.scrollTop === 0 && visibleCount < items.length) setVisibleCount((count) => Math.min(count + VISIBLE_STEP, items.length));
-			};
-			return (0, react_jsx_runtime.jsx)("div", {
-				className: timeline_module_css_default.scroll,
-				ref: scrollRef,
-				onScroll: handleScroll,
+			const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+			return (0, react_jsx_runtime.jsxs)("div", {
+				className: timeline_module_css_default.flow,
 				"data-sandore-timeline": true,
-				children: (0, react_jsx_runtime.jsxs)("div", {
-					className: timeline_module_css_default.timeline,
-					children: [visibleItems.length === 0 && (0, react_jsx_runtime.jsx)("p", {
-						className: timeline_module_css_default.empty,
-						children: t("run.trajectory.empty")
-					}), visibleItems.map((item, index) => item.kind === "user" ? (0, react_jsx_runtime.jsx)(UserBubble, { content: item.content }, `user-${index}`) : (0, react_jsx_runtime.jsx)(StepCard, {
-						item,
-						t,
-						openSession
-					}, `${item.stepId}-${index}`))]
-				})
+				children: [items.length === 0 && (0, react_jsx_runtime.jsx)("p", {
+					className: timeline_module_css_default.empty,
+					children: t("run.trajectory.empty")
+				}), items.map((item, index) => item.kind === "user" ? (0, react_jsx_runtime.jsx)(UserMsg, {
+					item,
+					t,
+					nowIso
+				}, `user-${index}`) : (0, react_jsx_runtime.jsx)(AgentMsg, {
+					item,
+					t,
+					nowIso,
+					openSession
+				}, `${item.stepId}-${index}`))]
+			});
+		}
+		//#endregion
+		//#region lib/types/client/composer-selects.js
+		/**
+		* ComposerSelects：执行详情输入框的两个选择器（模型 / 权限）。
+		*
+		* 行为与 DSH web 主 session 完全一致：
+		* - 模型：`modelDirectory`（复用 DSH `ctx.modelDirectories` 的 per-session 目录）
+		*   点击 → 两级菜单（模型 / 推理等级）→ 选择经 `select` → `selectModel` 绑定到
+		*   当前实例会话（instanceId）；触发器显示当前模型 + 推理等级。
+		* - 权限：从会话 `projections.permissions` 读权限投影，点击 → 菜单列出预设
+		*   （read-only / workspace-write / danger-full-access）→ 选择后经 `runCommand`
+		*   执行 `/permission <id>`（与主 session 同一命令路径）；`danger-full-access`
+		*   先弹风险确认。触发器显示当前权限名 + 盾牌图标。
+		* 样式照 DSH ModelSelect.module.css / PermissionSelect.module.css。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/composer-selects
+		*/
+		/** 完整访问权限预设值（与 DSH PermissionSelect 的 FULL_ACCESS 一致）。 */
+		const FULL_ACCESS = "danger-full-access";
+		/** 权限投影与命令查询均不可用时的降级占位（显示但锁定；仅旧日志实例触发）。 */
+		const FALLBACK_PERMISSION = {
+			options: [
+				{
+					value: "read-only",
+					name: "read-only"
+				},
+				{
+					value: "workspace-write",
+					name: "workspace-write"
+				},
+				{
+					value: FULL_ACCESS,
+					name: FULL_ACCESS
+				}
+			],
+			currentValue: "workspace-write"
+		};
+		/** 渲染模型触发器 + 两级菜单（复用 DSH 的模型目录数据面）。 */
+		function ModelSelectSandore({ t, directory, locked }) {
+			const state = (0, react.useSyncExternalStore)((fn) => directory.store.subscribe(fn), () => directory.store.getSnapshot());
+			const [open, setOpen] = (0, react.useState)(false);
+			const [pane, setPane] = (0, react.useState)("root");
+			const [toast, setToast] = (0, react.useState)(null);
+			const toastSeq = (0, react.useRef)(0);
+			const rootRef = (0, react.useRef)(null);
+			const lastActionRef = (0, react.useRef)("load");
+			const choices = (0, react.useMemo)(() => state.groups.flatMap((group) => group.models.map((model) => ({
+				group,
+				model,
+				selection: {
+					provider: group.id,
+					model: model.id,
+					...model.reasoning?.defaultEffort === void 0 ? {} : { reasoningEffort: model.reasoning.defaultEffort }
+				}
+			}))), [state.groups]);
+			const currentChoice = choices[state.current === null ? -1 : choices.findIndex((c) => c.selection.provider === state.current?.provider && c.selection.model === state.current.model)];
+			const reasoning = currentChoice?.model.reasoning;
+			const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort;
+			const effortLabel = reasoning === void 0 ? void 0 : effectiveEffort === void 0 ? t("composer.model.effortDefault") : reasoning.efforts.find((level) => level.id === effectiveEffort)?.name ?? effectiveEffort;
+			const effortChoices = (0, react.useMemo)(() => reasoning === void 0 ? [] : [...reasoning.defaultEffort === void 0 ? [{
+				key: "provider-default",
+				effort: void 0,
+				label: t("composer.model.effortDefault")
+			}] : [], ...reasoning.efforts.map((level) => ({
+				key: `effort:${level.id}`,
+				effort: level.id,
+				label: level.name,
+				...level.description === void 0 ? {} : { description: level.description }
+			}))], [reasoning, t]);
+			const busy = state.status === "selecting";
+			const reload = () => {
+				lastActionRef.current = "load";
+				directory.load().catch(() => {});
+			};
+			(0, react.useEffect)(() => {
+				if (locked) {
+					setOpen(false);
+					return;
+				}
+				if (!locked) {
+					lastActionRef.current = "load";
+					directory.load().catch(() => {});
+				}
+			}, [locked, directory]);
+			(0, react.useEffect)(() => {
+				if (!open) return;
+				const closeOutside = (event) => {
+					if (!rootRef.current?.contains(event.target)) setOpen(false);
+				};
+				document.addEventListener("mousedown", closeOutside);
+				return () => {
+					document.removeEventListener("mousedown", closeOutside);
+				};
+			}, [open]);
+			if (state.routable === false) return null;
+			const show = () => {
+				setPane("root");
+				setOpen(true);
+				reload();
+			};
+			const close = (restoreFocus = false) => {
+				setOpen(false);
+				setPane("root");
+				if (restoreFocus) queueMicrotask(() => {
+					rootRef.current?.querySelector("button")?.focus();
+				});
+			};
+			const settleSelection = (accepted) => {
+				if (accepted) {
+					close(true);
+					return;
+				}
+				const message = directory.store.getSnapshot().error;
+				if (message !== null) {
+					toastSeq.current += 1;
+					setToast({
+						seq: toastSeq.current,
+						text: t("composer.model.error", { message })
+					});
+				}
+			};
+			const choose = (selection) => {
+				if (state.current?.provider === selection.provider && state.current.model === selection.model) {
+					close(true);
+					return;
+				}
+				lastActionRef.current = "select";
+				directory.select(selection).then(() => {
+					settleSelection(true);
+				}, () => {
+					settleSelection(false);
+				});
+			};
+			const chooseEffort = (effort) => {
+				if (state.current === null) return;
+				if (effectiveEffort === effort) {
+					close(true);
+					return;
+				}
+				const selection = {
+					provider: state.current.provider,
+					model: state.current.model,
+					...effort === void 0 ? {} : { reasoningEffort: effort }
+				};
+				lastActionRef.current = "select";
+				directory.select(selection).then(() => {
+					settleSelection(true);
+				}, () => {
+					settleSelection(false);
+				});
+			};
+			const modelLabel = currentChoice?.model.name ?? t("composer.model.fallback");
+			const triggerLabel = effortLabel === void 0 ? modelLabel : `${modelLabel} · ${effortLabel}`;
+			const triggerAria = currentChoice === void 0 ? t("composer.model.fallback") : effortLabel === void 0 ? t("composer.model.aria", { model: modelLabel }) : t("composer.model.ariaEffort", {
+				model: modelLabel,
+				effort: effortLabel
+			});
+			return (0, react_jsx_runtime.jsxs)("div", {
+				ref: rootRef,
+				className: composer_selects_module_css_default.msRoot,
+				children: [
+					(0, react_jsx_runtime.jsxs)("button", {
+						type: "button",
+						className: composer_selects_module_css_default.trigger,
+						"aria-label": triggerAria,
+						"aria-haspopup": "menu",
+						"aria-expanded": open,
+						title: triggerLabel,
+						disabled: locked,
+						onClick: () => {
+							if (open) close();
+							else show();
+						},
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: composer_selects_module_css_default.triggerLabel,
+								children: modelLabel
+							}),
+							effortLabel !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+								className: composer_selects_module_css_default.triggerEffort,
+								children: effortLabel
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: `${composer_selects_module_css_default.chevron} ${open ? composer_selects_module_css_default.chevronOpen : ""}`,
+								"aria-hidden": true,
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+							})
+						]
+					}),
+					open && (0, react_jsx_runtime.jsxs)("div", {
+						className: composer_selects_module_css_default.menu,
+						role: "menu",
+						"aria-label": t("composer.model.menu"),
+						"aria-busy": state.status === "loading" || busy,
+						children: [
+							pane === "root" && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								role: "menuitem",
+								className: composer_selects_module_css_default.cell,
+								onClick: () => {
+									setPane("model");
+								},
+								children: [
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.cellLabel,
+										children: t("composer.model.title")
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.cellValue,
+										children: modelLabel
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.cellChevron,
+										"aria-hidden": true,
+										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {})
+									})
+								]
+							}), reasoning !== void 0 && (0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								role: "menuitem",
+								className: composer_selects_module_css_default.cell,
+								onClick: () => {
+									setPane("effort");
+								},
+								children: [
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.cellLabel,
+										children: t("composer.model.effort")
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.cellValue,
+										children: effortLabel
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.cellChevron,
+										"aria-hidden": true,
+										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {})
+									})
+								]
+							})] }),
+							pane === "model" && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+								state.status === "loading" && (0, react_jsx_runtime.jsx)("div", {
+									className: composer_selects_module_css_default.status,
+									children: t("composer.model.loading")
+								}),
+								state.error !== null && lastActionRef.current === "load" && (0, react_jsx_runtime.jsxs)("div", {
+									className: composer_selects_module_css_default.error,
+									children: [(0, react_jsx_runtime.jsx)("span", { children: t("composer.model.error", { message: state.error }) }), (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: composer_selects_module_css_default.retry,
+										onClick: reload,
+										children: t("composer.model.reload")
+									})]
+								}),
+								state.failures.map((failure) => (0, react_jsx_runtime.jsxs)("div", {
+									className: composer_selects_module_css_default.warning,
+									children: [(0, react_jsx_runtime.jsx)("span", { children: t("composer.model.warning", {
+										name: failure.name,
+										message: failure.message
+									}) }), (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: composer_selects_module_css_default.retry,
+										onClick: reload,
+										children: t("composer.model.reload")
+									})]
+								}, failure.id)),
+								(0, react_jsx_runtime.jsx)("div", {
+									className: composer_selects_module_css_default.groups,
+									children: state.groups.map((group) => (0, react_jsx_runtime.jsxs)("section", {
+										role: "group",
+										"aria-label": group.name,
+										className: composer_selects_module_css_default.group,
+										children: [(0, react_jsx_runtime.jsx)("div", {
+											className: composer_selects_module_css_default.groupTitle,
+											children: group.name
+										}), group.models.map((model) => {
+											const selected = state.current?.provider === group.id && state.current.model === model.id;
+											return (0, react_jsx_runtime.jsxs)("button", {
+												type: "button",
+												role: "menuitemradio",
+												"aria-checked": selected,
+												className: `${composer_selects_module_css_default.option} ${selected ? composer_selects_module_css_default.selected : ""}`,
+												title: model.name,
+												disabled: busy,
+												onClick: () => {
+													choose({
+														provider: group.id,
+														model: model.id
+													});
+												},
+												children: [(0, react_jsx_runtime.jsxs)("span", {
+													className: composer_selects_module_css_default.optionCopy,
+													children: [(0, react_jsx_runtime.jsx)("span", {
+														className: composer_selects_module_css_default.modelName,
+														children: model.name
+													}), model.description !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+														className: composer_selects_module_css_default.description,
+														children: model.description
+													})]
+												}), (0, react_jsx_runtime.jsx)("span", {
+													className: composer_selects_module_css_default.check,
+													children: selected ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}) : null
+												})]
+											}, model.id);
+										})]
+									}, group.id))
+								}),
+								state.status === "ready" && choices.length === 0 && (0, react_jsx_runtime.jsx)("div", {
+									className: composer_selects_module_css_default.empty,
+									children: t("composer.model.empty")
+								})
+							] }),
+							pane === "effort" && (0, react_jsx_runtime.jsx)(react_jsx_runtime.Fragment, { children: effortChoices.length === 0 ? (0, react_jsx_runtime.jsx)("div", {
+								className: composer_selects_module_css_default.empty,
+								children: t("composer.model.emptyEfforts")
+							}) : effortChoices.map((level) => (0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								role: "menuitemradio",
+								"aria-checked": effectiveEffort === level.effort,
+								className: `${composer_selects_module_css_default.option} ${effectiveEffort === level.effort ? composer_selects_module_css_default.selected : ""}`,
+								disabled: busy,
+								onClick: () => {
+									chooseEffort(level.effort);
+								},
+								children: [(0, react_jsx_runtime.jsxs)("span", {
+									className: composer_selects_module_css_default.optionCopy,
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.modelName,
+										children: level.label
+									}), level.description !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.description,
+										children: level.description
+									})]
+								}), (0, react_jsx_runtime.jsx)("span", {
+									className: composer_selects_module_css_default.check,
+									children: effectiveEffort === level.effort ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}) : null
+								})]
+							}, level.key)) })
+						]
+					}),
+					toast !== null && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Toast, {
+						text: toast.text,
+						onDone: () => {
+							setToast(null);
+						}
+					}, toast.seq)
+				]
+			});
+		}
+		/** 权限盾牌 glyph（照 DSH PermissionSelect 的 3 种：对勾 / 铅笔 / 感叹）。 */
+		function permissionGlyph(value) {
+			switch (value) {
+				case "read-only": return (0, react_jsx_runtime.jsxs)("svg", {
+					width: "16",
+					height: "16",
+					viewBox: "0 0 16 16",
+					fill: "none",
+					"aria-hidden": true,
+					children: [(0, react_jsx_runtime.jsx)("path", {
+						d: "M8.20554 0.899994L14.7901 3.36857V7.01026C14.7901 12 11.0466 14.2103 8.20554 15.3C5.36446 14.2103 1.62012 12 1.62012 7.01026V3.36857L8.20554 0.899994Z",
+						stroke: "currentColor",
+						strokeWidth: "1.31831",
+						strokeLinejoin: "round"
+					}), (0, react_jsx_runtime.jsx)("path", {
+						d: "M12.1654 5.7552L8.9447 9.41475C8.73044 9.65816 8.53628 9.8804 8.35774 10.0423C8.1713 10.2114 7.94235 10.3717 7.64016 10.4254C7.48207 10.4535 7.32 10.4552 7.16151 10.4294C6.85843 10.3801 6.62728 10.2223 6.43836 10.0559C6.25752 9.89653 6.06037 9.67732 5.84264 9.43705L4.72925 8.20897L5.63557 7.38707L6.74897 8.61594C6.98603 8.87755 7.12974 9.03533 7.24673 9.13839C7.31033 9.19443 7.34485 9.21476 7.35823 9.22122C7.38068 9.22484 7.40352 9.22515 7.42593 9.22122C7.40522 9.22502 7.42893 9.23294 7.53583 9.136C7.65132 9.03126 7.79316 8.87139 8.02643 8.60638L11.2479 4.94763L12.1654 5.7552Z",
+						fill: "currentColor"
+					})]
+				});
+				case FULL_ACCESS: return (0, react_jsx_runtime.jsxs)("svg", {
+					width: "16",
+					height: "16",
+					viewBox: "0 0 16 16",
+					fill: "none",
+					"aria-hidden": true,
+					children: [
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M8.20554 0.899994L14.7901 3.36857V7.01026C14.7901 12 11.0466 14.2103 8.20554 15.3C5.36446 14.2103 1.62012 12 1.62012 7.01026V3.36857L8.20554 0.899994Z",
+							stroke: "currentColor",
+							strokeWidth: "1.31831",
+							strokeLinejoin: "round"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M9.10094 4.5V8.75939H7.59888V4.5H9.10094Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M9.10094 9.8114V11.5H7.59888V9.8114H9.10094Z",
+							fill: "currentColor"
+						})
+					]
+				});
+				default: return (0, react_jsx_runtime.jsxs)("svg", {
+					width: "16",
+					height: "16",
+					viewBox: "0 0 16 16",
+					fill: "none",
+					"aria-hidden": true,
+					children: [
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M8.08887 0.251709C8.20479 0.23085 8.32486 0.241168 8.43652 0.282959L15.0215 2.75171C15.2787 2.84819 15.4492 3.09414 15.4492 3.3689V7.0105C15.4492 7.10986 15.4441 7.2081 15.4414 7.30542C15.0285 7.07175 14.5905 6.87695 14.1309 6.73022V3.82495L8.20508 1.60327L2.2793 3.82495V7.0105C2.27936 9.7171 3.4745 11.5379 5.02734 12.7947C5.01025 12.9942 5 13.1962 5 13.4001C5.00001 13.7617 5.02722 14.1169 5.08008 14.4636C2.91555 13.0393 0.961014 10.752 0.960938 7.0105V3.3689C0.960938 3.09417 1.13146 2.84821 1.38867 2.75171L7.97461 0.282959L8.08887 0.251709Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M11.3525 5.64688V6.85688H5V5.64688H11.3525Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M9.5824 8.29376V9.50376H5V8.29376H9.5824Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M14.6647 15.6852H10.0338C10.3878 15.3751 10.7567 15.0517 11.0772 14.7706C11.2531 14.6164 11.4144 14.4746 11.5511 14.3547H14.6647V15.6852Z",
+							fill: "currentColor"
+						}),
+						(0, react_jsx_runtime.jsx)("path", {
+							d: "M8.14852 14.1308L7.33925 15.4976C7.22458 15.6912 7.42245 15.9194 7.63037 15.8333L9.09785 15.2254L15.0399 10.0719L14.0905 8.97733L8.14852 14.1308Z",
+							fill: "currentColor"
+						})
+					]
+				});
+			}
+		}
+		/** 机器名 → 展示名（`workspace-write` → `Workspace Write`）。 */
+		function displayName(name) {
+			if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) return name;
+			return name.split("-").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+		}
+		/** 渲染权限触发器 + 菜单 + 完全访问确认（行为照 DSH PermissionSelect）。 */
+		function PermissionSelectSandore({ t, value, locked, runCommand, queryValue }) {
+			const [open, setOpen] = (0, react.useState)(false);
+			const [confirmation, setConfirmation] = (0, react.useState)(false);
+			const [acknowledged, setAcknowledged] = (0, react.useState)(false);
+			const [pendingPick, setPendingPick] = (0, react.useState)(false);
+			const [fallback, setFallback] = (0, react.useState)(void 0);
+			const [fallbackFailed, setFallbackFailed] = (0, react.useState)(false);
+			const rootRef = (0, react.useRef)(null);
+			(0, react.useEffect)(() => {
+				if (value !== void 0) {
+					setFallback(void 0);
+					setFallbackFailed(false);
+					return;
+				}
+				let alive = true;
+				queryValue().then((next) => {
+					if (!alive) return;
+					if (next === void 0) setFallbackFailed(true);
+					else setFallback(next);
+				});
+				return () => {
+					alive = false;
+				};
+			}, [value, queryValue]);
+			(0, react.useEffect)(() => {
+				if (!locked && (value ?? fallback) !== void 0) return;
+				setOpen(false);
+				setAcknowledged(false);
+				setConfirmation(false);
+			}, [
+				locked,
+				value,
+				fallback
+			]);
+			(0, react.useEffect)(() => {
+				if (!open) return;
+				const closeOutside = (event) => {
+					if (!rootRef.current?.contains(event.target)) setOpen(false);
+				};
+				document.addEventListener("mousedown", closeOutside);
+				return () => {
+					document.removeEventListener("mousedown", closeOutside);
+				};
+			}, [open]);
+			const degraded = value === void 0 && fallback === void 0 && fallbackFailed;
+			const effective = value ?? fallback ?? (degraded ? FALLBACK_PERMISSION : void 0);
+			const lockedOrDegraded = locked || degraded;
+			if (effective === void 0) return null;
+			const currentValue = effective.currentValue;
+			const current = effective.options.find((option) => option.value === currentValue);
+			const busy = pendingPick;
+			const submit = (id) => {
+				setPendingPick(true);
+				runCommand(`/permission ${id}`).catch(() => false).then(() => {
+					setPendingPick(false);
+				});
+			};
+			const choose = (id) => {
+				setOpen(false);
+				if (id === currentValue) return;
+				if (id === FULL_ACCESS) {
+					setAcknowledged(false);
+					setConfirmation(true);
+					return;
+				}
+				submit(id);
+			};
+			const confirmFullAccess = () => {
+				if (lockedOrDegraded || !acknowledged || !confirmation) return;
+				setConfirmation(false);
+				submit(FULL_ACCESS);
+			};
+			const glyph = permissionGlyph(currentValue);
+			return (0, react_jsx_runtime.jsxs)("div", {
+				ref: rootRef,
+				className: composer_selects_module_css_default.msRoot,
+				children: [
+					(0, react_jsx_runtime.jsxs)("button", {
+						type: "button",
+						className: composer_selects_module_css_default.trigger,
+						"aria-label": t("run.permission.title"),
+						title: current?.description,
+						disabled: lockedOrDegraded || busy,
+						onClick: () => {
+							setOpen(!open);
+						},
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: composer_selects_module_css_default.triggerIcon,
+								"aria-hidden": true,
+								children: glyph
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: composer_selects_module_css_default.triggerLabel,
+								children: current === void 0 ? displayName(currentValue) : current.value === FULL_ACCESS ? "Full access" : displayName(current.name)
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: `${composer_selects_module_css_default.chevron} ${open ? composer_selects_module_css_default.chevronOpen : ""}`,
+								"aria-hidden": true,
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+							})
+						]
+					}),
+					open && (0, react_jsx_runtime.jsx)("div", {
+						className: composer_selects_module_css_default.menu,
+						role: "menu",
+						"aria-label": t("run.permission.title"),
+						children: effective.options.filter((option) => option.value !== "custom").map((option) => {
+							const selected = option.value === currentValue;
+							const icon = permissionGlyph(option.value);
+							return (0, react_jsx_runtime.jsxs)("button", {
+								type: "button",
+								role: "menuitemradio",
+								"aria-checked": selected,
+								className: `${composer_selects_module_css_default.option} ${selected ? composer_selects_module_css_default.selected : ""}`,
+								disabled: busy,
+								onClick: () => {
+									choose(option.value);
+								},
+								children: [
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.optionIcon,
+										"aria-hidden": true,
+										children: icon
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.optionCopy,
+										children: (0, react_jsx_runtime.jsx)("span", {
+											className: composer_selects_module_css_default.modelName,
+											children: option.value === FULL_ACCESS ? "Full access" : displayName(option.name)
+										})
+									}),
+									(0, react_jsx_runtime.jsx)("span", {
+										className: composer_selects_module_css_default.check,
+										children: selected ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCheckOutline16, {}) : null
+									})
+								]
+							}, option.value);
+						})
+					}),
+					confirmation && (0, react_jsx_runtime.jsx)("div", {
+						className: composer_selects_module_css_default.riskMask,
+						children: (0, react_jsx_runtime.jsxs)("div", {
+							className: composer_selects_module_css_default.riskCard,
+							role: "alertdialog",
+							"aria-modal": "true",
+							children: [
+								(0, react_jsx_runtime.jsx)("div", {
+									className: composer_selects_module_css_default.riskTitle,
+									children: t("composer.permission.confirmTitle")
+								}),
+								(0, react_jsx_runtime.jsx)("div", {
+									className: composer_selects_module_css_default.riskDesc,
+									children: t("composer.permission.confirmDesc")
+								}),
+								(0, react_jsx_runtime.jsxs)("label", {
+									className: composer_selects_module_css_default.riskAck,
+									children: [(0, react_jsx_runtime.jsx)("input", {
+										type: "checkbox",
+										checked: acknowledged,
+										disabled: lockedOrDegraded,
+										onChange: (event) => {
+											setAcknowledged(event.target.checked);
+										}
+									}), (0, react_jsx_runtime.jsx)("span", { children: t("composer.permission.acknowledge") })]
+								}),
+								(0, react_jsx_runtime.jsxs)("div", {
+									className: composer_selects_module_css_default.riskActions,
+									children: [(0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: composer_selects_module_css_default.riskCancel,
+										onClick: () => {
+											setConfirmation(false);
+											setAcknowledged(false);
+										},
+										children: t("composer.permission.cancel")
+									}), (0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: composer_selects_module_css_default.riskConfirm,
+										disabled: !acknowledged || lockedOrDegraded,
+										onClick: confirmFullAccess,
+										children: t("composer.permission.enable")
+									})]
+								})
+							]
+						})
+					})
+				]
 			});
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\input.module.css.mjs
-		const css$3 = "/* DiscussionInput 状态驱动输入区。 */\n\n.s1ydxi_root {\n  flex: none;\n  border-top: 1px solid var(--dsw-alias-border-l1);\n  padding: 10px 16px;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  background: var(--dsw-alias-bg-elevated);\n  position: relative;\n}\n\n.s1ydxi_mentionBar {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  position: relative;\n}\n\n.s1ydxi_targetBtn {\n  padding: 4px 10px;\n  border: none;\n  border-radius: 6px;\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n  font-size: 11px;\n  font-weight: 500;\n  font-family: inherit;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  cursor: pointer;\n}\n\n.s1ydxi_targetBtn:hover:not(:disabled) {\n  background: rgba(74, 126, 255, 0.15);\n}\n\n.s1ydxi_targetBtn:disabled {\n  opacity: 0.5;\n  cursor: default;\n}\n\n.s1ydxi_mentionHint {\n  font-size: 10px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1ydxi_picker {\n  position: absolute;\n  top: calc(100% + 4px);\n  left: 0;\n  z-index: 20;\n  min-width: 180px;\n  max-height: 220px;\n  overflow-y: auto;\n  padding: 4px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-elevated);\n  border: 1px solid var(--dsw-alias-border-l1);\n  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.s1ydxi_picker button {\n  padding: 5px 8px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-secondary);\n  text-align: left;\n  cursor: pointer;\n}\n\n.s1ydxi_picker button:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1ydxi_picker button.s1ydxi_pickerActive {\n  background: var(--dsw-alias-accent-bg);\n  color: var(--dsw-alias-accent-primary);\n}\n\n.s1ydxi_textarea {\n  width: 100%;\n  min-height: 36px;\n  max-height: 120px;\n  padding: 8px 10px;\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-sunken);\n  border: 1px solid var(--dsw-alias-border-l1);\n  font-size: 12px;\n  font-family: inherit;\n  line-height: 1.5;\n  color: var(--dsw-alias-label-primary);\n  outline: none;\n  resize: vertical;\n  box-sizing: border-box;\n}\n\n.s1ydxi_textarea:focus {\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n.s1ydxi_textarea:disabled {\n  opacity: 0.5;\n  cursor: not-allowed;\n}\n\n.s1ydxi_retryRow {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n}\n\n.s1ydxi_retryLabel {\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n  margin-right: 4px;\n}\n\n.s1ydxi_retryBtn {\n  padding: 2px 8px;\n  border-radius: 6px;\n  border: 1px solid var(--dsw-alias-border-l1);\n  background: transparent;\n  font-size: 11px;\n  font-family: inherit;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.s1ydxi_retryBtn:hover {\n  background: var(--dsw-alias-bg-hover);\n}\n\n.s1ydxi_retryBtnActive {\n  background: var(--dsw-alias-accent-primary);\n  color: #fff;\n  border-color: var(--dsw-alias-accent-primary);\n}\n\n.s1ydxi_actions {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n}\n\n.s1ydxi_spacer {\n  flex: 1;\n}\n\n.s1ydxi_pauseBtn {\n  width: 32px;\n  height: 32px;\n  border-radius: 50%;\n  border: none;\n  background: var(--dsw-alias-state-warning);\n  color: #fff;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 14px;\n  cursor: pointer;\n  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);\n}\n\n.s1ydxi_pauseBtn:hover {\n  background: #d97d04;\n}\n\n.s1ydxi_pauseBtn:disabled {\n  opacity: 0.5;\n  cursor: default;\n  box-shadow: none;\n}\n\n.s1ydxi_sendBtn {\n  width: 32px;\n  height: 32px;\n  border-radius: 50%;\n  border: none;\n  background: var(--dsw-alias-accent-primary);\n  color: #fff;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  font-size: 14px;\n  cursor: pointer;\n  box-shadow: 0 4px 12px rgba(74, 126, 255, 0.3);\n}\n\n.s1ydxi_sendBtn:hover:not(:disabled) {\n  opacity: 0.9;\n}\n\n.s1ydxi_sendBtn:disabled {\n  opacity: 0.3;\n  cursor: default;\n  box-shadow: none;\n}\n";
+		const css$3 = "/* DiscussionInput：DSH composer 风格 + composer 接管面板（原型 execution-detail-prototype.s1ydxi_html 的\n   .s1ydxi_composer-card / .s1ydxi_perm-trigger / .s1ydxi_model-trigger / .s1ydxi_send-btn / .s1ydxi_approval-card / .s1ydxi_question-card）。 */\n\n.s1ydxi_root {\n  margin-top: 24px;\n  position: relative;\n}\n\n/* ── paused/failed 细工具条（@Step 目标 + 重试模式） ─────────────────────── */\n\n.s1ydxi_toolbar {\n  display: flex;\n  align-items: center;\n  flex-wrap: wrap;\n  gap: 8px;\n  padding: 0 2px 8px;\n  position: relative;\n}\n\n.s1ydxi_targetBtn {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  height: 28px;\n  padding: 0 10px;\n  border: none;\n  border-radius: 999px;\n  background: var(--sd-surface-hover);\n  color: var(--sd-muted-foreground);\n  font-size: 12px;\n  line-height: 20px;\n  font-weight: 500;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s1ydxi_targetBtn:hover:not(:disabled) {\n  background: var(--sd-accent);\n  color: var(--sd-foreground);\n}\n\n.s1ydxi_targetBtn:disabled {\n  cursor: default;\n  opacity: 0.6;\n}\n\n.s1ydxi_targetBtn svg {\n  width: 12px;\n  height: 12px;\n  color: var(--sd-faint-foreground);\n}\n\n.s1ydxi_picker {\n  position: absolute;\n  top: 32px;\n  left: 0;\n  z-index: 20;\n  display: flex;\n  flex-direction: column;\n  min-width: 180px;\n  padding: 4px;\n  border: 1px solid var(--sd-border);\n  border-radius: 10px;\n  background: var(--sd-surface);\n  box-shadow: var(--sd-card-shadow);\n}\n\n.s1ydxi_picker button {\n  display: flex;\n  align-items: center;\n  height: 30px;\n  padding: 0 10px;\n  border: none;\n  border-radius: 6px;\n  background: transparent;\n  color: var(--sd-foreground);\n  font-size: 12px;\n  font-family: inherit;\n  text-align: left;\n  cursor: pointer;\n}\n\n.s1ydxi_picker button:hover {\n  background: var(--sd-accent);\n}\n\n.s1ydxi_pickerActive {\n  background: var(--sd-accent) !important;\n  color: var(--sd-primary) !important;\n  font-weight: 500;\n}\n\n.s1ydxi_retryRow {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1ydxi_retryLabel {\n  font-size: 12px;\n  color: var(--sd-muted-foreground);\n}\n\n.s1ydxi_retryBtn {\n  height: 26px;\n  padding: 0 10px;\n  border: 1px solid var(--sd-border);\n  border-radius: 999px;\n  background: var(--sd-surface);\n  color: var(--sd-muted-foreground);\n  font-size: 12px;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s1ydxi_retryBtn:hover {\n  background: var(--sd-accent);\n  color: var(--sd-foreground);\n}\n\n.s1ydxi_retryBtnActive {\n  border-color: transparent;\n  background: var(--sd-primary);\n  color: var(--sd-primary-foreground);\n  font-weight: 500;\n}\n\n/* ── composer 卡片（DSH InputBar） ───────────────────────────────────────── */\n\n.s1ydxi_composerCard {\n  box-sizing: border-box;\n  position: relative;\n  display: flex;\n  flex-direction: column;\n  gap: 12px;\n  width: 100%;\n  padding-top: 10px;\n  border: 1px solid color-mix(in srgb, var(--sd-border) 80%, transparent);\n  border-radius: 22px;\n  background: var(--sd-surface);\n  box-shadow: var(--sd-card-shadow);\n  font-size: 16px;\n  line-height: 24px;\n}\n\n.s1ydxi_composerScroll {\n  max-height: 336px;\n  overflow-y: auto;\n}\n\n.s1ydxi_composerInput {\n  box-sizing: border-box;\n  width: 100%;\n  resize: none;\n  overflow: hidden;\n  border: none;\n  outline: none;\n  background: transparent;\n  color: transparent;\n  caret-color: var(--sd-brand);\n  font-family: inherit;\n  font-size: inherit;\n  line-height: inherit;\n  padding: 4px 12px 0 16px;\n  white-space: pre-wrap;\n  word-break: break-word;\n  overflow-wrap: anywhere;\n}\n\n.s1ydxi_composerInput::placeholder {\n  color: var(--sd-muted-foreground);\n  user-select: none;\n}\n\n.s1ydxi_composerInput:disabled {\n  color: var(--sd-faint-foreground);\n  cursor: not-allowed;\n}\n\n.s1ydxi_composerRow {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  padding: 2px 8px 6px;\n  min-width: 0;\n}\n\n.s1ydxi_composerTools {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  min-width: 0;\n}\n\n.s1ydxi_composerTrailing {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  flex: none;\n}\n\n/* 权限胶囊（DSH PermissionSelect trigger） */\n.s1ydxi_permTrigger {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  min-width: 0;\n  max-width: 220px;\n  height: 28px;\n  padding: 0 4px 0 8px;\n  border: none;\n  border-radius: 24px;\n  outline: none;\n  background: transparent;\n  color: var(--sd-muted-foreground);\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 500;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s1ydxi_permTrigger:hover {\n  background: var(--sd-accent);\n}\n\n.s1ydxi_permGlyph {\n  display: inline-flex;\n  flex: 0 0 auto;\n}\n\n.s1ydxi_permGlyph svg {\n  width: 14px;\n  height: 14px;\n}\n\n.s1ydxi_permLabel {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ydxi_permChev {\n  display: inline-flex;\n  flex: 0 0 auto;\n  color: var(--sd-faint-foreground);\n}\n\n.s1ydxi_permChev svg {\n  width: 14px;\n  height: 14px;\n}\n\n/* 模型胶囊（DSH ModelSelect trigger） */\n.s1ydxi_modelTrigger {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  min-width: 0;\n  max-width: 220px;\n  height: 28px;\n  padding: 0 4px 0 8px;\n  border: none;\n  border-radius: 24px;\n  outline: none;\n  background: transparent;\n  color: var(--sd-muted-foreground);\n  font-size: 13px;\n  line-height: 20px;\n  font-weight: 500;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s1ydxi_modelTrigger:hover {\n  background: var(--sd-accent);\n}\n\n.s1ydxi_modelLabel {\n  min-width: 0;\n  overflow: hidden;\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1ydxi_modelChev {\n  flex: 0 0 auto;\n  display: inline-flex;\n  color: var(--sd-faint-foreground);\n}\n\n.s1ydxi_modelChev svg {\n  width: 14px;\n  height: 14px;\n}\n\n/* 中止 ghost（running/paused 时 trailing 出现） */\n.s1ydxi_abortBtn {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 28px;\n  height: 28px;\n  padding: 0;\n  border: none;\n  border-radius: 999px;\n  background: transparent;\n  color: var(--sd-muted-foreground);\n  cursor: pointer;\n}\n\n.s1ydxi_abortBtn:hover:not(:disabled) {\n  background: var(--sd-accent);\n  color: var(--sd-destructive);\n}\n\n.s1ydxi_abortBtn:disabled {\n  opacity: 0.4;\n  cursor: default;\n}\n\n.s1ydxi_abortBtn svg {\n  width: 14px;\n  height: 14px;\n}\n\n/* 圆形主按钮（暂停 / 发送） */\n.s1ydxi_sendBtn {\n  display: grid;\n  place-items: center;\n  flex: none;\n  width: 34px;\n  height: 34px;\n  padding: 0;\n  border: none;\n  border-radius: 999px;\n  background: var(--sd-brand);\n  color: #fff;\n  cursor: pointer;\n  transform: translateY(-2px);\n  transition: background-color 100ms ease;\n}\n\n.s1ydxi_sendBtn:hover:not(:disabled) {\n  background: color-mix(in srgb, var(--sd-brand) 85%, #fff);\n}\n\n.s1ydxi_sendBtn:disabled {\n  opacity: 0.4;\n  cursor: default;\n}\n\n.s1ydxi_sendBtn svg {\n  width: 16px;\n  height: 16px;\n}\n\n/* ── composer 接管：权限申请（ApprovalPanel 风格） ────────────────────────── */\n\n.s1ydxi_takeover {\n  margin-top: 16px;\n}\n\n.s1ydxi_approvalCard {\n  overflow: hidden;\n  width: 100%;\n  border: 1px solid var(--sd-warning);\n  border-radius: 20px;\n  background: var(--sd-surface);\n  box-shadow: var(--sd-card-shadow);\n}\n\n.s1ydxi_approvalStrip {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  padding: 10px 16px;\n  background: color-mix(in srgb, var(--sd-warning) 12%, transparent);\n  color: var(--sd-warning);\n  font-size: 13px;\n  line-height: 18px;\n}\n\n.s1ydxi_approvalDot {\n  width: 8px;\n  height: 8px;\n  border-radius: 50%;\n  background: var(--sd-warning);\n  animation: sd-pulse 1.2s infinite;\n}\n\n@keyframes sd-pulse {\n  0%, 100% { opacity: 1; }\n  50% { opacity: 0.4; }\n}\n\n.s1ydxi_approvalBody {\n  display: flex;\n  flex-direction: column;\n  gap: 6px;\n  max-height: 200px;\n  overflow-y: auto;\n  padding: 12px 16px 0;\n}\n\n.s1ydxi_approvalHeadline {\n  color: var(--sd-foreground);\n  font-size: 15px;\n  font-weight: 500;\n  line-height: 24px;\n}\n\n.s1ydxi_approvalCommand {\n  color: var(--sd-muted-foreground);\n  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;\n  font-size: 13px;\n  line-height: 20px;\n  word-break: break-all;\n  white-space: pre-wrap;\n}\n\n.s1ydxi_approvalActions {\n  display: flex;\n  justify-content: flex-end;\n  gap: 8px;\n  padding: 14px 16px;\n}\n\n.s1ydxi_approvalBtn {\n  height: 32px;\n  padding: 0 14px;\n  border-radius: 999px;\n  font-size: 13px;\n  font-weight: 500;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s1ydxi_approvalBtn:disabled {\n  opacity: 0.5;\n  cursor: default;\n}\n\n.s1ydxi_approvalReject {\n  background: transparent;\n  border: 1px solid var(--sd-border);\n  color: var(--sd-foreground);\n}\n\n.s1ydxi_approvalReject:hover:not(:disabled) {\n  background: color-mix(in srgb, var(--sd-destructive) 8%, transparent);\n  color: var(--sd-destructive);\n  border-color: transparent;\n}\n\n.s1ydxi_approvalGhost {\n  background: transparent;\n  border: none;\n  color: var(--sd-muted-foreground);\n}\n\n.s1ydxi_approvalGhost:hover:not(:disabled) {\n  color: var(--sd-foreground);\n}\n\n.s1ydxi_approvalAllow {\n  background: var(--sd-primary);\n  color: var(--sd-primary-foreground);\n  border: none;\n}\n\n.s1ydxi_approvalAllow:hover:not(:disabled) {\n  opacity: 0.9;\n}\n\n/* ── composer 接管：问题选择（QuestionComposer 风格） ─────────────────────── */\n\n.s1ydxi_questionCard {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  max-height: min(60vh, 520px);\n  padding: 0 0 10px;\n  border: 1px solid color-mix(in srgb, var(--sd-border) 80%, transparent);\n  border-radius: 20px;\n  background: var(--sd-surface);\n  box-shadow: var(--sd-card-shadow);\n  color: var(--sd-foreground);\n  overflow: hidden;\n}\n\n.s1ydxi_qHeader {\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 16px;\n  flex-shrink: 0;\n  padding: 20px 16px 0 24px;\n}\n\n.s1ydxi_qHeadingBlock {\n  min-width: 0;\n}\n\n.s1ydxi_qEyebrow {\n  margin-bottom: 5px;\n  color: var(--sd-muted-foreground);\n  font-size: 11px;\n  line-height: 16px;\n}\n\n.s1ydxi_qTitle {\n  margin: 0;\n  font-size: 16px;\n  line-height: 22px;\n  font-weight: 500;\n  overflow-wrap: anywhere;\n}\n\n.s1ydxi_qHeaderActions {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  flex-shrink: 0;\n}\n\n.s1ydxi_qIconBtn {\n  display: grid;\n  place-items: center;\n  width: 24px;\n  height: 24px;\n  padding: 0;\n  border: none;\n  border-radius: 999px;\n  background: transparent;\n  color: var(--sd-muted-foreground);\n  cursor: pointer;\n}\n\n.s1ydxi_qIconBtn svg {\n  width: 14px;\n  height: 14px;\n}\n\n.s1ydxi_qIconBtn:hover:not(:disabled) {\n  background: var(--sd-accent);\n  color: var(--sd-foreground);\n}\n\n.s1ydxi_qIconBtn:disabled {\n  opacity: 0.4;\n  cursor: default;\n}\n\n.s1ydxi_qBody {\n  display: flex;\n  flex-direction: column;\n  flex: 1 1 auto;\n  min-height: 0;\n  overflow-y: auto;\n}\n\n.s1ydxi_qOptions {\n  display: flex;\n  flex-direction: column;\n  gap: 1px;\n  margin: 8px 0 0;\n  padding: 4px 12px;\n}\n\n.s1ydxi_qOption {\n  display: flex;\n  align-items: flex-start;\n  gap: 8px;\n  width: 100%;\n  min-height: 40px;\n  flex-shrink: 0;\n  padding: 8px 12px 8px 8px;\n  border: 1px solid transparent;\n  border-radius: 12px;\n  background: transparent;\n  color: inherit;\n  text-align: left;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s1ydxi_qOption:hover,\n.s1ydxi_qOptionSelected {\n  background: var(--sd-accent);\n}\n\n.s1ydxi_qOptionSelected {\n  border-color: var(--sd-border);\n}\n\n.s1ydxi_qNumber {\n  display: grid;\n  place-items: center;\n  flex: 0 0 20px;\n  width: 20px;\n  height: 20px;\n  margin-top: 2px;\n  border-radius: 6px;\n  background: var(--sd-surface-hover);\n  color: var(--sd-muted-foreground);\n  font-size: 12px;\n  font-weight: 500;\n  line-height: 18px;\n}\n\n.s1ydxi_qCheckbox {\n  display: grid;\n  place-items: center;\n  flex: 0 0 20px;\n  width: 20px;\n  height: 20px;\n  margin-top: 2px;\n  border: 1px solid var(--sd-border);\n  border-radius: 6px;\n  background: var(--sd-surface);\n  color: var(--sd-brand);\n  font-size: 12px;\n}\n\n.s1ydxi_qCheckboxChecked {\n  background: var(--sd-surface-selected, color-mix(in srgb, var(--sd-brand) 12%, transparent));\n}\n\n.s1ydxi_qOptionCopy {\n  min-width: 0;\n  flex: 1;\n}\n\n.s1ydxi_qOptionLine {\n  display: flex;\n  align-items: baseline;\n  flex-wrap: wrap;\n  gap: 2px 6px;\n}\n\n.s1ydxi_qOptionLabel {\n  font-size: 14px;\n  line-height: 24px;\n  font-weight: 500;\n}\n\n.s1ydxi_qBadge {\n  padding: 0 4px;\n  border-radius: 6px;\n  background: color-mix(in srgb, var(--sd-brand) 12%, transparent);\n  color: var(--sd-brand);\n  font-size: 11px;\n  line-height: 18px;\n  font-weight: 600;\n}\n\n.s1ydxi_qDesc {\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--sd-muted-foreground);\n}\n\n.s1ydxi_qCustom {\n  display: flex;\n  align-items: flex-start;\n  gap: 8px;\n  width: 100%;\n  min-height: 40px;\n  padding: 8px 12px 8px 8px;\n  border-radius: 12px;\n}\n\n.s1ydxi_qCustom:hover,\n.s1ydxi_qCustom:focus-within {\n  background: var(--sd-accent);\n}\n\n.s1ydxi_qCustom input {\n  flex: 1;\n  min-width: 0;\n  border: none;\n  outline: none;\n  background: transparent;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--sd-foreground);\n  font-family: inherit;\n  margin-top: 2px;\n}\n\n.s1ydxi_qCustom input::placeholder {\n  color: var(--sd-muted-foreground);\n}\n\n.s1ydxi_qTextarea {\n  box-sizing: border-box;\n  width: 100%;\n  margin: 0;\n  padding: 8px 12px 8px 8px;\n  border: none;\n  border-radius: 12px;\n  outline: none;\n  background: transparent;\n  font-size: 13px;\n  line-height: 20px;\n  color: var(--sd-foreground);\n  font-family: inherit;\n  resize: none;\n}\n\n.s1ydxi_qTextarea:hover,\n.s1ydxi_qTextarea:focus {\n  background: var(--sd-accent);\n}\n\n.s1ydxi_qTextarea::placeholder {\n  color: var(--sd-muted-foreground);\n}\n\n.s1ydxi_qFooter {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  flex-shrink: 0;\n  margin-top: 12px;\n  padding: 0 10px 0 18px;\n}\n\n.s1ydxi_qPager {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  flex-shrink: 0;\n}\n\n.s1ydxi_qProgress {\n  padding: 0 4px;\n  color: var(--sd-muted-foreground);\n  font-size: 14px;\n  line-height: 24px;\n  font-weight: 500;\n  white-space: nowrap;\n}\n\n.s1ydxi_qFeedback {\n  flex: 1;\n  min-width: 0;\n  color: var(--sd-destructive);\n  font-size: 12px;\n  line-height: 20px;\n  text-align: center;\n}\n\n.s1ydxi_qFooterActions {\n  display: flex;\n  align-items: center;\n  gap: 12px;\n  flex-shrink: 0;\n}\n\n.s1ydxi_qBtn {\n  height: 32px;\n  padding: 0 14px;\n  border-radius: 999px;\n  font-size: 13px;\n  font-weight: 500;\n  font-family: inherit;\n  cursor: pointer;\n}\n\n.s1ydxi_qBtn:disabled {\n  opacity: 0.5;\n  cursor: default;\n}\n\n.s1ydxi_qSkip {\n  border: 1px solid var(--sd-border);\n  background: transparent;\n  color: var(--sd-foreground);\n}\n\n.s1ydxi_qSkip:hover:not(:disabled) {\n  background: var(--sd-accent);\n}\n\n.s1ydxi_qSend {\n  border: none;\n  background: var(--sd-primary);\n  color: var(--sd-primary-foreground);\n}\n\n.s1ydxi_qSend:hover:not(:disabled) {\n  opacity: 0.9;\n}\n";
 		const tagId$3 = "@deepseek-ai/dsh-client-ui-sandore/input.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$3) + "]") === null) {
 			const tag = document.createElement("style");
@@ -30504,13 +32154,18 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region lib/types/client/DiscussionInput.js
 		/**
-		* DiscussionInput：执行态中栏底部输入区（状态驱动）。
+		* DiscussionInput：执行详情底部输入区（DSH composer 风格 + composer 接管面板）。
 		*
-		* - running/interacting：textarea 禁用 + ⏸ 暂停按钮（pauseAll）。
-		* - paused：可输入，发送 → 定点 `resumeStep`（@Step 目标）或广播 `resumeAll`（文本作 resumePrompt）。
-		* - failed：可输入 + 重试三模式（continue/revert/fork），发送 → `retryStep`（@Step 目标缺省首个失败 Step）。
-		* - 终态：禁用（无可用操作）。
-		* @Step 选择器列出 paused/failed Step，不选 = 广播。
+		* 按 `docs/design/execution-detail-prototype.html` 原型实现：
+		* - 正常态：DSH InputBar 风格 composer（22px 圆角卡片 + 透明 textarea + 底部工具行：
+		*   左权限胶囊 / 右模型胶囊 + 圆形发送按钮）。状态语义保留：
+		*   running → textarea 禁用 + ⏸ 暂停（trailing 主按钮）+ 中止 ghost；
+		*   paused → 发送 = 定点 `resumeStep`（@Step）或广播 `resumeAll`；
+		*   failed → 发送 = `retryStep`（continue/revert/fork）；终态 → 禁用。
+		*   @Step 目标选择与重试模式行做成 composer 上方仅在 paused/failed 出现的细工具条。
+		* - 接管态：存在 pending 权限 → ApprovalPanel 风格卡片（琥珀条 + headline + command
+		*   + 拒绝/始终允许/允许一次）；否则存在 pending 问答 → QuestionComposer 风格卡片
+		*   （header + 编号选项 + 自定义行 + pager + 跳过/提交）。接管面板隐藏 composer。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/DiscussionInput
 		*/
 		/** 运行中/终态判定（决定输入区可用性）。 */
@@ -30520,17 +32175,406 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		function isTerminal(status) {
 			return status === "completed" || status === "failed" || status === "aborted";
 		}
-		/** 渲染状态驱动输入区。 */
-		function DiscussionInput({ t, status, steps, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep }) {
+		/** 反查 Step 名（接管面板 headline/eyebrow 用）。 */
+		function stepNameOf(steps, stepId) {
+			return steps.find((item) => stepIdOf(item) === stepId)?.name ?? stepId;
+		}
+		/** 拆分约定推荐后缀（照 DSH QuestionComposer.parseRecommendedLabel）。 */
+		function parseRecommendedLabel(label) {
+			const suffix = /\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i;
+			return suffix.test(label) ? {
+				label: label.replace(suffix, ""),
+				recommended: true
+			} : {
+				label,
+				recommended: false
+			};
+		}
+		function ApprovalCard({ entry, steps, t, pending, onReply }) {
+			const stepName = stepNameOf(steps, entry.stepId);
+			const permission = entry.payload.permission;
+			const patterns = entry.payload.patterns ?? [];
+			const tool = entry.payload.tool;
+			const command = tool !== void 0 ? `${tool}${patterns.length > 0 ? `(${patterns.join(", ")})` : ""}` : patterns.length > 0 ? patterns.join(", ") : permission;
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: input_module_css_default.takeover,
+				"data-sandore-takeover": "approval",
+				children: (0, react_jsx_runtime.jsxs)("div", {
+					className: input_module_css_default.approvalCard,
+					children: [
+						(0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.approvalStrip,
+							children: [(0, react_jsx_runtime.jsx)("span", {
+								className: input_module_css_default.approvalDot,
+								"aria-hidden": true
+							}), t("run.approval.waiting")]
+						}),
+						(0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.approvalBody,
+							children: [(0, react_jsx_runtime.jsx)("div", {
+								className: input_module_css_default.approvalHeadline,
+								children: t("run.approval.headline", {
+									step: stepName,
+									permission
+								})
+							}), (0, react_jsx_runtime.jsx)("div", {
+								className: input_module_css_default.approvalCommand,
+								children: command
+							})]
+						}),
+						(0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.approvalActions,
+							children: [
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: `${input_module_css_default.approvalBtn} ${input_module_css_default.approvalReject}`,
+									disabled: pending,
+									onClick: () => {
+										onReply(entry.requestId, "reject");
+									},
+									children: t("run.permission.reject")
+								}),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: `${input_module_css_default.approvalBtn} ${input_module_css_default.approvalGhost}`,
+									disabled: pending,
+									onClick: () => {
+										onReply(entry.requestId, "always");
+									},
+									children: t("run.permission.always")
+								}),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: `${input_module_css_default.approvalBtn} ${input_module_css_default.approvalAllow}`,
+									disabled: pending,
+									onClick: () => {
+										onReply(entry.requestId, "once");
+									},
+									children: t("run.permission.once")
+								})
+							]
+						})
+					]
+				})
+			});
+		}
+		function QuestionCard({ entry, steps, t, pending, onReply }) {
+			const questions = entry.payload.questions;
+			const stepName = stepNameOf(steps, entry.stepId);
+			const [index, setIndex] = (0, react.useState)(0);
+			const [drafts, setDrafts] = (0, react.useState)(() => questions.map(() => ({
+				selected: [],
+				custom: "",
+				skipped: false
+			})));
+			const [minimized, setMinimized] = (0, react.useState)(false);
+			const [error, setError] = (0, react.useState)(null);
+			const question = questions[index];
+			const draft = drafts[index];
+			const hasOptions = (question.options?.length ?? 0) > 0;
+			const multi = question.multi_select === true;
+			const updateDraft = (update) => {
+				setDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? update(item) : item));
+				setError(null);
+			};
+			const choose = (label) => {
+				updateDraft((current) => {
+					if (multi) {
+						const selected = current.selected.includes(label) ? current.selected.filter((item) => item !== label) : [...current.selected, label];
+						return {
+							...current,
+							selected,
+							skipped: false
+						};
+					}
+					return {
+						selected: [label],
+						custom: "",
+						skipped: false
+					};
+				});
+				if (!multi && index < questions.length - 1) setIndex((current) => current + 1);
+			};
+			const answered = (item) => item.selected.length > 0 || item.custom.trim() !== "";
+			const completed = (item) => answered(item) || item.skipped;
+			const submitAll = (values) => {
+				const missing = values.findIndex((item) => !completed(item));
+				if (missing >= 0) {
+					setIndex(missing);
+					setError(t("run.question.incomplete"));
+					return;
+				}
+				const answers = questions.map((item, itemIndex) => {
+					const value = values[itemIndex];
+					if (value.skipped) return {
+						id: item.id,
+						selected: []
+					};
+					const custom = value.custom.trim();
+					return {
+						id: item.id,
+						selected: custom === "" || item.multi_select === true ? value.selected : [],
+						...custom === "" ? {} : { custom }
+					};
+				});
+				onReply(entry.requestId, answers);
+			};
+			const continueFlow = () => {
+				if (!answered(draft)) {
+					setError(t("run.question.unanswered"));
+					return;
+				}
+				if (index < questions.length - 1) {
+					setIndex((current) => current + 1);
+					setError(null);
+					return;
+				}
+				submitAll(drafts);
+			};
+			const skipQuestion = () => {
+				const next = drafts.map((item, itemIndex) => itemIndex === index ? {
+					selected: [],
+					custom: "",
+					skipped: true
+				} : item);
+				setDrafts(next);
+				setError(null);
+				if (index < questions.length - 1) {
+					setIndex((current) => current + 1);
+					return;
+				}
+				submitAll(next);
+			};
+			const cancelFlow = () => {
+				const next = drafts.map((item) => ({
+					selected: [],
+					custom: "",
+					skipped: true
+				}));
+				setDrafts(next);
+				submitAll(next);
+			};
+			const draftCustom = (event) => {
+				updateDraft((current) => ({
+					...current,
+					selected: multi ? current.selected : [],
+					custom: event.target.value,
+					skipped: false
+				}));
+			};
+			const continueFromCustom = (event) => {
+				if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+				event.preventDefault();
+				continueFlow();
+			};
+			return (0, react_jsx_runtime.jsx)("div", {
+				className: input_module_css_default.takeover,
+				"data-sandore-takeover": "question",
+				children: (0, react_jsx_runtime.jsxs)("section", {
+					className: input_module_css_default.questionCard,
+					children: [(0, react_jsx_runtime.jsxs)("header", {
+						className: input_module_css_default.qHeader,
+						children: [(0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.qHeadingBlock,
+							children: [(0, react_jsx_runtime.jsx)("div", {
+								className: input_module_css_default.qEyebrow,
+								children: question.header ?? t("run.question.eyebrow", { step: stepName })
+							}), (0, react_jsx_runtime.jsx)("h2", {
+								className: input_module_css_default.qTitle,
+								children: question.question
+							})]
+						}), (0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.qHeaderActions,
+							children: [(0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: input_module_css_default.qIconBtn,
+								title: minimized ? t("run.question.maximize") : t("run.question.minimize"),
+								disabled: pending,
+								onClick: () => {
+									setMinimized((current) => !current);
+								},
+								children: minimized ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronUpOutline14, {}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})
+							}), (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: input_module_css_default.qIconBtn,
+								title: t("run.question.cancel"),
+								disabled: pending,
+								onClick: cancelFlow,
+								children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconCloseOutline16, { size: 14 })
+							})]
+						})]
+					}), !minimized && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)("div", {
+						className: input_module_css_default.qBody,
+						children: (0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.qOptions,
+							children: [(question.options ?? []).map((option, optionIndex) => {
+								const selected = draft.selected.includes(option.label);
+								const display = parseRecommendedLabel(option.label);
+								return (0, react_jsx_runtime.jsxs)("button", {
+									type: "button",
+									className: `${input_module_css_default.qOption} ${selected && !multi ? input_module_css_default.qOptionSelected : ""}`,
+									role: multi ? "checkbox" : "radio",
+									"aria-checked": selected,
+									disabled: pending,
+									onClick: () => {
+										choose(option.label);
+									},
+									children: [multi ? (0, react_jsx_runtime.jsx)("span", {
+										className: `${input_module_css_default.qCheckbox} ${selected ? input_module_css_default.qCheckboxChecked : ""}`,
+										"aria-hidden": true,
+										children: selected ? "✓" : ""
+									}) : (0, react_jsx_runtime.jsx)("span", {
+										className: input_module_css_default.qNumber,
+										children: optionIndex + 1
+									}), (0, react_jsx_runtime.jsx)("span", {
+										className: input_module_css_default.qOptionCopy,
+										children: (0, react_jsx_runtime.jsxs)("span", {
+											className: input_module_css_default.qOptionLine,
+											children: [
+												(0, react_jsx_runtime.jsx)("span", {
+													className: input_module_css_default.qOptionLabel,
+													children: display.label
+												}),
+												display.recommended && (0, react_jsx_runtime.jsx)("span", {
+													className: input_module_css_default.qBadge,
+													children: t("run.question.recommended")
+												}),
+												option.description !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+													className: input_module_css_default.qDesc,
+													children: option.description
+												})
+											]
+										})
+									})]
+								}, `${option.label}-${String(optionIndex)}`);
+							}), hasOptions ? (0, react_jsx_runtime.jsxs)("div", {
+								className: `${input_module_css_default.qCustom} ${draft.custom !== "" ? input_module_css_default.qCustomActive : ""}`,
+								children: [(0, react_jsx_runtime.jsx)("span", {
+									className: input_module_css_default.qNumber,
+									"aria-hidden": true,
+									children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconEditOutline16, { size: 12 })
+								}), (0, react_jsx_runtime.jsx)("input", {
+									type: "text",
+									value: draft.custom,
+									disabled: pending,
+									placeholder: t("run.question.customPlaceholder"),
+									onChange: draftCustom,
+									onKeyDown: continueFromCustom
+								})]
+							}) : (0, react_jsx_runtime.jsx)("textarea", {
+								rows: 2,
+								className: input_module_css_default.qTextarea,
+								value: draft.custom,
+								disabled: pending,
+								placeholder: t("run.question.customPlaceholder"),
+								onChange: draftCustom,
+								onKeyDown: continueFromCustom
+							})]
+						})
+					}), (0, react_jsx_runtime.jsxs)("footer", {
+						className: input_module_css_default.qFooter,
+						children: [
+							(0, react_jsx_runtime.jsxs)("div", {
+								className: input_module_css_default.qPager,
+								children: [
+									(0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: input_module_css_default.qIconBtn,
+										"aria-label": "‹",
+										disabled: index === 0 || pending,
+										onClick: () => {
+											setIndex((current) => current - 1);
+											setError(null);
+										},
+										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronLeftOutline14, {})
+									}),
+									(0, react_jsx_runtime.jsxs)("span", {
+										className: input_module_css_default.qProgress,
+										children: [
+											index + 1,
+											" / ",
+											questions.length
+										]
+									}),
+									(0, react_jsx_runtime.jsx)("button", {
+										type: "button",
+										className: input_module_css_default.qIconBtn,
+										"aria-label": "›",
+										disabled: index === questions.length - 1 || pending,
+										onClick: () => {
+											setIndex((current) => current + 1);
+											setError(null);
+										},
+										children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutline14, {})
+									})
+								]
+							}),
+							error !== null && (0, react_jsx_runtime.jsx)("div", {
+								className: input_module_css_default.qFeedback,
+								role: "status",
+								children: error
+							}),
+							(0, react_jsx_runtime.jsxs)("div", {
+								className: input_module_css_default.qFooterActions,
+								children: [(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: `${input_module_css_default.qBtn} ${input_module_css_default.qSkip}`,
+									disabled: pending,
+									onClick: skipQuestion,
+									children: t("run.question.skip")
+								}), (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: `${input_module_css_default.qBtn} ${input_module_css_default.qSend}`,
+									disabled: pending || !answered(draft),
+									onClick: continueFlow,
+									children: index === questions.length - 1 ? t("run.question.submit") : t("run.question.next")
+								})]
+							})
+						]
+					})] })]
+				})
+			});
+		}
+		/** 发送箭头 glyph（照 DSH InputBar 主按钮）。 */
+		function SendGlyph() {
+			return (0, react_jsx_runtime.jsx)("svg", {
+				viewBox: "0 0 16 16",
+				fill: "none",
+				"aria-hidden": true,
+				children: (0, react_jsx_runtime.jsx)("path", {
+					d: "M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z",
+					fill: "currentColor"
+				})
+			});
+		}
+		/** 暂停 glyph（照 DSH 主按钮 stop 方块）。 */
+		function PauseGlyph() {
+			return (0, react_jsx_runtime.jsx)("svg", {
+				viewBox: "0 0 16 16",
+				"aria-hidden": true,
+				children: (0, react_jsx_runtime.jsx)("rect", {
+					x: "3",
+					y: "3",
+					width: "10",
+					height: "10",
+					rx: "3",
+					fill: "currentColor"
+				})
+			});
+		}
+		function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep, onAbort, instanceId, modelDirectory, sessionPermissions, runCommand, queryPermission }) {
 			const [text, setText] = (0, react.useState)("");
 			const [targetStepId, setTargetStepId] = (0, react.useState)(void 0);
 			const [retryMode, setRetryMode] = (0, react.useState)("continue");
 			const [pickerOpen, setPickerOpen] = (0, react.useState)(false);
+			const directory = (0, react.useMemo)(() => modelDirectory(instanceId), [modelDirectory, instanceId]);
+			const permissionValue = (0, react.useSyncExternalStore)((fn) => sessionPermissions.subscribe(fn), () => sessionPermissions.getSnapshot());
 			const running = isRunning(status);
 			const failed = status === "failed";
 			const paused = status === "paused";
 			const terminal = isTerminal(status);
-			const targetSteps = (0, react.useMemo)(() => steps.filter((step) => step.status === "paused" || step.status === "failed"), [steps]);
+			const showAbort = onAbort !== void 0 && (running || paused);
+			const targetSteps = steps.filter((step) => step.status === "paused" || step.status === "failed");
 			const firstFailedStepId = steps.find((step) => step.status === "failed");
 			const effectiveTarget = targetStepId ?? (failed && firstFailedStepId !== void 0 ? stepIdOf(firstFailedStepId) : void 0);
 			const targetName = targetStepId === void 0 ? t("input.target.broadcast") : steps.find((step) => stepIdOf(step) === targetStepId)?.name ?? targetStepId;
@@ -30555,94 +32599,145 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			return (0, react_jsx_runtime.jsxs)("div", {
 				className: input_module_css_default.root,
 				"data-sandore-disc-input": true,
-				children: [
-					(0, react_jsx_runtime.jsxs)("div", {
-						className: input_module_css_default.mentionBar,
-						children: [
-							(0, react_jsx_runtime.jsxs)("button", {
+				children: [(paused || failed) && (0, react_jsx_runtime.jsxs)("div", {
+					className: input_module_css_default.toolbar,
+					children: [
+						(0, react_jsx_runtime.jsxs)("button", {
+							type: "button",
+							className: input_module_css_default.targetBtn,
+							onClick: () => {
+								setPickerOpen((current) => !current);
+							},
+							disabled,
+							children: [targetStepId === void 0 && !failed ? t("input.target.broadcast") : `@${targetName}`, (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {})]
+						}),
+						pickerOpen && targetSteps.length > 0 && (0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.picker,
+							"data-sandore-step-picker": true,
+							children: [(0, react_jsx_runtime.jsx)("button", {
 								type: "button",
-								className: input_module_css_default.targetBtn,
+								className: targetStepId === void 0 ? input_module_css_default.pickerActive : "",
 								onClick: () => {
-									setPickerOpen((current) => !current);
+									setTargetStepId(void 0);
+									setPickerOpen(false);
 								},
-								disabled,
-								children: [targetStepId === void 0 && !failed ? t("input.target.broadcast") : `@${targetName}`, " ▾"]
-							}),
-							(0, react_jsx_runtime.jsx)("span", {
-								className: input_module_css_default.mentionHint,
-								children: t("input.resume.hint")
-							}),
-							pickerOpen && targetSteps.length > 0 && (0, react_jsx_runtime.jsxs)("div", {
-								className: input_module_css_default.picker,
-								"data-sandore-step-picker": true,
-								children: [(0, react_jsx_runtime.jsx)("button", {
+								children: t("input.target.broadcast")
+							}), targetSteps.map((step) => {
+								const id = stepIdOf(step);
+								return (0, react_jsx_runtime.jsxs)("button", {
 									type: "button",
-									className: targetStepId === void 0 ? input_module_css_default.pickerActive : "",
+									className: targetStepId === id ? input_module_css_default.pickerActive : "",
 									onClick: () => {
-										setTargetStepId(void 0);
+										setTargetStepId(id);
 										setPickerOpen(false);
 									},
-									children: t("input.target.broadcast")
-								}), targetSteps.map((step) => {
-									const id = stepIdOf(step);
-									return (0, react_jsx_runtime.jsxs)("button", {
-										type: "button",
-										className: targetStepId === id ? input_module_css_default.pickerActive : "",
-										onClick: () => {
-											setTargetStepId(id);
-											setPickerOpen(false);
-										},
-										children: ["@", step.name]
-									}, id);
-								})]
-							})
-						]
-					}),
-					(0, react_jsx_runtime.jsx)("textarea", {
-						className: input_module_css_default.textarea,
-						value: text,
-						onChange: (event) => {
-							setText(event.target.value);
-						},
-						placeholder,
-						disabled,
-						rows: 1
-					}),
-					failed && (0, react_jsx_runtime.jsxs)("div", {
-						className: input_module_css_default.retryRow,
-						children: [(0, react_jsx_runtime.jsx)("span", {
-							className: input_module_css_default.retryLabel,
-							children: t("input.retry.label")
-						}), RETRY_MODES.map((mode) => (0, react_jsx_runtime.jsx)("button", {
-							type: "button",
-							className: `${input_module_css_default.retryBtn} ${retryMode === mode ? input_module_css_default.retryBtnActive : ""}`,
-							onClick: () => {
-								setRetryMode(mode);
+									children: ["@", step.name]
+								}, id);
+							})]
+						}),
+						failed && (0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.retryRow,
+							children: [(0, react_jsx_runtime.jsx)("span", {
+								className: input_module_css_default.retryLabel,
+								children: t("input.retry.label")
+							}), RETRY_MODES.map((mode) => (0, react_jsx_runtime.jsx)("button", {
+								type: "button",
+								className: `${input_module_css_default.retryBtn} ${retryMode === mode ? input_module_css_default.retryBtnActive : ""}`,
+								onClick: () => {
+									setRetryMode(mode);
+								},
+								children: mode === "continue" ? t("run.retry.mode.continue") : mode === "revert" ? t("run.retry.mode.revert") : t("run.retry.mode.fork")
+							}, mode))]
+						})
+					]
+				}), (0, react_jsx_runtime.jsxs)("div", {
+					className: input_module_css_default.composerCard,
+					children: [(0, react_jsx_runtime.jsx)("div", {
+						className: input_module_css_default.composerScroll,
+						children: (0, react_jsx_runtime.jsx)("textarea", {
+							className: input_module_css_default.composerInput,
+							value: text,
+							onChange: (event) => {
+								setText(event.target.value);
 							},
-							children: mode === "continue" ? t("run.retry.mode.continue") : mode === "revert" ? t("run.retry.mode.revert") : t("run.retry.mode.fork")
-						}, mode))]
-					}),
-					(0, react_jsx_runtime.jsxs)("div", {
-						className: input_module_css_default.actions,
-						children: [(0, react_jsx_runtime.jsx)("span", { className: input_module_css_default.spacer }), running ? (0, react_jsx_runtime.jsx)("button", {
-							type: "button",
-							className: input_module_css_default.pauseBtn,
-							title: t("input.pause"),
-							"aria-label": t("input.pause"),
-							disabled: pending,
-							onClick: onPauseAll,
-							children: "⏸"
-						}) : (0, react_jsx_runtime.jsx)("button", {
-							type: "button",
-							className: input_module_css_default.sendBtn,
-							title: t("input.send"),
-							"aria-label": t("input.send"),
-							disabled: !canSend || pending,
-							onClick: send,
-							children: "➤"
+							placeholder,
+							disabled,
+							rows: 1
+						})
+					}), (0, react_jsx_runtime.jsxs)("div", {
+						className: input_module_css_default.composerRow,
+						children: [(0, react_jsx_runtime.jsx)("div", {
+							className: input_module_css_default.composerTools,
+							children: (0, react_jsx_runtime.jsx)(PermissionSelectSandore, {
+								t,
+								value: permissionValue,
+								locked: pending,
+								runCommand: (line) => runCommand(instanceId, line),
+								queryValue: queryPermission
+							})
+						}), (0, react_jsx_runtime.jsxs)("div", {
+							className: input_module_css_default.composerTrailing,
+							children: [
+								(0, react_jsx_runtime.jsx)(ModelSelectSandore, {
+									t,
+									directory,
+									locked: pending
+								}),
+								showAbort && (0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: input_module_css_default.abortBtn,
+									title: t("run.abort"),
+									"aria-label": t("run.abort"),
+									disabled: pending,
+									onClick: onAbort,
+									children: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconStopFill16, {})
+								}),
+								(0, react_jsx_runtime.jsx)("button", {
+									type: "button",
+									className: input_module_css_default.sendBtn,
+									title: running ? t("input.pause") : `${t("input.send")} · ⌘↵`,
+									"aria-label": running ? t("input.pause") : t("input.send"),
+									disabled: running ? pending : !canSend || pending,
+									onClick: running ? onPauseAll : send,
+									children: running ? (0, react_jsx_runtime.jsx)(PauseGlyph, {}) : (0, react_jsx_runtime.jsx)(SendGlyph, {})
+								})
+							]
 						})]
-					})
-				]
+					})]
+				})]
+			});
+		}
+		/** 渲染执行详情底部（composer 或接管面板）。 */
+		function DiscussionInput({ t, status, steps, questions, permissions, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep, onReplyQuestion, onReplyPermission, onAbort, instanceId, modelDirectory, sessionPermissions, runCommand, queryPermission }) {
+			if (permissions.length > 0) return (0, react_jsx_runtime.jsx)(ApprovalCard, {
+				entry: permissions[0],
+				steps,
+				t,
+				pending,
+				onReply: onReplyPermission
+			});
+			if (questions.length > 0) return (0, react_jsx_runtime.jsx)(QuestionCard, {
+				entry: questions[0],
+				steps,
+				t,
+				pending,
+				onReply: onReplyQuestion
+			});
+			return (0, react_jsx_runtime.jsx)(Composer, {
+				t,
+				status,
+				steps,
+				pending,
+				onPauseAll,
+				onResumeAll,
+				onResumeStep,
+				onRetryStep,
+				onAbort,
+				instanceId,
+				modelDirectory,
+				sessionPermissions,
+				runCommand,
+				queryPermission
 			});
 		}
 		//#endregion
@@ -30793,7 +32888,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		}
 		//#endregion
 		//#region \0sandore-css:D:\project-code\llm\sandore\packages\sandore\ui\src\client\RunView.module.css.mjs
-		const css$1 = "/* RunView 执行态三栏：树形导航 + 时间线/输入区 + 文件预览。 */\n\n.s1lh5j_runView {\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n}\n\n.s1lh5j_columns {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1lh5j_drag-handle 观感）。 */\n.s1lh5j_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1lh5j_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1lh5j_dragHandle:hover::after,\n.s1lh5j_dragHandle.s1lh5j_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n.s1lh5j_treeCol {\n  flex: none;\n  min-width: 180px;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n  background: var(--dsw-alias-bg-elevated);\n  border-right: 1px solid var(--dsw-alias-border-l1);\n}\n\n.s1lh5j_treeCol > * {\n  flex: 1;\n  min-height: 0;\n}\n\n.s1lh5j_mainCol {\n  flex: 1;\n  min-width: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.s1lh5j_header {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  min-height: 44px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--dsw-alias-border-l2);\n  background: var(--dsw-alias-bg-elevated);\n}\n\n.s1lh5j_title {\n  font-size: 13px;\n  font-weight: 600;\n  line-height: 20px;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1lh5j_statusBadge {\n  flex: none;\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  height: 20px;\n  padding: 0 8px;\n  border-radius: 10px;\n  background: var(--dsw-alias-button-ghost-active-fill, var(--dsw-alias-bg-active));\n  font-size: 11px;\n  line-height: 20px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1lh5j_spacer {\n  flex: 1;\n}\n\n.s1lh5j_loading {\n  margin: 0;\n  padding: 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--dsw-alias-state-error-primary);\n  overflow-wrap: anywhere;\n}\n\n/* ── 待处理交互（时间线下方、输入区上方） ───────────────────────────────── */\n\n.s1lh5j_interactions {\n  flex: none;\n  max-height: 40%;\n  overflow-y: auto;\n  padding: 8px 16px;\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  border-top: 1px solid var(--dsw-alias-border-l2);\n}\n\n.s1lh5j_card {\n  display: flex;\n  flex-direction: column;\n  gap: 8px;\n  padding: 10px 12px;\n  border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 8px;\n  background: var(--dsw-alias-bg-base);\n}\n\n.s1lh5j_cardHead {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1lh5j_cardTitle {\n  font-size: 12px;\n  font-weight: 600;\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1lh5j_question {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n}\n\n.s1lh5j_questionHeader {\n  font-size: 11px;\n  font-weight: 500;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_questionText {\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1lh5j_options {\n  display: flex;\n  flex-direction: column;\n  gap: 4px;\n}\n\n.s1lh5j_option {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n  cursor: pointer;\n}\n\n.s1lh5j_optionLabel {\n  color: var(--dsw-alias-label-primary);\n}\n\n.s1lh5j_optionDesc {\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_metaRow {\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  font-size: 12px;\n  color: var(--dsw-alias-label-secondary);\n}\n\n.s1lh5j_metaLabel {\n  flex: none;\n  font-size: 11px;\n  color: var(--dsw-alias-label-caption);\n}\n\n.s1lh5j_permissionActions {\n  display: flex;\n  align-items: center;\n  gap: 6px;\n}\n\n.s1lh5j_previewCol {\n  flex: none;\n  min-width: 280px;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.s1lh5j_previewCol > * {\n  flex: 1;\n  min-height: 0;\n}\n";
+		const css$1 = "/* RunView 执行态：树形导航 + 执行详情页（原型 execution-detail-prototype.s1lh5j_html 结构）。 */\n\n/* ── multica/DSH 合并 token（限定在 run 视图作用域） ─────────────────────── */\n\n.s1lh5j_runView {\n  --sd-page-canvas: oklch(0.988 0 0);\n  --sd-surface: oklch(1 0 0);\n  --sd-surface-hover: oklch(0.967 0.001 286);\n  --sd-surface-border: oklch(0.92 0.004 286);\n  --sd-foreground: oklch(0.141 0.005 285.8);\n  --sd-muted-foreground: oklch(0.505 0.016 285.9);\n  --sd-faint-foreground: oklch(0.606 0.016 285.9);\n  --sd-accent: oklch(0.967 0.001 286.375);\n  --sd-primary: oklch(0.21 0.006 285.885);\n  --sd-primary-foreground: oklch(0.985 0 0);\n  --sd-brand: oklch(0.55 0.16 255);\n  --sd-success: oklch(0.55 0.16 145);\n  --sd-warning: oklch(0.75 0.16 85);\n  --sd-info: oklch(0.55 0.18 250);\n  --sd-destructive: oklch(0.577 0.245 27.3);\n  --sd-border: oklch(0.945 0.003 286.32);\n  --sd-bubble: oklch(0.925 0.01 250);\n  --sd-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 1px rgb(15 23 42 / 0.03);\n  --sd-card-shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 8px rgb(15 23 42 / 0.05);\n\n  display: flex;\n  flex-direction: column;\n  width: 100%;\n  height: 100%;\n  min-height: 0;\n  overflow: hidden;\n  background: var(--sd-page-canvas);\n  color: var(--sd-foreground);\n  font-size: 14px;\n  line-height: 20px;\n}\n\n.s1lh5j_detailSplit {\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  overflow: hidden;\n}\n\n/* 左：工作流导航（与对话列之间无分割线）。 */\n.s1lh5j_navCol {\n  flex: none;\n  width: 360px;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.s1lh5j_navCol > * {\n  flex: 1;\n  min-height: 0;\n}\n\n/* 右：对话消息列表（标题条 / 滚动区 / 输入框三段隔离）。 */\n.s1lh5j_feedCol {\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n/* 消息滚动区（独立滚动）。 */\n.s1lh5j_feedScroll {\n  flex: 1;\n  min-height: 0;\n  overflow-y: auto;\n}\n\n/* 输入框：固定在对话列最底部（照 DSH 主会话输入框位置），与消息区隔离。 */\n.s1lh5j_composerWrap {\n  flex: none;\n  box-sizing: border-box;\n  width: 100%;\n  max-width: 768px;\n  margin: 0 auto;\n  padding: 0 24px 24px;\n}\n\n/* 拖拽分隔条（照 DSH AppFrame .s1lh5j_drag-handle 观感）。 */\n.s1lh5j_dragHandle {\n  flex: none;\n  width: 7px;\n  cursor: col-resize;\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  background: transparent;\n  touch-action: none;\n}\n\n.s1lh5j_dragHandle::after {\n  content: '';\n  width: 1px;\n  height: 100%;\n  background: var(--dsw-alias-border-l1);\n  transition: background 0.15s, width 0.15s;\n}\n\n.s1lh5j_dragHandle:hover::after,\n.s1lh5j_dragHandle.s1lh5j_dragging::after {\n  background: var(--dsw-alias-accent-primary);\n  width: 2px;\n}\n\n/* ── 顶部栏（page-header：面包屑 + agent chip） ─────────────────────────── */\n\n.s1lh5j_pageHeader {\n  flex: none;\n  display: flex;\n  align-items: center;\n  gap: 8px;\n  height: 48px;\n  padding: 0 16px;\n  box-sizing: border-box;\n  border-bottom: 1px solid var(--sd-border);\n  background: var(--sd-page-canvas);\n}\n\n.s1lh5j_crumb {\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  min-width: 0;\n  overflow: hidden;\n  white-space: nowrap;\n}\n\n.s1lh5j_seg {\n  display: inline-flex;\n  align-items: center;\n  gap: 4px;\n  min-width: 0;\n}\n\n.s1lh5j_sep {\n  flex: none;\n  color: var(--sd-muted-foreground);\n  font-size: 14px;\n  line-height: 20px;\n}\n\n.s1lh5j_crumbItem {\n  max-width: 220px;\n  overflow: hidden;\n  padding: 4px 8px;\n  border: none;\n  border-radius: 12px;\n  background: transparent;\n  font-size: 14px;\n  line-height: 20px;\n  font-family: inherit;\n  color: var(--sd-muted-foreground);\n  text-overflow: ellipsis;\n  white-space: nowrap;\n}\n\n.s1lh5j_crumbCurrent {\n  font-weight: 500;\n  color: var(--sd-foreground);\n}\n\n.s1lh5j_headerActions {\n  margin-left: auto;\n  display: flex;\n  align-items: center;\n  gap: 4px;\n  flex: none;\n}\n\n.s1lh5j_agentChip {\n  display: inline-flex;\n  align-items: center;\n  gap: 6px;\n  height: 28px;\n  padding: 0 6px;\n  margin-right: 4px;\n  border-radius: 6px;\n  background: color-mix(in srgb, var(--sd-brand) 5%, transparent);\n  font-size: 12px;\n  color: var(--sd-foreground);\n  white-space: nowrap;\n}\n\n.s1lh5j_agentDot {\n  width: 6px;\n  height: 6px;\n  border-radius: 50%;\n  background: var(--sd-info);\n  animation: sd-pulse 1.2s infinite;\n}\n\n@keyframes sd-pulse {\n  0%, 100% { opacity: 1; }\n  50% { opacity: 0.4; }\n}\n\n/* ── 对话消息列表（768px 居中列，顶部对齐标题栏） ───────────────────────── */\n\n.s1lh5j_column {\n  max-width: 768px;\n  margin: 0 auto;\n  padding: 24px 24px 32px;\n}\n\n/* ── 加载 / 错误 ─────────────────────────────────────────────────────────── */\n\n.s1lh5j_loading {\n  margin: 0;\n  padding: 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--sd-muted-foreground);\n}\n\n.s1lh5j_error {\n  margin: 0;\n  padding: 8px 12px;\n  font-size: 12px;\n  line-height: 18px;\n  color: var(--sd-destructive);\n  overflow-wrap: anywhere;\n}\n\n/* ── 文件预览列（树叶子选中时出现，独立功能） ───────────────────────────── */\n\n.s1lh5j_previewCol {\n  flex: none;\n  min-width: 280px;\n  min-height: 0;\n  display: flex;\n  flex-direction: column;\n  overflow: hidden;\n}\n\n.s1lh5j_previewCol > * {\n  flex: 1;\n  min-height: 0;\n}\n";
 		const tagId$1 = "@deepseek-ai/dsh-client-ui-sandore/RunView.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId$1) + "]") === null) {
 			const tag = document.createElement("style");
@@ -30806,193 +32901,25 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		//#endregion
 		//#region lib/types/client/RunView.js
 		/**
-		* RunView：执行态三栏视图（树形导航 + 统一时间线/输入区 + 文件预览）。
+		* RunView：执行态视图（树形导航 + 执行详情页）。
+		*
+		* 执行详情按 `docs/design/execution-detail-prototype.html` 原型实现：
+		* multica Issue 页面骨架（面包屑 header + 固定 head + 滚动 feed + 底部 composer）×
+		* DSH 多 agent 对话流（用户右气泡 + agent 左流式）× DSH composer 接管面板
+		* （权限申请 ApprovalPanel / 问题选择 QuestionComposer）。
 		*
 		* 数据源 = `getInstanceState` 轮询（运行中 5s，终态停）+ `getArtifacts` 初始化；
-		* 树与时间线由纯函数从状态派生。交互：header（暂停全部/恢复全部/中止/刷新/打开讨论）、
-		* 树叶子 → 右栏预览、输入区状态驱动（running 暂停 / paused 恢复 / failed 重试）、
-		* 待处理问答/权限卡片在时间线下方。Step「查看详情」/树行 ↗ 跳子代理会话。
+		* 对话流与 agent 消息由纯函数从状态派生。agent 标题点击 → `openSession(childId)`
+		* 打开 DSH 现成的子代理会话页（复用，不重复实现）；暂停/恢复/重试/中止集中在
+		* 底部 composer（接管面板期间隐藏）；权限/问答待办以 composer 接管面板呈现。
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/RunView
 		*/
 		/** 轮询间隔（毫秒）。 */
 		const POLL_INTERVAL_MS = 5e3;
-		/** 实例生命周期状态 → 本地化标签键。 */
-		const RUN_STATUS_KEYS = {
-			pending: "run.status.pending",
-			running: "run.status.running",
-			interacting: "run.status.interacting",
-			completed: "run.status.completed",
-			failed: "run.status.failed",
-			aborted: "run.status.aborted",
-			paused: "run.status.paused"
-		};
-		/** 单个待答问题条目：渲染各问题的选项（单选/多选）或自由文本输入，提交经 onReply。 */
-		function QuestionCard({ entry, t, pending, onReply }) {
-			const questions = entry.payload.questions;
-			const [selections, setSelections] = (0, react.useState)({});
-			const [customs, setCustoms] = (0, react.useState)({});
-			const answered = questions.every((question) => {
-				if (question.options !== void 0 && question.options.length > 0) return (selections[question.id] ?? []).length > 0;
-				return !isBlank(customs[question.id] ?? "");
-			});
-			const toggleOption = (questionId, label, multi) => {
-				setSelections((current) => {
-					const selected = current[questionId] ?? [];
-					const next = multi ? selected.includes(label) ? selected.filter((item) => item !== label) : [...selected, label] : [label];
-					return {
-						...current,
-						[questionId]: next
-					};
-				});
-			};
-			const submit = () => {
-				const answers = questions.map((question) => {
-					if (question.options !== void 0 && question.options.length > 0) return {
-						id: question.id,
-						selected: [...selections[question.id] ?? []]
-					};
-					const custom = customs[question.id] ?? "";
-					return {
-						id: question.id,
-						selected: [],
-						...custom === "" ? {} : { custom }
-					};
-				});
-				onReply(entry.requestId, answers);
-			};
-			return (0, react_jsx_runtime.jsxs)("div", {
-				className: RunView_module_css_default.card,
-				children: [questions.map((question) => (0, react_jsx_runtime.jsxs)("div", {
-					className: RunView_module_css_default.question,
-					children: [
-						question.header !== void 0 && (0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.questionHeader,
-							children: question.header
-						}),
-						(0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.questionText,
-							children: question.question
-						}),
-						question.options !== void 0 && question.options.length > 0 ? (0, react_jsx_runtime.jsx)("div", {
-							className: RunView_module_css_default.options,
-							role: "group",
-							children: question.options.map((option) => {
-								const checked = (selections[question.id] ?? []).includes(option.label);
-								return (0, react_jsx_runtime.jsxs)("label", {
-									className: RunView_module_css_default.option,
-									children: [
-										(0, react_jsx_runtime.jsx)("input", {
-											type: question.multi_select === true ? "checkbox" : "radio",
-											name: question.id,
-											checked,
-											onChange: () => {
-												toggleOption(question.id, option.label, question.multi_select === true);
-											}
-										}),
-										(0, react_jsx_runtime.jsx)("span", {
-											className: RunView_module_css_default.optionLabel,
-											children: option.label
-										}),
-										option.description !== void 0 && (0, react_jsx_runtime.jsx)("span", {
-											className: RunView_module_css_default.optionDesc,
-											children: option.description
-										})
-									]
-								}, option.label);
-							})
-						}) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-							value: customs[question.id] ?? "",
-							onChange: (event) => {
-								setCustoms((current) => ({
-									...current,
-									[question.id]: event.target.value
-								}));
-							},
-							placeholder: t("run.question.placeholder")
-						})
-					]
-				}, question.id)), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-					size: "sm",
-					variant: "primary",
-					disabled: !answered || pending,
-					onClick: submit,
-					children: t("run.question.submit")
-				})]
-			});
-		}
-		/** 单个待批权限条目：展示权限/工具/路径模式，应答经 onReply（once/always/reject）。 */
-		function PermissionCard({ entry, t, pending, onReply }) {
-			return (0, react_jsx_runtime.jsxs)("div", {
-				className: RunView_module_css_default.card,
-				children: [
-					(0, react_jsx_runtime.jsx)("div", {
-						className: RunView_module_css_default.cardHead,
-						children: (0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.cardTitle,
-							children: t("run.permission.title")
-						})
-					}),
-					(0, react_jsx_runtime.jsxs)("div", {
-						className: RunView_module_css_default.metaRow,
-						children: [(0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.metaLabel,
-							children: t("run.permission.patterns")
-						}), (0, react_jsx_runtime.jsx)("span", { children: entry.payload.permission })]
-					}),
-					entry.payload.tool !== void 0 && (0, react_jsx_runtime.jsxs)("div", {
-						className: RunView_module_css_default.metaRow,
-						children: [(0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.metaLabel,
-							children: t("run.permission.tool")
-						}), (0, react_jsx_runtime.jsx)("span", { children: entry.payload.tool })]
-					}),
-					entry.payload.patterns !== void 0 && entry.payload.patterns.length > 0 && (0, react_jsx_runtime.jsxs)("div", {
-						className: RunView_module_css_default.metaRow,
-						children: [(0, react_jsx_runtime.jsx)("span", {
-							className: RunView_module_css_default.metaLabel,
-							children: t("run.permission.patterns")
-						}), (0, react_jsx_runtime.jsx)("span", { children: entry.payload.patterns.join(", ") })]
-					}),
-					(0, react_jsx_runtime.jsxs)("div", {
-						className: RunView_module_css_default.permissionActions,
-						children: [
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "primary",
-								disabled: pending,
-								onClick: () => {
-									onReply(entry.requestId, "once");
-								},
-								children: t("run.permission.once")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "outline",
-								disabled: pending,
-								onClick: () => {
-									onReply(entry.requestId, "always");
-								},
-								children: t("run.permission.always")
-							}),
-							(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								size: "sm",
-								variant: "ghost",
-								disabled: pending,
-								onClick: () => {
-									onReply(entry.requestId, "reject");
-								},
-								children: t("run.permission.reject")
-							})
-						]
-					})
-				]
-			});
-		}
-		/** 渲染 RunView（三栏）。 */
-		function RunView({ t, instanceId, openSession, remote }) {
+		/** 渲染 RunView（树形导航 + 执行详情页）。 */
+		function RunView({ t, instanceId, openSession, remote, modelDirectory, permissions: sessionPermissionsOf, runCommand, queryPermission }) {
 			const [loadState, setLoadState] = (0, react.useState)({ kind: "loading" });
 			const [actionState, setActionState] = (0, react.useState)({ kind: "idle" });
-			const treeWidth = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().treeWidth);
 			const previewWidth = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().previewWidth);
 			const preview = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().preview);
 			const refresh = (0, react.useCallback)(async () => {
@@ -31112,6 +33039,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				questions: [],
 				permissions: []
 			} : partitionInteractions(state.pendingInteractions);
+			const workingCount = state === void 0 ? 0 : state.executedSteps.filter((step) => step.status === "running" || step.status === "interacting" || step.status === "paused").length;
 			const selectLeaf = (selection) => {
 				setWorkflowState({ preview: selection });
 			};
@@ -31119,16 +33047,54 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				setWorkflowState({ preview: null });
 			};
 			const pending = actionState.kind === "pending";
-			return (0, react_jsx_runtime.jsx)("section", {
+			const permissionsFace = (0, react.useMemo)(() => sessionPermissionsOf(instanceId), [sessionPermissionsOf, instanceId]);
+			const workflowName = state?.workflowName ?? state?.workflowId ?? "";
+			const rawInput = state?.originalInput ?? "";
+			return (0, react_jsx_runtime.jsxs)("section", {
 				className: RunView_module_css_default.runView,
 				"aria-label": t("run.title"),
 				"data-sandore-run-view": true,
-				children: (0, react_jsx_runtime.jsxs)("div", {
-					className: RunView_module_css_default.columns,
+				children: [(0, react_jsx_runtime.jsxs)("header", {
+					className: RunView_module_css_default.pageHeader,
+					children: [(0, react_jsx_runtime.jsxs)("nav", {
+						className: RunView_module_css_default.crumb,
+						children: [
+							(0, react_jsx_runtime.jsx)("span", {
+								className: RunView_module_css_default.seg,
+								children: (0, react_jsx_runtime.jsx)("span", {
+									className: RunView_module_css_default.crumbItem,
+									children: workflowName
+								})
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: RunView_module_css_default.sep,
+								"aria-hidden": true,
+								children: "/"
+							}),
+							(0, react_jsx_runtime.jsx)("span", {
+								className: RunView_module_css_default.seg,
+								children: (0, react_jsx_runtime.jsx)("span", {
+									className: `${RunView_module_css_default.crumbItem} ${RunView_module_css_default.crumbCurrent}`,
+									title: rawInput,
+									children: rawInput
+								})
+							})
+						]
+					}), (0, react_jsx_runtime.jsx)("div", {
+						className: RunView_module_css_default.headerActions,
+						children: state !== void 0 && workingCount > 0 && (0, react_jsx_runtime.jsxs)("span", {
+							className: RunView_module_css_default.agentChip,
+							children: [(0, react_jsx_runtime.jsx)("span", {
+								className: RunView_module_css_default.agentDot,
+								"aria-hidden": true
+							}), t("run.workingAgents", { count: workingCount })]
+						})
+					})]
+				}), (0, react_jsx_runtime.jsxs)("div", {
+					className: RunView_module_css_default.detailSplit,
 					children: [
-						(0, react_jsx_runtime.jsx)("aside", {
-							style: { width: treeWidth },
-							className: RunView_module_css_default.treeCol,
+						(0, react_jsx_runtime.jsx)("div", {
+							className: RunView_module_css_default.navCol,
 							children: (0, react_jsx_runtime.jsx)(TreeNav, {
 								t,
 								tree,
@@ -31138,109 +33104,56 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							})
 						}),
 						(0, react_jsx_runtime.jsxs)("div", {
-							className: RunView_module_css_default.mainCol,
-							children: [
-								(0, react_jsx_runtime.jsxs)("header", {
-									className: RunView_module_css_default.header,
+							className: RunView_module_css_default.feedCol,
+							children: [(0, react_jsx_runtime.jsx)("div", {
+								className: RunView_module_css_default.feedScroll,
+								children: (0, react_jsx_runtime.jsxs)("div", {
+									className: RunView_module_css_default.column,
 									children: [
-										(0, react_jsx_runtime.jsx)("span", {
-											className: RunView_module_css_default.title,
-											children: t("run.title")
+										loadState.kind === "loading" && (0, react_jsx_runtime.jsx)("p", {
+											className: RunView_module_css_default.loading,
+											children: t("run.loading")
 										}),
-										state !== void 0 && (0, react_jsx_runtime.jsxs)("span", {
-											className: RunView_module_css_default.statusBadge,
-											children: [(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.StateDot, { state: runDotState(state.status) }), (0, react_jsx_runtime.jsx)("span", { children: t(RUN_STATUS_KEYS[state.status]) })]
+										loadState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
+											className: RunView_module_css_default.error,
+											role: "alert",
+											children: t("run.error", { message: loadState.message })
 										}),
-										(0, react_jsx_runtime.jsx)("span", { className: RunView_module_css_default.spacer }),
-										state !== void 0 && isRunningStatus(state.status) && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											size: "sm",
-											variant: "ghost",
-											disabled: pending,
-											onClick: pauseAll,
-											children: t("run.pauseAll")
+										actionState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
+											className: RunView_module_css_default.error,
+											role: "alert",
+											children: actionState.message
 										}),
-										state !== void 0 && state.status === "paused" && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											size: "sm",
-											variant: "ghost",
-											disabled: pending,
-											onClick: () => {
-												resumeAll("");
-											},
-											children: t("run.resumeAll")
-										}),
-										state !== void 0 && !isTerminalStatus(state.status) && (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											size: "sm",
-											variant: "ghost",
-											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconStopFill16, {}),
-											disabled: pending,
-											onClick: abort,
-											"aria-label": t("run.abort")
-										}),
-										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											size: "sm",
-											variant: "ghost",
-											icon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconRefreshOutline16, {}),
-											onClick: () => {
-												refreshAndSchedule();
-											},
-											"aria-label": t("run.refresh")
-										}),
-										(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-											size: "sm",
-											variant: "outline",
-											onClick: () => {
-												openSession(instanceId);
-											},
-											children: t("run.discuss")
+										loadState.kind === "ready" && state !== void 0 && (0, react_jsx_runtime.jsx)(UnifiedTimeline, {
+											t,
+											items: timeline,
+											openSession
 										})
 									]
-								}),
-								loadState.kind === "loading" && (0, react_jsx_runtime.jsx)("p", {
-									className: RunView_module_css_default.loading,
-									children: t("run.loading")
-								}),
-								loadState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
-									className: RunView_module_css_default.error,
-									role: "alert",
-									children: t("run.error", { message: loadState.message })
-								}),
-								actionState.kind === "error" && (0, react_jsx_runtime.jsx)("p", {
-									className: RunView_module_css_default.error,
-									role: "alert",
-									children: actionState.message
-								}),
-								loadState.kind === "ready" && state !== void 0 && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-									(0, react_jsx_runtime.jsx)(UnifiedTimeline, {
-										t,
-										items: timeline,
-										openSession
-									}),
-									(questions.length > 0 || permissions.length > 0) && (0, react_jsx_runtime.jsxs)("div", {
-										className: RunView_module_css_default.interactions,
-										children: [questions.map((entry) => (0, react_jsx_runtime.jsx)(QuestionCard, {
-											entry,
-											t,
-											pending,
-											onReply: replyQuestion
-										}, entry.id)), permissions.map((entry) => (0, react_jsx_runtime.jsx)(PermissionCard, {
-											entry,
-											t,
-											pending,
-											onReply: replyPermission
-										}, entry.id))]
-									}),
-									(0, react_jsx_runtime.jsx)(DiscussionInput, {
-										t,
-										status: state.status,
-										steps: state.executedSteps,
-										pending,
-										onPauseAll: pauseAll,
-										onResumeAll: resumeAll,
-										onResumeStep: resumeStep,
-										onRetryStep: retryStep
-									})
-								] })
-							]
+								})
+							}), loadState.kind === "ready" && state !== void 0 && (0, react_jsx_runtime.jsx)("div", {
+								className: RunView_module_css_default.composerWrap,
+								children: (0, react_jsx_runtime.jsx)(DiscussionInput, {
+									t,
+									status: state.status,
+									steps: lastActiveSegmentsOf(state.executedSteps),
+									questions,
+									permissions,
+									pending,
+									onPauseAll: pauseAll,
+									onResumeAll: resumeAll,
+									onResumeStep: resumeStep,
+									onRetryStep: retryStep,
+									onReplyQuestion: replyQuestion,
+									onReplyPermission: replyPermission,
+									onAbort: abort,
+									instanceId,
+									modelDirectory,
+									sessionPermissions: permissionsFace,
+									runCommand,
+									queryPermission: () => queryPermission(instanceId)
+								})
+							})]
 						}),
 						preview !== null && (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [(0, react_jsx_runtime.jsx)(DragHandle, {
 							side: "preview",
@@ -31256,7 +33169,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 							})
 						})] })
 					]
-				})
+				})]
 			});
 		}
 		//#endregion
@@ -31288,8 +33201,6 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						initialId: selectedDefinition?.id,
 						save: face.save,
 						onSaved,
-						listJobs: face.listJobs,
-						createJob: face.createJob,
 						startInstance: face.startInstance
 					}, selectedDefinition?.id ?? "new") : selectedInstanceId === void 0 ? (0, react_jsx_runtime.jsx)("div", {
 						className: WorkflowOverlay_module_css_default.editorPlaceholder,
@@ -31298,7 +33209,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 						t,
 						instanceId: selectedInstanceId,
 						remote: face.remote,
-						openSession: face.openSession
+						openSession: face.openSession,
+						modelDirectory: face.modelDirectory,
+						permissions: face.permissions,
+						runCommand: face.runCommand,
+						queryPermission: face.queryPermission
 					}, selectedInstanceId)
 				})
 			});
@@ -31316,7 +33231,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowOverlay
 		*/
 		/** 渲染 shell.overlay 全局工作流 UI（关闭时渲染 null）。 */
-		function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions, listJobs, createJob, startInstance, deleteDefinition, getYaml, save, remote, openSession, t }) {
+		function WorkflowOverlay({ useWorkspaces, listInstances, listDefinitions, startInstance, listModelDirectory, pickDirectory, deleteDefinition, deleteInstance, getYaml, save, remote, openSession, modelDirectory, permissions, runCommand, queryPermission, t }) {
 			const open = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().open);
 			const listWidth = (0, react.useSyncExternalStore)(subscribeWorkflowState, () => getWorkflowState().listWidth);
 			const workspaces = useWorkspaces((state) => state.items);
@@ -31349,14 +33264,19 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			const face = {
 				listInstances,
 				listDefinitions,
-				listJobs,
-				createJob,
 				startInstance,
+				listModelDirectory,
+				pickDirectory,
 				deleteDefinition,
+				deleteInstance,
 				getYaml,
 				save,
 				remote,
-				openSession
+				openSession,
+				modelDirectory,
+				permissions,
+				runCommand,
+				queryPermission
 			};
 			return (0, react_jsx_runtime.jsx)("div", {
 				className: WorkflowOverlay_module_css_default.layer,
@@ -31666,6 +33586,141 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			}
 		};
 		//#endregion
+		//#region lib/types/client/model-faces.js
+		/**
+		* composer 选择器的运行时注入面（模型目录 / 会话权限投影 / 命令执行）。
+		*
+		* 编译期不依赖 DSH 的 ui-model-selection / ui-permission-presets 包（沙盒仓库
+		* 未链接它们），这里按 harness 的 wire 形状自声明最小类型；运行时复用 dev 实例
+		* 已加载的 `ctx.modelDirectories` 服务、会话 projections 与 `remote.commands`，
+		* 行为与 DSH 主 session 的模型/权限选择完全一致（同一数据源、同一 RPC）。
+		* @module @deepseek-ai/dsh-client-ui-sandore/src/client/model-faces
+		*/
+		/**
+		* 轻量每会话模型目录（对齐 DSH ui-model-selection 的 `ModelDirectory`）：
+		* 直接走 `connection.api.sessions.models/selectModel`（同一 RPC、同一行为），
+		* 不依赖 DSH 会话 scope（sandore 实例会话未必被 DSH 会话列表 staged）。
+		*/
+		var SandoreModelDirectory = class {
+			api;
+			sessionId;
+			store = {
+				getSnapshot: () => this.state,
+				subscribe: (fn) => {
+					this.listeners.add(fn);
+					return () => {
+						this.listeners.delete(fn);
+					};
+				}
+			};
+			state = {
+				current: null,
+				routable: null,
+				groups: [],
+				failures: [],
+				status: "idle",
+				error: null
+			};
+			listeners = /* @__PURE__ */ new Set();
+			generation = 0;
+			disposed = false;
+			constructor(api, sessionId) {
+				this.api = api;
+				this.sessionId = sessionId;
+			}
+			/** 刷新目录（失败保留上次好数据；打开菜单时调用，行为同 DSH）。 */
+			async load() {
+				const generation = ++this.generation;
+				this.update({
+					status: "loading",
+					error: null
+				});
+				const { result } = await this.api.models({ sessionId: this.sessionId });
+				if (this.disposed || generation !== this.generation) {
+					if (!result.ok) throw new Error(`${result.error?.code}: ${result.error?.message}`);
+					return result.value;
+				}
+				if (!result.ok) {
+					this.update({
+						status: "error",
+						error: `${result.error?.code}: ${result.error?.message}`
+					});
+					throw new Error(`session.models failed: ${result.error?.code}: ${result.error?.message}`);
+				}
+				this.update({
+					current: result.value.current,
+					routable: result.value.routable,
+					groups: result.value.groups,
+					failures: result.value.failures,
+					status: "ready",
+					error: null
+				});
+				return result.value;
+			}
+			/** 选择完整 provider/model/推理等级（提交 `selectModel` 绑定会话）。 */
+			async select(selection) {
+				const generation = ++this.generation;
+				this.update({
+					status: "selecting",
+					error: null
+				});
+				const { result } = await this.api.selectModel({
+					sessionId: this.sessionId,
+					provider: selection.provider,
+					model: selection.model,
+					...selection.reasoningEffort === void 0 ? {} : { reasoningEffort: selection.reasoningEffort }
+				});
+				if (this.disposed || generation !== this.generation) {
+					if (!result.ok) throw new Error(`${result.error?.code}: ${result.error?.message}`);
+					return;
+				}
+				if (!result.ok) {
+					this.update({
+						status: "error",
+						error: `${result.error?.code}: ${result.error?.message}`
+					});
+					throw new Error(`session.selectModel failed: ${result.error?.code}: ${result.error?.message}`);
+				}
+				this.update({
+					current: result.value.selected,
+					routable: true,
+					status: "ready",
+					error: null
+				});
+			}
+			/** 会话 scope 拆除时调用（沙盒目录随组件卸载回收）。 */
+			dispose() {
+				this.disposed = true;
+				this.listeners.clear();
+			}
+			update(patch) {
+				this.state = {
+					...this.state,
+					...patch
+				};
+				for (const listener of this.listeners) listener();
+			}
+		};
+		/**
+		* 解析 `/permission`（无参）命令报告文本：
+		* `current preset workspace-write (available: workspace-write, danger-full-access)`。
+		* 权限投影缺失时作为回退数据源（与 DSH 主 session 的权限选择同一命令路径）。
+		*/
+		function parsePermissionReport(text) {
+			const match = /^current preset (\S+) \(available: ([^)]+)\)$/.exec(text.trim());
+			if (match === null) return void 0;
+			const currentValue = match[1];
+			const options = match[2].split(",").map((part) => part.trim()).filter((part) => part !== "").map((name) => ({
+				value: name,
+				name
+			}));
+			if (options.length === 0) return void 0;
+			return {
+				options,
+				currentValue
+			};
+		}
+		//#endregion
 		//#region lib/types/client/index.js
 		/** sandore Client UI 入口：挂载 sandore Remote 命名空间、注册 sidebar 工作流入口与 shell.overlay 全局工作流 UI。 */
 		/** Client 插件依赖的 cordis 服务键。 */
@@ -31675,7 +33730,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			"locale",
 			"remote",
 			"sessions",
-			"workspaces"
+			"workspaces",
+			"connection"
 		];
 		/** 挂载 sandore 远程命名空间、注册 locale 字典与工作流入口/overlay。 */
 		async function apply(ctx) {
@@ -31692,7 +33748,7 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 				locale: NS,
 				inject: () => ({ onToggleWorkflow: toggleWorkflowOverlay })
 			}, WorkflowButton));
-			await ctx.inject(["remote.sandore"], (remoteCtx) => {
+			await ctx.inject(["remote.sandore", "remote.commands"], (remoteCtx) => {
 				const sandore = remoteCtx.remote.sandore;
 				remoteCtx.slots.inject("shell.overlay", () => remoteCtx.slots.register({
 					name: "shell.overlay",
@@ -31702,15 +33758,61 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 					inject: () => ({
 						listInstances: async () => unwrap(await sandore.listInstances()),
 						listDefinitions: async () => unwrap(await sandore.listDefinitions()),
-						listJobs: async (workflowId) => unwrap(await sandore.listJobs(workflowId === void 0 ? {} : { workflowId })),
-						createJob: async (input) => unwrap(await sandore.createJob(input)),
 						startInstance: async (input) => unwrap(await sandore.startInstance(input)),
+						listModelDirectory: async () => {
+							const providers = unwrap(await sandore.listProviders());
+							const entries = [];
+							for (const provider of providers) {
+								const models = unwrap(await sandore.listModels(provider.id));
+								entries.push({
+									provider: provider.id,
+									providerName: provider.name,
+									models: models.map((m) => ({
+										id: m.id,
+										name: m.name
+									}))
+								});
+							}
+							return entries;
+						},
+						pickDirectory: async () => {
+							const path = await remoteCtx.workspaces.pickDirectory();
+							return path === null ? void 0 : path;
+						},
 						deleteDefinition: async (id) => unwrap(await sandore.deleteDefinition(id)),
+						deleteInstance: async (instanceId) => unwrap(await sandore.deleteInstance(instanceId)),
 						getYaml: async (id) => unwrap(await sandore.getYaml(id)),
 						save: createSandoreSave(sandore),
 						remote: sandore,
 						openSession: (id) => {
 							remoteCtx.sessions.open(id);
+						},
+						modelDirectory: (sessionId) => {
+							return new SandoreModelDirectory(remoteCtx.connection.api.sessions, sessionId);
+						},
+						permissions: (sessionId) => {
+							const sessions = remoteCtx.sessions;
+							const scope = sessions.scope(sessionId);
+							if (scope === void 0) return {
+								getSnapshot: () => void 0,
+								subscribe: () => () => void 0
+							};
+							const session = sessions.sessionOf(scope);
+							if (session === void 0) return {
+								getSnapshot: () => void 0,
+								subscribe: () => () => void 0
+							};
+							return session.projections.faceOf("permissions");
+						},
+						runCommand: async (sessionId, line) => {
+							return (await remoteCtx.remote.commands.execute(sessionId, line)).ok;
+						},
+						queryPermission: async (sessionId) => {
+							const result = await remoteCtx.remote.commands.execute(sessionId, "/permission");
+							if (!result.ok) return void 0;
+							const text = result.value?.text;
+							if (text === void 0) return void 0;
+							return parsePermissionReport(text);
 						}
 					})
 				}, WorkflowOverlay));

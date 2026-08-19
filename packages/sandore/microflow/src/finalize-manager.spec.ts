@@ -252,7 +252,7 @@ describe('FinalizeAssessor', () => {
     };
 
     const result = await assessor.assess({
-      step: step({ command: { type: 'prompt', value: { promptText: 'do work' } } }),
+      step: step({ command: { type: 'agent', value: { promptText: 'do work' } } }),
       stepSessionId: 'missing-session',
       context: { input: 'req', output: 'out' },
     });

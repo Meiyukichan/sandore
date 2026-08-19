@@ -133,9 +133,9 @@ describe('BranchEvaluator two-phase', () => {
 });
 
 describe('BranchEvaluator shell three-injection', () => {
-  it('replaces passThroughVars in the command and injects them into the subprocess env', async () => {
-    const { subprocess, evaluator } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+  it('replaces passThroughVars in the command and injects them into the shell env', async () => {
+    const { subprocess, shell, evaluator } = harness();
+    shell.runHandler = async spec => successResult(spec, 'ok');
 
     await evaluator.evaluate(
       { type: 'shell', value: { command: 'echo ${projectName}' } },
@@ -143,14 +143,14 @@ describe('BranchEvaluator shell three-injection', () => {
       { passThroughVars: { projectName: 'sandore' } },
     );
 
-    expect(subprocess.specs).toHaveLength(1);
-    expect(subprocess.specs[0]?.argv).toEqual(['/usr/bin/echo', 'sandore']);
-    expect(subprocess.specs[0]?.env).toEqual({ projectName: 'sandore' });
+    expect(subprocess.specs).toHaveLength(0);
+    expect(shell.specs[0]?.command).toBe('echo sandore');
+    expect(shell.specs[0]?.env).toEqual({ projectName: 'sandore' });
   });
 
-  it('writes the stdin content into the subprocess stdio', async () => {
-    const { subprocess, evaluator } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+  it('writes the stdin content into the shell request', async () => {
+    const { subprocess, shell, evaluator } = harness();
+    shell.runHandler = async spec => successResult(spec, 'ok');
 
     await evaluator.evaluate(
       { type: 'shell', value: { command: 'node read-stdin.js' } },
@@ -158,7 +158,8 @@ describe('BranchEvaluator shell three-injection', () => {
       { stdin: '{"foo":"bar"}' },
     );
 
-    expect(subprocess.specs[0]?.stdio.stdin).toEqual({ data: '{"foo":"bar"}' });
+    expect(subprocess.specs).toHaveLength(0);
+    expect(shell.specs[0]?.stdin).toBe('{"foo":"bar"}');
   });
 
   it('uses shell.run for a simple shell condition without injection', async () => {
@@ -226,22 +227,40 @@ describe('BranchEvaluator shell error paths', () => {
     });
   });
 
-  it('maps a subprocess nonzero exit to STEP_EXECUTION', async () => {
-    const { subprocess, evaluator } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 2, signal: null });
+  it('maps a shell nonzero exit to STEP_EXECUTION', async () => {
+    const { subprocess, shell, evaluator } = harness();
+    shell.runHandler = async spec => ({
+      exitCode: 2,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: '', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await expect(
       evaluator.evaluate({ type: 'shell', value: { command: 'false' } }, 'ctx', { passThroughVars: { a: '1' } }),
     ).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
+    expect(subprocess.specs).toHaveLength(0);
   });
 
-  it('maps a subprocess timedOut to STEP_TIMEOUT', async () => {
-    const { subprocess, evaluator } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: null, signal: 'SIGTERM', timedOut: true });
+  it('maps a shell timedOut to STEP_TIMEOUT', async () => {
+    const { subprocess, shell, evaluator } = harness();
+    shell.runHandler = async spec => ({
+      exitCode: null,
+      signal: 'SIGTERM',
+      timedOut: true,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: '', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await expect(
       evaluator.evaluate({ type: 'shell', value: { command: 'sleep 10' } }, 'ctx', { passThroughVars: { a: '1' } }),
     ).rejects.toMatchObject({ code: 'STEP_TIMEOUT' });
+    expect(subprocess.specs).toHaveLength(0);
   });
 });
 

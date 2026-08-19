@@ -1,5 +1,5 @@
 /**
- * remote.ts（SandoreRemote）的单元测试：定义/Job/实例 CRUD、产物查询、
+ * remote.ts（SandoreRemote）的单元测试：定义/实例 CRUD、产物查询、
  * Provider/Model 转发与 ping。测试用内存 mock storageDomain + mock llm +
  * mock sandoreEngine。
  * @module @deepseek-ai/dsh-sandore-workflow/src/remote.spec
@@ -43,7 +43,6 @@ function makeState(overrides: Partial<WorkflowTaskState> & { taskId: string }): 
   const now = new Date().toISOString()
   return {
     taskId,
-    jobId: 'job-1',
     workflowId: 'wfl-1',
     cwd: '/tmp',
     status: 'running',
@@ -133,7 +132,6 @@ async function harness(): Promise<{
     const now = new Date().toISOString()
     const state: WorkflowTaskState = {
       taskId: instanceId,
-      jobId: request.jobId,
       workflowId: request.workflowId,
       cwd: request.cwd ?? '/tmp',
       status: 'running',
@@ -286,100 +284,45 @@ stages:
   })
 })
 
-describe('SandoreRemote job CRUD', () => {
-  it('rejects createJob for a nonexistent workflowId', async () => {
-    const { remote } = await harness()
-
-    await expect(remote.createJob({ name: 'x', workflowId: 'wfl-nonexistent' })).rejects.toMatchObject({
-      code: 'INVALID_OPERATION',
-    })
-  })
-
-  it('filters jobs by workflowId', async () => {
-    const { remote } = await harness()
-    const workflowA = await remote.createDefinition({ yaml: validV2Yaml })
-    const workflowB = await remote.createDefinition({
-      yaml: validV2Yaml.replace('wfl-source', 'wfl-source-b'),
-    })
-    await remote.createJob({ name: 'job-a', workflowId: workflowA.id })
-    await remote.createJob({ name: 'job-b', workflowId: workflowB.id })
-
-    const jobsA = remote.listJobs({ workflowId: workflowA.id })
-    expect(jobsA).toHaveLength(1)
-    expect(jobsA[0]?.workflowId).toBe(workflowA.id)
-    expect(remote.listJobs({})).toHaveLength(2)
-  })
-
-  it('reads a single job by id', async () => {
-    const { remote } = await harness()
-    const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
-
-    const read = remote.getJob(job.id)
-    expect(read.id).toBe(job.id)
-    expect(read.name).toBe('job-a')
-    expect(read.workflowId).toBe(definition.id)
-  })
-
-  it('updates job metadata and returns the updated record', async () => {
-    const { remote } = await harness()
-    const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
-
-    const updated = await remote.updateJob(job.id, { name: 'job-a-renamed', cwd: '/srv' })
-
-    expect(updated.id).toBe(job.id)
-    expect(updated.name).toBe('job-a-renamed')
-    expect(updated.cwd).toBe('/srv')
-    expect(updated.workflowId).toBe(definition.id)
-  })
-
-  it('deletes a job idempotently', async () => {
-    const { remote } = await harness()
-    const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
-
-    await expect(remote.deleteJob(job.id)).resolves.toBe(true)
-    expect(remote.listJobs({})).toHaveLength(0)
-    await expect(remote.deleteJob(job.id)).resolves.toBe(false)
-  })
-})
-
 describe('SandoreRemote instance lifecycle', () => {
   it('startInstance returns a run and writes a readable state snapshot', async () => {
     const { remote, persistence } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
 
-    const run = await remote.startInstance({ jobId: job.id, originalInput: '测试需求' })
+    const run = await remote.startInstance({ workflowId: definition.id, originalInput: '测试需求' })
     expect(run.instanceId).toBeTruthy()
     expect(run.status).toBe('running')
 
     const state = remote.getInstanceState(run.instanceId)
     expect(state.originalInput).toBe('测试需求')
-    expect(state.jobId).toBe(job.id)
+    expect(state.workflowId).toBe(definition.id)
     expect(persistence.state.get(run.instanceId)?.originalInput).toBe('测试需求')
   })
 
-  it('derives instance summaries filtered by jobId', async () => {
+  it('rejects startInstance for a nonexistent workflowId', async () => {
+    const { remote } = await harness()
+
+    await expect(remote.startInstance({ workflowId: 'wfl-nonexistent', originalInput: 'x' })).rejects.toMatchObject({
+      code: 'INVALID_OPERATION',
+    })
+  })
+
+  it('derives instance summaries for every state row (no job filter)', async () => {
     const { remote } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    const jobA = await remote.createJob({ name: 'job-a', workflowId: definition.id })
-    const jobB = await remote.createJob({ name: 'job-b', workflowId: definition.id })
-    await remote.startInstance({ jobId: jobA.id, originalInput: 'a' })
-    await remote.startInstance({ jobId: jobB.id, originalInput: 'b' })
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'a' })
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'b' })
 
-    const instancesA = remote.listInstances(jobA.id)
-    expect(instancesA).toHaveLength(1)
-    expect(instancesA[0]?.jobId).toBe(jobA.id)
-    expect(remote.listInstances()).toHaveLength(2)
+    const instances = remote.listInstances()
+    expect(instances).toHaveLength(2)
+    expect(instances.map(instance => instance.workflowId)).toEqual([definition.id, definition.id])
+    expect(instances.map(instance => instance.originalInput).sort()).toEqual(['a', 'b'])
   })
 
   it('removes the snapshot on deleteInstance', async () => {
     const { remote } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    const job = await remote.createJob({ name: 'job-a', workflowId: definition.id })
-    const run = await remote.startInstance({ jobId: job.id, originalInput: 'x' })
+    const run = await remote.startInstance({ workflowId: definition.id, originalInput: 'x' })
 
     await remote.deleteInstance(run.instanceId)
     expect(catchCode(() => remote.getInstanceState(run.instanceId))).toBe('NODE_NOT_FOUND')

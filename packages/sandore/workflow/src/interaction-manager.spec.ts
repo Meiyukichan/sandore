@@ -152,7 +152,7 @@ describe('InteractionManager.ask（引擎级 ask 主通道）', () => {
     }]);
   });
 
-  it('卡片回复后条目终态化（status=replied + answer）并持久化', async () => {
+  it('卡片回复后条目移出 pending 并持久化空列表（终态条目只留内存审计）', async () => {
     const { deps, userQuestions, persist } = makeDeps();
     const mgr = new InteractionManager(deps);
     const entry = questionEntry('req-1', singleQuestionPayload());
@@ -160,8 +160,9 @@ describe('InteractionManager.ask（引擎级 ask 主通道）', () => {
 
     await mgr.ask({ entry });
 
+    // §3.6A P0#3：syncState 只持久化 pending；回复后 pending Map 清空 → 持久化 []。
     const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingQuestionEntry[];
-    expect(lastCall).toEqual([{ ...entry, status: 'replied', answer: [['A']] }]);
+    expect(lastCall).toEqual([]);
   });
 
   it('无卡片通道时挂起，等待 replyQuestion 兼容路径 resolve（与 ask 的 await 汇合）', async () => {
@@ -175,7 +176,7 @@ describe('InteractionManager.ask（引擎级 ask 主通道）', () => {
     await expect(asking).resolves.toEqual(result);
 
     const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingQuestionEntry[];
-    expect(lastCall).toEqual([{ ...entry, status: 'replied', answer: [['A']] }]);
+    expect(lastCall).toEqual([]);
   });
 });
 
@@ -199,7 +200,7 @@ describe('InteractionManager.replyQuestion', () => {
 });
 
 describe('InteractionManager.replyPermission', () => {
-  it('reply=once/always 将条目置 replied 并持久化 answer', async () => {
+  it('reply=once/always 将条目移出 pending 并持久化空列表（终态条目只留内存审计）', async () => {
     const { deps, persist } = makeDeps();
     const mgr = new InteractionManager(deps);
     const entry = permissionEntry('req-p');
@@ -208,10 +209,10 @@ describe('InteractionManager.replyPermission', () => {
     await mgr.replyPermission('req-p', 'always');
 
     const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingPermissionEntry[];
-    expect(lastCall).toEqual([{ ...entry, status: 'replied', answer: 'always' }]);
+    expect(lastCall).toEqual([]);
   });
 
-  it('reply=reject 将条目置 rejected 并持久化 answer', async () => {
+  it('reply=reject 将条目移出 pending 并持久化空列表（终态条目只留内存审计）', async () => {
     const { deps, persist } = makeDeps();
     const mgr = new InteractionManager(deps);
     const entry = permissionEntry('req-p');
@@ -220,7 +221,7 @@ describe('InteractionManager.replyPermission', () => {
     await mgr.replyPermission('req-p', 'reject');
 
     const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingPermissionEntry[];
-    expect(lastCall).toEqual([{ ...entry, status: 'rejected', answer: 'reject' }]);
+    expect(lastCall).toEqual([]);
   });
 
   it('未知 permission requestId 抛 SandoreError(INVALID_OPERATION)', async () => {

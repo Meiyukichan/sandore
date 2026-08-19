@@ -176,8 +176,8 @@ describe('LoopManager checkLoopBreak', () => {
   });
 
   it('injects in-loop-turn and all-loop-turn into a shell breakCondition env', async () => {
-    const { subprocess, manager } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+    const { shell, manager } = harness();
+    shell.runHandler = async spec => successResult(spec, 'x');
     manager.pushActiveLoop('loop-1', 5);
     const node: LoopNode = {
       id: 'loop-1',
@@ -190,6 +190,7 @@ describe('LoopManager checkLoopBreak', () => {
 
     await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
 
-    expect(subprocess.specs[0]?.env).toEqual({ 'in-loop-turn': '1', 'all-loop-turn': '5' });
+    // breakCondition 统一经 ctx.shell 执行（branch-evaluator 新实现），env 随请求携带。
+    expect(shell.specs[0]?.env).toEqual({ 'in-loop-turn': '1', 'all-loop-turn': '5' });
   });
 });

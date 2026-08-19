@@ -23,13 +23,12 @@ import {
   describeError,
   resolvePassThroughVars,
   resolveProviderModel as resolveModelRoute,
-  splitCommand,
   textSummary,
 } from './internal.ts';
-import { finalAssistantOutput } from './subagents.ts';
+import { finalAssistantOutput, collectSessionMessages } from './subagents.ts';
 import type { Agent } from './subagents.ts';
-import type { CommandConfig, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
-import type { ShellExecRequest, ShellRunResult, SubprocessSpawnSpec } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
+import type { CommandConfig, SessionMessage, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { ShellExecRequest, ShellRunResult } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
 
 type ShellCommand = Extract<CommandConfig, { type: 'shell' }>;
 type PromptCommand = Extract<CommandConfig, { type: 'prompt' }>;
@@ -72,8 +71,9 @@ export interface StepRunnerConfig {
   /**
    * 子代理真实 childId 就绪回调（由 workflow 层注入）：`startContinuable` 返回后、
    * `whenIdle` 挂起前调用，把真实子代理 SessionId 上抛给引擎（供暂停反查 childId）。
+   * 返回 Promise 时 runner 会 await（引擎借此把真实 childId 落盘后再继续）。
    */
-  readonly onChildStarted?: (stepId: string, childId: string) => void;
+  readonly onChildStarted?: (stepId: string, childId: string) => void | Promise<void>;
   /**
    * 子代理 ask 转接回调（由 workflow 层注入，microflow 不 import workflow 运行时）。
    * 子代理 final result 含 `[[SANDORE_ASK]]` 标记块时调用；返回 `true` 表示已转接
@@ -125,6 +125,8 @@ export interface StepRunSessionMeta {
 export interface StepRunResult {
   readonly output: ContentBlock[];
   readonly sessionMeta?: StepRunSessionMeta;
+  /** 子代理会话消息行（§3.8A：真实子代理采集，随结果带出写 `executed.sessionMessages`）。 */
+  readonly sessionMessages?: SessionMessage[];
 }
 
 /** 结构化提示词主头部。 */
@@ -374,59 +376,29 @@ export class StepRunner {
     );
     const stdin = resolveShellStdin(request.step, request.previousOutputs);
     const env = buildShellEnv(request.passThroughVars, request.loopTurn, request.loopMaxIterations);
-    if (stdin === undefined && env === undefined) {
-      return await this.runShellSimple(resolvedCommand, request);
-    }
-    return await this.runShellSubprocess(resolvedCommand, stdin, env, request);
+    // 统一经 `ctx.shell`（平台 shell 解释器，如 PowerShell/bash）执行：env/stdin
+    // 由 ShellExecRequest 携带。不要在这里改用 `ctx.subprocess.spawn` 直接执行
+    // 命令——subprocess 不做 shell 解释，PowerShell cmdlet（New-Item 等）不是可
+    // 执行文件，带透传变量/inputFrom 的 shell 步骤会失败。
+    return await this.runShellSimple(resolvedCommand, request, stdin, env);
   }
 
-  private async runShellSimple(command: string, request: StepRunRequest): Promise<StepRunResult> {
+  private async runShellSimple(
+    command: string,
+    request: StepRunRequest,
+    stdin: string | undefined = undefined,
+    env: Record<string, string> | undefined = undefined,
+  ): Promise<StepRunResult> {
     const shellRequest: ShellExecRequest = {
       command,
       timeoutMs: this.stepTimeoutMs(request.step),
       ...(request.workdir === undefined ? {} : { workdir: request.workdir }),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
+      ...(stdin === undefined ? {} : { stdin }),
+      ...(env === undefined ? {} : { env }),
     };
     const spec = this.ctx.shell.resolve(shellRequest);
     const result = await this.ctx.shell.run(spec);
-    return this.toShellResult(result);
-  }
-
-  private async runShellSubprocess(
-    command: string,
-    stdin: string | undefined,
-    env: Record<string, string> | undefined,
-    request: StepRunRequest,
-  ): Promise<StepRunResult> {
-    const tokens = splitCommand(command);
-    const program = tokens[0] ?? command;
-    const args = tokens.slice(1);
-    const executable = await this.ctx.subprocess.resolveExecutable(program, env, request.signal);
-    const spec: SubprocessSpawnSpec = {
-      argv: [executable, ...args],
-      cwd: request.workdir,
-      stdio: {
-        stdin: stdin === undefined ? 'ignore' : { data: stdin },
-        stdout: { maxBytes: 1024 * 1024 },
-        stderr: { maxBytes: 1024 * 1024 },
-      },
-      graceMs: this.stepTimeoutMs(request.step),
-      ...(env === undefined ? {} : { env }),
-      ...(request.signal === undefined ? {} : { signal: request.signal }),
-    };
-    const handle = this.ctx.subprocess.spawn(spec);
-    const outcome = await handle.done;
-    const stdout = handle.collected.stdout?.readFrom(0);
-    const stderr = handle.collected.stderr?.readFrom(0);
-    const result: ShellRunResult = {
-      exitCode: outcome.exitCode,
-      signal: outcome.signal,
-      timedOut: outcome.timedOut ?? false,
-      aborted: request.signal?.aborted ?? false,
-      timeoutMs: this.stepTimeoutMs(request.step),
-      stdout: { text: stdout?.text ?? '', truncated: stdout?.lossy ?? false },
-      stderr: { text: stderr?.text ?? '', truncated: stderr?.lossy ?? false },
-    };
     return this.toShellResult(result);
   }
 
@@ -509,7 +481,7 @@ export class StepRunner {
       },
       signal: request.signal ?? new AbortController().signal,
     });
-    this.config.onChildStarted?.(request.step.id, started.childId);
+    await this.config.onChildStarted?.(request.step.id, started.childId);
     return this.collectSubagentOutput(command.type, started.childId, request.step.id, request.stageId);
   }
 
@@ -571,7 +543,13 @@ export class StepRunner {
         output = next;
       }
     }
-    return { output, sessionMeta: { childId, synthetic: false, command: commandType } };
+    return {
+      output,
+      sessionMeta: { childId, synthetic: false, command: commandType },
+      // §3.8A：子代理消息持久化（whenIdle 后采集，随结果带出 → finishCommandNode 写
+      // executed.sessionMessages → onPersist 定格；前端内嵌消息框/失败·暂停最近 N 条）。
+      sessionMessages: collectSessionMessages(child.session.events),
+    };
   }
 
   /** 用临时会话按模板填充参数；失败（error/aborted/抛错）回退模板原文。 */

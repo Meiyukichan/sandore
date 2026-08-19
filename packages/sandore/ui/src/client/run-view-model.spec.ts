@@ -9,7 +9,7 @@ import type { PendingPermissionEntry, PendingQuestionEntry } from '@deepseek-ai/
 
 import {
   isBlank, isRunningStatus, isSubagentStep, isTerminalStatus, partitionInteractions, RETRY_MODES, runDotState,
-  stepDotState, stepIdOf,
+  stepDotState, stepIdOf, relativeTimeOf, chatLinesOf,
 } from './run-view-model.ts'
 import type { ExecutedStep } from './run-view-model.ts'
 
@@ -206,5 +206,75 @@ describe('isBlank', () => {
 describe('RETRY_MODES', () => {
   it('lists the three retry modes in order', () => {
     expect(RETRY_MODES).toEqual(['continue', 'revert', 'fork'])
+  })
+})
+
+describe('relativeTimeOf', () => {
+  const NOW = '2026-01-01T12:00:00.000Z'
+
+  it('returns justNow for a sub-minute delta', () => {
+    expect(relativeTimeOf('2026-01-01T11:59:40.000Z', NOW)).toEqual({ kind: 'justNow' })
+  })
+
+  it('returns minutes for a sub-hour delta', () => {
+    expect(relativeTimeOf('2026-01-01T11:55:00.000Z', NOW)).toEqual({ kind: 'minutes', count: 5 })
+  })
+
+  it('returns hours for a sub-day delta', () => {
+    expect(relativeTimeOf('2026-01-01T10:00:00.000Z', NOW)).toEqual({ kind: 'hours', count: 2 })
+  })
+
+  it('returns days for a sub-week delta', () => {
+    expect(relativeTimeOf('2025-12-30T12:00:00.000Z', NOW)).toEqual({ kind: 'days', count: 2 })
+  })
+
+  it('falls back to a short date beyond a week', () => {
+    const date = new Date('2025-12-20T03:05:00.000Z')
+    const pad = (value: number): string => String(value).padStart(2, '0')
+    expect(relativeTimeOf('2025-12-20T03:05:00.000Z', NOW)).toEqual({
+      kind: 'date',
+      text: `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`,
+    })
+  })
+
+  it('returns undefined for a missing timestamp', () => {
+    expect(relativeTimeOf(undefined, NOW)).toBeUndefined()
+  })
+})
+
+describe('chatLinesOf', () => {
+  /** 构造带 sessionMessages 的 Step 快照。 */
+  function stepWithMessages(messages: NonNullable<ExecutedStep['sessionMessages']>): ExecutedStep {
+    return {
+      type: 'default',
+      id: 'exec-1',
+      stageId: 'stg-1',
+      name: 'lint',
+      status: 'completed',
+      visitCount: 1,
+      sessionMessages: messages,
+    }
+  }
+
+  it('maps text messages to assistant lines with step name', () => {
+    const lines = chatLinesOf(stepWithMessages([{ type: 'text', text: '开始检查' }]))
+    expect(lines).toEqual([{ who: 'lint · agent', text: '开始检查', kind: 'assistant' }])
+  })
+
+  it('maps tool messages to mono lines with output summary', () => {
+    const lines = chatLinesOf(stepWithMessages([{ type: 'tool', tool: 'write_file', output: 'ok' }]))
+    expect(lines?.[0]?.who).toBe('lint · tool')
+    expect(lines?.[0]?.text).toContain('┌ write_file')
+    expect(lines?.[0]?.text).toContain('└ ok')
+  })
+
+  it('skips empty text messages', () => {
+    const lines = chatLinesOf(stepWithMessages([{ type: 'text', text: '' }, { type: 'tool', tool: 'ls' }]))
+    expect(lines?.length).toBe(1)
+    expect(lines?.[0]?.kind).toBe('tool')
+  })
+
+  it('returns undefined without sessionMessages', () => {
+    expect(chatLinesOf(step())).toBeUndefined()
   })
 })

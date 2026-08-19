@@ -62,6 +62,9 @@ export function isTerminalStatus(status) {
 }
 /**
  * 按 `kind` 把 `pendingInteractions` 分为问答与权限两组。
+ *
+ * 探索修正（2026-08）：仅取 `status === 'pending'` 的条目——后端已只持久化 pending，
+ * 此处过滤是防御旧快照（含 replied/rejected 全量历史时避免讨论页复弹接管面板）。
  * @param interactions - 实例的 pending 交互列表。
  * @returns 问答与权限两个分组。
  */
@@ -69,6 +72,8 @@ export function partitionInteractions(interactions) {
     const questions = [];
     const permissions = [];
     for (const interaction of interactions) {
+        if (interaction.status !== 'pending')
+            continue;
         if (interaction.kind === 'question') {
             questions.push(interaction);
         }
@@ -109,6 +114,86 @@ export function stepIdOf(step) {
 export function isSubagentStep(step) {
     const command = step.sessionMeta?.command ?? step.command?.type;
     return command === 'agent' || command === 'skill' || command === 'mcp';
+}
+/**
+ * 计算相对时间（ISO → 刚刚 / N 分钟前 / N 小时前 / N 天前；跨 7 天回退短日期）。
+ * @param iso - 目标时间（ISO 串），undefined 返回 undefined。
+ * @param nowIso - 基准「现在」（ISO 串）。
+ * @returns 相对时间结果或 undefined。
+ */
+export function relativeTimeOf(iso, nowIso) {
+    if (iso === undefined)
+        return undefined;
+    const then = Date.parse(iso);
+    const now = Date.parse(nowIso);
+    if (Number.isNaN(then) || Number.isNaN(now))
+        return undefined;
+    const diffMs = now - then;
+    if (diffMs < 60_000)
+        return { kind: 'justNow' };
+    const minutes = Math.floor(diffMs / 60_000);
+    if (minutes < 60)
+        return { kind: 'minutes', count: minutes };
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24)
+        return { kind: 'hours', count: hours };
+    const days = Math.floor(hours / 24);
+    if (days < 7)
+        return { kind: 'days', count: days };
+    const date = new Date(then);
+    const pad = (value) => String(value).padStart(2, '0');
+    return {
+        kind: 'date',
+        text: `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`,
+    };
+}
+/** 把任意载荷值缩略为单行文本（供 tool 消息行展示）。 */
+function summarizeValue(value) {
+    if (value === undefined || value === null)
+        return undefined;
+    if (typeof value === 'string')
+        return value === '' ? undefined : value;
+    if (typeof value === 'number' || typeof value === 'boolean')
+        return String(value);
+    try {
+        const text = JSON.stringify(value);
+        if (text === undefined)
+            return undefined;
+        return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+    }
+    catch {
+        return String(value);
+    }
+}
+/**
+ * 把 step 的 sessionMessages 派生为展示行（agent 内嵌消息框 / 失败列表用）。
+ * tool 消息 → `┌ tool\n└ 输出摘要`（mono 行）；text/reasoning → 正文行。
+ * @param step - 已执行 Step 快照。
+ * @returns 展示行列表；无消息返回 undefined。
+ */
+export function chatLinesOf(step) {
+    const messages = step.sessionMessages;
+    if (messages === undefined || messages.length === 0)
+        return undefined;
+    const lines = [];
+    for (const message of messages) {
+        if (message.type === 'tool') {
+            const head = `┌ ${message.tool ?? 'tool'}`;
+            const output = summarizeValue(message.output);
+            lines.push({
+                who: `${step.name} · tool`,
+                text: output === undefined ? head : `${head}\n└ ${output}`,
+                kind: 'tool',
+            });
+        }
+        else {
+            const text = message.text;
+            if (text === undefined || text === '')
+                continue;
+            lines.push({ who: `${step.name} · agent`, text, kind: 'assistant' });
+        }
+    }
+    return lines.length === 0 ? undefined : lines;
 }
 /**
  * 把 `output: ContentBlock[]` 的 text 块拼接为纯文本（无 text 块返回 undefined）。
@@ -164,13 +249,25 @@ export function buildRunTree(state) {
         }
     }
     const stageNodes = state.stageInfos.map(stage => {
-        const steps = state.executedSteps.filter(step => step.stageId === stage.id);
+        // 段模型下同 stepId 多次执行段（暂停续跑/重试/ask 续问）在树导航里聚合成一个
+        // step 节点：取 attemptIndex 最大（最后）的一段展示状态，避免重复展开。
+        const steps = state.executedSteps
+            .filter(step => step.stageId === stage.id)
+            .sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0));
+        const seen = new Set();
+        const uniqueSteps = steps.filter(step => {
+            const key = stepIdOf(step);
+            if (seen.has(key))
+                return false;
+            seen.add(key);
+            return true;
+        });
         return {
             id: stage.id,
             name: stage.name,
             type: 'stage',
             status: stage.status,
-            children: steps.map(step => {
+            children: uniqueSteps.map(step => {
                 const key = stepIdOf(step);
                 return {
                     id: step.id,
@@ -193,16 +290,47 @@ export function buildRunTree(state) {
         }];
 }
 /**
- * 从 `WorkflowTaskState` 构建统一时间线：初始输入 user 气泡 + 各 executedStep 卡片
- * （按执行顺序）。running 卡无实时消息流（引擎不写 sessionMessages、无 step-message
- * 事件），body 按状态展示输出文本 / 错误 / 运行中占位。
+ * 段模型下按「最后活跃段」聚合 Step 列表（DiscussionInput @Step 定点恢复用）。
+ *
+ * 同 stepId 多次执行段（暂停续跑/重试/ask 续问）只保留 attemptIndex 最大的段，
+ * 避免 @Step 选择器重复展示同一 Step 的多个执行段。
+ * @param steps - 实例的 executedSteps（可能含同 stepId 多段）。
+ * @returns 按 stepId 去重后的 Step 快照列表（取最后活跃段；非子代理 Step 原样保留）。
+ */
+export function lastActiveSegmentsOf(steps) {
+    const byStepId = new Map();
+    for (const step of steps) {
+        const key = stepIdOf(step);
+        const current = byStepId.get(key);
+        if (current === undefined || (step.attemptIndex ?? 0) >= (current.attemptIndex ?? 0)) {
+            byStepId.set(key, step);
+        }
+    }
+    return [...byStepId.values()];
+}
+/**
+ * 从 `WorkflowTaskState` 构建统一时间线（段模型 + 用户消息统一排序）。
+ *
+ * 三路来源严格按 `createdAt` 排序合并：
+ * 1. `userMessages`（input/resume/retry/answer，含原始需求——初始 input 消息
+ *    由引擎 makeInitialState 写入，前端不再单独拼 `state.originalInput` 气泡）
+ * 2. executedSteps 各**执行段**（`createdAt` 为段开始时间；同 stepId 多次执行段
+ *    各自成卡，`attemptIndex` 标注第几次）
+ * 3. running 卡无实时消息流（引擎不写 sessionMessages、无 step-message 事件），
+ *    body 按状态展示输出文本 / 错误 / 运行中占位。
  * @param state - 实例状态快照。
- * @returns 时间线条目列表。
+ * @returns 时间线条目列表（按 createdAt 升序）。
  */
 export function buildTimeline(state) {
     const items = [];
-    if (state.originalInput !== '') {
-        items.push({ kind: 'user', content: state.originalInput });
+    for (const message of state.userMessages ?? []) {
+        items.push({
+            kind: 'user',
+            content: message.content,
+            time: message.createdAt,
+            messageKind: message.kind,
+            target: message.target,
+        });
     }
     for (const step of state.executedSteps) {
         items.push({
@@ -211,12 +339,23 @@ export function buildTimeline(state) {
             name: step.name,
             status: step.status,
             loopLabel: loopLabelOf(step.loopIteration),
+            time: step.createdAt ?? step.updatedAt ?? step.startedAt,
             outputText: outputTextOf(step.output),
             error: step.error,
             childId: step.sessionMeta?.childId,
+            synthetic: step.sessionMeta?.synthetic,
+            messages: chatLinesOf(step),
             visitCount: step.visitCount,
+            attemptIndex: step.attemptIndex,
+            pausedAt: step.pausedAt,
         });
     }
+    // 统一时间轴：严格按 createdAt 排序（旧实例缺 createdAt 的段排最后）。
+    items.sort((a, b) => {
+        const ta = a.time === undefined ? '' : a.time;
+        const tb = b.time === undefined ? '' : b.time;
+        return ta < tb ? -1 : ta > tb ? 1 : 0;
+    });
     return items;
 }
 //# sourceMappingURL=run-view-model.js.map

@@ -160,7 +160,9 @@ export function createBlankDefinition(id: string = NEW_DEFINITION_ID): WorkflowD
     mcps: [],
     agents: [],
     settings: { defaultTimeout: 120, maxConcurrentAgents: 4 },
-    stages: [{ id: 'stg-1', name: '阶段 1', steps: [] }],
+    // 骨架 Stage 用 uuid（与 createStage 的 `stg-{uuid}` 一致，避免 stg-1 与后续添加
+    // 的 uuid 格式混杂）。
+    stages: [{ id: newId('stg'), name: '阶段 1', steps: [] }],
   }
 }
 

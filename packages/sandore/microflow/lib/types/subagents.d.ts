@@ -12,6 +12,7 @@
  */
 import type { AssistantMessage, ContentBlock, MessageSource, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
+import type { SessionMessage } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 /** 会话 ID（与 DSH `SessionId` 品牌字符串结构兼容）。 */
 export type SessionId = string;
 /** 消息 ID（与 DSH `MessageId` 品牌字符串结构兼容）。 */
@@ -56,13 +57,27 @@ export interface PromptSection {
     readonly order: number;
     readonly text: string;
 }
-/** `AgentSetup` 回调的 agentCtx 最小面（`tools.register`/`systemPrompt.section`）。 */
+/**
+ * `AgentSetup` 回调的 agentCtx 最小面。
+ *
+ * 结构兼容 DSH 真实 agent scope Context：`tools.register`/`systemPrompt.section`
+ * 为 sandore 直接使用的键；`agentPresets` 为可选服务面（无 preset 部署时为
+ * undefined，`mount`/`resolve` 签名对齐 `@deepseek-ai/dsh-agent-presets`）。
+ */
 export interface AgentSetupContext {
     readonly tools: {
         register(tool: unknown): void;
     };
     readonly systemPrompt: {
         section(section: PromptSection): void;
+    };
+    /** agentPresets 服务最小面：挂载 preset 组合（§3.0 宿主主代理 = 纯 DSH 默认 preset）。 */
+    readonly agentPresets?: {
+        mount(agentCtx: AgentSetupContext, id?: string): Promise<unknown>;
+        resolve(id?: string): Promise<{
+            readonly id: string;
+        }>;
+        composeFrom(agentCtx: AgentSetupContext, parentCtx: unknown): string | undefined;
     };
 }
 /** 代理 setup 回调：在 mint agentCtx 后、发布前执行，可返回同步提交对象。 */
@@ -202,8 +217,10 @@ export interface AssistantChunkData {
 /**
  * `finalAssistantOutput` 需要的最小会话事件快照。
  *
- * 仅精确建模 `assistant/message` 与 `assistant/chunk` 两类事件；`seq`/`time` 为 DSH
- * 追加式日志的包络字段（深冻结快照）。其余事件类型由宿主运行时注入，接缝不建模。
+ * 精确建模 `assistant/message` 与 `assistant/chunk` 两类事件；`seq`/`time` 为 DSH
+ * 追加式日志的包络字段（深冻结快照）。消息收集（`collectSessionMessages`）额外建模
+ * `user/message`、`tool/call`、`tool/result` 三类。其余事件类型由宿主运行时注入，
+ * 接缝不建模。
  */
 export type SessionEvent = {
     readonly type: 'assistant/message';
@@ -215,7 +232,43 @@ export type SessionEvent = {
     readonly seq: number;
     readonly time: number;
     readonly data: AssistantChunkData;
+} | {
+    readonly type: 'user/message';
+    readonly seq: number;
+    readonly time: number;
+    readonly data: UserMessageData;
+} | {
+    readonly type: 'tool/call';
+    readonly seq: number;
+    readonly time: number;
+    readonly data: ToolCallData;
+} | {
+    readonly type: 'tool/result';
+    readonly seq: number;
+    readonly time: number;
+    readonly data: ToolResultData;
 };
+/** `user/message` 事件载荷（DSH `UserMessage` 最小面：id + content 块）。 */
+export interface UserMessageData {
+    readonly id: string;
+    readonly content: readonly ContentBlock[];
+}
+/** `tool/call` 事件载荷（DSH 形状：callId + name + 原始 arguments JSON 串）。 */
+export interface ToolCallData {
+    readonly turn: number;
+    readonly step: number;
+    readonly callId: string;
+    readonly name: string;
+    readonly arguments: string;
+}
+/** `tool/result` 事件载荷（DSH `ToolResultMessage` 最小面：content 块）。 */
+export interface ToolResultData {
+    readonly turn: number;
+    readonly step: number;
+    readonly message: {
+        readonly content: readonly ContentBlock[];
+    };
+}
 /**
  * 选取子代理最终 assistant 输出（与 DSH 源码规则一致，与 stop reason 无关）。
  *
@@ -227,6 +280,19 @@ export type SessionEvent = {
  * @returns 选中的 `ContentBlock[]`，或无输出时为 `undefined`。
  */
 export declare function finalAssistantOutput(events: readonly SessionEvent[]): ContentBlock[] | undefined;
+/**
+ * 从子代理会话事件归一化消息行（§3.8A：`executedSteps[].sessionMessages` 数据源）。
+ *
+ * 采集规则（对齐 DSH `core/session/src/types.ts` 事件形状）：
+ * - `user/message` → `{type:'text', text}`（取全部 text 块拼接）
+ * - `assistant/message` → 逐块归一：text → `{type:'text'}`；reasoning →
+ *   `{type:'reasoning'}`；tool-call → `{type:'tool', tool:name, args}`
+ * - `tool/result` → `{type:'tool', output}`（取 message.content 的 text 拼接）
+ * `assistant/chunk` 与其余事件类型忽略（chunk 已由 message 汇总，避免重复）。
+ * @param events - 子代理事件日志（`agent.session.events`）。
+ * @returns 归一化后的消息行（无任何可采集行时为 `[]`）。
+ */
+export declare function collectSessionMessages(events: readonly SessionEvent[]): SessionMessage[];
 declare module '@deepseek-ai/cordis' {
     interface Context {
         subagents: SubagentRuntime;

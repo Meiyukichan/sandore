@@ -14,6 +14,7 @@ import type { WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 
 import { InstanceList } from './InstanceList.tsx'
 import { DefinitionList } from './DefinitionList.tsx'
+import { NewInstanceDialog } from './NewInstanceDialog.tsx'
 import type { WorkflowOverlayFace } from './workflow-face.ts'
 import {
   getWorkflowState, newDefinition, selectDefinition, selectInstance, setWorkflowState, subscribeWorkflowState,
@@ -40,6 +41,11 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
   const selectedInstanceId = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId)
   const selectedDefinitionId = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedDefinition?.id)
   const [query, setQuery] = useState('')
+  /** 新增实例弹窗开关（实例模式下「+」按钮打开）。 */
+  const [creatingInstance, setCreatingInstance] = useState(false)
+  /** 实例列表即时刷新计数：新建/删除实例后 +1，重挂载 InstanceList 立即拉取
+      （不等 3s 轮询周期，新建后列表立即可见）。 */
+  const [instanceTick, setInstanceTick] = useState(0)
 
   return (
     <section className={css.list} style={{ width }} data-sandore-wf-list>
@@ -82,9 +88,11 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
             size="sm"
             variant="primary"
             icon={<IconPlusOutline16 />}
-            disabled={listMode === 'instance'}
-            title={listMode === 'instance' ? t('panel.add.instance.hint') : undefined}
-            onClick={newDefinition}
+            title={t('panel.add.instance.hint')}
+            onClick={() => {
+              if (listMode === 'instance') setCreatingInstance(true)
+              else newDefinition()
+            }}
           >
             {listMode === 'definition' ? t('panel.add.definition') : t('panel.add.instance')}
           </Button>
@@ -103,16 +111,31 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
           />
         ) : (
           <InstanceList
-            key={`inst-${refreshKey}`}
+            key={`inst-${refreshKey}-${instanceTick}`}
             t={t}
             workspaces={workspaces}
             query={query}
             activeId={selectedInstanceId}
             listInstances={face.listInstances}
+            deleteInstance={face.deleteInstance}
             onOpen={selectInstance}
+            onInstanceDeleted={() => { setInstanceTick(tick => tick + 1) }}
           />
         )}
       </div>
+      {creatingInstance && (
+        <NewInstanceDialog
+          t={t}
+          face={face}
+          onClose={() => { setCreatingInstance(false) }}
+          onCreated={instanceId => {
+            setCreatingInstance(false)
+            selectInstance(instanceId)
+            // 立即重挂载实例列表，让新实例马上可见（不必等轮询周期）。
+            setInstanceTick(tick => tick + 1)
+          }}
+        />
+      )}
     </section>
   )
 }

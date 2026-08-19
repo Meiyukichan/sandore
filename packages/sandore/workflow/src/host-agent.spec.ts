@@ -1,132 +1,61 @@
 /**
- * host-agent.ts（createHostAgentSetup 工厂）的单元测试：注册 8 个 sandore_* 工具、
- * 注入编排器 system prompt section、per-instance 闭包捕获、create/resume 共用同一
+ * host-agent.ts（createHostAgentSetup 工厂）的单元测试（§3.0：宿主主代理 = 纯 DSH
+ * 默认主代理）：setup 唯一动作是挂默认 agent preset（不注册任何 sandore_* 工具、
+ * 不注入编排器角色提示词）、presets 服务缺失时跳过 mount、create/resume 共用同一
  * 工厂，以及宿主主代理创建的无自动 prompt 与 setup 抛错回滚语义。
  * @module @deepseek-ai/dsh-sandore-workflow/src/host-agent.spec
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentSetupContext, PromptSection } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
+import type { AgentSetupContext } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeSessionStore } from '../tests/mocks/sessions.ts';
-import type { SandoreEngineSurface } from './engine-surface.ts';
 import { createHostAgentSetup } from './host-agent.ts';
-import type { DagInstanceState, DagRunStatus } from './types.ts';
 
-/** 构造字段完整的 `DagInstanceState` 快照。 */
-function makeState(status: DagRunStatus): DagInstanceState {
-  return {
-    taskId: 'inst-1',
-    jobId: 'job-1',
-    workflowId: 'wfl-1',
-    status,
-    originalInput: 'do it',
-    currentStageId: '',
-    executedSteps: [],
-    stageInfos: [],
-    pendingQueue: [],
-    createdAt: '2026-08-16T00:00:00.000Z',
-    updatedAt: '2026-08-16T00:00:00.000Z',
-  };
-}
-
-/** 构造一个用 `vi.fn` 打桩的引擎（满足 `SandoreEngineSurface` 结构面）。 */
-function makeEngine(): SandoreEngineSurface {
-  return {
-    startInstance: vi.fn(async () => ({ instanceId: 'inst-new', status: 'running' as const })),
-    recoverInstance: vi.fn(async () => ({ instanceId: 'inst-new', status: 'running' as const })),
-    abortInstance: vi.fn(async () => {}),
-    replyQuestion: vi.fn(async () => {}),
-    replyPermission: vi.fn(async () => {}),
-    pauseStep: vi.fn(async () => {}),
-    resumeStep: vi.fn(async () => {}),
-    pauseAllSteps: vi.fn(async () => {}),
-    resumeAllSteps: vi.fn(async () => {}),
-    retryStep: vi.fn(async () => {}),
-    getState: vi.fn(() => makeState('running')),
-  };
-}
-
-/** 记录 `tools.register` / `systemPrompt.section` 调用的最小 agentCtx。 */
-function makeRecordingContext(): {
-  agentCtx: AgentSetupContext;
-  tools: unknown[];
-  sections: PromptSection[];
-} {
-  const tools: unknown[] = [];
-  const sections: PromptSection[] = [];
+/** 构造最小 agentCtx（setup 不再注册工具/提示词，只需满足 AgentSetupContext 结构）。 */
+function makeRecordingContext(): { agentCtx: AgentSetupContext } {
   const agentCtx: AgentSetupContext = {
-    tools: {
-      register: (tool: unknown) => {
-        tools.push(tool);
-      },
-    },
-    systemPrompt: {
-      section: (section: PromptSection) => {
-        sections.push(section);
-      },
-    },
+    tools: { register: () => {} },
+    systemPrompt: { section: () => {} },
   };
-  return { agentCtx, tools, sections };
+  return { agentCtx };
 }
 
-/** 从注册的工具数组提取名称（非字符串名称归一为空串）。 */
-function toolNames(tools: unknown[]): string[] {
-  return tools.map((tool) => {
-    const name = (tool as { name?: unknown }).name;
-    return typeof name === 'string' ? name : '';
-  });
-}
+describe('createHostAgentSetup (§3.0 pure default preset)', () => {
+  it('mounts the default agent preset via the injected presets seam and registers no sandore tools', async () => {
+    const mount = vi.fn(async () => ({ id: 'default' }));
+    const presets = { mount, resolve: vi.fn(async () => ({ id: 'default' })) };
+    const setup = createHostAgentSetup({ instanceId: 'inst-1', presets });
+    const { agentCtx } = makeRecordingContext();
 
-describe('createHostAgentSetup', () => {
-  it('registers 8 sandore_* tools and injects the orchestrator system prompt section', () => {
-    const setup = createHostAgentSetup({ instanceId: 'inst-1', engine: makeEngine() });
-    const { agentCtx, tools, sections } = makeRecordingContext();
+    await setup(agentCtx);
 
-    setup(agentCtx);
-
-    expect(toolNames(tools)).toEqual([
-      'sandore_getState',
-      'sandore_startInstance',
-      'sandore_abortInstance',
-      'sandore_pauseStep',
-      'sandore_resumeStep',
-      'sandore_pauseAllSteps',
-      'sandore_resumeAllPaused',
-      'sandore_retryStep',
-    ]);
-    expect(sections).toHaveLength(1);
-    expect(sections[0]?.name).toBe('sandore-host');
-    expect(sections[0]?.order).toBe(116);
-    expect(sections[0]?.text).toMatch(/sandore_/);
+    // 唯一动作：经注入的 presets 服务挂默认 preset（无 id = 默认），不注册任何工具。
+    expect(mount).toHaveBeenCalledTimes(1);
+    expect(mount).toHaveBeenCalledWith(agentCtx);
   });
 
-  it('each tool closure captures the instanceId passed to the factory', async () => {
-    const engine = makeEngine();
-    const setup = createHostAgentSetup({ instanceId: 'inst-captured', engine });
-    const { agentCtx, tools } = makeRecordingContext();
-    setup(agentCtx);
+  it('skips mount when the presets seam is absent (no preset deployment)', async () => {
+    const setup = createHostAgentSetup({ instanceId: 'inst-1' });
+    const { agentCtx } = makeRecordingContext();
 
-    const getState = tools.find((tool) => (tool as { name?: unknown }).name === 'sandore_getState');
-    expect(getState).toBeDefined();
-    const execute = (getState as { execute(args: unknown, exec: unknown): Promise<unknown> }).execute;
-    await execute({}, undefined);
+    await setup(agentCtx);
 
-    expect(engine.getState).toHaveBeenCalledWith('inst-captured');
+    // presets 缺失：跳过 mount 不抛错。
   });
 
-  it('produces identical registrations for create and resume (same params → same closure)', () => {
-    const engine = makeEngine();
-    const createSetup = createHostAgentSetup({ instanceId: 'inst-1', engine });
-    const resumeSetup = createHostAgentSetup({ instanceId: 'inst-1', engine });
+  it('produces identical behavior for create and resume (same params → same closure)', async () => {
+    const mount = vi.fn(async () => ({ id: 'default' }));
+    const presets = { mount, resolve: vi.fn(async () => ({ id: 'default' })) };
+    const createSetup = createHostAgentSetup({ instanceId: 'inst-1', presets });
+    const resumeSetup = createHostAgentSetup({ instanceId: 'inst-1', presets });
 
     const createCtx = makeRecordingContext();
     const resumeCtx = makeRecordingContext();
-    createSetup(createCtx.agentCtx);
-    resumeSetup(resumeCtx.agentCtx);
+    await createSetup(createCtx.agentCtx);
+    await resumeSetup(resumeCtx.agentCtx);
 
-    expect(toolNames(createCtx.tools)).toEqual(toolNames(resumeCtx.tools));
-    expect(createCtx.sections).toEqual(resumeCtx.sections);
+    expect(mount).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -134,7 +63,8 @@ describe('host agent creation', () => {
   it('mints an idle agent (no auto prompt) with meta.cwd and runs setup exactly once', async () => {
     const sessions = new FakeSessionStore();
     const registry = new FakeAgentRegistry(sessions);
-    const setup = createHostAgentSetup({ instanceId: 'inst-1', engine: makeEngine() });
+    const presets = { mount: vi.fn(async () => ({ id: 'default' })), resolve: vi.fn(async () => ({ id: 'default' })) };
+    const setup = createHostAgentSetup({ instanceId: 'inst-1', presets });
 
     const handle = await registry.create({ sessionId: 'inst-1', meta: { cwd: '/srv/app' }, setup });
 
@@ -152,7 +82,8 @@ describe('host agent creation', () => {
     const registry = new FakeAgentRegistry(sessions);
     registry.setupError = new Error('setup boom');
 
-    const setup = createHostAgentSetup({ instanceId: 'inst-1', engine: makeEngine() });
+    const presets = { mount: vi.fn(async () => ({ id: 'default' })), resolve: vi.fn(async () => ({ id: 'default' })) };
+    const setup = createHostAgentSetup({ instanceId: 'inst-1', presets });
     await expect(registry.create({ sessionId: 'inst-1', setup })).rejects.toThrow('setup boom');
 
     expect(registry.get('inst-1')).toBeUndefined();

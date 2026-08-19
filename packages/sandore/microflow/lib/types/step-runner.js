@@ -1,8 +1,8 @@
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import { SandoreError } from "./errors.js";
 import { idMatches, replacePassThroughVars } from "./file-utils.js";
-import { buildShellEnv, describeError, resolvePassThroughVars, resolveProviderModel as resolveModelRoute, splitCommand, textSummary, } from "./internal.js";
-import { finalAssistantOutput } from "./subagents.js";
+import { buildShellEnv, describeError, resolvePassThroughVars, resolveProviderModel as resolveModelRoute, textSummary, } from "./internal.js";
+import { finalAssistantOutput, collectSessionMessages } from "./subagents.js";
 /** 结构化提示词主头部。 */
 const PROMPT_MAIN_HEADER = '你是严谨准确的Step执行Agent，你的任务是参考`## 参考信息`和`## 前置Steps输出`中的信息，\n准确完成`## 你的任务`中的要求。';
 /** fillParams 临时会话的任务指令。 */
@@ -214,52 +214,23 @@ export class StepRunner {
         const resolvedCommand = replacePassThroughVars(command.value.command, resolvePassThroughVars(request.passThroughVars, request.loopTurn, request.loopMaxIterations));
         const stdin = resolveShellStdin(request.step, request.previousOutputs);
         const env = buildShellEnv(request.passThroughVars, request.loopTurn, request.loopMaxIterations);
-        if (stdin === undefined && env === undefined) {
-            return await this.runShellSimple(resolvedCommand, request);
-        }
-        return await this.runShellSubprocess(resolvedCommand, stdin, env, request);
+        // 统一经 `ctx.shell`（平台 shell 解释器，如 PowerShell/bash）执行：env/stdin
+        // 由 ShellExecRequest 携带。不要在这里改用 `ctx.subprocess.spawn` 直接执行
+        // 命令——subprocess 不做 shell 解释，PowerShell cmdlet（New-Item 等）不是可
+        // 执行文件，带透传变量/inputFrom 的 shell 步骤会失败。
+        return await this.runShellSimple(resolvedCommand, request, stdin, env);
     }
-    async runShellSimple(command, request) {
+    async runShellSimple(command, request, stdin = undefined, env = undefined) {
         const shellRequest = {
             command,
             timeoutMs: this.stepTimeoutMs(request.step),
             ...(request.workdir === undefined ? {} : { workdir: request.workdir }),
             ...(request.signal === undefined ? {} : { signal: request.signal }),
+            ...(stdin === undefined ? {} : { stdin }),
+            ...(env === undefined ? {} : { env }),
         };
         const spec = this.ctx.shell.resolve(shellRequest);
         const result = await this.ctx.shell.run(spec);
-        return this.toShellResult(result);
-    }
-    async runShellSubprocess(command, stdin, env, request) {
-        const tokens = splitCommand(command);
-        const program = tokens[0] ?? command;
-        const args = tokens.slice(1);
-        const executable = await this.ctx.subprocess.resolveExecutable(program, env, request.signal);
-        const spec = {
-            argv: [executable, ...args],
-            cwd: request.workdir,
-            stdio: {
-                stdin: stdin === undefined ? 'ignore' : { data: stdin },
-                stdout: { maxBytes: 1024 * 1024 },
-                stderr: { maxBytes: 1024 * 1024 },
-            },
-            graceMs: this.stepTimeoutMs(request.step),
-            ...(env === undefined ? {} : { env }),
-            ...(request.signal === undefined ? {} : { signal: request.signal }),
-        };
-        const handle = this.ctx.subprocess.spawn(spec);
-        const outcome = await handle.done;
-        const stdout = handle.collected.stdout?.readFrom(0);
-        const stderr = handle.collected.stderr?.readFrom(0);
-        const result = {
-            exitCode: outcome.exitCode,
-            signal: outcome.signal,
-            timedOut: outcome.timedOut ?? false,
-            aborted: request.signal?.aborted ?? false,
-            timeoutMs: this.stepTimeoutMs(request.step),
-            stdout: { text: stdout?.text ?? '', truncated: stdout?.lossy ?? false },
-            stderr: { text: stderr?.text ?? '', truncated: stderr?.lossy ?? false },
-        };
         return this.toShellResult(result);
     }
     toShellResult(result) {
@@ -325,7 +296,7 @@ export class StepRunner {
             },
             signal: request.signal ?? new AbortController().signal,
         });
-        this.config.onChildStarted?.(request.step.id, started.childId);
+        await this.config.onChildStarted?.(request.step.id, started.childId);
         return this.collectSubagentOutput(command.type, started.childId, request.step.id, request.stageId);
     }
     /**
@@ -375,7 +346,13 @@ export class StepRunner {
                 output = next;
             }
         }
-        return { output, sessionMeta: { childId, synthetic: false, command: commandType } };
+        return {
+            output,
+            sessionMeta: { childId, synthetic: false, command: commandType },
+            // §3.8A：子代理消息持久化（whenIdle 后采集，随结果带出 → finishCommandNode 写
+            // executed.sessionMessages → onPersist 定格；前端内嵌消息框/失败·暂停最近 N 条）。
+            sessionMessages: collectSessionMessages(child.session.events),
+        };
     }
     /** 用临时会话按模板填充参数；失败（error/aborted/抛错）回退模板原文。 */
     async fillParams(command, template, request) {

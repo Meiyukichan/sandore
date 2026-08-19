@@ -26,7 +26,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 import type { AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
-import type { WorkflowTaskState } from './schema.ts';
+import type { UserMessageRecord, WorkflowTaskState } from './schema.ts';
 /** 重试三模式。 */
 export type RetryMode = 'continue' | 'revert' | 'fork';
 /** fork 源会话最小结构（仅需 `events`，用于安全边界计算与 seed 提取）。 */
@@ -48,6 +48,8 @@ export interface RecoveryManagerOptions {
     readonly readState: () => WorkflowTaskState;
     /** 不可变重建 + 持久化当前状态快照。 */
     readonly commitState: (next: WorkflowTaskState) => void;
+    /** 追加一条用户指令消息（写入 `state.userMessages` 并持久化）。 */
+    readonly appendUserMessage: (record: UserMessageRecord) => void;
     /** `ctx.subagents.followup` 的注入包装（已绑定宿主主代理作 parent）。 */
     readonly followup: (childId: string, content: ContentBlock[], signal: AbortSignal) => Promise<void> | void;
     /** `ctx.agents.create` 的注入包装（revert/fork 创建带 seed 的新子代理）。 */
@@ -108,7 +110,7 @@ export declare class RecoveryManager {
     recover(): Promise<RecoverResult>;
     /** 不可变重建状态：更新单个 Step（按唯一执行 id 定位，不改实例状态）+ updatedAt。 */
     private commitStep;
-    /** 重试发起：更新单个 Step 为 running 并置实例 running + updatedAt。 */
+    /** 重试发起：追加新执行段（保留旧 failed 段定格快照）并置实例 running + updatedAt。 */
     private commitRunningStep;
     /** 重试会话准备/续跑失败：Step 回退 failed、实例 failed，记录 retryHistory 末条 result=failed。 */
     private failRetry;

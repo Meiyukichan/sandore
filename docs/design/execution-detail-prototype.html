@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>执行详情 · 原型（multica Issue 结构 × DSH 多 agent 对话流）</title>
+<style>
+  /* ── multica tokens（浅色） ── */
+  :root {
+    --app-shell: oklch(0.964 0.001 286);
+    --page-canvas: oklch(0.988 0 0);
+    --surface: oklch(1 0 0);
+    --surface-hover: oklch(0.967 0.001 286);
+    --surface-border: oklch(0.92 0.004 286);
+    --foreground: oklch(0.141 0.005 285.8);
+    --muted-foreground: oklch(0.505 0.016 285.9);
+    --faint-foreground: oklch(0.606 0.016 285.9);
+    --accent: oklch(0.967 0.001 286.375);
+    --accent-foreground: oklch(0.21 0.006 285.885);
+    --primary: oklch(0.21 0.006 285.885);
+    --primary-foreground: oklch(0.985 0 0);
+    --brand: oklch(0.55 0.16 255);
+    --success: oklch(0.55 0.16 145);
+    --warning: oklch(0.75 0.16 85);
+    --info: oklch(0.55 0.18 250);
+    --destructive: oklch(0.577 0.245 27.3);
+    --border: oklch(0.945 0.003 286.32);
+    --ring: oklch(0.705 0.015 286.067);
+    --radius: 0.625rem;
+    --surface-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 1px rgb(15 23 42 / 0.03);
+    /* DSH 用户气泡底 */
+    --bubble: oklch(0.925 0.01 250);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--page-canvas);
+    color: var(--foreground);
+    font-size: 14px; line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .text-caption { font-size: 12px; line-height: 16px; }
+  .text-body { font-size: 14px; line-height: 20px; }
+  .text-title-sm { font-size: 16px; line-height: 24px; }
+  .text-display-sm { font-size: 24px; line-height: 32px; }
+  .text-muted { color: var(--muted-foreground); }
+  .text-faint { color: var(--faint-foreground); }
+  .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ── 布局 ── */
+  .shell { display: flex; height: 100vh; background: var(--app-shell); }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--page-canvas); }
+
+  /* ── 顶部栏（PageHeader） ── */
+  .page-header {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    height: 48px; padding: 0 16px; border-bottom: 1px solid var(--border);
+    background: var(--page-canvas);
+  }
+  .crumb { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .crumb .seg { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+  .crumb .sep { color: var(--muted-foreground); font-size: 14px; line-height: 20px; }
+  .crumb .item {
+    max-width: 220px; overflow: hidden; padding: 4px 8px; border: none; border-radius: 12px;
+    background: transparent; font-size: 14px; line-height: 20px;
+    color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap;
+  }
+  .crumb .item.current { font-weight: 500; color: var(--foreground); }
+  .header-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border: none; border-radius: 6px;
+    background: transparent; color: var(--muted-foreground); cursor: pointer; font-size: 14px;
+  }
+  .icon-btn:hover { background: var(--accent); color: var(--accent-foreground); }
+  .agent-chip {
+    display: inline-flex; align-items: center; gap: 6px; height: 28px;
+    padding: 0 6px; margin-right: 4px; border-radius: 6px;
+    background: color-mix(in srgb, var(--brand) 5%, transparent);
+    font-size: 12px; color: var(--foreground);
+  }
+  .agent-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--info); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+  /* ── 滚动 + 居中列（DSH chat column 宽度风格） ── */
+  /* 页面整体：head（标题区）固定，feed（评论列表）滚动 */
+  .main-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .head { flex: none; overflow-y: auto; scrollbar-gutter: stable both-edges; }
+  .feed { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; }
+  .column { max-width: 768px; margin: 0 auto; padding: 24px 24px 0; }
+  .feed .column { padding-top: 0; padding-bottom: 32px; }
+
+  .issue-title { font-size: 24px; font-weight: 700; line-height: 32px; letter-spacing: -0.02em; }
+  .issue-desc { margin-top: 16px; }
+  .issue-desc .desc-body { font-size: 14px; line-height: 1.625; color: var(--foreground); white-space: pre-wrap; }
+  .divider { margin: 24px 0; border-top: 1px solid var(--border); }
+
+  /* ── 对话流（DSH 多 agent chat 左右布局） ── */
+  .flow { display: flex; flex-direction: column; gap: 20px; margin-top: 12px; }
+
+  /* 用户消息：右侧气泡（DSH UserStyleBubble） */
+  .user-msg { display: flex; justify-content: flex-end; }
+  .user-msg .bubble {
+    max-width: 82%;
+    background: var(--bubble);
+    border-radius: 22px;
+    padding: 10px 16px;
+    font-size: 15px; line-height: 24px; color: var(--foreground);
+  }
+  .user-meta { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+  .user-meta .time { font-size: 11px; color: var(--faint-foreground); }
+
+  /* agent 消息：左侧，带头像行 + 正文（DSH assistant 流式感 × multica 头部细节） */
+  .agent-msg { display: flex; flex-direction: column; min-width: 0; }
+  .agent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .avatar {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--accent); color: var(--accent-foreground);
+    font-size: 11px; font-weight: 600; flex: none;
+  }
+  /* agent 头像：圆形蓝底 + sparkle 图标（蓝色调） */
+  .avatar.agent { background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); }
+  .avatar.agent svg { width: 15px; height: 15px; }
+  .author { font-size: 14px; font-weight: 500; color: var(--foreground); }
+  /* agent 标题：可点击进入子代理页面（hover 变蓝 + 下划线） */
+  .author.link { color: var(--foreground); text-decoration: none; cursor: pointer; border: none; background: none; padding: 0; font-family: inherit; font-size: 14px; font-weight: 500; }
+  .author.link:hover { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; }
+  .time { font-size: 12px; color: var(--muted-foreground); }
+  .agent-body {
+    margin-left: 32px; font-size: 14px; line-height: 1.625; color: var(--foreground);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .agent-body .muted { color: var(--muted-foreground); }
+  .agent-body .err { color: var(--destructive); }
+  .agent-body .run { color: var(--muted-foreground); }
+  .agent-sub { margin-left: 32px; margin-top: 6px; font-size: 13px; color: var(--muted-foreground); white-space: pre-wrap; }
+
+  /* 完成态：返回结果标签 + md 渲染内容块（DSH MarkdownText 风格） */
+  .return-label {
+    margin-left: 32px; margin-top: 8px;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 500; color: var(--muted-foreground);
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .md {
+    margin-left: 32px; margin-top: 6px;
+    padding: 10px 12px; border-radius: 8px;
+    background: var(--surface-hover);
+    font-size: 14px; line-height: 1.625; color: var(--foreground);
+    overflow-wrap: anywhere;
+  }
+  .md p { margin: 8px 0; }
+  .md p:first-child { margin-top: 0; }
+  .md p:last-child { margin-bottom: 0; }
+  .md strong { font-weight: 600; }
+  .md h4 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; }
+  .md ul, .md ol { margin: 8px 0; padding-left: 18px; }
+  .md li:not(:first-child) { margin-top: 4px; }
+  .md li::marker { color: var(--muted-foreground); }
+  .md code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.875em;
+    background: color-mix(in srgb, var(--foreground) 8%, transparent);
+    border-radius: 6px; padding: 0 5px;
+  }
+  .md pre {
+    margin: 8px 0; padding: 8px 10px;
+    background: var(--surface); border-radius: 6px;
+    overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.5;
+  }
+  .md pre code { background: none; padding: 0; font-size: inherit; }
+  .md a { color: var(--brand); text-decoration: none; }
+  .md a:hover { text-decoration: underline; }
+  .md blockquote {
+    border-left: 2px solid var(--faint-foreground);
+    margin: 8px 0; padding-left: 12px; color: var(--muted-foreground);
+  }
+
+  /* 运行中：内嵌子代理消息框（可滚动） */
+  .agent-chat {
+    margin-left: 32px; margin-top: 8px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); overflow: hidden;
+    box-shadow: var(--surface-shadow);
+  }
+  .agent-chat-scroll {
+    max-height: 220px; overflow-y: auto; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .chat-line { display: flex; flex-direction: column; gap: 2px; }
+  .chat-line .who { font-size: 11px; font-weight: 500; color: var(--faint-foreground); }
+  .chat-line .txt {
+    font-size: 13px; line-height: 1.55; color: var(--foreground);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .chat-line.assistant .txt { color: var(--muted-foreground); }
+  .chat-line.tool .txt {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px; color: var(--muted-foreground);
+    background: var(--surface-hover); border-radius: 6px; padding: 6px 8px;
+  }
+
+  /* 失败/暂停：子代理最后 N 条消息（可滚动列表，DSH 消息风格） */
+  .agent-last-list {
+    margin-left: 32px; margin-top: 8px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); overflow: hidden;
+    box-shadow: var(--surface-shadow);
+  }
+  .agent-last-scroll {
+    max-height: 240px; overflow-y: auto; padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .agent-last-list .chat-line .txt { color: var(--muted-foreground); }
+  .agent-last-list.failed .chat-line:last-child .txt { color: var(--destructive); }
+  .agent-last-list.paused .chat-line:last-child .txt { color: var(--warning); }
+
+  /* 状态 SVG 图标 + 状态色（multica status-icon） */
+  .st { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; }
+  .st svg { width: 14px; height: 14px; }
+  .st .lbl { font-size: 12px; }
+  .st.info { color: var(--info); }
+  .st.success { color: var(--success); }
+  .st.warning { color: var(--warning); }
+  .st.destructive { color: var(--destructive); }
+
+  /* 活动块（ActivityBlock）：左侧流内，紧凑行 */
+  .activity {
+    display: flex; flex-direction: column; gap: 6px; margin-left: 32px;
+    padding: 8px 12px; border-radius: 8px; background: var(--surface-hover);
+  }
+  .activity-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
+  .activity-row b { color: var(--foreground); font-weight: 500; }
+  .activity-row .t { margin-left: auto; font-size: 11px; color: var(--faint-foreground); }
+  .activity-row .mini-av { width: 16px; height: 16px; border-radius: 50%; background: var(--accent); color: var(--accent-foreground); display: inline-flex; align-items: center; justify-content: center; font-size: 9px; flex: none; }
+
+  /* ── 底部输入（DSH composer 风格：22px 圆角卡片 + 底部工具行 + 圆形发送） ── */
+  .composer { margin-top: 24px; }
+  .composer-card {
+    box-sizing: border-box;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    padding-top: 10px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 22px;
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 8px rgb(15 23 42 / 0.05);
+    font-size: 16px;
+    line-height: 24px;
+  }
+
+  /* 草稿滚动区：上限 14 行内部滚动 */
+  .composer-scroll { max-height: 336px; overflow-y: auto; }
+
+  /* textarea：透明底色、透明文字、蓝色 caret，与 card 同字号 */
+  .composer-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    overflow: hidden;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--brand);
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    padding: 4px 12px 0 16px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  .composer-input::placeholder { color: var(--muted-foreground); user-select: none; }
+  .composer-input:disabled { color: var(--faint-foreground); cursor: not-allowed; }
+
+  /* 底部工具行：左 权限，右（模型 + 发送）紧凑挨着（DSH .row） */
+  .composer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 8px 6px;
+    min-width: 0;
+  }
+  .composer-tools { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .composer-trailing { display: flex; align-items: center; gap: 12px; flex: none; }
+
+  /* DSH 权限选择器（PermissionSelect trigger）：圆角胶囊 + 盾牌图标 + 标签 + chevron */
+  .perm-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    max-width: 220px;
+    height: 28px;
+    padding: 0 4px 0 8px;
+    border: none;
+    border-radius: 24px;
+    outline: none;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .perm-trigger:hover { background: var(--accent); }
+  .perm-trigger .glyph { display: inline-flex; flex: 0 0 auto; }
+  .perm-trigger .glyph svg { width: 14px; height: 14px; }
+  .perm-trigger .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .perm-trigger .chev { display: inline-flex; flex: 0 0 auto; color: var(--faint-foreground); }
+  .perm-trigger .chev svg { width: 14px; height: 14px; }
+
+  /* DSH 模型选择（ModelSelect trigger）：与权限同款胶囊 */
+  .model-trigger {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    max-width: 220px;
+    height: 28px;
+    padding: 0 4px 0 8px;
+    border: none;
+    border-radius: 24px;
+    outline: none;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 13px;
+    line-height: 20px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .model-trigger:hover { background: var(--accent); }
+  .model-trigger .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-trigger .effort { flex: 0 0 auto; color: var(--faint-foreground); }
+  .model-trigger .chev { flex: 0 0 auto; display: inline-flex; color: var(--faint-foreground); }
+  .model-trigger .chev svg { width: 14px; height: 14px; }
+
+  .send-btn {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 999px;
+    background: var(--brand);
+    color: #fff;
+    cursor: pointer;
+    transform: translateY(-2px);
+    transition: background-color 100ms ease;
+  }
+  .send-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--brand) 85%, #fff); }
+  .send-btn:disabled { opacity: 0.4; cursor: default; }
+  .send-btn svg { width: 16px; height: 16px; }
+
+  /* ── composer 接管面板：权限申请（ApprovalPanel 风格） ── */
+  .takeover { margin-top: 16px; display: none; }
+  .takeover.active { display: block; }
+  .approval-card {
+    overflow: hidden; width: 100%;
+    border: 1px solid var(--warning); border-radius: 20px;
+    background: var(--surface); box-shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 8px rgb(15 23 42 / 0.05);
+  }
+  .approval-strip {
+    display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    color: var(--warning); font-size: 13px; line-height: 18px;
+  }
+  .approval-strip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); animation: pulse 1.2s infinite; }
+  .approval-body { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; padding: 12px 16px 0; }
+  .approval-headline { color: var(--foreground); font-size: 15px; font-weight: 500; line-height: 24px; }
+  .approval-command {
+    color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px; line-height: 20px; word-break: break-all;
+  }
+  .approval-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 16px; }
+  .approval-actions .btn {
+    height: 32px; padding: 0 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit;
+  }
+  .approval-actions .btn.reject { background: transparent; border: 1px solid var(--border); color: var(--foreground); }
+  .approval-actions .btn.reject:hover { background: color-mix(in srgb, var(--destructive) 8%, transparent); color: var(--destructive); border-color: transparent; }
+  .approval-actions .btn.allow { background: var(--primary); color: var(--primary-foreground); border: none; }
+  .approval-actions .btn.allow:hover { opacity: .9; }
+
+  /* ── composer 接管面板：问题选择（QuestionComposer 风格） ── */
+  .question-card {
+    display: flex; flex-direction: column; width: 100%;
+    max-height: min(60vh, 520px); padding: 0 0 10px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 20px; background: var(--surface);
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 8px rgb(15 23 42 / 0.05);
+    color: var(--foreground); overflow: hidden;
+  }
+  .q-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-shrink: 0; padding: 20px 16px 0 24px; }
+  .q-heading-block { min-width: 0; }
+  .q-eyebrow { margin-bottom: 5px; color: var(--muted-foreground); font-size: 11px; line-height: 16px; }
+  .q-title { margin: 0; font-size: 16px; line-height: 22px; font-weight: 500; }
+  .q-header-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+  /* 右上角图标按钮：24×24 圆、14px SVG 图标（照 DSH .iconButton） */
+  .q-icon-btn { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: none; border-radius: 999px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+  .q-icon-btn svg { width: 14px; height: 14px; }
+  .q-icon-btn:hover { background: var(--accent); color: var(--foreground); }
+  .q-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .q-options { display: flex; flex-direction: column; gap: 1px; margin: 8px 0 0; padding: 4px 12px; }
+  .q-option {
+    display: flex; align-items: flex-start; gap: 8px; width: 100%;
+    min-height: 40px; flex-shrink: 0; padding: 8px 12px 8px 8px;
+    border: 1px solid transparent; border-radius: 12px;
+    background: transparent; color: inherit; text-align: left; cursor: pointer; font-family: inherit;
+  }
+  .q-option:hover, .q-option.selected { background: var(--accent); }
+  .q-option.selected { border-color: var(--border); }
+  .q-number {
+    display: grid; place-items: center; flex: 0 0 20px; width: 20px; height: 20px;
+    margin-top: 2px; border-radius: 6px; background: var(--surface-selected);
+    color: var(--muted-foreground); font-size: 12px; font-weight: 500; line-height: 18px;
+  }
+  .q-option-copy { min-width: 0; flex: 1; }
+  .q-option-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 6px; }
+  .q-option-label { font-size: 14px; line-height: 24px; font-weight: 500; }
+  .q-badge { padding: 0 4px; border-radius: 6px; background: color-mix(in srgb, var(--brand) 12%, transparent); color: var(--brand); font-size: 11px; line-height: 18px; font-weight: 600; }
+  .q-desc { font-size: 12px; line-height: 18px; color: var(--muted-foreground); }
+  .q-custom {
+    display: flex; align-items: flex-start; gap: 8px; width: 100%;
+    min-height: 40px; padding: 8px 12px 8px 8px; border-radius: 12px;
+  }
+  .q-custom:hover, .q-custom:focus-within { background: var(--accent); }
+  .q-custom input {
+    flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+    font-size: 13px; line-height: 20px; color: var(--foreground); font-family: inherit;
+    margin-top: 2px;
+  }
+  .q-custom input::placeholder { color: var(--muted-foreground); }
+  .q-footer {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-shrink: 0; margin-top: 12px; padding: 0 10px 0 18px;
+  }
+  .q-pager { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .q-progress { padding: 0 4px; color: var(--muted-foreground); font-size: 14px; line-height: 24px; font-weight: 500; white-space: nowrap; }
+  .q-footer-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .q-skip {
+    height: 32px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px;
+    background: transparent; color: var(--foreground); font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit;
+  }
+  .q-skip:hover { background: var(--accent); }
+  .q-send {
+    height: 32px; padding: 0 14px; border: none; border-radius: 999px;
+    background: var(--primary); color: var(--primary-foreground); font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit;
+  }
+  .q-send:hover { opacity: .9; }
+
+  /* 演示切换按钮（临时） */
+  .demo-switch { display: flex; gap: 8px; margin-top: 12px; }
+  .demo-switch button {
+    height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--muted-foreground); font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .demo-switch button:hover { background: var(--accent); color: var(--foreground); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="main">
+    <!-- 顶部栏 -->
+    <header class="page-header">
+      <nav class="crumb">
+        <span class="seg"><span class="item">E2E 编排测试</span></span>
+        <span class="sep">/</span>
+        <span class="seg"><span class="item current">测试运行：hello-from-sandore- 请检查 lint 输出并汇总报告到 reports/lint.txt，完成后把结果写入 final.md</span></span>
+      </nav>
+      <div class="header-actions">
+        <span class="agent-chip"><span class="dot"></span>2 个正在工作</span>
+      </div>
+    </header>
+
+    <div class="main-body">
+      <div class="head">
+        <div class="column">
+          <h1 class="issue-title">E2E 编排测试</h1>
+          <div class="issue-desc">
+            <div class="desc-body">编排工作流 E2E 测试：shell 步骤输出文本
+从左侧选择一个工作流进行查看或编辑。</div>
+          </div>
+          <div class="divider"></div>
+        </div>
+      </div>
+
+      <div class="feed">
+        <div class="column">
+        <!-- ── 对话流：用户右侧气泡 + agent 左侧流式 ── -->
+        <div class="flow">
+
+          <!-- 用户输入 -->
+          <div class="user-msg">
+            <div class="bubble">测试运行</div>
+          </div>
+          <div class="user-meta"><span class="time">3 分钟前 · 你</span></div>
+
+          <!-- agent：Echo 输出（完成） -->
+          <div class="agent-msg">
+            <div class="agent-head">
+              <span class="avatar agent"><svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden><path d="M6.1 3.1Q6.6 7.8 11.3 8.3Q6.6 8.8 6.1 13.5Q5.6 8.8 0.9 8.3Q5.6 7.8 6.1 3.1Z" fill="currentColor"/><path d="M11.9 1Q12.2 3.7 14.9 4Q12.2 4.3 11.9 7Q11.6 4.3 8.9 4Q11.6 3.7 11.9 1Z" fill="currentColor"/><path d="M12.5 9.4Q12.7 11.4 14.7 11.6Q12.7 11.8 12.5 13.8Q12.3 11.8 10.3 11.6Q12.3 11.4 12.5 9.4Z" fill="currentColor"/></svg></span>
+              <button class="author link">Echo 输出</button>
+              <span class="time">3 分钟前</span>
+              <span class="st success">
+                <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4" fill="currentColor"/><path d="M4.6 7.2l1.6 1.6 3.2-3.4" stroke="#fff" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+                <span class="lbl">已完成</span>
+              </span>
+            </div>
+            <div class="md">
+              <p>检查完成，输出为 <code>hello-from-sandore-</code>。</p>
+              <h4>执行摘要</h4>
+              <ul>
+                <li><strong>状态</strong>：通过</li>
+                <li><strong>输出</strong>：<code>hello-from-sandore-</code></li>
+                <li><strong>耗时</strong>：1.2s</li>
+              </ul>
+              <pre><code>hello-from-sandore-
+# shell stdout 完整输出</code></pre>
+              <blockquote>该步骤为 shell 命令输出，无副作用。</blockquote>
+            </div>
+          </div>
+
+          <!-- agent：write file（运行中） -->
+          <div class="agent-msg">
+            <div class="agent-head">
+              <span class="avatar agent"><svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden><path d="M6.1 3.1Q6.6 7.8 11.3 8.3Q6.6 8.8 6.1 13.5Q5.6 8.8 0.9 8.3Q5.6 7.8 6.1 3.1Z" fill="currentColor"/><path d="M11.9 1Q12.2 3.7 14.9 4Q12.2 4.3 11.9 7Q11.6 4.3 8.9 4Q11.6 3.7 11.9 1Z" fill="currentColor"/><path d="M12.5 9.4Q12.7 11.4 14.7 11.6Q12.7 11.8 12.5 13.8Q12.3 11.8 10.3 11.6Q12.3 11.4 12.5 9.4Z" fill="currentColor"/></svg></span>
+              <button class="author link">write file</button>
+              <span class="time">刚刚</span>
+              <span class="st info">
+                <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 1.5a5.5 5.5 0 1 1-5.5 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                <span class="lbl">运行中</span>
+              </span>
+            </div>
+            <div class="agent-chat">
+              <div class="agent-chat-scroll">
+                <div class="chat-line assistant">
+                  <span class="who">write file · agent</span>
+                  <span class="txt">我来把检查结果写入 reports/lint.txt。先确认目录结构，然后写入文件。</span>
+                </div>
+                <div class="chat-line tool">
+                  <span class="who">write file · tool</span>
+                  <span class="txt">┌ write_file
+└ path: reports/lint.txt · content: 12 行 · status: ok</span>
+                </div>
+                <div class="chat-line assistant">
+                  <span class="who">write file · agent</span>
+                  <span class="txt">已写入 reports/lint.txt（12 行）。接下来继续处理 combine-report…</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- agent：combine-report（失败） -->
+          <div class="agent-msg">
+            <div class="agent-head">
+              <span class="avatar agent"><svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden><path d="M6.1 3.1Q6.6 7.8 11.3 8.3Q6.6 8.8 6.1 13.5Q5.6 8.8 0.9 8.3Q5.6 7.8 6.1 3.1Z" fill="currentColor"/><path d="M11.9 1Q12.2 3.7 14.9 4Q12.2 4.3 11.9 7Q11.6 4.3 8.9 4Q11.6 3.7 11.9 1Z" fill="currentColor"/><path d="M12.5 9.4Q12.7 11.4 14.7 11.6Q12.7 11.8 12.5 13.8Q12.3 11.8 10.3 11.6Q12.3 11.4 12.5 9.4Z" fill="currentColor"/></svg></span>
+              <button class="author link">combine-report</button>
+              <span class="time">2 分钟前</span>
+              <span class="st destructive">
+                <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M4.6 4.6l4.8 4.8M9.4 4.6l-4.8 4.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                <span class="lbl">失败</span>
+              </span>
+            </div>
+            <div class="agent-last-list failed">
+              <div class="agent-last-scroll">
+                <div class="chat-line tool"><span class="who">combine-report · tool</span><span class="txt">┌ read_file
+└ path: reports/lint.txt · ✗ 文件不存在</span></div>
+                <div class="chat-line assistant"><span class="who">combine-report · agent</span><span class="txt">lint 报告缺失，重试一次。</span></div>
+                <div class="chat-line tool"><span class="who">combine-report · tool</span><span class="txt">┌ read_file
+└ path: reports/lint.txt · ✗ 文件不存在</span></div>
+                <div class="chat-line assistant"><span class="who">combine-report · agent</span><span class="txt">lint 报告持续缺失，无法完成合并。</span></div>
+                <div class="chat-line assistant"><span class="who">combine-report · agent</span><span class="txt">失败：找不到 reports/lint.txt（exit 1）——目录 reports/ 不存在。</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- agent：review（暂停） -->
+          <div class="agent-msg">
+            <div class="agent-head">
+              <span class="avatar agent"><svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden><path d="M6.1 3.1Q6.6 7.8 11.3 8.3Q6.6 8.8 6.1 13.5Q5.6 8.8 0.9 8.3Q5.6 7.8 6.1 3.1Z" fill="currentColor"/><path d="M11.9 1Q12.2 3.7 14.9 4Q12.2 4.3 11.9 7Q11.6 4.3 8.9 4Q11.6 3.7 11.9 1Z" fill="currentColor"/><path d="M12.5 9.4Q12.7 11.4 14.7 11.6Q12.7 11.8 12.5 13.8Q12.3 11.8 10.3 11.6Q12.3 11.4 12.5 9.4Z" fill="currentColor"/></svg></span>
+              <button class="author link">review</button>
+              <span class="time">1 分钟前</span>
+              <span class="st warning">
+                <svg viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 4v3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="7" cy="10" r="0.7" fill="currentColor"/></svg>
+                <span class="lbl">已暂停</span>
+              </span>
+            </div>
+            <div class="agent-last-list paused">
+              <div class="agent-last-scroll">
+                <div class="chat-line tool"><span class="who">review · tool</span><span class="txt">┌ mkdir
+└ path: reports/ · ok</span></div>
+                <div class="chat-line assistant"><span class="who">review · agent</span><span class="txt">准备写入 reports/lint.txt，但写入涉及新目录权限。</span></div>
+                <div class="chat-line tool"><span class="who">review · tool</span><span class="txt">┌ request_permission
+└ 请求写入 reports/ 目录权限</span></div>
+                <div class="chat-line assistant"><span class="who">review · agent</span><span class="txt">等待人工确认：是否批准写入 reports/ 目录（等待中）</span></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 演示切换（临时，评审用） -->
+        <div class="demo-switch">
+          <button data-show="approval">显示权限申请</button>
+          <button data-show="question">显示问题选择</button>
+          <button data-show="none">隐藏（正常输入框）</button>
+        </div>
+
+        <!-- composer 接管：权限申请（ApprovalPanel 风格） -->
+        <div class="takeover" data-takeover="approval">
+          <div class="approval-card">
+            <div class="approval-strip"><span class="dot"></span>等待权限确认</div>
+            <div class="approval-body">
+              <div class="approval-headline">write file 请求写入新目录 reports/，需要你的批准</div>
+              <div class="approval-command">write_file(path: "reports/lint.txt", content: "…")</div>
+            </div>
+            <div class="approval-actions">
+              <button class="btn reject">拒绝</button>
+              <button class="btn allow">允许一次</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- composer 接管：问题选择（QuestionComposer 风格） -->
+        <div class="takeover" data-takeover="question">
+          <div class="question-card">
+            <div class="q-header">
+              <div class="q-heading-block">
+                <div class="q-eyebrow">combine-report 需要确认</div>
+                <div class="q-title">汇总结果如何保存？</div>
+              </div>
+              <div class="q-header-actions">
+                <button class="q-icon-btn" title="收起"><svg viewBox="0 0 14 14" fill="none" aria-hidden><path d="M3 8.5l4-4 4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                <button class="q-icon-btn" title="取消"><svg viewBox="0 0 14 14" fill="none" aria-hidden><path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg></button>
+              </div>
+            </div>
+            <div class="q-body">
+              <div class="q-options">
+                <button class="q-option selected">
+                  <span class="q-number">1</span>
+                  <span class="q-option-copy">
+                    <span class="q-option-line">
+                      <span class="q-option-label">写入 final.md</span>
+                      <span class="q-badge">推荐</span>
+                    </span>
+                    <span class="q-desc">汇总到工作区根目录的 final.md</span>
+                  </span>
+                </button>
+                <button class="q-option">
+                  <span class="q-number">2</span>
+                  <span class="q-option-copy">
+                    <span class="q-option-line"><span class="q-option-label">只输出到对话</span></span>
+                    <span class="q-desc">不写文件，直接返回给主代理</span>
+                  </span>
+                </button>
+                <div class="q-custom">
+                  <span class="q-number">3</span>
+                  <input placeholder="自定义路径…" />
+                </div>
+              </div>
+            </div>
+            <div class="q-footer">
+              <div class="q-pager">
+                <button class="q-icon-btn" disabled style="opacity:.4;">‹</button>
+                <span class="q-progress">1 / 1</span>
+                <button class="q-icon-btn" disabled style="opacity:.4;">›</button>
+              </div>
+              <div class="q-footer-actions">
+                <button class="q-skip">跳过</button>
+                <button class="q-send">提交</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部输入（DSH composer 风格） -->
+        <div class="composer" data-composer>
+          <div class="composer-card">
+            <div class="composer-scroll">
+              <textarea class="composer-input" rows="2" placeholder="回复 Echo 输出…" aria-label="回复"></textarea>
+            </div>
+            <div class="composer-row">
+              <div class="composer-tools">
+                <button class="perm-trigger" title="Workspace Write" aria-label="权限">
+                  <span class="glyph">
+                    <svg viewBox="0 0 16 16" fill="none" aria-hidden>
+                      <path d="M8.08887 0.251709C8.20479 0.23085 8.32486 0.241168 8.43652 0.282959L15.0215 2.75171C15.2787 2.84819 15.4492 3.09414 15.4492 3.3689V7.0105C15.4492 7.10986 15.4441 7.2081 15.4414 7.30542C15.0285 7.07175 14.5905 6.87695 14.1309 6.73022V3.82495L8.20508 1.60327L2.2793 3.82495V7.0105C2.27936 9.7171 3.4745 11.5379 5.02734 12.7947C5.01025 12.9942 5 13.1962 5 13.4001C5.00001 13.7617 5.02722 14.1169 5.08008 14.4636C2.91555 13.0393 0.961014 10.752 0.960938 7.0105V3.3689C0.960938 3.09417 1.13146 2.84821 1.38867 2.75171L7.97461 0.282959L8.08887 0.251709Z" fill="currentColor" />
+                      <path d="M11.3525 5.64688V6.85688H5V5.64688H11.3525Z" fill="currentColor" />
+                      <path d="M9.5824 8.29376V9.50376H5V8.29376H9.5824Z" fill="currentColor" />
+                      <path d="M14.6647 15.6852H10.0338C10.3878 15.3751 10.7567 15.0517 11.0772 14.7706C11.2531 14.6164 11.4144 14.4746 11.5511 14.3547H14.6647V15.6852Z" fill="currentColor" />
+                      <path d="M8.14852 14.1308L7.33925 15.4976C7.22458 15.6912 7.42245 15.9194 7.63037 15.8333L9.09785 15.2254L15.0399 10.0719L14.0905 8.97733L8.14852 14.1308Z" fill="currentColor" />
+                    </svg>
+                  </span>
+                  <span class="label">Workspace Write</span>
+                  <span class="chev"><svg viewBox="0 0 14 14" fill="none" aria-hidden><path d="M3 5.5l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                </button>
+              </div>
+              <div class="composer-trailing">
+                <button class="model-trigger" title="deepseek-chat · High" aria-label="模型">
+                  <span class="label">deepseek-chat</span>
+                  <span class="effort">· High</span>
+                  <span class="chev"><svg viewBox="0 0 14 14" fill="none" aria-hidden><path d="M3 5.5l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                </button>
+                <button class="send-btn" title="发送 · ⌘↵" aria-label="发送">
+                  <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                    <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  // composer 接管面板切换（权限申请 / 问题选择 / 正常输入框）
+  // 注：step 标题（.author.link）点击在真实实现中打开 DSH 现成的子代理会话页面（openSession），原型不模拟。
+  document.querySelectorAll('.demo-switch [data-show]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const which = btn.getAttribute('data-show')
+      document.querySelectorAll('[data-takeover]').forEach(p => p.classList.toggle('active', which === p.getAttribute('data-takeover')))
+      const composer = document.querySelector('[data-composer]')
+      composer.style.display = which === 'none' ? '' : 'none'
+    })
+  })
+</script>
+</body>
+</html>

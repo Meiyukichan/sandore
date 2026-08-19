@@ -57,7 +57,6 @@ describe('SandorePersistence', () => {
     expect(storageDomain.get('sandore')).toBeDefined()
     expect(storageDomain.get('sandore')?.name).toBe('sandore')
     expect(persistence.definitions.size).toBe(0)
-    expect(persistence.jobs.size).toBe(0)
     expect(persistence.state.size).toBe(0)
   })
 

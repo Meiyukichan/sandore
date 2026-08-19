@@ -1,19 +1,87 @@
-/* RunView 执行态三栏：树形导航 + 时间线/输入区 + 文件预览。 */
+/* RunView 执行态：树形导航 + 执行详情页（原型 execution-detail-prototype.html 结构）。 */
+
+/* ── multica/DSH 合并 token（限定在 run 视图作用域） ─────────────────────── */
 
 .runView {
+  --sd-page-canvas: oklch(0.988 0 0);
+  --sd-surface: oklch(1 0 0);
+  --sd-surface-hover: oklch(0.967 0.001 286);
+  --sd-surface-border: oklch(0.92 0.004 286);
+  --sd-foreground: oklch(0.141 0.005 285.8);
+  --sd-muted-foreground: oklch(0.505 0.016 285.9);
+  --sd-faint-foreground: oklch(0.606 0.016 285.9);
+  --sd-accent: oklch(0.967 0.001 286.375);
+  --sd-primary: oklch(0.21 0.006 285.885);
+  --sd-primary-foreground: oklch(0.985 0 0);
+  --sd-brand: oklch(0.55 0.16 255);
+  --sd-success: oklch(0.55 0.16 145);
+  --sd-warning: oklch(0.75 0.16 85);
+  --sd-info: oklch(0.55 0.18 250);
+  --sd-destructive: oklch(0.577 0.245 27.3);
+  --sd-border: oklch(0.945 0.003 286.32);
+  --sd-bubble: oklch(0.925 0.01 250);
+  --sd-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 1px rgb(15 23 42 / 0.03);
+  --sd-card-shadow: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 8px rgb(15 23 42 / 0.05);
+
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  background: var(--sd-page-canvas);
+  color: var(--sd-foreground);
+  font-size: 14px;
+  line-height: 20px;
 }
 
-.columns {
+.detailSplit {
   flex: 1;
   min-height: 0;
   display: flex;
   overflow: hidden;
+}
+
+/* 左：工作流导航（与对话列之间无分割线）。 */
+.navCol {
+  flex: none;
+  width: 360px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.navCol > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 右：对话消息列表（标题条 / 滚动区 / 输入框三段隔离）。 */
+.feedCol {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 消息滚动区（独立滚动）。 */
+.feedScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 输入框：固定在对话列最底部（照 DSH 主会话输入框位置），与消息区隔离。 */
+.composerWrap {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 768px;
+  margin: 0 auto;
+  padding: 0 24px 24px;
 }
 
 /* 拖拽分隔条（照 DSH AppFrame .drag-handle 观感）。 */
@@ -42,73 +110,114 @@
   width: 2px;
 }
 
-.treeCol {
-  flex: none;
-  min-width: 180px;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--dsw-alias-bg-elevated);
-  border-right: 1px solid var(--dsw-alias-border-l1);
-}
+/* ── 顶部栏（page-header：面包屑 + agent chip） ─────────────────────────── */
 
-.treeCol > * {
-  flex: 1;
-  min-height: 0;
-}
-
-.mainCol {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.header {
+.pageHeader {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
+  height: 48px;
   padding: 0 16px;
   box-sizing: border-box;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-elevated);
+  border-bottom: 1px solid var(--sd-border);
+  background: var(--sd-page-canvas);
 }
 
-.title {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 20px;
-  color: var(--dsw-alias-label-primary);
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-.statusBadge {
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sep {
   flex: none;
+  color: var(--sd-muted-foreground);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.crumbItem {
+  max-width: 220px;
+  overflow: hidden;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 20px;
+  font-family: inherit;
+  color: var(--sd-muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumbCurrent {
+  font-weight: 500;
+  color: var(--sd-foreground);
+}
+
+.headerActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.agentChip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 20px;
-  padding: 0 8px;
-  border-radius: 10px;
-  background: var(--dsw-alias-button-ghost-active-fill, var(--dsw-alias-bg-active));
-  font-size: 11px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-secondary);
+  height: 28px;
+  padding: 0 6px;
+  margin-right: 4px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sd-brand) 5%, transparent);
+  font-size: 12px;
+  color: var(--sd-foreground);
+  white-space: nowrap;
 }
 
-.spacer {
-  flex: 1;
+.agentDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sd-info);
+  animation: sd-pulse 1.2s infinite;
 }
+
+@keyframes sd-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── 对话消息列表（768px 居中列，顶部对齐标题栏） ───────────────────────── */
+
+.column {
+  max-width: 768px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
+}
+
+/* ── 加载 / 错误 ─────────────────────────────────────────────────────────── */
 
 .loading {
   margin: 0;
   padding: 12px;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--sd-muted-foreground);
 }
 
 .error {
@@ -116,105 +225,11 @@
   padding: 8px 12px;
   font-size: 12px;
   line-height: 18px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--sd-destructive);
   overflow-wrap: anywhere;
 }
 
-/* ── 待处理交互（时间线下方、输入区上方） ───────────────────────────────── */
-
-.interactions {
-  flex: none;
-  max-height: 40%;
-  overflow-y: auto;
-  padding: 8px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-top: 1px solid var(--dsw-alias-border-l2);
-}
-
-.card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-base);
-}
-
-.cardHead {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.cardTitle {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
-}
-
-.question {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.questionHeader {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--dsw-alias-label-caption);
-}
-
-.questionText {
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.options {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.optionLabel {
-  color: var(--dsw-alias-label-primary);
-}
-
-.optionDesc {
-  font-size: 11px;
-  color: var(--dsw-alias-label-caption);
-}
-
-.metaRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.metaLabel {
-  flex: none;
-  font-size: 11px;
-  color: var(--dsw-alias-label-caption);
-}
-
-.permissionActions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+/* ── 文件预览列（树叶子选中时出现，独立功能） ───────────────────────────── */
 
 .previewCol {
   flex: none;

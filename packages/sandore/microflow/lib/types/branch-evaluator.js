@@ -1,7 +1,7 @@
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import { SandoreError } from "./errors.js";
 import { replacePassThroughVars } from "./file-utils.js";
-import { buildShellEnv, resolvePassThroughVars, resolveProviderModel as resolveModelRoute, splitCommand, textSummary, } from "./internal.js";
+import { buildShellEnv, resolvePassThroughVars, resolveProviderModel as resolveModelRoute, textSummary, } from "./internal.js";
 /** 结构化分支评估提示词主头部。 */
 const BRANCH_PROMPT_HEADER = '你是严谨准确的DAG分支评估Agent，你的任务是根据分支条件与上下文，判断本次执行应路由到哪个分支。';
 /** 分支评估红线规则（只读，禁止文件改动与过度思考）。 */
@@ -201,52 +201,19 @@ export class BranchEvaluator {
         return textSummary(assembler.blocks());
     }
     async runShellCommand(command, options, env) {
-        if (options.stdin === undefined && env === undefined) {
-            return await this.runShellSimple(command, options);
-        }
-        return await this.runShellSubprocess(command, options, env);
-    }
-    async runShellSimple(command, options) {
+        // 统一经 `ctx.shell`（平台 shell 解释器）执行：env/stdin 由 ShellExecRequest
+        // 携带。不要用 `ctx.subprocess.spawn` 直接执行——subprocess 不做 shell 解释，
+        // PowerShell cmdlet 等内建命令不是可执行文件，条件命令会失败。
         const request = {
             command,
             timeoutMs: this.config.defaultTimeoutMs,
             ...(options.workdir === undefined ? {} : { workdir: options.workdir }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+            ...(env === undefined ? {} : { env }),
         };
         const spec = this.ctx.shell.resolve(request);
         const result = await this.ctx.shell.run(spec);
-        return this.toStdout(result);
-    }
-    async runShellSubprocess(command, options, env) {
-        const tokens = splitCommand(command);
-        const program = tokens[0] ?? command;
-        const args = tokens.slice(1);
-        const executable = await this.ctx.subprocess.resolveExecutable(program, env, options.signal);
-        const spec = {
-            argv: [executable, ...args],
-            cwd: options.workdir ?? '',
-            stdio: {
-                stdin: options.stdin === undefined ? 'ignore' : { data: options.stdin },
-                stdout: { maxBytes: 1024 * 1024 },
-                stderr: { maxBytes: 1024 * 1024 },
-            },
-            graceMs: this.config.defaultTimeoutMs,
-            ...(env === undefined ? {} : { env }),
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-        };
-        const handle = this.ctx.subprocess.spawn(spec);
-        const outcome = await handle.done;
-        const stdout = handle.collected.stdout?.readFrom(0);
-        const stderr = handle.collected.stderr?.readFrom(0);
-        const result = {
-            exitCode: outcome.exitCode,
-            signal: outcome.signal,
-            timedOut: outcome.timedOut ?? false,
-            aborted: options.signal?.aborted ?? false,
-            timeoutMs: this.config.defaultTimeoutMs,
-            stdout: { text: stdout?.text ?? '', truncated: stdout?.lossy ?? false },
-            stderr: { text: stderr?.text ?? '', truncated: stderr?.lossy ?? false },
-        };
         return this.toStdout(result);
     }
     /** shell 结果 → 输出文本：成功返回 stdout，非零退出/超时/中止抛 SandoreError。 */

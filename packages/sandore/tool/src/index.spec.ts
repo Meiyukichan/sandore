@@ -103,11 +103,10 @@ describe('createSandoreTools', () => {
 
     const result = await run(toolByName(tools, 'sandore_startInstance'), {
       workflowId: 'wfl-1',
-      jobId: 'job-1',
       originalInput: 'do it',
     });
 
-    expect(engine.startInstance).toHaveBeenCalledWith({ workflowId: 'wfl-1', jobId: 'job-1', originalInput: 'do it' });
+    expect(engine.startInstance).toHaveBeenCalledWith({ workflowId: 'wfl-1', originalInput: 'do it' });
     expect(result).toMatchObject({ ok: true, run: { instanceId: 'inst-new', status: 'running' } });
   });
 
@@ -117,14 +116,12 @@ describe('createSandoreTools', () => {
 
     await run(toolByName(tools, 'sandore_startInstance'), {
       workflowId: 'wfl-1',
-      jobId: 'job-1',
       originalInput: 'do it',
       cwd: '/srv/app',
     });
 
     expect(engine.startInstance).toHaveBeenCalledWith({
       workflowId: 'wfl-1',
-      jobId: 'job-1',
       originalInput: 'do it',
       cwd: '/srv/app',
     });

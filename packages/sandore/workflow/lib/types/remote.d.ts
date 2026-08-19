@@ -13,7 +13,7 @@ import type { LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type { DagRun } from './types.ts';
 import type { WorkflowTaskState } from './schema.ts';
-import type { ArtifactEntry, CreateDefinitionInput, CreateJobInput, InstanceSummary, JobEntry, ListJobsInput, PauseAllInput, PauseStepInput, PingResponse, ReplyPermissionInput, ReplyQuestionInput, ResumeAllInput, ResumeStepInput, RetryStepInput, StartInstanceInput, UpdateDefinitionInput, UpdateJobInput, WorkflowDefinitionEntry } from './wire.ts';
+import type { ArtifactEntry, CreateDefinitionInput, InstanceSummary, PauseAllInput, PauseStepInput, PingResponse, ReplyPermissionInput, ReplyQuestionInput, ResumeAllInput, ResumeStepInput, RetryStepInput, StartInstanceInput, UpdateDefinitionInput, WorkflowDefinitionEntry } from './wire.ts';
 /**
  * sandore 的 Host RPC 服务。
  *
@@ -42,19 +42,9 @@ export declare class SandoreRemote extends TypertRemoteService {
     /** 重新验证后覆盖定义的 YAML 文本；非法 YAML 抛错且存储保持旧值。
      *  元数据（name/version/description）从新 YAML 解析同步，保证列表展示与内容一致。 */
     updateYaml(id: string, yaml: string): Promise<WorkflowDefinitionEntry>;
-    /** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
-    listJobs(input: ListJobsInput): JobEntry[];
-    /** 创建 Job：校验 workflowId 存在（否则抛 `INVALID_OPERATION`），自动生成 jobId。 */
-    createJob(input: CreateJobInput): Promise<JobEntry>;
-    /** 按 id 读取单个 Job。 */
-    getJob(id: string): JobEntry;
-    /** 更新 Job 元数据（name/cwd），保留 workflowId。 */
-    updateJob(id: string, input: UpdateJobInput): Promise<JobEntry>;
-    /** 删除 Job（不级联删除实例）；重复删除幂等（返回 false）。 */
-    deleteJob(id: string): Promise<boolean>;
-    /** 列出实例摘要（从 `state` 表派生），可选按 jobId 过滤。 */
-    listInstances(jobId?: string): InstanceSummary[];
-    /** 启动实例：解析 Job 的 workflowId 后转发 `ctx.sandoreEngine.startInstance`。 */
+    /** 列出实例摘要（从 `state` 表派生，去 job 概念）。 */
+    listInstances(): InstanceSummary[];
+    /** 启动实例：校验定义存在后转发 `ctx.sandoreEngine.startInstance`（去 job 概念）。 */
     startInstance(input: StartInstanceInput): Promise<DagRun>;
     /** 删除实例快照（`state` 表删除）；重复删除幂等。 */
     deleteInstance(instanceId: string): Promise<boolean>;
@@ -85,7 +75,6 @@ export declare class SandoreRemote extends TypertRemoteService {
     /** 列出某 Provider 的模型（透传 `ctx.llm.listModels()`）。 */
     listModels(provider: string): Promise<LlmModelInfo[]>;
     private requireDefinition;
-    private requireJob;
     private requireInstanceState;
 }
 export default SandoreRemote;

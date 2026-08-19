@@ -7,8 +7,9 @@ import { createSandoreSave } from "./sandore-save.js";
 import { toggleWorkflowOverlay } from "./workflow-store.js";
 import { DagStepNodeView } from "./DagStepNodeView.js";
 import { sandoreStepDefinition } from "./sandore-step-definition.js";
+import { SandoreModelDirectory, parsePermissionReport } from "./model-faces.js";
 /** Client 插件依赖的 cordis 服务键。 */
-export const inject = ['conversationEvents', 'slots', 'locale', 'remote', 'sessions', 'workspaces'];
+export const inject = ['conversationEvents', 'slots', 'locale', 'remote', 'sessions', 'workspaces', 'connection'];
 /** 挂载 sandore 远程命名空间、注册 locale 字典与工作流入口/overlay。 */
 export async function apply(ctx) {
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sandore: dictionaries');
@@ -29,7 +30,8 @@ export async function apply(ctx) {
     // `remote.sandore` 命名空间服务由 `$mount` 动态安装（不在本插件静态 inject 中，
     // self-mount + self-inject 会死锁）。用 `ctx.inject` 动态依赖注入：等命名空间服务
     // 就绪后（$mount 已完成）再注册依赖它的 slot，回调内的 `ctx.remote.sandore` 可正常访问。
-    await ctx.inject(['remote.sandore'], (remoteCtx) => {
+    // 同时注入 `remote.commands`（权限命令执行/查询走 `remote.commands.execute`）。
+    await ctx.inject(['remote.sandore', 'remote.commands'], (remoteCtx) => {
         const sandore = remoteCtx.remote.sandore;
         // shell.overlay 全局工作流 UI（root scope，不挂会话；覆盖 conversation/details 列）。
         remoteCtx.slots.inject('shell.overlay', () => remoteCtx.slots.register({
@@ -40,14 +42,64 @@ export async function apply(ctx) {
             inject: () => ({
                 listInstances: async () => unwrap(await sandore.listInstances()),
                 listDefinitions: async () => unwrap(await sandore.listDefinitions()),
-                listJobs: async (workflowId) => unwrap(await sandore.listJobs(workflowId === undefined ? {} : { workflowId })),
-                createJob: async (input) => unwrap(await sandore.createJob(input)),
                 startInstance: async (input) => unwrap(await sandore.startInstance(input)),
+                listModelDirectory: async () => {
+                    const providers = unwrap(await sandore.listProviders());
+                    const entries = [];
+                    for (const provider of providers) {
+                        const models = unwrap(await sandore.listModels(provider.id));
+                        entries.push({ provider: provider.id, providerName: provider.name, models: models.map((m) => ({ id: m.id, name: m.name })) });
+                    }
+                    return entries;
+                },
+                pickDirectory: async () => {
+                    const workspaces = remoteCtx.workspaces;
+                    const path = await workspaces.pickDirectory();
+                    return path === null ? undefined : path;
+                },
                 deleteDefinition: async (id) => unwrap(await sandore.deleteDefinition(id)),
+                deleteInstance: async (instanceId) => unwrap(await sandore.deleteInstance(instanceId)),
                 getYaml: async (id) => unwrap(await sandore.getYaml(id)),
                 save: createSandoreSave(sandore),
                 remote: sandore,
                 openSession: (id) => { remoteCtx.sessions.open(id); },
+                // 模型目录：自实现轻量目录，直接走 connection.api.sessions.models/selectModel
+                // （与 DSH ModelDirectory 同一 RPC、同一行为；不依赖会话 scope）。
+                modelDirectory: (sessionId) => {
+                    const withConnection = remoteCtx;
+                    return new SandoreModelDirectory(withConnection.connection.api.sessions, sessionId);
+                },
+                // 权限投影：经 sessions.sessionOf(scope) 解析业务 Session，读其
+                // projections.permissions（host 计算，可订阅）。
+                permissions: (sessionId) => {
+                    const sessions = remoteCtx.sessions;
+                    const scope = sessions.scope(sessionId);
+                    if (scope === undefined) {
+                        return { getSnapshot: () => undefined, subscribe: () => () => undefined };
+                    }
+                    const session = sessions.sessionOf(scope);
+                    if (session === undefined) {
+                        return { getSnapshot: () => undefined, subscribe: () => () => undefined };
+                    }
+                    return session.projections.faceOf('permissions');
+                },
+                // 命令执行：走 DSH remote.commands（/permission 等与主 session 同一路径）。
+                runCommand: async (sessionId, line) => {
+                    const commands = remoteCtx.remote.commands;
+                    const result = await commands.execute(sessionId, line);
+                    return result.ok;
+                },
+                // 权限投影缺失回退：`/permission`（无参）查询当前预设与可用列表。
+                queryPermission: async (sessionId) => {
+                    const commands = remoteCtx.remote.commands;
+                    const result = await commands.execute(sessionId, '/permission');
+                    if (!result.ok)
+                        return undefined;
+                    const text = result.value?.text;
+                    if (text === undefined)
+                        return undefined;
+                    return parsePermissionReport(text);
+                },
             }),
         }, WorkflowOverlay));
         // conversation.chat.node sandore-step 节点渲染器（宿主会话 chat 页展示 step 节点）。

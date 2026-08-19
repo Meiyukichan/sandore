@@ -35,6 +35,12 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     protected [Service.init](): Promise<void>;
     /** 启动实例：读定义 → parse → 初始化 pending 快照 → 创建宿主主代理 → fire-and-forget 执行。 */
     startInstance(request: DagStartRequest): Promise<DagRun>;
+    /**
+     * 应用创建实例时选择的权限预设：宿主会话 sandbox 模式（`sandbox/mode` 事件，
+     * 对齐 `setSandboxMode`）+ 审批策略（`ctx.approval.setPolicy`）。失败仅记录 warn，
+     * 不得使 startInstance 失败；shell/子代理在后续调用时折叠会话模式生效。
+     */
+    private applyPermission;
     /** 查询实例的当前状态快照（内存活跃实例优先，state 表兜底读）。 */
     getState(instanceId: string): DagInstanceState;
     /**
@@ -88,6 +94,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     private buildActiveInstance;
     /** 快照是否含 paused Step（paused-only 实例等待手动 resume，不自动重跑）。 */
     private hasPausedStep;
+    /** 从段列表中取"最后活跃段"（status running/interacting 中 attemptIndex 最大者）。 */
+    private findActiveSegment;
     /** 续跑执行位置的起始 Stage：running/interacting Step 所在 Stage，否则 currentStageId。 */
     private resumeStageId;
     /** 计算 Stage 续跑播种：跳过已完成 Step 并从 running/interacting 子代理 Step 续跑。 */

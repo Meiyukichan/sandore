@@ -1,238 +1,292 @@
-/* UnifiedTimeline：step 卡片 + user 气泡（GitHub comment-card 风格，DSH token）。 */
+/* 执行详情对话流（原型 execution-detail-prototype.html 的 .flow / .md / .agent-chat / .agent-last-list）。 */
 
-.scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
+/* ── 对话流 ─────────────────────────────────────────────────────────────── */
 
-.timeline {
-  padding: 8px 12px 16px;
+.flow {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 20px;
+  margin-top: 12px;
 }
 
 .empty {
-  margin: 0;
-  padding: 16px;
+  margin: 12px 0;
   font-size: 12px;
-  color: var(--dsw-alias-label-caption);
-  text-align: center;
+  color: var(--sd-muted-foreground);
 }
 
-/* ── Step 卡片 ───────────────────────────────────────────────────────────── */
-
-.stepCard {
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-elevated);
-  overflow: hidden;
+/* 用户消息：右侧气泡（DSH UserStyleBubble） */
+.userMsg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
-.stepHeader {
+.bubble {
+  max-width: 82%;
+  background: var(--sd-bubble);
+  border-radius: 22px;
+  padding: 10px 16px;
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--sd-foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.userMeta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+  padding-right: 2px;
+}
+
+.userMeta .time {
+  font-size: 11px;
+  color: var(--sd-faint-foreground);
+}
+
+/* agent 消息：左侧，带头像行 + 正文 */
+.agentMsg {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.agentHead {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  margin-bottom: 4px;
+  min-width: 0;
 }
 
 .avatar {
   flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--sd-accent);
+  color: var(--sd-primary);
+  font-size: 11px;
   font-weight: 600;
 }
 
-.avatarDone {
-  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));
-  color: var(--dsw-alias-state-success);
+.avatarAgent {
+  background: color-mix(in srgb, var(--sd-brand) 12%, transparent);
+  color: var(--sd-brand);
 }
 
-.avatarRun {
-  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));
-  color: var(--dsw-alias-state-info);
-  animation: pulse 1.5s infinite;
+.avatarAgent svg {
+  width: 15px;
+  height: 15px;
 }
 
-.avatarFail {
-  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));
-  color: var(--dsw-alias-state-error);
+.author {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sd-foreground);
 }
 
-.avatarPaused {
-  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));
-  color: var(--dsw-alias-state-warning);
-}
-
-.avatarTodo {
-  background: var(--dsw-alias-bg-active);
-  color: var(--dsw-alias-label-caption);
-}
-
-.stepName {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dsw-alias-label-primary);
+/* agent 标题：可点击进入 DSH 现成子代理会话页（hover 变蓝 + 下划线） */
+.authorLink {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--sd-foreground);
+  text-decoration: none;
   cursor: pointer;
 }
 
-.stepName:hover {
-  color: var(--dsw-alias-accent-primary);
+.authorLink:hover {
+  color: var(--sd-brand);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .loopLabel {
-  margin-left: 4px;
-  font-size: 10px;
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
   font-weight: 500;
-  color: var(--dsw-alias-label-caption);
+  color: var(--sd-muted-foreground);
+  background: var(--sd-surface-hover);
+  border-radius: 6px;
+  padding: 1px 6px;
 }
 
-.badge {
+.time {
+  flex: none;
+  font-size: 12px;
+  color: var(--sd-muted-foreground);
+  white-space: nowrap;
+}
+
+/* 状态图标 + 状态色 */
+.st {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  border-radius: 99px;
-  font-size: 10px;
-  font-weight: 500;
+  gap: 5px;
+  margin-left: 8px;
+  white-space: nowrap;
 }
 
-.badgeRun {
-  background: var(--dsw-alias-state-info-bg, rgba(59, 130, 246, 0.1));
-  color: var(--dsw-alias-state-info);
+.st svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
 
-.badgeDone {
-  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));
-  color: var(--dsw-alias-state-success);
+.stLbl {
+  font-size: 12px;
 }
 
-.badgeFail {
-  background: var(--dsw-alias-state-error-bg, rgba(239, 68, 68, 0.1));
-  color: var(--dsw-alias-state-error);
+.stInfo { color: var(--sd-info); }
+.stSuccess { color: var(--sd-success); }
+.stWarning { color: var(--sd-warning); }
+.stDestructive { color: var(--sd-destructive); }
+
+/* 运行中正文占位 */
+.agentBodyRun {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--sd-muted-foreground);
 }
 
-.badgePaused {
-  background: var(--dsw-alias-state-warning-bg, rgba(245, 158, 11, 0.1));
-  color: var(--dsw-alias-state-warning);
+/* 完成态：md 渲染内容块（DSH MarkdownText 风格） */
+.md {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--sd-surface-hover);
+  font-size: 14px;
+  line-height: 1.625;
+  color: var(--sd-foreground);
+  overflow-wrap: anywhere;
 }
 
-.badgeDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
+.md p { margin: 8px 0; }
+.md p:first-child { margin-top: 0; }
+.md p:last-child { margin-bottom: 0; }
+.md strong { font-weight: 600; }
+.md h1, .md h2, .md h3, .md h4 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; }
+.md ul, .md ol { margin: 8px 0; padding-left: 18px; }
+.md li:not(:first-child) { margin-top: 4px; }
+.md li::marker { color: var(--sd-muted-foreground); }
+.md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  background: color-mix(in srgb, var(--sd-foreground) 8%, transparent);
+  border-radius: 6px;
+  padding: 0 5px;
+}
+.md pre {
+  margin: 8px 0;
+  padding: 8px 10px;
+  background: var(--sd-surface);
+  border-radius: 6px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.md pre code { background: none; padding: 0; font-size: inherit; }
+.md a { color: var(--sd-brand); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md blockquote {
+  border-left: 2px solid var(--sd-faint-foreground);
+  margin: 8px 0;
+  padding-left: 12px;
+  color: var(--sd-muted-foreground);
 }
 
-.badgeRun .badgeDot {
-  animation: pulse 1.5s infinite;
+/* 运行中：内嵌子代理消息框（可滚动） */
+.agentChat {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 8px;
+  border: 1px solid var(--sd-border);
+  border-radius: 10px;
+  background: var(--sd-surface);
+  overflow: hidden;
+  box-shadow: var(--sd-shadow);
 }
 
-.visitCount {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--dsw-alias-label-caption);
-}
-
-.stepBody {
-  padding: 8px 12px 8px 44px;
+.agentChatScroll {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
-.stepReturn {
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary);
-  line-height: 1.6;
+/* 失败/暂停：子代理最近 N 条消息（可滚动列表） */
+.agentLastList {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 8px;
+  border: 1px solid var(--sd-border);
+  border-radius: 10px;
+  background: var(--sd-surface);
+  overflow: hidden;
+  box-shadow: var(--sd-shadow);
 }
 
-.stepError {
-  font-size: 12px;
-  color: var(--dsw-alias-state-error);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.agentLastScroll {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.stepPaused {
-  font-size: 12px;
-  color: var(--dsw-alias-state-warning);
-}
-
-.stepRunning {
-  font-size: 12px;
-  color: var(--dsw-alias-label-caption);
-}
-
-.expandBtn {
-  align-self: flex-start;
-  border: none;
-  background: transparent;
-  padding: 0;
-  font-size: 11px;
-  font-family: inherit;
-  color: var(--dsw-alias-accent-primary);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
+/* 消息行 */
+.chatLine {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
-.expandBtn:hover {
-  text-decoration: underline;
+.chatWho {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sd-faint-foreground);
 }
 
-/* ── 用户气泡 ────────────────────────────────────────────────────────────── */
-
-.userBubble {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 4px 12px;
-}
-
-.userContent {
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border-bottom-right-radius: 4px;
-  background: var(--dsw-alias-bg-sunken);
-  font-size: 12px;
-  color: var(--dsw-alias-label-primary);
-  line-height: 1.5;
+.chatTxt {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--sd-foreground);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.userAvatar {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: var(--dsw-alias-state-success-bg, rgba(34, 197, 94, 0.1));
-  color: var(--dsw-alias-state-success);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.chatLineAssistant .chatTxt { color: var(--sd-muted-foreground); }
+
+.chatLineTool .chatTxt {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  font-weight: 600;
+  color: var(--sd-muted-foreground);
+  background: var(--sd-surface-hover);
+  border-radius: 6px;
+  padding: 6px 8px;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
+.agentLastList .chatTxt { color: var(--sd-muted-foreground); }
+.agentLastListFailed .chatLine:last-child .chatTxt { color: var(--sd-destructive); }
+.agentLastListPaused .chatLine:last-child .chatTxt { color: var(--sd-warning); }

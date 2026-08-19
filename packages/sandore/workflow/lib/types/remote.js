@@ -35,7 +35,7 @@ var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, 
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { SandoreError } from "./errors.js";
 import { parseWorkflowYaml, serializeWorkflowYaml } from "./yaml-parser.js";
-import { CreateDefinitionInputSchema, CreateJobInputSchema, ListJobsInputSchema, PauseAllInputSchema, PauseStepInputSchema, ReplyPermissionInputSchema, ReplyQuestionInputSchema, ResumeAllInputSchema, ResumeStepInputSchema, RetryStepInputSchema, StartInstanceInputSchema, UpdateDefinitionInputSchema, UpdateJobInputSchema, } from "./wire.js";
+import { CreateDefinitionInputSchema, PauseAllInputSchema, PauseStepInputSchema, ReplyPermissionInputSchema, ReplyQuestionInputSchema, ResumeAllInputSchema, ResumeStepInputSchema, RetryStepInputSchema, StartInstanceInputSchema, UpdateDefinitionInputSchema, } from "./wire.js";
 /** 实例的终态集合：`abortInstance` 对终态实例拒绝操作。 */
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'aborted']);
 /**
@@ -54,11 +54,6 @@ let SandoreRemote = (() => {
     let _deleteDefinition_decorators;
     let _getYaml_decorators;
     let _updateYaml_decorators;
-    let _listJobs_decorators;
-    let _createJob_decorators;
-    let _getJob_decorators;
-    let _updateJob_decorators;
-    let _deleteJob_decorators;
     let _listInstances_decorators;
     let _startInstance_decorators;
     let _deleteInstance_decorators;
@@ -84,11 +79,6 @@ let SandoreRemote = (() => {
             _deleteDefinition_decorators = [Remote('deleteDefinition')];
             _getYaml_decorators = [Remote('getYaml')];
             _updateYaml_decorators = [Remote('updateYaml')];
-            _listJobs_decorators = [Remote('listJobs')];
-            _createJob_decorators = [Remote('createJob')];
-            _getJob_decorators = [Remote('getJob')];
-            _updateJob_decorators = [Remote('updateJob')];
-            _deleteJob_decorators = [Remote('deleteJob')];
             _listInstances_decorators = [Remote('listInstances')];
             _startInstance_decorators = [Remote('startInstance')];
             _deleteInstance_decorators = [Remote('deleteInstance')];
@@ -111,11 +101,6 @@ let SandoreRemote = (() => {
             __esDecorate(this, null, _deleteDefinition_decorators, { kind: "method", name: "deleteDefinition", static: false, private: false, access: { has: obj => "deleteDefinition" in obj, get: obj => obj.deleteDefinition }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _getYaml_decorators, { kind: "method", name: "getYaml", static: false, private: false, access: { has: obj => "getYaml" in obj, get: obj => obj.getYaml }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _updateYaml_decorators, { kind: "method", name: "updateYaml", static: false, private: false, access: { has: obj => "updateYaml" in obj, get: obj => obj.updateYaml }, metadata: _metadata }, null, _instanceExtraInitializers);
-            __esDecorate(this, null, _listJobs_decorators, { kind: "method", name: "listJobs", static: false, private: false, access: { has: obj => "listJobs" in obj, get: obj => obj.listJobs }, metadata: _metadata }, null, _instanceExtraInitializers);
-            __esDecorate(this, null, _createJob_decorators, { kind: "method", name: "createJob", static: false, private: false, access: { has: obj => "createJob" in obj, get: obj => obj.createJob }, metadata: _metadata }, null, _instanceExtraInitializers);
-            __esDecorate(this, null, _getJob_decorators, { kind: "method", name: "getJob", static: false, private: false, access: { has: obj => "getJob" in obj, get: obj => obj.getJob }, metadata: _metadata }, null, _instanceExtraInitializers);
-            __esDecorate(this, null, _updateJob_decorators, { kind: "method", name: "updateJob", static: false, private: false, access: { has: obj => "updateJob" in obj, get: obj => obj.updateJob }, metadata: _metadata }, null, _instanceExtraInitializers);
-            __esDecorate(this, null, _deleteJob_decorators, { kind: "method", name: "deleteJob", static: false, private: false, access: { has: obj => "deleteJob" in obj, get: obj => obj.deleteJob }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _listInstances_decorators, { kind: "method", name: "listInstances", static: false, private: false, access: { has: obj => "listInstances" in obj, get: obj => obj.listInstances }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _startInstance_decorators, { kind: "method", name: "startInstance", static: false, private: false, access: { has: obj => "startInstance" in obj, get: obj => obj.startInstance }, metadata: _metadata }, null, _instanceExtraInitializers);
             __esDecorate(this, null, _deleteInstance_decorators, { kind: "method", name: "deleteInstance", static: false, private: false, access: { has: obj => "deleteInstance" in obj, get: obj => obj.deleteInstance }, metadata: _metadata }, null, _instanceExtraInitializers);
@@ -214,71 +199,15 @@ let SandoreRemote = (() => {
             await this.ctx.sandorePersistence.definitions.put(id, next);
             return { id, ...next };
         }
-        // ── Job CRUD ─────────────────────────────────────────────────────────────
-        /** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
-        listJobs(input) {
-            const parsed = ListJobsInputSchema.parse(input);
-            const entries = [];
-            for (const [id, record] of this.ctx.sandorePersistence.jobs.entries()) {
-                if (parsed.workflowId !== undefined && record.workflowId !== parsed.workflowId)
-                    continue;
-                entries.push({ id, ...record });
-            }
-            return entries;
-        }
-        /** 创建 Job：校验 workflowId 存在（否则抛 `INVALID_OPERATION`），自动生成 jobId。 */
-        async createJob(input) {
-            const parsed = CreateJobInputSchema.parse(input);
-            if (this.ctx.sandorePersistence.definitions.get(parsed.workflowId) === undefined) {
-                throw new SandoreError(`workflow '${parsed.workflowId}' does not exist`, 'INVALID_OPERATION');
-            }
-            const id = `job-${globalThis.crypto.randomUUID()}`;
-            const now = new Date().toISOString();
-            const record = {
-                name: parsed.name,
-                workflowId: parsed.workflowId,
-                ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
-                createdAt: now,
-                updatedAt: now,
-            };
-            await this.ctx.sandorePersistence.jobs.put(id, record);
-            return { id, ...record };
-        }
-        /** 按 id 读取单个 Job。 */
-        getJob(id) {
-            return this.requireJob(id);
-        }
-        /** 更新 Job 元数据（name/cwd），保留 workflowId。 */
-        async updateJob(id, input) {
-            const parsed = UpdateJobInputSchema.parse(input);
-            const existing = this.requireJob(id);
-            const now = new Date().toISOString();
-            const cwd = parsed.cwd ?? existing.cwd;
-            const next = {
-                name: parsed.name ?? existing.name,
-                workflowId: existing.workflowId,
-                ...(cwd === undefined ? {} : { cwd }),
-                createdAt: existing.createdAt,
-                updatedAt: now,
-            };
-            await this.ctx.sandorePersistence.jobs.put(id, next);
-            return { id, ...next };
-        }
-        /** 删除 Job（不级联删除实例）；重复删除幂等（返回 false）。 */
-        async deleteJob(id) {
-            return await this.ctx.sandorePersistence.jobs.delete(id);
-        }
         // ── 实例生命周期 ─────────────────────────────────────────────────────────
-        /** 列出实例摘要（从 `state` 表派生），可选按 jobId 过滤。 */
-        listInstances(jobId) {
+        /** 列出实例摘要（从 `state` 表派生，去 job 概念）。 */
+        listInstances() {
             const summaries = [];
             for (const [instanceId, state] of this.ctx.sandorePersistence.state.entries()) {
-                if (jobId !== undefined && state.jobId !== jobId)
-                    continue;
                 summaries.push({
                     instanceId,
-                    jobId: state.jobId,
                     workflowId: state.workflowId,
+                    originalInput: state.originalInput,
                     status: state.status,
                     createdAt: state.createdAt,
                     updatedAt: state.updatedAt,
@@ -286,15 +215,18 @@ let SandoreRemote = (() => {
             }
             return summaries;
         }
-        /** 启动实例：解析 Job 的 workflowId 后转发 `ctx.sandoreEngine.startInstance`。 */
+        /** 启动实例：校验定义存在后转发 `ctx.sandoreEngine.startInstance`（去 job 概念）。 */
         async startInstance(input) {
             const parsed = StartInstanceInputSchema.parse(input);
-            const job = this.requireJob(parsed.jobId);
+            if (this.ctx.sandorePersistence.definitions.get(parsed.workflowId) === undefined) {
+                throw new SandoreError(`workflow '${parsed.workflowId}' does not exist`, 'INVALID_OPERATION');
+            }
             const request = {
-                workflowId: job.workflowId,
-                jobId: parsed.jobId,
+                workflowId: parsed.workflowId,
                 originalInput: parsed.originalInput,
                 ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
+                ...(parsed.model === undefined ? {} : { model: parsed.model }),
+                ...(parsed.permission === undefined ? {} : { permission: parsed.permission }),
             };
             return await this.ctx.sandoreEngine.startInstance(request);
         }
@@ -387,13 +319,6 @@ let SandoreRemote = (() => {
             const record = this.ctx.sandorePersistence.definitions.get(id);
             if (record === undefined) {
                 throw new SandoreError(`definition '${id}' not found`, 'NODE_NOT_FOUND');
-            }
-            return { id, ...record };
-        }
-        requireJob(id) {
-            const record = this.ctx.sandorePersistence.jobs.get(id);
-            if (record === undefined) {
-                throw new SandoreError(`job '${id}' not found`, 'NODE_NOT_FOUND');
             }
             return { id, ...record };
         }

@@ -1,206 +1,798 @@
-/* DiscussionInput 状态驱动输入区。 */
+/* DiscussionInput：DSH composer 风格 + composer 接管面板（原型 execution-detail-prototype.html 的
+   .composer-card / .perm-trigger / .model-trigger / .send-btn / .approval-card / .question-card）。 */
 
 .root {
-  flex: none;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  padding: 10px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--dsw-alias-bg-elevated);
+  margin-top: 24px;
   position: relative;
 }
 
-.mentionBar {
+/* ── paused/failed 细工具条（@Step 目标 + 重试模式） ─────────────────────── */
+
+.toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  padding: 0 2px 8px;
   position: relative;
 }
 
 .targetBtn {
-  padding: 4px 10px;
-  border: none;
-  border-radius: 6px;
-  background: var(--dsw-alias-accent-bg);
-  color: var(--dsw-alias-accent-primary);
-  font-size: 11px;
-  font-weight: 500;
-  font-family: inherit;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: var(--sd-surface-hover);
+  color: var(--sd-muted-foreground);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  font-family: inherit;
   cursor: pointer;
 }
 
 .targetBtn:hover:not(:disabled) {
-  background: rgba(74, 126, 255, 0.15);
+  background: var(--sd-accent);
+  color: var(--sd-foreground);
 }
 
 .targetBtn:disabled {
-  opacity: 0.5;
   cursor: default;
+  opacity: 0.6;
 }
 
-.mentionHint {
-  font-size: 10px;
-  color: var(--dsw-alias-label-caption);
+.targetBtn svg {
+  width: 12px;
+  height: 12px;
+  color: var(--sd-faint-foreground);
 }
 
 .picker {
   position: absolute;
-  top: calc(100% + 4px);
+  top: 32px;
   left: 0;
   z-index: 20;
-  min-width: 180px;
-  max-height: 220px;
-  overflow-y: auto;
-  padding: 4px;
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-elevated);
-  border: 1px solid var(--dsw-alias-border-l1);
-  box-shadow: var(--dsw-shadow-md, 0 2px 8px rgba(0, 0, 0, 0.08));
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--sd-border);
+  border-radius: 10px;
+  background: var(--sd-surface);
+  box-shadow: var(--sd-card-shadow);
 }
 
 .picker button {
-  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
-  font-size: 11px;
+  color: var(--sd-foreground);
+  font-size: 12px;
   font-family: inherit;
-  color: var(--dsw-alias-label-secondary);
   text-align: left;
   cursor: pointer;
 }
 
 .picker button:hover {
-  background: var(--dsw-alias-bg-hover);
+  background: var(--sd-accent);
 }
 
-.picker button.pickerActive {
-  background: var(--dsw-alias-accent-bg);
-  color: var(--dsw-alias-accent-primary);
-}
-
-.textarea {
-  width: 100%;
-  min-height: 36px;
-  max-height: 120px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-sunken);
-  border: 1px solid var(--dsw-alias-border-l1);
-  font-size: 12px;
-  font-family: inherit;
-  line-height: 1.5;
-  color: var(--dsw-alias-label-primary);
-  outline: none;
-  resize: vertical;
-  box-sizing: border-box;
-}
-
-.textarea:focus {
-  border-color: var(--dsw-alias-accent-primary);
-}
-
-.textarea:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.pickerActive {
+  background: var(--sd-accent) !important;
+  color: var(--sd-primary) !important;
+  font-weight: 500;
 }
 
 .retryRow {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .retryLabel {
-  font-size: 11px;
-  color: var(--dsw-alias-label-caption);
-  margin-right: 4px;
+  font-size: 12px;
+  color: var(--sd-muted-foreground);
 }
 
 .retryBtn {
-  padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  background: transparent;
-  font-size: 11px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--sd-border);
+  border-radius: 999px;
+  background: var(--sd-surface);
+  color: var(--sd-muted-foreground);
+  font-size: 12px;
   font-family: inherit;
-  color: var(--dsw-alias-label-secondary);
   cursor: pointer;
 }
 
 .retryBtn:hover {
-  background: var(--dsw-alias-bg-hover);
+  background: var(--sd-accent);
+  color: var(--sd-foreground);
 }
 
 .retryBtnActive {
-  background: var(--dsw-alias-accent-primary);
-  color: #fff;
-  border-color: var(--dsw-alias-accent-primary);
+  border-color: transparent;
+  background: var(--sd-primary);
+  color: var(--sd-primary-foreground);
+  font-weight: 500;
 }
 
-.actions {
+/* ── composer 卡片（DSH InputBar） ───────────────────────────────────────── */
+
+.composerCard {
+  box-sizing: border-box;
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding-top: 10px;
+  border: 1px solid color-mix(in srgb, var(--sd-border) 80%, transparent);
+  border-radius: 22px;
+  background: var(--sd-surface);
+  box-shadow: var(--sd-card-shadow);
+  font-size: 16px;
+  line-height: 24px;
 }
 
-.spacer {
-  flex: 1;
+.composerScroll {
+  max-height: 336px;
+  overflow-y: auto;
 }
 
-.pauseBtn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+.composerInput {
+  box-sizing: border-box;
+  width: 100%;
+  resize: none;
+  overflow: hidden;
   border: none;
-  background: var(--dsw-alias-state-warning);
-  color: #fff;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--sd-brand);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  padding: 4px 12px 0 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.composerInput::placeholder {
+  color: var(--sd-muted-foreground);
+  user-select: none;
+}
+
+.composerInput:disabled {
+  color: var(--sd-faint-foreground);
+  cursor: not-allowed;
+}
+
+.composerRow {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 14px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 8px 6px;
+  min-width: 0;
+}
+
+.composerTools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.composerTrailing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+/* 权限胶囊（DSH PermissionSelect trigger） */
+.permTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  border: none;
+  border-radius: 24px;
+  outline: none;
+  background: transparent;
+  color: var(--sd-muted-foreground);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  font-family: inherit;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
 }
 
-.pauseBtn:hover {
-  background: #d97d04;
+.permTrigger:hover {
+  background: var(--sd-accent);
 }
 
-.pauseBtn:disabled {
-  opacity: 0.5;
+.permGlyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.permGlyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.permLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permChev {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--sd-faint-foreground);
+}
+
+.permChev svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 模型胶囊（DSH ModelSelect trigger） */
+.modelTrigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  border: none;
+  border-radius: 24px;
+  outline: none;
+  background: transparent;
+  color: var(--sd-muted-foreground);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.modelTrigger:hover {
+  background: var(--sd-accent);
+}
+
+.modelLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelChev {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--sd-faint-foreground);
+}
+
+.modelChev svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 中止 ghost（running/paused 时 trailing 出现） */
+.abortBtn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sd-muted-foreground);
+  cursor: pointer;
+}
+
+.abortBtn:hover:not(:disabled) {
+  background: var(--sd-accent);
+  color: var(--sd-destructive);
+}
+
+.abortBtn:disabled {
+  opacity: 0.4;
   cursor: default;
-  box-shadow: none;
 }
 
+.abortBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 圆形主按钮（暂停 / 发送） */
 .sendBtn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   border: none;
-  background: var(--dsw-alias-accent-primary);
+  border-radius: 999px;
+  background: var(--sd-brand);
   color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(74, 126, 255, 0.3);
+  transform: translateY(-2px);
+  transition: background-color 100ms ease;
 }
 
 .sendBtn:hover:not(:disabled) {
-  opacity: 0.9;
+  background: color-mix(in srgb, var(--sd-brand) 85%, #fff);
 }
 
 .sendBtn:disabled {
-  opacity: 0.3;
+  opacity: 0.4;
   cursor: default;
-  box-shadow: none;
+}
+
+.sendBtn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── composer 接管：权限申请（ApprovalPanel 风格） ────────────────────────── */
+
+.takeover {
+  margin-top: 16px;
+}
+
+.approvalCard {
+  overflow: hidden;
+  width: 100%;
+  border: 1px solid var(--sd-warning);
+  border-radius: 20px;
+  background: var(--sd-surface);
+  box-shadow: var(--sd-card-shadow);
+}
+
+.approvalStrip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--sd-warning) 12%, transparent);
+  color: var(--sd-warning);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.approvalDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sd-warning);
+  animation: sd-pulse 1.2s infinite;
+}
+
+@keyframes sd-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.approvalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 12px 16px 0;
+}
+
+.approvalHeadline {
+  color: var(--sd-foreground);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.approvalCommand {
+  color: var(--sd-muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.approvalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 16px;
+}
+
+.approvalBtn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.approvalBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.approvalReject {
+  background: transparent;
+  border: 1px solid var(--sd-border);
+  color: var(--sd-foreground);
+}
+
+.approvalReject:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sd-destructive) 8%, transparent);
+  color: var(--sd-destructive);
+  border-color: transparent;
+}
+
+.approvalGhost {
+  background: transparent;
+  border: none;
+  color: var(--sd-muted-foreground);
+}
+
+.approvalGhost:hover:not(:disabled) {
+  color: var(--sd-foreground);
+}
+
+.approvalAllow {
+  background: var(--sd-primary);
+  color: var(--sd-primary-foreground);
+  border: none;
+}
+
+.approvalAllow:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+/* ── composer 接管：问题选择（QuestionComposer 风格） ─────────────────────── */
+
+.questionCard {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: min(60vh, 520px);
+  padding: 0 0 10px;
+  border: 1px solid color-mix(in srgb, var(--sd-border) 80%, transparent);
+  border-radius: 20px;
+  background: var(--sd-surface);
+  box-shadow: var(--sd-card-shadow);
+  color: var(--sd-foreground);
+  overflow: hidden;
+}
+
+.qHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+  padding: 20px 16px 0 24px;
+}
+
+.qHeadingBlock {
+  min-width: 0;
+}
+
+.qEyebrow {
+  margin-bottom: 5px;
+  color: var(--sd-muted-foreground);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.qTitle {
+  margin: 0;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.qHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.qIconBtn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sd-muted-foreground);
+  cursor: pointer;
+}
+
+.qIconBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.qIconBtn:hover:not(:disabled) {
+  background: var(--sd-accent);
+  color: var(--sd-foreground);
+}
+
+.qIconBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.qBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.qOptions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 8px 0 0;
+  padding: 4px 12px;
+}
+
+.qOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  flex-shrink: 0;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.qOption:hover,
+.qOptionSelected {
+  background: var(--sd-accent);
+}
+
+.qOptionSelected {
+  border-color: var(--sd-border);
+}
+
+.qNumber {
+  display: grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  border-radius: 6px;
+  background: var(--sd-surface-hover);
+  color: var(--sd-muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.qCheckbox {
+  display: grid;
+  place-items: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  border: 1px solid var(--sd-border);
+  border-radius: 6px;
+  background: var(--sd-surface);
+  color: var(--sd-brand);
+  font-size: 12px;
+}
+
+.qCheckboxChecked {
+  background: var(--sd-surface-selected, color-mix(in srgb, var(--sd-brand) 12%, transparent));
+}
+
+.qOptionCopy {
+  min-width: 0;
+  flex: 1;
+}
+
+.qOptionLine {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+
+.qOptionLabel {
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 500;
+}
+
+.qBadge {
+  padding: 0 4px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sd-brand) 12%, transparent);
+  color: var(--sd-brand);
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.qDesc {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--sd-muted-foreground);
+}
+
+.qCustom {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px 8px 8px;
+  border-radius: 12px;
+}
+
+.qCustom:hover,
+.qCustom:focus-within {
+  background: var(--sd-accent);
+}
+
+.qCustom input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--sd-foreground);
+  font-family: inherit;
+  margin-top: 2px;
+}
+
+.qCustom input::placeholder {
+  color: var(--sd-muted-foreground);
+}
+
+.qTextarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px 8px 8px;
+  border: none;
+  border-radius: 12px;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--sd-foreground);
+  font-family: inherit;
+  resize: none;
+}
+
+.qTextarea:hover,
+.qTextarea:focus {
+  background: var(--sd-accent);
+}
+
+.qTextarea::placeholder {
+  color: var(--sd-muted-foreground);
+}
+
+.qFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  margin-top: 12px;
+  padding: 0 10px 0 18px;
+}
+
+.qPager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.qProgress {
+  padding: 0 4px;
+  color: var(--sd-muted-foreground);
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.qFeedback {
+  flex: 1;
+  min-width: 0;
+  color: var(--sd-destructive);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.qFooterActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.qBtn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.qBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.qSkip {
+  border: 1px solid var(--sd-border);
+  background: transparent;
+  color: var(--sd-foreground);
+}
+
+.qSkip:hover:not(:disabled) {
+  background: var(--sd-accent);
+}
+
+.qSend {
+  border: none;
+  background: var(--sd-primary);
+  color: var(--sd-primary-foreground);
+}
+
+.qSend:hover:not(:disabled) {
+  opacity: 0.9;
 }

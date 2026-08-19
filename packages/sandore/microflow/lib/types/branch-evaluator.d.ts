@@ -93,8 +93,6 @@ export declare class BranchEvaluator {
     /** 聚合 AI 临时会话输出为文本；error/aborted 抛 SandoreError。 */
     private aggregate;
     private runShellCommand;
-    private runShellSimple;
-    private runShellSubprocess;
     /** shell 结果 → 输出文本：成功返回 stdout，非零退出/超时/中止抛 SandoreError。 */
     private toStdout;
     /** 生成临时会话标识（随机 8 位 hex）。 */

@@ -9,20 +9,17 @@
  * @module @deepseek-ai/dsh-sandore-workflow/src/wire
  */
 import { z } from 'zod';
-import type { JobRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts';
+import type { WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts';
 /** `definitions` 表条目：记录键（workflowId）与 value 的合并。 */
 export interface WorkflowDefinitionEntry extends WorkflowDefinitionRecord {
-    id: string;
-}
-/** `jobs` 表条目：记录键（jobId）与 value 的合并。 */
-export interface JobEntry extends JobRecord {
     id: string;
 }
 /** 实例清单摘要（从 `state` 表派生）。 */
 export interface InstanceSummary {
     instanceId: string;
-    jobId: string;
     workflowId: string;
+    /** 作业需求（创建实例时的原始输入，供列表直接展示，无需再查详情）。 */
+    originalInput: string;
     status: WorkflowTaskState['status'];
     createdAt: string;
     updatedAt: string;
@@ -45,26 +42,23 @@ export declare const UpdateDefinitionInputSchema: z.ZodObject<{
     version: z.ZodOptional<z.ZodString>;
     description: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
-/** `createJob` 入参。 */
-export declare const CreateJobInputSchema: z.ZodObject<{
-    name: z.ZodString;
-    workflowId: z.ZodString;
-    cwd: z.ZodOptional<z.ZodString>;
+/** 创建实例时选择的模型（对齐 DSH `ModelSelection`）。 */
+export declare const StartModelSelectionSchema: z.ZodObject<{
+    provider: z.ZodString;
+    model: z.ZodString;
+    reasoningEffort: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
-/** `listJobs` 入参：可选按 workflowId 过滤（RPC 面统一对象入参，避免可选参数退化）。 */
-export declare const ListJobsInputSchema: z.ZodObject<{
-    workflowId: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>;
-/** `updateJob` 入参。 */
-export declare const UpdateJobInputSchema: z.ZodObject<{
-    name: z.ZodOptional<z.ZodString>;
-    cwd: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>;
-/** `startInstance` 入参。 */
+/** `startInstance` 入参（去 job 概念：直接绑定工作流定义 + 工作目录 + 模型/权限）。 */
 export declare const StartInstanceInputSchema: z.ZodObject<{
-    jobId: z.ZodString;
+    workflowId: z.ZodString;
     originalInput: z.ZodString;
     cwd: z.ZodOptional<z.ZodString>;
+    model: z.ZodOptional<z.ZodObject<{
+        provider: z.ZodString;
+        model: z.ZodString;
+        reasoningEffort: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>>;
+    permission: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 /** 单个问题回答的 zod 校验（对齐 DSH `AskUserQuestionAnswerItem`）。 */
 export declare const AskUserQuestionAnswerItemSchema: z.ZodObject<{
@@ -135,9 +129,7 @@ export declare const RetryStepInputSchema: z.ZodObject<{
 }, z.core.$strip>;
 export type CreateDefinitionInput = z.infer<typeof CreateDefinitionInputSchema>;
 export type UpdateDefinitionInput = z.infer<typeof UpdateDefinitionInputSchema>;
-export type CreateJobInput = z.infer<typeof CreateJobInputSchema>;
-export type ListJobsInput = z.infer<typeof ListJobsInputSchema>;
-export type UpdateJobInput = z.infer<typeof UpdateJobInputSchema>;
+export type StartModelSelectionInput = z.infer<typeof StartModelSelectionSchema>;
 export type StartInstanceInput = z.infer<typeof StartInstanceInputSchema>;
 export type ReplyQuestionInput = z.infer<typeof ReplyQuestionInputSchema>;
 export type ReplyPermissionInput = z.infer<typeof ReplyPermissionInputSchema>;

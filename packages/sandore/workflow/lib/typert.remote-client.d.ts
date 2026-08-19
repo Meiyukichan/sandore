@@ -7,11 +7,8 @@ import type { LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
 import type {
   ArtifactEntry,
   CreateDefinitionInput,
-  CreateJobInput,
   DagRun,
   InstanceSummary,
-  JobEntry,
-  ListJobsInput,
   PauseAllInput,
   PauseStepInput,
   PingResponse,
@@ -22,7 +19,6 @@ import type {
   RetryStepInput,
   StartInstanceInput,
   UpdateDefinitionInput,
-  UpdateJobInput,
   WorkflowDefinitionEntry,
   WorkflowTaskState,
 } from '@deepseek-ai/dsh-sandore-workflow/types'
@@ -31,7 +27,6 @@ export type {
   ArtifactEntry,
   DagRun,
   InstanceSummary,
-  JobEntry,
   PingResponse,
   WorkflowDefinitionEntry,
 } from '@deepseek-ai/dsh-sandore-workflow/types'
@@ -45,12 +40,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     deleteDefinition: (id: string) => Promise<RemoteResult<boolean>>
     getYaml: (id: string) => Promise<RemoteResult<string>>
     updateYaml: (id: string, yaml: string) => Promise<RemoteResult<WorkflowDefinitionEntry>>
-    listJobs: (input: ListJobsInput) => Promise<RemoteResult<JobEntry[]>>
-    createJob: (input: CreateJobInput) => Promise<RemoteResult<JobEntry>>
-    getJob: (id: string) => Promise<RemoteResult<JobEntry>>
-    updateJob: (id: string, input: UpdateJobInput) => Promise<RemoteResult<JobEntry>>
-    deleteJob: (id: string) => Promise<RemoteResult<boolean>>
-    listInstances: (jobId?: string) => Promise<RemoteResult<InstanceSummary[]>>
+    listInstances: () => Promise<RemoteResult<InstanceSummary[]>>
     startInstance: (input: StartInstanceInput) => Promise<RemoteResult<DagRun>>
     deleteInstance: (instanceId: string) => Promise<RemoteResult<boolean>>
     getInstanceState: (instanceId: string) => Promise<RemoteResult<WorkflowTaskState>>
@@ -74,12 +64,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'sandore/deleteDefinition': (id: string) => Promise<RemoteResult<boolean>>
     'sandore/getYaml': (id: string) => Promise<RemoteResult<string>>
     'sandore/updateYaml': (id: string, yaml: string) => Promise<RemoteResult<WorkflowDefinitionEntry>>
-    'sandore/listJobs': (input: ListJobsInput) => Promise<RemoteResult<JobEntry[]>>
-    'sandore/createJob': (input: CreateJobInput) => Promise<RemoteResult<JobEntry>>
-    'sandore/getJob': (id: string) => Promise<RemoteResult<JobEntry>>
-    'sandore/updateJob': (id: string, input: UpdateJobInput) => Promise<RemoteResult<JobEntry>>
-    'sandore/deleteJob': (id: string) => Promise<RemoteResult<boolean>>
-    'sandore/listInstances': (jobId?: string) => Promise<RemoteResult<InstanceSummary[]>>
+    'sandore/listInstances': () => Promise<RemoteResult<InstanceSummary[]>>
     'sandore/startInstance': (input: StartInstanceInput) => Promise<RemoteResult<DagRun>>
     'sandore/deleteInstance': (instanceId: string) => Promise<RemoteResult<boolean>>
     'sandore/getInstanceState': (instanceId: string) => Promise<RemoteResult<WorkflowTaskState>>

@@ -15,7 +15,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { Agent } from './subagents.ts';
-import type { CommandConfig, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { CommandConfig, SessionMessage, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 /** 子代理 ask 转接回调的入参（microflow 检测到标记块后上抛给 workflow 层解析）。 */
 export interface DelegatedAskContext {
     readonly childId: string;
@@ -40,8 +40,9 @@ export interface StepRunnerConfig {
     /**
      * 子代理真实 childId 就绪回调（由 workflow 层注入）：`startContinuable` 返回后、
      * `whenIdle` 挂起前调用，把真实子代理 SessionId 上抛给引擎（供暂停反查 childId）。
+     * 返回 Promise 时 runner 会 await（引擎借此把真实 childId 落盘后再继续）。
      */
-    readonly onChildStarted?: (stepId: string, childId: string) => void;
+    readonly onChildStarted?: (stepId: string, childId: string) => void | Promise<void>;
     /**
      * 子代理 ask 转接回调（由 workflow 层注入，microflow 不 import workflow 运行时）。
      * 子代理 final result 含 `[[SANDORE_ASK]]` 标记块时调用；返回 `true` 表示已转接
@@ -89,6 +90,8 @@ export interface StepRunSessionMeta {
 export interface StepRunResult {
     readonly output: ContentBlock[];
     readonly sessionMeta?: StepRunSessionMeta;
+    /** 子代理会话消息行（§3.8A：真实子代理采集，随结果带出写 `executed.sessionMessages`）。 */
+    readonly sessionMessages?: SessionMessage[];
 }
 /**
  * 单 Step 执行器。
@@ -105,7 +108,6 @@ export declare class StepRunner {
     run(request: StepRunRequest): Promise<StepRunResult>;
     private runShell;
     private runShellSimple;
-    private runShellSubprocess;
     private toShellResult;
     /** 解析 Step 级 timeout（分钟）→ 毫秒；缺省回退引擎 defaultTimeoutMs。 */
     private stepTimeoutMs;

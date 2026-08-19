@@ -22,7 +22,7 @@ import type { FinalizeAssessResult, DagBranch, Gates, WorkflowDefinition, Workfl
 import type { ResolveNextNodesContext, ResolveNextNodesResult } from '@deepseek-ai/dsh-sandore-workflow/src/dag-navigator';
 
 import { FinalizeManager } from './finalize-manager.ts';
-import { describeError, isCancellationError, textSummary } from './internal.ts';
+import { describeError, textSummary } from './internal.ts';
 import { LoopManager } from './loop-manager.ts';
 import { StepRunner } from './step-runner.ts';
 import type { StepRunnerConfig, PreviousStepOutput, StepRunResult } from './step-runner.ts';
@@ -47,7 +47,6 @@ export interface PassThroughVarValue {
 /** Stage 共享状态。 */
 export interface StageSharedState {
   readonly cwd: string;
-  readonly jobId: string;
   readonly taskId: string;
 }
 
@@ -107,6 +106,19 @@ export interface StageExecutionResult {
 function synthesizeChildId(stepId: string): string {
   const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
   return `step-${stepId}-${execId}`;
+}
+
+/** 生成执行段唯一 id（纯 UUID；每次执行段一个新 id，与 childId 解耦）。 */
+function newExecId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
+/** ask 收尾闭环的最大轮次（防子代理基于回答反复产出未完成结果导致无限重问）。 */
+const MAX_FINALIZE_ASK_ROUNDS = 3;
+
+/** 当前时间 ISO 串（供 executedStep 的 startedAt/updatedAt 写入）。 */
+function now(): string {
+  return new Date().toISOString();
 }
 
 /** 收集 Stage 内全部 Step 定义的透传变量（steps 为合并后的完整 Step）。 */
@@ -213,12 +225,14 @@ interface StageRunState {
   nextBatch: string[];
   status: StepStatus;
   errorDetail: string | undefined;
-  /** ask 断点：等待回复的 Step 及其收尾评估结果（resume 时重跑门禁 + 推进下一批）。 */
+  /** ask 断点：等待回复的 Step 及其收尾评估结果（resume 时重收集输出 + 重跑完整 finalize）。 */
   pendingAsk: {
     readonly nodeId: string;
     readonly step: WorkflowStep;
     readonly executed: ExecutedStepDefault;
     readonly assessResult: FinalizeAssessResult;
+    /** 已发生的 ask 轮次数（防无限重问；达到上限后按普通输出推进）。 */
+    readonly rounds: number;
   } | undefined;
   /** paused 断点：被 interrupt 打断且命中暂停登记表的子代理 Step（resume 后重新收集输出续跑）。 */
   pendingPaused: {
@@ -265,9 +279,9 @@ export class StageExecutor {
     }
     return {
       ...runnerConfig,
-      onChildStarted: (stepId, childId) => {
+      onChildStarted: async (stepId, childId) => {
         this.realChildIds.set(stepId, childId);
-        onChildStarted(stepId, childId);
+        await onChildStarted(stepId, childId);
       },
     };
   }
@@ -299,7 +313,9 @@ export class StageExecutor {
     }
     if (state.pendingAsk !== undefined) {
       const resumed = await this.resumePendingAsk(state);
-      if (resumed === 'failed') {
+      if (resumed !== 'ok') {
+        // 'ask'：新 output 再次判定需提问（断点已重新挂回），引擎 ask 循环再走一轮；
+        // 'failed'：收尾失败。两者均返回 buildResult 交引擎处理。
         return this.buildResult(state);
       }
     }
@@ -419,14 +435,16 @@ export class StageExecutor {
     const hasLoopMeta = routed.loopMeta !== undefined;
     if (!isLoopControl || hasBranchMeta || hasLoopMeta) {
       const inLoopRouting = loopManager.buildLoopIterationPath().length > 0;
-      const routingChildId = inLoopRouting ? loopManager.getActualStepId(step.id) : synthesizeChildId(step.id);
       const routingEntry: ExecutedStepDefault = {
-        type: 'default',
-        id: routingChildId,
+        id: newExecId(),
         stepId: step.id,
         stageId: stageDef.id,
         name: step.name ?? step.id,
         status: 'completed',
+        createdAt: now(),
+        attemptIndex: 0,
+        startedAt: now(),
+        updatedAt: now(),
         visitCount: (visitCounts[nodeId] ?? 0) + 1,
         ...(inLoopRouting ? { loopIteration: loopManager.buildLoopIterationPath() } : {}),
         ...(hasBranchMeta ? { branchMeta: routed.branchMeta } : {}),
@@ -444,14 +462,18 @@ export class StageExecutor {
     const { stageDef, input, sharedState, signal, hooks, loopManager, visitCounts } = this.options;
     const command = step.command;
     const inLoop = loopManager.buildLoopIterationPath().length > 0;
+    // executed.id = 执行段唯一 id（纯 UUID）；childId = sessionMeta 子代理占位/真实会话
+    // id（两者解耦：同一 Step 多次执行段各自新 id，子代理会话 id 可复用/由 onChildStarted 更新）。
     const childId = inLoop ? loopManager.getActualStepId(step.id) : synthesizeChildId(step.id);
     const executed: ExecutedStepDefault = {
-      type: 'default',
-      id: childId,
+      id: newExecId(),
       stepId: step.id,
       stageId: stageDef.id,
       name: step.name ?? step.id,
       status: 'running',
+      createdAt: now(),
+      attemptIndex: 0,
+      startedAt: now(),
       ...(command === undefined ? {} : { command }),
       ...(step.inputFrom === undefined ? {} : { inputFrom: step.inputFrom }),
       ...(step.outputTo === undefined ? {} : { outputTo: step.outputTo }),
@@ -472,6 +494,7 @@ export class StageExecutor {
       const message = `step '${step.id}' has no command`;
       executed.status = 'failed';
       executed.error = message;
+      executed.updatedAt = now();
       state.executedSteps.push(executed);
       hooks?.onStepFailed(step, childId, message);
       await this.options.onPersist?.(executed);
@@ -495,10 +518,21 @@ export class StageExecutor {
       });
       return await this.finishCommandNode(nodeId, step, childId, executed, result, state);
     } catch (error) {
-      // 取消类错误：`interrupt` 打断 whenIdle/执行 Promise 时以取消结束。查暂停登记表
-      // 命中 → Step 保持 paused（不落 failed、不发 step-failed）；未命中 → 按失败处理。
-      if (isCancellationError(error) && this.isPausedStep(step.id)) {
+      // 暂停判定：**以暂停登记表为权威**（不再依赖错误形状）。
+      //
+      // 真实 DSH 语义（2026-08 e2e 确认）：`Agent.cancel()` 只 abort 当前 phase 的
+      // signal，agent-loop 的 `kick()` 在 driver 边界吞掉取消错误 → `whenIdle()`
+      // **正常 resolve**（不 reject）。因此 `interrupt` 打断后 `collectSubagentOutput`
+      // 拿到空输出，抛的是 `'subagent produced no assistant output'`
+      // （code STEP_EXECUTION，非 CANCELLED）——`isCancellationError` 判 false，
+      // 若按错误形状路由会把已暂停 Step 误标 failed。
+      //
+      // 正确路由：interrupt 已把 childId 登记进暂停登记表（pauseStep 同步 add），
+      // 这里查登记表命中 → Step 保持 paused（不落 failed、不发 step-failed）；
+      // 未命中 → 按失败处理（含真正的取消类错误、模型失败等）。
+      if (this.isPausedStep(step.id)) {
         executed.status = 'paused';
+        executed.updatedAt = now();
         state.executedSteps.push(executed);
         state.status = 'paused';
         state.pendingPaused = { nodeId, step, executed, childId: this.realChildIds.get(step.id) ?? childId };
@@ -507,6 +541,7 @@ export class StageExecutor {
       const message = describeError(error);
       executed.status = 'failed';
       executed.error = message;
+      executed.updatedAt = now();
       // 失败时同步真实子代理 childId（onChildStarted 已记录），供重试/暂停反查真实 child 续跑。
       const realChildId = this.realChildIds.get(step.id);
       if (executed.sessionMeta !== undefined && realChildId !== undefined) {
@@ -536,7 +571,13 @@ export class StageExecutor {
   ): Promise<'ok' | 'ask' | 'failed'> {
     const { stageDef, input, sharedState, signal, hooks, finalizeManager, resolveNextNodes } = this.options;
     executed.status = 'completed';
+    executed.updatedAt = now();
     executed.output = result.output;
+    // §3.8A：真实子代理会话消息随结果带出，写入段快照（onPersist 持久化定格；
+    // shell/prompt 无该字段 → 前端走 fallback）。
+    if (result.sessionMessages !== undefined) {
+      executed.sessionMessages = result.sessionMessages;
+    }
     if (result.sessionMeta !== undefined) {
       executed.sessionMeta = {
         childId: result.sessionMeta.childId ?? childId,
@@ -565,7 +606,7 @@ export class StageExecutor {
     if (finalizeOutcome.type === 'ask') {
       // ask 中断：保留断点（剩余 Step 不丢失），等待引擎 ask 回复后续跑。
       await this.options.onPersist?.(executed);
-      state.pendingAsk = { nodeId, step, executed, assessResult: finalizeOutcome.assessResult };
+      state.pendingAsk = { nodeId, step, executed, assessResult: finalizeOutcome.assessResult, rounds: 0 };
       state.status = 'interacting';
       return 'ask';
     }
@@ -573,6 +614,7 @@ export class StageExecutor {
       const message = finalizeOutcome.errorDetail;
       executed.status = 'failed';
       executed.error = message;
+      executed.updatedAt = now();
       hooks?.onStepFailed(step, result.sessionMeta?.childId ?? childId, message);
       await this.options.onPersist?.(executed);
       state.status = 'failed';
@@ -593,11 +635,32 @@ export class StageExecutor {
     return 'ok';
   }
 
-  /** pause 后从断点续跑：重新收集子代理输出（whenIdle + final output），随后走公共收尾。 */
+  /**
+   * pause 后从断点续跑：基于被暂停段**新建执行段**（新 id + attemptIndex+1 + createdAt，
+   * sessionMeta 保持原 childId）后重新收集子代理输出 + 公共收尾。
+   *
+   * 段创建权归执行器（§3.5 定夺）：lifecycle 的 resumeStep 只负责 followup/登记表/消息/事件，
+   * 新段由这里创建——旧 paused 段保持定格快照，新段以新 id 走 finishCommandNode 追加。
+   */
   private async resumePendingPaused(state: StageRunState): Promise<'ok' | 'ask' | 'failed'> {
     const pending = state.pendingPaused!;
     state.pendingPaused = undefined;
-    return this.resumeSubagentStep(state, pending.nodeId, pending.step, pending.executed, pending.childId);
+    const base = pending.executed;
+    // 新段继承旧段快照但清除暂停/失败细节（exactOptionalPropertyTypes 下不能赋 undefined，
+    // 用解构剔除字段；sessionMeta 保持原 childId，仅清暂停细节）。
+    const { pausedAt: _pausedAt, error: _error, ...rest } = base;
+    const segment: ExecutedStepDefault = {
+      ...rest,
+      id: newExecId(),
+      attemptIndex: (base.attemptIndex ?? 0) + 1,
+      createdAt: now(),
+      startedAt: now(),
+      status: 'running',
+      ...(base.sessionMeta === undefined ? {} : { sessionMeta: { ...base.sessionMeta, childId: pending.childId } }),
+    };
+    // running 新段先持久化（崩溃恢复/暂停定位需要 executedSteps 含运行中 Step）。
+    await this.options.onPersist?.(segment);
+    return this.resumeSubagentStep(state, pending.nodeId, pending.step, segment, pending.childId);
   }
 
   /** 崩溃恢复/重试续跑：重新收集子代理输出（whenIdle + final output），随后走公共收尾。 */
@@ -621,13 +684,34 @@ export class StageExecutor {
       const message = `step '${step.id}' is not a resumable subagent step`;
       executed.status = 'failed';
       executed.error = message;
+      executed.updatedAt = now();
       await this.options.onPersist?.(executed);
       state.status = 'failed';
       state.errorDetail = message;
       return 'failed';
     }
-    const result = await this.runner.resumeSubagent(command.type, childId, step.id, this.options.stageDef.id);
-    return this.finishCommandNode(nodeId, step, childId, executed, result, state);
+    try {
+      const result = await this.runner.resumeSubagent(command.type, childId, step.id, this.options.stageDef.id);
+      return await this.finishCommandNode(nodeId, step, childId, executed, result, state);
+    } catch (error) {
+      // 续跑重收集输出失败（子代理无输出/模型错误等）：与首次执行一致落 failed。
+      // e2e 确认（2026-08）：此前异常直接冒泡，新段停在 running 造成「实例 failed +
+      // 段 running」不一致（retry 场景显式暴露）。续跑路径登记表已清（resume 前移出），
+      // paused 分支不可达，直接落 failed。
+      const message = describeError(error);
+      executed.status = 'failed';
+      executed.error = message;
+      executed.updatedAt = now();
+      const realChildId = this.realChildIds.get(step.id);
+      if (executed.sessionMeta !== undefined && realChildId !== undefined) {
+        executed.sessionMeta = { ...executed.sessionMeta, childId: realChildId, synthetic: false };
+      }
+      this.options.hooks?.onStepFailed(step, realChildId ?? childId, message);
+      await this.options.onPersist?.(executed);
+      state.status = 'failed';
+      state.errorDetail = message;
+      return 'failed';
+    }
   }
 
   /** 取消类错误下，Step 是否命中暂停登记表（真实 childId 已暂停 → 保持 paused）。 */
@@ -639,13 +723,89 @@ export class StageExecutor {
     return this.options.runnerConfig.isPausedChild?.(childId) === true;
   }
 
-  /** ask 回复后从断点续跑：重跑门禁审查，随后推进下一批节点。 */
-  private async resumePendingAsk(state: StageRunState): Promise<'ok' | 'failed'> {
+  /** ask 回复后从断点续跑：真实子代理先重收集新 output，随后重跑收尾并推进下一批。 */
+  private async resumePendingAsk(state: StageRunState): Promise<'ok' | 'ask' | 'failed'> {
     const { stageDef, input, sharedState, signal, hooks, finalizeManager, resolveNextNodes } = this.options;
     const pending = state.pendingAsk!;
     state.pendingAsk = undefined;
-    const { nodeId, step, executed, assessResult } = pending;
+    const { nodeId, step, executed, assessResult, rounds } = pending;
 
+    // §3.6A：真实子代理（synthetic === false）的回答已被引擎 followup 注回，这里重新
+    // 收集子代理基于回答产生的新 output，并以新 output 重跑**完整 finalize**（重新评估，
+    // 可能再次 ask → 挂回断点续问，受 MAX_FINALIZE_ASK_ROUNDS 上限保护）。
+    const childId = executed.sessionMeta?.childId;
+    const commandType = step.command?.type;
+    const isRealSubagent = childId !== undefined
+      && executed.sessionMeta?.synthetic === false
+      && (commandType === 'agent' || commandType === 'skill' || commandType === 'mcp');
+
+    if (isRealSubagent) {
+      const result = await this.runner.resumeSubagent(commandType!, childId!, step.id, stageDef.id);
+      executed.output = result.output;
+      executed.updatedAt = now();
+      // §3.8A：回答注回后子代理新产出 → 消息行随新输出更新。
+      if (result.sessionMessages !== undefined) {
+        executed.sessionMessages = result.sessionMessages;
+      }
+      await this.options.onPersist?.(executed);
+      const gates = mergeGates(this.options.workflowDef, stageDef, step);
+      const finalizeOutcome = await finalizeManager.finalizeStep({
+        step,
+        executedStep: executed,
+        stepSessionId: childId,
+        context: { input: input.originalInput, output: textSummary(executed.output) },
+        ...(gates === undefined ? {} : { gates }),
+        workdir: sharedState.cwd,
+        passThroughVars: state.passThroughVars,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      if (finalizeOutcome.type === 'ask') {
+        if (rounds + 1 >= MAX_FINALIZE_ASK_ROUNDS) {
+          // 达到轮次上限：按普通输出推进（不再续问；最后 output 视为完成）。
+          executed.status = 'completed';
+          executed.updatedAt = now();
+          await this.options.onPersist?.(executed);
+          const routed = await resolveNextNodes(nodeId, this.buildContext(state));
+          if (routed.branchMeta !== undefined) {
+            executed.branchMeta = routed.branchMeta;
+          }
+          if (routed.loopMeta !== undefined) {
+            executed.loopMeta = routed.loopMeta;
+          }
+          await this.options.onPersist?.(executed);
+          state.nextBatch.push(...routed.nextNodeIds);
+          state.status = 'completed';
+          return 'ok';
+        }
+        state.pendingAsk = { nodeId, step, executed, assessResult: finalizeOutcome.assessResult, rounds: rounds + 1 };
+        state.status = 'interacting';
+        return 'ask';
+      }
+      if (finalizeOutcome.type === 'error') {
+        const message = finalizeOutcome.errorDetail;
+        executed.status = 'failed';
+        executed.error = message;
+        executed.updatedAt = now();
+        hooks?.onStepFailed(step, childId, message);
+        await this.options.onPersist?.(executed);
+        state.status = 'failed';
+        state.errorDetail = message;
+        return 'failed';
+      }
+      const routed = await resolveNextNodes(nodeId, this.buildContext(state));
+      if (routed.branchMeta !== undefined) {
+        executed.branchMeta = routed.branchMeta;
+      }
+      if (routed.loopMeta !== undefined) {
+        executed.loopMeta = routed.loopMeta;
+      }
+      await this.options.onPersist?.(executed);
+      state.nextBatch.push(...routed.nextNodeIds);
+      state.status = 'completed';
+      return 'ok';
+    }
+
+    // 无真实会话（shell/prompt）：走原路径——评估已在首次 finalizeStep 完成，仅重跑门禁。
     const gates = mergeGates(this.options.workflowDef, stageDef, step);
     const finalizeOutcome = await finalizeManager.finalizeStepAfterAsk({
       step,
@@ -662,6 +822,7 @@ export class StageExecutor {
       const message = finalizeOutcome.errorDetail;
       executed.status = 'failed';
       executed.error = message;
+      executed.updatedAt = now();
       hooks?.onStepFailed(step, executed.sessionMeta?.childId ?? executed.id, message);
       await this.options.onPersist?.(executed);
       state.status = 'failed';

@@ -15,11 +15,9 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { SandoreError } from './errors.ts'
 import type { AskUserQuestionAnswer, DagRun, DagStartRequest } from './types.ts'
 import { parseWorkflowYaml, serializeWorkflowYaml } from './yaml-parser.ts'
-import type { JobRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
+import type { WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
 import {
   CreateDefinitionInputSchema,
-  CreateJobInputSchema,
-  ListJobsInputSchema,
   PauseAllInputSchema,
   PauseStepInputSchema,
   ReplyPermissionInputSchema,
@@ -29,15 +27,11 @@ import {
   RetryStepInputSchema,
   StartInstanceInputSchema,
   UpdateDefinitionInputSchema,
-  UpdateJobInputSchema,
 } from './wire.ts'
 import type {
   ArtifactEntry,
   CreateDefinitionInput,
-  CreateJobInput,
   InstanceSummary,
-  JobEntry,
-  ListJobsInput,
   PauseAllInput,
   PauseStepInput,
   PingResponse,
@@ -48,7 +42,6 @@ import type {
   RetryStepInput,
   StartInstanceInput,
   UpdateDefinitionInput,
-  UpdateJobInput,
   WorkflowDefinitionEntry,
 } from './wire.ts'
 
@@ -159,82 +152,17 @@ export class SandoreRemote extends TypertRemoteService {
     return { id, ...next }
   }
 
-  // ── Job CRUD ─────────────────────────────────────────────────────────────
-
-  /** 列出 Job，可选按 workflowId 过滤（对象入参，RPC 面稳定）。 */
-  @Remote('listJobs')
-  listJobs(input: ListJobsInput): JobEntry[] {
-    const parsed = ListJobsInputSchema.parse(input)
-    const entries: JobEntry[] = []
-    for (const [id, record] of this.ctx.sandorePersistence.jobs.entries()) {
-      if (parsed.workflowId !== undefined && record.workflowId !== parsed.workflowId) continue
-      entries.push({ id, ...record })
-    }
-    return entries
-  }
-
-  /** 创建 Job：校验 workflowId 存在（否则抛 `INVALID_OPERATION`），自动生成 jobId。 */
-  @Remote('createJob')
-  async createJob(input: CreateJobInput): Promise<JobEntry> {
-    const parsed = CreateJobInputSchema.parse(input)
-    if (this.ctx.sandorePersistence.definitions.get(parsed.workflowId) === undefined) {
-      throw new SandoreError(`workflow '${parsed.workflowId}' does not exist`, 'INVALID_OPERATION')
-    }
-    const id = `job-${globalThis.crypto.randomUUID()}`
-    const now = new Date().toISOString()
-    const record: JobRecord = {
-      name: parsed.name,
-      workflowId: parsed.workflowId,
-      ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
-      createdAt: now,
-      updatedAt: now,
-    }
-    await this.ctx.sandorePersistence.jobs.put(id, record)
-    return { id, ...record }
-  }
-
-  /** 按 id 读取单个 Job。 */
-  @Remote('getJob')
-  getJob(id: string): JobEntry {
-    return this.requireJob(id)
-  }
-
-  /** 更新 Job 元数据（name/cwd），保留 workflowId。 */
-  @Remote('updateJob')
-  async updateJob(id: string, input: UpdateJobInput): Promise<JobEntry> {
-    const parsed = UpdateJobInputSchema.parse(input)
-    const existing = this.requireJob(id)
-    const now = new Date().toISOString()
-    const cwd = parsed.cwd ?? existing.cwd
-    const next: JobRecord = {
-      name: parsed.name ?? existing.name,
-      workflowId: existing.workflowId,
-      ...(cwd === undefined ? {} : { cwd }),
-      createdAt: existing.createdAt,
-      updatedAt: now,
-    }
-    await this.ctx.sandorePersistence.jobs.put(id, next)
-    return { id, ...next }
-  }
-
-  /** 删除 Job（不级联删除实例）；重复删除幂等（返回 false）。 */
-  @Remote('deleteJob')
-  async deleteJob(id: string): Promise<boolean> {
-    return await this.ctx.sandorePersistence.jobs.delete(id)
-  }
-
   // ── 实例生命周期 ─────────────────────────────────────────────────────────
 
-  /** 列出实例摘要（从 `state` 表派生），可选按 jobId 过滤。 */
+  /** 列出实例摘要（从 `state` 表派生，去 job 概念）。 */
   @Remote('listInstances')
-  listInstances(jobId?: string): InstanceSummary[] {
+  listInstances(): InstanceSummary[] {
     const summaries: InstanceSummary[] = []
     for (const [instanceId, state] of this.ctx.sandorePersistence.state.entries()) {
-      if (jobId !== undefined && state.jobId !== jobId) continue
       summaries.push({
         instanceId,
-        jobId: state.jobId,
         workflowId: state.workflowId,
+        originalInput: state.originalInput,
         status: state.status,
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
@@ -243,17 +171,20 @@ export class SandoreRemote extends TypertRemoteService {
     return summaries
   }
 
-  /** 启动实例：解析 Job 的 workflowId 后转发 `ctx.sandoreEngine.startInstance`。 */
+  /** 启动实例：校验定义存在后转发 `ctx.sandoreEngine.startInstance`（去 job 概念）。 */
   @Remote('startInstance')
   async startInstance(input: StartInstanceInput): Promise<DagRun> {
     const parsed = StartInstanceInputSchema.parse(input)
-    const job = this.requireJob(parsed.jobId)
-    const request: DagStartRequest = {
-      workflowId: job.workflowId,
-      jobId: parsed.jobId,
+    if (this.ctx.sandorePersistence.definitions.get(parsed.workflowId) === undefined) {
+      throw new SandoreError(`workflow '${parsed.workflowId}' does not exist`, 'INVALID_OPERATION')
+    }
+    const request = {
+      workflowId: parsed.workflowId,
       originalInput: parsed.originalInput,
       ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
-    }
+      ...(parsed.model === undefined ? {} : { model: parsed.model }),
+      ...(parsed.permission === undefined ? {} : { permission: parsed.permission }),
+    } as DagStartRequest
     return await this.ctx.sandoreEngine.startInstance(request)
   }
 
@@ -374,14 +305,6 @@ export class SandoreRemote extends TypertRemoteService {
     const record = this.ctx.sandorePersistence.definitions.get(id)
     if (record === undefined) {
       throw new SandoreError(`definition '${id}' not found`, 'NODE_NOT_FOUND')
-    }
-    return { id, ...record }
-  }
-
-  private requireJob(id: string): JobEntry {
-    const record = this.ctx.sandorePersistence.jobs.get(id)
-    if (record === undefined) {
-      throw new SandoreError(`job '${id}' not found`, 'NODE_NOT_FOUND')
     }
     return { id, ...record }
   }

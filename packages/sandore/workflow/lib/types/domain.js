@@ -7,14 +7,13 @@
  * @module @deepseek-ai/dsh-sandore-workflow/src/domain
  */
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain';
-import { JobRecordSchema, WorkflowDefinitionRecordSchema, WorkflowTaskStateSchema, } from "./schema.js";
-/** sandore 存储域声明：三表 `definitions`/`jobs`/`state`，Zod 校验每一条记录。 */
+import { WorkflowDefinitionRecordSchema, WorkflowTaskStateSchema, } from "./schema.js";
+/** sandore 存储域声明：两表 `definitions`/`state`，Zod 校验每一条记录（去 job 概念）。 */
 export const sandoreDomainSpec = defineDomain({
     name: 'sandore',
     version: 1,
     tables: {
         definitions: domainTable(WorkflowDefinitionRecordSchema),
-        jobs: domainTable(JobRecordSchema),
         state: domainTable(WorkflowTaskStateSchema),
     },
 });

@@ -35,6 +35,15 @@ export interface InteractionManagerOptions {
     readonly followup: (childId: string, content: ContentBlock[]) => Promise<void> | void;
 }
 /**
+ * `AskUserQuestionAnswer` → 注回子代理/写 userMessages 的可读文本。
+ *
+ * 每题一行：选中项 `selected` 用 `、` 连接，`custom` 自由文本追加为「（补充：…）」；
+ * 无选中项仅自由文本时输出自由文本本身。空答案条目跳过。
+ * @param answer - 用户整批回答。
+ * @returns 多行可读文本。
+ */
+export declare function buildAnswerText(answer: AskUserQuestionAnswer): string;
+/**
  * 解析子代理 final result 中的保守标记块 `[[SANDORE_ASK]]{...json...}[[/SANDORE_ASK]]`。
  *
  * 仅解析首个标记块；JSON 解析失败、`AskUserQuestionPayloadSchema` 校验不通过或
@@ -110,7 +119,14 @@ export declare class InteractionManager {
     private finishQuestion;
     /** 卡片 ask 失败（取消/拒绝）时清理 pending 条目并拒绝其等待 Promise。 */
     private failQuestion;
-    /** 把活跃 pending + 终态历史全量镜像持久化到状态快照。 */
+    /**
+     * 把活跃 pending 条目镜像持久化到状态快照（**只含 pending**，不含终态历史）。
+     *
+     * 探索修正（2026-08）：原实现持久化 pending + resolvedEntries 全量历史，前端
+     * `partitionInteractions` 不筛 status → 回答/批准后 5s 轮询再次弹出接管面板，
+     * 二次提交抛 INVALID_OPERATION 无法关闭。终态条目不再进快照（历史由 userMessages
+     * 与 executedSteps 承载）；resolvedEntries 仅保留内存作审计。
+     */
     private syncState;
 }
 //# sourceMappingURL=interaction-manager.d.ts.map

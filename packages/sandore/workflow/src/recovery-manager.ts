@@ -28,7 +28,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session';
 
 import type { AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { SandoreError } from './errors.ts';
-import type { RetryRecord, WorkflowTaskState } from './schema.ts';
+import type { RetryRecord, UserMessageRecord, WorkflowTaskState } from './schema.ts';
 
 /** 重试三模式。 */
 export type RetryMode = 'continue' | 'revert' | 'fork';
@@ -57,6 +57,8 @@ export interface RecoveryManagerOptions {
   readonly readState: () => WorkflowTaskState;
   /** 不可变重建 + 持久化当前状态快照。 */
   readonly commitState: (next: WorkflowTaskState) => void;
+  /** 追加一条用户指令消息（写入 `state.userMessages` 并持久化）。 */
+  readonly appendUserMessage: (record: UserMessageRecord) => void;
   /** `ctx.subagents.followup` 的注入包装（已绑定宿主主代理作 parent）。 */
   readonly followup: (childId: string, content: ContentBlock[], signal: AbortSignal) => Promise<void> | void;
   /** `ctx.agents.create` 的注入包装（revert/fork 创建带 seed 的新子代理）。 */
@@ -153,15 +155,27 @@ export class RecoveryManager {
       throw new SandoreError(`step '${stepId}' is not a resumable subagent step (shell/prompt cannot be retried)`, 'INVALID_OPERATION');
     }
 
-    // 1. 清残留字段 + 置 running + RetryRecord 入 retryHistory（result 先 running）。
+    // 1. 以 failed 段为基底追加新段（保留旧 failed 段定格快照）+ RetryRecord 入新段 retryHistory。
     const retryRecord: RetryRecord = { mode, timestamp: now(), userMessage: message, result: 'running' };
     const cleaned = cleanStepResidue(step);
+    const newSegmentId = globalThis.crypto.randomUUID();
     let runningStep: ExecutedStep = {
       ...cleaned,
+      id: newSegmentId,
+      attemptIndex: (cleaned.attemptIndex ?? 0) + 1,
+      createdAt: now(),
+      startedAt: now(),
       status: 'running',
       retryHistory: [...(cleaned.retryHistory ?? []), retryRecord],
     };
     this.commitRunningStep(state, runningStep);
+    this.deps.appendUserMessage({
+      id: `usr-${globalThis.crypto.randomUUID()}`,
+      kind: 'retry',
+      target: stepIdOf(step),
+      content: message,
+      createdAt: now(),
+    });
     this.deps.emitStepRetried(stepIdOf(step), mode, step.name, step.loopIteration);
 
     // 2. 按模式准备子代理会话（revert/fork 需 fork + 新 agent + 更新 childId/parentSessionId）。
@@ -187,19 +201,21 @@ export class RecoveryManager {
           seed: forked.events,
         });
         // 更新 sessionMeta.childId 为新 session id，parentSessionId 记旧值。
+        // 注意：此处是同 id 段的原地更新（upsert），不能再用 commitRunningStep（append）——
+        // 否则 executedSteps 会出现两个同 id 段。
         const sessionMeta = {
           ...(runningStep.sessionMeta ?? { command: 'agent' as const, synthetic: false }),
           childId: newChildId,
           synthetic: false,
         };
         runningStep = { ...runningStep, sessionMeta, parentSessionId: childId };
-        this.commitRunningStep(this.deps.readState(), runningStep);
+        this.commitStep(this.deps.readState(), runningStep);
         childId = newChildId;
       }
       await this.deps.followup(childId, textBlock(message), this.deps.signal);
     } catch (error) {
-      // 会话准备或 followup 失败：回退 Step/工作流为 failed 并记录失败结果，保持可重试。
-      this.failRetry(step.id);
+      // 会话准备或 followup 失败：回退新段/工作流为 failed 并记录失败结果，保持可重试。
+      this.failRetry(newSegmentId);
       throw error;
     }
 
@@ -207,15 +223,15 @@ export class RecoveryManager {
     try {
       await this.deps.resumeExecution();
     } catch (error) {
-      this.failRetry(step.id);
+      this.failRetry(newSegmentId);
       throw error;
     }
 
-    // 4. 据实际结果更新 retryHistory 末条 result。
+    // 4. 据实际结果更新新段 retryHistory 末条 result。
     const finalState = this.deps.readState();
-    const finalStep = findStep(finalState.executedSteps, step.id);
+    const finalStep = findStep(finalState.executedSteps, newSegmentId);
     const result = finalStep?.status === 'completed' ? 'completed' : 'failed';
-    this.setRetryResult(step.id, result);
+    this.setRetryResult(newSegmentId, result);
   }
 
   /**
@@ -266,12 +282,12 @@ export class RecoveryManager {
     });
   }
 
-  /** 重试发起：更新单个 Step 为 running 并置实例 running + updatedAt。 */
+  /** 重试发起：追加新执行段（保留旧 failed 段定格快照）并置实例 running + updatedAt。 */
   private commitRunningStep(prev: WorkflowTaskState, step: ExecutedStep): void {
     this.deps.commitState({
       ...prev,
       status: 'running',
-      executedSteps: prev.executedSteps.map(item => (item.id === step.id ? step : item)),
+      executedSteps: [...prev.executedSteps, step],
       updatedAt: now(),
     });
   }
@@ -331,13 +347,10 @@ function isSubagentStep(step: ExecutedStep): boolean {
   return command === 'agent' || command === 'skill' || command === 'mcp';
 }
 
-/** 清除上一轮重试的残留字段（暂停/恢复/消息/门禁评估现场）。 */
+/** 清除上一轮重试的残留字段（暂停细节/门禁评估现场；保留 sessionMessages 供消息框展示）。 */
 function cleanStepResidue(step: ExecutedStep): ExecutedStep {
   const {
     pausedAt: _pausedAt,
-    resumedAt: _resumedAt,
-    resumePrompt: _resumePrompt,
-    sessionMessages: _sessionMessages,
     pauseEntryId: _pauseEntryId,
     finalizeMeta: _finalizeMeta,
     ...rest

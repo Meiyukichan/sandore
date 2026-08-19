@@ -70,7 +70,6 @@ type NoArgs = Record<string, never>;
 /** `sandore_startInstance` 的入参。 */
 interface StartInstanceArgs {
   readonly workflowId: string;
-  readonly jobId: string;
   readonly originalInput: string;
   readonly cwd?: string;
 }
@@ -106,11 +105,10 @@ const START_INSTANCE_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
     workflowId: { type: 'string', description: '工作流定义 ID。' },
-    jobId: { type: 'string', description: 'Job ID。' },
     originalInput: { type: 'string', description: '用户原始需求。' },
     cwd: { type: 'string', description: '可选工作目录。' },
   },
-  required: ['workflowId', 'jobId', 'originalInput'],
+  required: ['workflowId', 'originalInput'],
 };
 
 /** 单个 Step 参数的 JSON Schema。 */
@@ -292,7 +290,6 @@ export function createSandoreTools(options: CreateSandoreToolsOptions): SandoreT
       execute: async (args) => {
         const request: DagStartRequest = {
           workflowId: args.workflowId,
-          jobId: args.jobId,
           originalInput: args.originalInput,
           ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
         };

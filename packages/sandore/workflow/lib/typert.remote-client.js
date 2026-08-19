@@ -15,18 +15,15 @@ const definitionEntry = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 })
-const jobEntry = z.object({
-  id: z.string(),
-  name: z.string(),
-  workflowId: z.string(),
-  cwd: z.string().optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
+const startModelSelection = z.object({
+  provider: z.string(),
+  model: z.string(),
+  reasoningEffort: z.string().optional(),
 })
 const instanceSummary = z.object({
   instanceId: z.string(),
-  jobId: z.string(),
   workflowId: z.string(),
+  originalInput: z.string(),
   status: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -143,72 +140,12 @@ export const TYPERT_REMOTE = {
       result: json(definitionEntry, '@deepseek-ai/dsh-sandore-workflow/types#WorkflowDefinitionEntry'),
     },
     {
-      id: '@deepseek-ai/dsh-sandore-workflow#sandore/listJobs',
-      service: 'sandore',
-      namespace: 'sandore',
-      method: 'listJobs',
-      invocation: { kind: 'direct' },
-      // `workflowId?` 为可选过滤条件。Typert 客户端按 descriptor.parameters.length
-      // 严格校验实参个数（不支持 TS 可选参数），故统一为对象入参：UI 侧不传时给
-      // 空对象 {}，Host 侧宽松校验允许缺失（workflowId undefined → 全量返回）。
-      parameters: [
-        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ workflowId: z.string().optional() }), '@deepseek-ai/dsh-sandore-workflow/types#ListJobsInput') },
-      ],
-      result: json(z.array(jobEntry), '@deepseek-ai/dsh-sandore-workflow/types#JobEntry'),
-    },
-    {
-      id: '@deepseek-ai/dsh-sandore-workflow#sandore/createJob',
-      service: 'sandore',
-      namespace: 'sandore',
-      method: 'createJob',
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ name: z.string(), workflowId: z.string(), cwd: z.string().optional() }), '@deepseek-ai/dsh-sandore-workflow/types#CreateJobInput') },
-      ],
-      result: json(jobEntry, '@deepseek-ai/dsh-sandore-workflow/types#JobEntry'),
-    },
-    {
-      id: '@deepseek-ai/dsh-sandore-workflow#sandore/getJob',
-      service: 'sandore',
-      namespace: 'sandore',
-      method: 'getJob',
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), '@deepseek-ai/dsh-sandore-workflow#sandore/getJob:id') },
-      ],
-      result: json(jobEntry, '@deepseek-ai/dsh-sandore-workflow/types#JobEntry'),
-    },
-    {
-      id: '@deepseek-ai/dsh-sandore-workflow#sandore/updateJob',
-      service: 'sandore',
-      namespace: 'sandore',
-      method: 'updateJob',
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), '@deepseek-ai/dsh-sandore-workflow#sandore/updateJob:id') },
-        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ name: z.string().optional(), cwd: z.string().optional() }), '@deepseek-ai/dsh-sandore-workflow/types#UpdateJobInput') },
-      ],
-      result: json(jobEntry, '@deepseek-ai/dsh-sandore-workflow/types#JobEntry'),
-    },
-    {
-      id: '@deepseek-ai/dsh-sandore-workflow#sandore/deleteJob',
-      service: 'sandore',
-      namespace: 'sandore',
-      method: 'deleteJob',
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), '@deepseek-ai/dsh-sandore-workflow#sandore/deleteJob:id') },
-      ],
-      result: json(z.boolean(), '@deepseek-ai/dsh-sandore-workflow#sandore/deleteJob:result'),
-    },
-    {
       id: '@deepseek-ai/dsh-sandore-workflow#sandore/listInstances',
       service: 'sandore',
       namespace: 'sandore',
       method: 'listInstances',
       invocation: { kind: 'direct' },
-      // 同 listJobs：`jobId?` 为可选过滤条件，Typert 客户端不支持可选参数，UI 不传，
-      // Host SRC 宽松校验允许缺失（jobId undefined → 全量列表）。
+      // 去 job 概念：实例全量列表，无过滤参数。
       parameters: [],
       result: json(z.array(instanceSummary), '@deepseek-ai/dsh-sandore-workflow/types#InstanceSummary'),
     },
@@ -219,7 +156,7 @@ export const TYPERT_REMOTE = {
       method: 'startInstance',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ jobId: z.string(), originalInput: z.string(), cwd: z.string().optional() }), '@deepseek-ai/dsh-sandore-workflow/types#StartInstanceInput') },
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ workflowId: z.string(), originalInput: z.string(), cwd: z.string().optional(), model: startModelSelection.optional(), permission: z.string().optional() }), '@deepseek-ai/dsh-sandore-workflow/types#StartInstanceInput') },
       ],
       result: json(dagRun, '@deepseek-ai/dsh-sandore-workflow/types#DagRun'),
     },

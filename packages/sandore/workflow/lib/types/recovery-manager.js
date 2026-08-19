@@ -77,15 +77,27 @@ export class RecoveryManager {
         if (!isSubagentStep(step)) {
             throw new SandoreError(`step '${stepId}' is not a resumable subagent step (shell/prompt cannot be retried)`, 'INVALID_OPERATION');
         }
-        // 1. 清残留字段 + 置 running + RetryRecord 入 retryHistory（result 先 running）。
+        // 1. 以 failed 段为基底追加新段（保留旧 failed 段定格快照）+ RetryRecord 入新段 retryHistory。
         const retryRecord = { mode, timestamp: now(), userMessage: message, result: 'running' };
         const cleaned = cleanStepResidue(step);
+        const newSegmentId = globalThis.crypto.randomUUID();
         let runningStep = {
             ...cleaned,
+            id: newSegmentId,
+            attemptIndex: (cleaned.attemptIndex ?? 0) + 1,
+            createdAt: now(),
+            startedAt: now(),
             status: 'running',
             retryHistory: [...(cleaned.retryHistory ?? []), retryRecord],
         };
         this.commitRunningStep(state, runningStep);
+        this.deps.appendUserMessage({
+            id: `usr-${globalThis.crypto.randomUUID()}`,
+            kind: 'retry',
+            target: stepIdOf(step),
+            content: message,
+            createdAt: now(),
+        });
         this.deps.emitStepRetried(stepIdOf(step), mode, step.name, step.loopIteration);
         // 2. 按模式准备子代理会话（revert/fork 需 fork + 新 agent + 更新 childId/parentSessionId）。
         let childId = childIdOf(step);
@@ -107,20 +119,22 @@ export class RecoveryManager {
                     seed: forked.events,
                 });
                 // 更新 sessionMeta.childId 为新 session id，parentSessionId 记旧值。
+                // 注意：此处是同 id 段的原地更新（upsert），不能再用 commitRunningStep（append）——
+                // 否则 executedSteps 会出现两个同 id 段。
                 const sessionMeta = {
                     ...(runningStep.sessionMeta ?? { command: 'agent', synthetic: false }),
                     childId: newChildId,
                     synthetic: false,
                 };
                 runningStep = { ...runningStep, sessionMeta, parentSessionId: childId };
-                this.commitRunningStep(this.deps.readState(), runningStep);
+                this.commitStep(this.deps.readState(), runningStep);
                 childId = newChildId;
             }
             await this.deps.followup(childId, textBlock(message), this.deps.signal);
         }
         catch (error) {
-            // 会话准备或 followup 失败：回退 Step/工作流为 failed 并记录失败结果，保持可重试。
-            this.failRetry(step.id);
+            // 会话准备或 followup 失败：回退新段/工作流为 failed 并记录失败结果，保持可重试。
+            this.failRetry(newSegmentId);
             throw error;
         }
         // 3. 续跑执行（whenIdle + finalAssistantOutput + finalize + DAG 推进）。
@@ -128,14 +142,14 @@ export class RecoveryManager {
             await this.deps.resumeExecution();
         }
         catch (error) {
-            this.failRetry(step.id);
+            this.failRetry(newSegmentId);
             throw error;
         }
-        // 4. 据实际结果更新 retryHistory 末条 result。
+        // 4. 据实际结果更新新段 retryHistory 末条 result。
         const finalState = this.deps.readState();
-        const finalStep = findStep(finalState.executedSteps, step.id);
+        const finalStep = findStep(finalState.executedSteps, newSegmentId);
         const result = finalStep?.status === 'completed' ? 'completed' : 'failed';
-        this.setRetryResult(step.id, result);
+        this.setRetryResult(newSegmentId, result);
     }
     /**
      * 单实例恢复例程的 Step 分类处理（崩溃恢复）。
@@ -181,12 +195,12 @@ export class RecoveryManager {
             updatedAt: now(),
         });
     }
-    /** 重试发起：更新单个 Step 为 running 并置实例 running + updatedAt。 */
+    /** 重试发起：追加新执行段（保留旧 failed 段定格快照）并置实例 running + updatedAt。 */
     commitRunningStep(prev, step) {
         this.deps.commitState({
             ...prev,
             status: 'running',
-            executedSteps: prev.executedSteps.map(item => (item.id === step.id ? step : item)),
+            executedSteps: [...prev.executedSteps, step],
             updatedAt: now(),
         });
     }
@@ -237,9 +251,9 @@ function isSubagentStep(step) {
     const command = step.sessionMeta?.command ?? step.command?.type;
     return command === 'agent' || command === 'skill' || command === 'mcp';
 }
-/** 清除上一轮重试的残留字段（暂停/恢复/消息/门禁评估现场）。 */
+/** 清除上一轮重试的残留字段（暂停细节/门禁评估现场；保留 sessionMessages 供消息框展示）。 */
 function cleanStepResidue(step) {
-    const { pausedAt: _pausedAt, resumedAt: _resumedAt, resumePrompt: _resumePrompt, sessionMessages: _sessionMessages, pauseEntryId: _pauseEntryId, finalizeMeta: _finalizeMeta, ...rest } = step;
+    const { pausedAt: _pausedAt, pauseEntryId: _pauseEntryId, finalizeMeta: _finalizeMeta, ...rest } = step;
     return rest;
 }
 /** 更新 retryHistory 末条记录的 result（返回新数组）。 */

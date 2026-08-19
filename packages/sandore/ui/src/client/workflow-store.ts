@@ -60,7 +60,7 @@ const INITIAL: WorkflowUiState = {
   selectedDefinition: undefined,
   creatingNew: false,
   preview: null,
-  listWidth: 300,
+  listWidth: 360,
   treeWidth: 360,
   previewWidth: 380,
 }
@@ -135,7 +135,7 @@ export function newDefinition(): void {
 
 /** 更新列表列宽（拖拽分隔条，带边界钳制）。 */
 export function resizeListWidth(delta: number): void {
-  setWorkflowState({ listWidth: clamp(state.listWidth + delta, 200, 520) })
+  setWorkflowState({ listWidth: clamp(state.listWidth + delta, 240, 560) })
 }
 
 /** 更新树形导航列宽（拖拽分隔条，带边界钳制）。 */

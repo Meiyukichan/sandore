@@ -205,16 +205,25 @@ describe('StepRunner shell', () => {
     await expect(runner.run(request(shellStep('sleep 10')))).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
   });
 
-  it('uses subprocess.spawn with JSON stdin when inputFrom resolves to content', async () => {
+  it('passes JSON stdin through shell.run when inputFrom resolves to content', async () => {
     const { subprocess, shell, runner } = harness();
     const previousOutputs = [{ name: 'prev', id: 'step-p', returnPrompt: 'hello', files: [] }];
+    shell.runHandler = async spec => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: 'ok', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await runner.run(request(shellStepWithInputFrom('node read-stdin.js'), { previousOutputs }));
 
-    expect(subprocess.specs).toHaveLength(1);
-    expect(shell.specs).toHaveLength(0);
-    expect(subprocess.specs[0]?.stdio.stdin).toEqual({ data: JSON.stringify(previousOutputs) });
-    expect(subprocess.specs[0]?.argv[0]).toBe('/usr/bin/node');
+    expect(subprocess.specs).toHaveLength(0);
+    expect(shell.specs).toHaveLength(1);
+    expect(shell.specs[0]?.stdin).toEqual(JSON.stringify(previousOutputs));
+    expect(shell.specs[0]?.command).toBe('node read-stdin.js');
   });
 
   it('still uses shell.run for a simple shell step without stdin/env injection', async () => {
@@ -236,22 +245,38 @@ describe('StepRunner shell', () => {
     expect(subprocess.specs).toHaveLength(0);
   });
 
-  it('uses subprocess.spawn with merged env when non-empty passThroughVars are present', async () => {
+  it('passes merged env through shell.run when non-empty passThroughVars are present', async () => {
     const { subprocess, shell, runner } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+    shell.runHandler = async spec => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: 'ok', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await runner.run(
       request(shellStep('echo $projectName'), { passThroughVars: { projectName: 'sandore', empty: '' } }),
     );
 
-    expect(subprocess.specs).toHaveLength(1);
-    expect(shell.specs).toHaveLength(0);
-    expect(subprocess.specs[0]?.env).toEqual({ projectName: 'sandore' });
+    expect(subprocess.specs).toHaveLength(0);
+    expect(shell.specs).toHaveLength(1);
+    expect(shell.specs[0]?.env).toEqual({ projectName: 'sandore' });
   });
 
-  it('injects in-loop-turn and all-loop-turn into subprocess env when loopTurn > 0', async () => {
-    const { subprocess, runner } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+  it('injects in-loop-turn and all-loop-turn into shell env when loopTurn > 0', async () => {
+    const { subprocess, shell, runner } = harness();
+    shell.runHandler = async spec => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: 'ok', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await runner.run(
       request(shellStep('echo hi'), {
@@ -261,7 +286,7 @@ describe('StepRunner shell', () => {
       }),
     );
 
-    expect(subprocess.specs[0]?.env).toEqual({
+    expect(shell.specs[0]?.env).toEqual({
       projectName: 'sandore',
       'in-loop-turn': '3',
       'all-loop-turn': '5',
@@ -286,9 +311,17 @@ describe('StepRunner shell', () => {
     expect(shell.specs).toHaveLength(1);
   });
 
-  it('maps subprocess timedOut to STEP_TIMEOUT', async () => {
-    const { subprocess, runner } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: null, signal: 'SIGTERM', timedOut: true });
+  it('maps shell timedOut to STEP_TIMEOUT', async () => {
+    const { subprocess, shell, runner } = harness();
+    shell.runHandler = async () => ({
+      exitCode: null,
+      signal: 'SIGTERM',
+      timedOut: true,
+      aborted: false,
+      timeoutMs: 60000,
+      stdout: { text: '', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await expect(
       runner.run(request(shellStep('sleep 10'), { passThroughVars: { a: '1' } })),
@@ -296,21 +329,39 @@ describe('StepRunner shell', () => {
   });
 
   it('replaces ${projectName} in the shell command with its passThroughVar value', async () => {
-    const { subprocess, runner } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+    const { subprocess, shell, runner } = harness();
+    shell.runHandler = async spec => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: 'ok', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await runner.run(request(shellStep('echo ${projectName}'), { passThroughVars: { projectName: 'sandore' } }));
 
-    expect(subprocess.specs[0]?.argv).toEqual(['/usr/bin/echo', 'sandore']);
+    expect(subprocess.specs).toHaveLength(0);
+    expect(shell.specs[0]?.command).toBe('echo sandore');
   });
 
-  it('splits a quoted shell command preserving spaces within quotes', async () => {
-    const { subprocess, runner } = harness();
-    subprocess.outcomeHandler = () => ({ exitCode: 0, signal: null });
+  it('keeps quoted arguments intact in the shell command string', async () => {
+    const { subprocess, shell, runner } = harness();
+    shell.runHandler = async spec => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      aborted: false,
+      timeoutMs: spec.timeoutMs,
+      stdout: { text: 'ok', truncated: false },
+      stderr: { text: '', truncated: false },
+    });
 
     await runner.run(request(shellStep('echo "hello world"'), { passThroughVars: { a: '1' } }));
 
-    expect(subprocess.specs[0]?.argv).toEqual(['/usr/bin/echo', 'hello world']);
+    expect(subprocess.specs).toHaveLength(0);
+    expect(shell.specs[0]?.command).toBe('echo "hello world"');
   });
 });
 
