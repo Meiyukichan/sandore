@@ -795,10 +795,10 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       const info: DagRunInfo = {
         taskId: active.state.taskId,
         workflowId: active.state.workflowId,
-        };
+      };
       this.emitEnd(active.session, info, {
         taskId: active.state.taskId,
-          status: 'failed',
+        status: 'failed',
         error: renderError(error),
       });
     }
@@ -882,7 +882,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         },
         sharedState: {
           cwd: active.state.cwd,
-              taskId: active.state.taskId,
+          taskId: active.state.taskId,
         },
         runnerConfig,
         signal,
@@ -1306,8 +1306,14 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       active.settlementBuffer.set(settlement.childId, settlement);
       const resolve = active.settlementResolvers.get(settlement.childId);
       if (resolve !== undefined) {
+        // 有 awaiter 在等：直接 resolve，不写 buffer（避免陈旧 settlement 残留，
+        // 导致后续同 childId 的 awaiter 命中陈旧 stopReason 误判——如 pause→resume
+        // 后 awaiter#2 命中陈旧 {aborted} 重新 STEP_PAUSED 使 resume 失效）
         active.settlementResolvers.delete(settlement.childId);
         resolve(settlement);
+      } else {
+        // 无 awaiter：缓冲（awaiter 稍后注册时先查 buffer 命中即消费）
+        active.settlementBuffer.set(settlement.childId, settlement);
       }
     });
     return active;
