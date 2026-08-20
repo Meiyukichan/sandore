@@ -17,7 +17,6 @@ import type { SandoreToolDefinition, SandoreToolResult } from './index.ts';
 function makeState(status: DagRunStatus): DagInstanceState {
   return {
     taskId: 'inst-1',
-    jobId: 'job-1',
     workflowId: 'wfl-1',
     status,
     originalInput: 'do the thing',

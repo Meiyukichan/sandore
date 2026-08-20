@@ -783,7 +783,7 @@ export class StageExecutor {
 
   /** 命令节点：run + finalize + resolveNextNodes；ask 中断 / 失败 / 暂停时返回对应标记。 */
   private async processCommandNode(nodeId: string, step: WorkflowStep, state: StageRunState): Promise<'ok' | 'ask' | 'failed' | 'paused'> {
-    const { stageDef, input, sharedState, signal, hooks, loopManager } = this.options;
+    const { stageDef, input, sharedState, signal, hooks, loopManager, visitCounts } = this.options;
     const command = step.command;
     const inLoop = loopManager.buildLoopIterationPath().length > 0;
     // executed.id = 执行段唯一 id（纯 UUID）；childId = sessionMeta 子代理占位/真实会话
