@@ -515,11 +515,13 @@ function OutputRow({ item, onChange, onRemove, t }: {
 }
 
 /** Step 完整字段编辑器（名称 + 执行 command + 流控 FlowEditor + 映射 + gates）。 */
-function StepEditor({ step, stageSteps, targets, onChange, onRemove, t }: {
+function StepEditor({ step, stageSteps, targets, ruleKeys, onChange, onRemove, t }: {
   readonly step: MergedStep
   /** 当前 Stage 内全部合并 step（含 branches），用于计算回环环上节点。 */
   readonly stageSteps: readonly MergedStep[]
   readonly targets: readonly FlowTarget[]
+  /** 工作流级 rules 内容表的键集合（供 step.rules 键引用编辑的勾选项）。 */
+  readonly ruleKeys: readonly string[]
   readonly onChange: (step: MergedStep) => void
   readonly onRemove: () => void
   readonly t: TranslateNS<'sandore'>
@@ -527,6 +529,7 @@ function StepEditor({ step, stageSteps, targets, onChange, onRemove, t }: {
   const inputFrom = step.inputFrom ?? []
   const outputTo = step.outputTo ?? []
   const passThroughVars = step.passThroughVars ?? []
+  const selectedRules = step.rules ?? []
 
   return (
     <div className={css.step}>
@@ -608,6 +611,14 @@ function StepEditor({ step, stageSteps, targets, onChange, onRemove, t }: {
         {t('editor.add.item')}
       </Button>
 
+      <SectionLabel>{t('editor.section.rules')}</SectionLabel>
+      <RulesRefEditor
+        selected={selectedRules}
+        options={ruleKeys}
+        onChange={next => { onChange({ ...step, rules: next.length === 0 ? undefined : next }) }}
+        t={t}
+      />
+
       <SectionLabel>{t('editor.section.gates')}</SectionLabel>
       <GatesEditor gates={step.gates} onChange={gates => { onChange({ ...step, gates }) }} t={t} />
     </div>
@@ -615,13 +626,16 @@ function StepEditor({ step, stageSteps, targets, onChange, onRemove, t }: {
 }
 
 /** Stage 编辑器（名称 + 连接节点流控；Stage 层不展示 Step 简表，下钻走画布双击）。 */
-function StageEditor({ stage, targets, onChange, onRemove, t }: {
+function StageEditor({ stage, targets, ruleKeys, onChange, onRemove, t }: {
   readonly stage: WorkflowStage
   readonly targets: readonly FlowTarget[]
+  /** 工作流级 rules 内容表的键集合（供 stage.rules 键引用编辑的勾选项）。 */
+  readonly ruleKeys: readonly string[]
   readonly onChange: (stage: WorkflowStage) => void
   readonly onRemove: () => void
   readonly t: TranslateNS<'sandore'>
 }) {
+  const selectedRules = stage.rules ?? []
   return (
     <div className={css.step}>
       <div className={css.stepHead}>
@@ -643,6 +657,14 @@ function StageEditor({ stage, targets, onChange, onRemove, t }: {
         onChange={flow => {
           onChange({ ...stage, branches: flow.branches as DagBranch[] })
         }}
+      />
+
+      <SectionLabel>{t('editor.section.rules')}</SectionLabel>
+      <RulesRefEditor
+        selected={selectedRules}
+        options={ruleKeys}
+        onChange={next => { onChange({ ...stage, rules: next.length === 0 ? undefined : next }) }}
+        t={t}
       />
     </div>
   )
@@ -680,6 +702,46 @@ function GatesEditor({ gates, onChange, t }: {
           placeholder={t('editor.field.secondaryPrompt')}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * 任务规则键引用编辑（缺陷 7 修复）：Stage/Step 级 `rules: string[]` 是对工作流级
+ * `definition.rules` 键的引用数组。这里把工作流级 rules 的全部键渲染为复选框，勾选
+ * 即加入引用、取消即移除。空 `ruleKeys` 时提示先在工作流详情定义规则。
+ */
+function RulesRefEditor({ selected, options, onChange, t }: {
+  /** 当前已引用的规则键（stage.rules / step.rules）。 */
+  readonly selected: readonly string[]
+  /** 工作流级 rules 内容表的全部键（勾选项来源）。 */
+  readonly options: readonly string[]
+  readonly onChange: (next: string[]) => void
+  readonly t: TranslateNS<'sandore'>
+}) {
+  if (options.length === 0) {
+    return <span className={css.hint}>{t('editor.field.rulesRefEmpty')}</span>
+  }
+  return (
+    <div className={css.gates}>
+      {options.map(key => {
+        const checked = selected.includes(key)
+        return (
+          <label key={key} className={css.checkbox}>
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={event => {
+                const next = event.target.checked
+                  ? [...selected, key]
+                  : selected.filter(k => k !== key)
+                onChange(next)
+              }}
+            />
+            <span>{key}</span>
+          </label>
+        )
+      })}
     </div>
   )
 }
@@ -1082,6 +1144,7 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInsta
                     .filter(stage => stage.id !== selectedStage.id)
                     .filter(stage => !wouldCreateStageCycle(definition.stages, selectedStage.id, stage.id))
                     .map(stage => ({ id: stage.id, name: stage.name }))}
+                  ruleKeys={Object.keys(definition.rules ?? {})}
                   onChange={next => { updateStage(selectedStage.id, next) }}
                   onRemove={() => { removeStage(selectedStage.id) }}
                   t={t}
@@ -1102,6 +1165,7 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInsta
                       step={step}
                       stageSteps={mergedSteps}
                       targets={mergedSteps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id }))}
+                      ruleKeys={Object.keys(definition.rules ?? {})}
                       onChange={next => { updateStep(drilledStage.id, step.id, next) }}
                       onRemove={() => { removeStep(drilledStage.id, step.id) }}
                       t={t}

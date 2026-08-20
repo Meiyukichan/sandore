@@ -20,7 +20,7 @@ import type { GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
 
 import { SandoreError } from './errors.ts';
-import { findFilesByGlob, findFilesByRegex, isGlobPattern } from './file-utils.ts';
+import { fileExists, findFilesByGlob, findFilesByRegex, hasUnresolvedVars, isGlobPattern, resolveOutputToVars } from './file-utils.ts';
 import { describeError, resolveProviderModel, textSummary } from './internal.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
 
@@ -65,6 +65,17 @@ export interface FinalizeGateInput {
   /** 三级合并后的门禁配置。 */
   readonly gates: Gates;
   readonly workdir: string;
+  /**
+   * outputTo 路径解析用的透传变量映射（缺陷 34）。
+   *
+   * 由 `FinalizeManager` 合并 `request.passThroughVars`（引擎累加器）+ 当次
+   * `assessResult.passThroughVars`（快照提取值）后传入——使自引用变量
+   * （本 Step 提取并在自身 outputTo 中引用的 `${xxx}`）在门禁时可解析。
+   * 缺省 `{}`：含未解析占位符的路径走字面匹配自然不命中（确定性报 missing）。
+   * **时序兼容**：verifyArtifacts 用此传入副本解析，不依赖提前持久化，避免
+   * assess 与 gate 之间的变量竞态。
+   */
+  readonly vars?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
 }
 
@@ -338,12 +349,19 @@ function isSessionType(type: string | undefined): boolean {
 
 /** 判定 Step 是否含未解析透传变量（value 仍含 `${xxx}` 占位）。 */
 function hasUnresolvedPassThroughVars(step: WorkflowStep): boolean {
-  return (step.passThroughVars ?? []).some(variable => /\$\{[^}]+\}/.test(variable.value));
+  return (step.passThroughVars ?? []).some(variable => hasUnresolvedVars(variable.value));
 }
 
-/** 判定门禁配置是否存在 enabled 门禁（primary 或 secondary）。 */
+/**
+ * 判定门禁配置是否存在 enabled 门禁（primary 或 secondary）。
+ *
+ * primary 默认启用（对齐基准 `primary?.enabled ?? true`）——未显式 `enabled:false`
+ * 即视为有门禁；secondary 默认禁用，需显式 `enabled:true` 才计入。`gates` 为
+ * `undefined`（三级均未配置，`mergeGates` 返回 undefined）时返回 false，仍走
+ * `finalizeStep` 的零 AI 调用跳过路径。
+ */
 function hasEnabledGates(gates: Gates | undefined): gates is Gates {
-  return gates !== undefined && (gates.primary?.enabled === true || gates.secondary?.enabled === true);
+  return gates !== undefined && (gates.primary?.enabled !== false || gates.secondary?.enabled === true);
 }
 
 /** 就地回写提取的透传变量（保留 Step 定义中的 description/refresh 标志）。 */
@@ -367,6 +385,33 @@ function writeBackPassThroughVars(
       ...(definition.refresh === undefined ? {} : { refresh: definition.refresh }),
     };
   }
+}
+
+/**
+ * 合并 outputTo 路径解析用的透传变量映射（缺陷 34）。
+ *
+ * 引擎累加器 `request.passThroughVars`（前置 Step 已提取值）+ 当次 assess 提取值
+ * `assessResult.passThroughVars`（快照，本 Step 新提取/refresh 覆盖）→ 字符串映射。
+ * 当次提取值优先（refresh 场景下取最新），供 {@link GateEvaluator.verifyArtifacts}
+ * 解析自引用变量（本 Step 提取并在自身 outputTo 中引用的 `${xxx}`）。
+ *
+ * **时序兼容**：返回独立副本，不读写 `request.passThroughVars` 累加器——verifyArtifacts
+ * 用此副本解析，避免 assess 与 gate 之间的变量竞态（不依赖提前持久化）。
+ */
+function buildOutputToVars(
+  passThroughVars: Record<string, PassThroughVarValue> | undefined,
+  extracted: Readonly<Record<string, string>>,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (passThroughVars !== undefined) {
+    for (const [name, value] of Object.entries(passThroughVars)) {
+      result[name] = value.value;
+    }
+  }
+  for (const [name, value] of Object.entries(extracted)) {
+    result[name] = value;
+  }
+  return result;
 }
 
 /** 组装 finalizeMeta（status/completionType/assessResult + 可选 gateResult/gateSessionId）。 */
@@ -487,6 +532,12 @@ export class FinalizeAssessor {
  * 临时会话，与 Assessor 完全隔离。`gatesPassed=true` 后再验证 outputTo 产物文件存在，
  * 任一缺失则覆盖为 false 并记 `errorDetail`。未启用的门禁在 `gateDetails` 中仅标
  * `enabled:false`、不输出 `passed`（顶层 `primaryPassed`/`secondaryPassed` 亦省略）。
+ *
+ * **primary 默认启用**（对齐基准 `primary?.enabled ?? true`）：未配置 primary 或
+ * `enabled!==false` 时执行 primary 门禁；仅显式 `primary.enabled:false` 才跳过。
+ * secondary 默认禁用（对齐基准 `secondary?.enabled ?? false`），需显式 `enabled:true`
+ * 才执行。差异场景：用户只配置 secondary 门禁、未配置 primary 时，基准 primary 默认
+ * 执行，sandore 改动后同样默认执行（修前 sandore 默认不执行 → 行为分歧，已修）。
  */
 export class GateEvaluator {
   constructor(
@@ -496,7 +547,10 @@ export class GateEvaluator {
 
   /** 执行门禁审查，返回 `GateEvalResult`（含 gateSessionId/assessmentRaw）。 */
   async evaluate(input: FinalizeGateInput): Promise<GateEvalResult> {
-    const primaryEnabled = input.gates.primary?.enabled === true;
+    // primary 默认启用（对齐基准 primary?.enabled ?? true）：未配置或 enabled!==false
+    // 即执行 primary 门禁；仅显式 enabled:false 才跳过。secondary 默认禁用，需显式
+    // enabled:true 才执行（与基准 secondary?.enabled ?? false 一致）。
+    const primaryEnabled = input.gates.primary?.enabled !== false;
     const secondaryEnabled = input.gates.secondary?.enabled === true;
     const gateSessionId = newSessionHandle();
     const rawParts: string[] = [];
@@ -534,7 +588,7 @@ export class GateEvaluator {
       (primaryEnabled ? primaryPassed === true : true) &&
       (secondaryEnabled ? secondaryPassed === true : true);
     if (gatesPassed) {
-      const missing = await this.verifyArtifacts(input.step, input.workdir);
+      const missing = await this.verifyArtifacts(input.step, input.workdir, input.vars ?? {});
       if (missing.length > 0) {
         gatesPassed = false;
         errorParts.push(`missing output files: ${missing.join(', ')}`);
@@ -568,21 +622,44 @@ export class GateEvaluator {
     };
   }
 
-  /** 校验 outputTo 产物文件存在；返回缺失的 pattern 列表。 */
-  private async verifyArtifacts(step: WorkflowStep, workdir: string): Promise<string[]> {
+  /**
+   * 校验 outputTo 产物文件存在；返回缺失的 pattern 列表。
+   *
+   * **缺陷 34**：每项 path/regex 先经 {@link resolveOutputToVars} 用 `vars` 替换
+   * `${xxx}` 透传变量占位符后再匹配——原实现原样传入 findFilesByGlob/findFilesByRegex/
+   * fileExists，路径含 `${xxx}` 时 `new RegExp('${projectName}')` 的 `$` 行尾锚 +
+   * 花括号字面量永不匹配 → 确定性报 missing → Step 失败。vars 由
+   * {@link GateEvaluator.evaluate} 传入（引擎累加器 + 当次 assess 提取值合并），
+   * 使自引用变量在门禁时可解析。
+   */
+  private async verifyArtifacts(
+    step: WorkflowStep,
+    workdir: string,
+    vars: Readonly<Record<string, string>>,
+  ): Promise<string[]> {
     const missing: string[] = [];
     for (const outputTo of step.outputTo ?? []) {
-      if (outputTo.regex !== undefined) {
-        const found = await findFilesByRegex(this.ctx.fs, workdir, outputTo.regex);
+      const resolved = resolveOutputToVars(outputTo, vars);
+      if (resolved.regex !== undefined) {
+        const found = await findFilesByRegex(this.ctx.fs, workdir, resolved.regex);
         if (found.length === 0) {
-          missing.push(outputTo.regex);
+          missing.push(resolved.regex);
         }
-      } else if (outputTo.path !== undefined) {
-        const found = isGlobPattern(outputTo.path)
-          ? await findFilesByGlob(this.ctx.fs, workdir, outputTo.path)
-          : await findFilesByRegex(this.ctx.fs, workdir, outputTo.path);
-        if (found.length === 0) {
-          missing.push(outputTo.path);
+      } else if (resolved.path !== undefined) {
+        if (isGlobPattern(resolved.path)) {
+          const found = await findFilesByGlob(this.ctx.fs, workdir, resolved.path);
+          if (found.length === 0) {
+            missing.push(resolved.path);
+          }
+        } else {
+          // 非 glob 字面路径：精确存在性检查（resolve + readText），避免路径中的
+          // `.` 被当作正则元字符导致漏报（树内相似文件误命中→该报缺失却放行）或
+          // 误报（`./` 前缀使非锚定 regex 误判→门禁恒失败）。对齐基准
+          // fs.existsSync(path.resolve(cwd, path))；regex 字段仍走 findFilesByRegex。
+          const exists = await fileExists(this.ctx.fs, workdir, resolved.path);
+          if (!exists) {
+            missing.push(resolved.path);
+          }
         }
       }
     }
@@ -657,11 +734,15 @@ export class FinalizeManager {
     const hasGates = hasEnabledGates(request.gates);
     let gateResult: GateEvalResult | undefined;
     if (hasGates) {
+      // 缺陷 34：合并引擎累加器 + 当次 assess 提取值为 outputTo 路径解析用 vars
+      // （独立副本，不依赖提前持久化——避免 assess 与 gate 之间的变量竞态）。
+      const outputToVars = buildOutputToVars(request.passThroughVars, assessResult.passThroughVars);
       gateResult = await this.gateEvaluator.evaluate({
         step: request.step,
         context: request.context,
         gates: request.gates,
         workdir: request.workdir,
+        vars: outputToVars,
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
     }
@@ -710,7 +791,7 @@ function fillUnresolvedSingleVar(
   output: string | undefined,
 ): void {
   if (Object.keys(extracted).length > 0) return;
-  const unresolved = (step.passThroughVars ?? []).filter(variable => /\$\{[^}]+\}/.test(variable.value));
+  const unresolved = (step.passThroughVars ?? []).filter(variable => hasUnresolvedVars(variable.value));
   if (unresolved.length === 1 && output !== undefined && output.trim() !== '') {
     extracted[unresolved[0]!.name] = output;
   }

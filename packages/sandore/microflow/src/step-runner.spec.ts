@@ -17,6 +17,7 @@ import { FakeSubagents } from '../../workflow/tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../../workflow/tests/mocks/subprocess.ts';
 import { StepRunner } from './step-runner.ts';
 import type { StepRunRequest, StepRunnerConfig } from './step-runner.ts';
+import type { SubagentSettlement, SubagentStopReason } from './subagents.ts';
 
 /** 提取文本 ContentBlock 的纯文本（非文本块返回空串）。 */
 function textOf(block: ContentBlock | undefined): string {
@@ -718,5 +719,265 @@ describe('StepRunner skill/mcp', () => {
     await runner.run(request(mcpStep('filesystem-mcp')));
 
     expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).toContain('使用 MCP：filesystem-mcp');
+  });
+});
+
+describe('StepRunner ## 任务规则 注入（缺陷 7）', () => {
+  /** 组装带 resolvedRules 的请求（模拟 StageExecutor 解析后的 3 级合并结果）。 */
+  function requestWithRules(step: WorkflowStep, rules: Record<string, string>): StepRunRequest {
+    return {
+      step,
+      workdir: '/tmp',
+      originalInput: 'do the thing',
+      previousOutputs: [],
+      stageId: 'stg-1',
+      resolvedRules: rules,
+    };
+  }
+
+  it('prompt 路注入 ## 任务规则 节（非空 resolvedRules）', async () => {
+    const { llm, runner } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('ok');
+
+    await runner.run(requestWithRules(promptStep(), {
+      'chinese-output': '所有输出必须使用中文',
+      'no-direct-commit': '禁止直接执行 git commit',
+    }));
+
+    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    expect(promptText).toContain('## 任务规则');
+    expect(promptText).toContain('- **chinese-output**: 所有输出必须使用中文');
+    expect(promptText).toContain('- **no-direct-commit**: 禁止直接执行 git commit');
+    // 位置对齐基准：## 任务规则 在 ## 前置Steps输出与产物 之后（此处无前置输出，
+    // ## 任务规则 应在 ## 参考信息 之后作为最后一节）。
+    const rulesIdx = promptText.indexOf('## 任务规则');
+    const refIdx = promptText.indexOf('## 参考信息');
+    expect(rulesIdx).toBeGreaterThan(refIdx);
+    expect(rulesIdx).toBeGreaterThan(-1);
+  });
+
+  it('agent 路注入 ## 任务规则 节（非空 resolvedRules）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await runner.run(requestWithRules(agentStep(), { 'chinese-output': '所有输出必须使用中文' }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('## 任务规则');
+    expect(promptText).toContain('- **chinese-output**: 所有输出必须使用中文');
+  });
+
+  it('skill 路注入 ## 任务规则 节（非空 resolvedRules）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      skills: ['code-review-skill'],
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await runner.run(requestWithRules(skillStep('code-review-skill'), { 'chinese-output': '所有输出必须使用中文' }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('## 任务规则');
+    expect(promptText).toContain('- **chinese-output**: 所有输出必须使用中文');
+  });
+
+  it('mcp 路注入 ## 任务规则 节（非空 resolvedRules）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      mcps: ['filesystem-mcp'],
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+
+    await runner.run(requestWithRules(mcpStep('filesystem-mcp'), { 'chinese-output': '所有输出必须使用中文' }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('## 任务规则');
+    expect(promptText).toContain('- **chinese-output**: 所有输出必须使用中文');
+  });
+
+  it('resolvedRules 缺省时不注入 ## 任务规则 节（向后兼容）', async () => {
+    const { llm, runner } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('ok');
+
+    await runner.run(request(promptStep()));
+
+    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    expect(promptText).not.toContain('## 任务规则');
+  });
+
+  it('resolvedRules 为空对象时不注入 ## 任务规则 节', async () => {
+    const { llm, runner } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('ok');
+
+    await runner.run(requestWithRules(promptStep(), {}));
+
+    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    expect(promptText).not.toContain('## 任务规则');
+  });
+});
+
+/**
+ * settle 测试用控制器：可手动触发 settle 的 `awaitSubagentSettlement` 注入实现。
+ * 缓冲 settle（settle 早于 awaiter 注册时存入 buffered，awaiter 注册即消费）——对齐
+ * workflow-engine 的缓冲路由语义。
+ */
+function settleController(): {
+  awaitSubagentSettlement: NonNullable<StepRunnerConfig['awaitSubagentSettlement']>;
+  settle: (childId: string, stopReason: SubagentStopReason, output?: readonly ContentBlock[]) => void;
+} {
+  const pending = new Map<string, (s: SubagentSettlement) => void>();
+  const buffered = new Map<string, SubagentSettlement>();
+  const awaitSubagentSettlement: NonNullable<StepRunnerConfig['awaitSubagentSettlement']> = (
+    childId,
+    _signal,
+  ) =>
+    new Promise<SubagentSettlement>((resolve) => {
+      const buf = buffered.get(childId);
+      if (buf !== undefined) {
+        buffered.delete(childId);
+        resolve(buf);
+        return;
+      }
+      pending.set(childId, resolve);
+    });
+  const settle = (
+    childId: string,
+    stopReason: SubagentStopReason,
+    output?: readonly ContentBlock[],
+  ): void => {
+    const settlement: SubagentSettlement = {
+      childId,
+      stopReason,
+      ...(output === undefined ? {} : { output }),
+    };
+    const resolve = pending.get(childId);
+    if (resolve !== undefined) {
+      pending.delete(childId);
+      resolve(settlement);
+    } else {
+      buffered.set(childId, settlement);
+    }
+  };
+  return { awaitSubagentSettlement, settle };
+}
+
+/** 组装带 settle 注入的 StepRunner harness（agent Step + 真实 childId 占位）。 */
+function settleHarness(ctrl: ReturnType<typeof settleController>): {
+  agents: FakeAgentRegistry;
+  subagents: FakeSubagents;
+  runner: StepRunner;
+} {
+  const { agents, subagents, runner } = harness({
+    defaultTimeoutMs: 60000,
+    defaultProvider: 'p',
+    defaultModel: 'm',
+    awaitSubagentSettlement: ctrl.awaitSubagentSettlement,
+  });
+  return { agents, subagents, runner };
+}
+
+describe('StepRunner subagent settle completion (DSH subagent/end alignment)', () => {
+  // 完成判定对齐 DSH `subagent/end`：collectSubagentOutput 等 settle（非 whenIdle），
+  // 按 stopReason 路由：completed→完成 / aborted→STEP_PAUSED / error·max-tokens·refusal→STEP_EXECUTION。
+
+  it('settle(completed) returns the final assistant output as step output', async () => {
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
+
+    const runP = runner.run(request(agentStep()));
+    ctrl.settle('child-1', 'completed');
+    const result = await runP;
+    expect(result.output).toEqual([{ type: 'text', text: 'done' }]);
+    expect(result.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'agent' });
+  });
+
+  it('settle(completed, output) returns the settlement output verbatim', async () => {
+    const child = new FakeAgent('child-1');
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
+
+    const runP = runner.run(request(agentStep()));
+    ctrl.settle('child-1', 'completed', [{ type: 'text', text: 'settle output' }]);
+    const result = await runP;
+    expect(result.output).toEqual([{ type: 'text', text: 'settle output' }]);
+  });
+
+  it('settle(aborted) throws STEP_PAUSED (interrupt/pause → not failed)', async () => {
+    const child = new FakeAgent('child-1');
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
+
+    const runP = runner.run(request(agentStep()));
+    ctrl.settle('child-1', 'aborted');
+    await expect(runP).rejects.toMatchObject({ code: 'STEP_PAUSED' });
+  });
+
+  it('settle(error) throws STEP_EXECUTION (failed)', async () => {
+    const child = new FakeAgent('child-1');
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
+
+    const runP = runner.run(request(agentStep()));
+    ctrl.settle('child-1', 'error');
+    await expect(runP).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
+  });
+
+  it('settle(max-tokens) throws STEP_EXECUTION (token ceiling → failed)', async () => {
+    const child = new FakeAgent('child-1');
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
+
+    const runP = runner.run(request(agentStep()));
+    ctrl.settle('child-1', 'max-tokens');
+    await expect(runP).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
+  });
+
+  it('settle(refusal) throws STEP_EXECUTION (declined → failed)', async () => {
+    const child = new FakeAgent('child-1');
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
+
+    const runP = runner.run(request(agentStep()));
+    ctrl.settle('child-1', 'refusal');
+    await expect(runP).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
+  });
+
+  it('settle(completed) with no assistant output throws STEP_EXECUTION (no output)', async () => {
+    const child = new FakeAgent('child-1'); // no events
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
+
+    const runP = runner.run(request(agentStep()));
+    ctrl.settle('child-1', 'completed');
+    await expect(runP).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
   });
 });

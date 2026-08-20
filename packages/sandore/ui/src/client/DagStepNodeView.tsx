@@ -8,13 +8,14 @@
  * 控件（continue/revert/fork + 可选 message，提交经注入的 `retryStep`）。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/DagStepNodeView
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Button, Input, MarkdownText, Pill, StateDot,
   type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { RevertBoundaryOption } from '@deepseek-ai/dsh-sandore-workflow/types'
 
 import { describeError } from './describe-error.ts'
 import type { SandoreKey } from './locales.ts'
@@ -25,7 +26,8 @@ import css from './DagStepNodeView.module.css'
 /** 由插件自身服务访问注入的导航与重试动作。 */
 export interface SandoreStepInjected {
   readonly openSession: (id: SessionId) => void
-  readonly retryStep: (input: { instanceId: string; stepId: string; mode: RetryMode; message: string }) => Promise<void>
+  readonly retryStep: (input: { instanceId: string; stepId: string; mode: RetryMode; message: string; revertBoundary?: number }) => Promise<void>
+  readonly listRevertBoundaries: (input: { instanceId: string; stepId: string }) => Promise<RevertBoundaryOption[]>
 }
 
 /** keyed Chat 渲染器完整 props。 */
@@ -67,21 +69,50 @@ function outputText(output: readonly SandoreTextBlock[] | undefined): string {
 }
 
 /** 渲染单个 sandore Step 节点。 */
-export function DagStepNodeView({ node, sessionId, openSession, retryStep, t }: DagStepNodeViewProps) {
+export function DagStepNodeView({ node, sessionId, openSession, retryStep, listRevertBoundaries, t }: DagStepNodeViewProps) {
   const data = node.data
   const [retryOpen, setRetryOpen] = useState(false)
   const [mode, setMode] = useState<RetryMode>('continue')
   const [message, setMessage] = useState('')
   const [pending, setPending] = useState(false)
   const [retryError, setRetryError] = useState<string | undefined>(undefined)
+  // revert 模式可选回退点：undefined = 默认（最后一个闭合 turn）；数字 = 所选闭合 turn/end seq。
+  const [revertBoundary, setRevertBoundary] = useState<number | undefined>(undefined)
+  const [boundaryOptions, setBoundaryOptions] = useState<RevertBoundaryOption[]>([])
+  const [boundaryLoading, setBoundaryLoading] = useState(false)
 
   const canRetry = data.status === 'failed' || data.status === 'completed'
+
+  // revert 模式打开时拉取该 Step 子代理会话的闭合 turn 回退点候选，供回退点下拉选择。
+  useEffect(() => {
+    setRevertBoundary(undefined)
+    if (!retryOpen || mode !== 'revert') {
+      setBoundaryOptions([])
+      setBoundaryLoading(false)
+      return
+    }
+    let cancelled = false
+    setBoundaryLoading(true)
+    void listRevertBoundaries({ instanceId: sessionId, stepId: data.stepId })
+      .then(options => {
+        if (cancelled) return
+        setBoundaryOptions(options)
+        setBoundaryLoading(false)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setBoundaryOptions([])
+        setBoundaryLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [retryOpen, mode, sessionId, data.stepId, listRevertBoundaries])
 
   const submitRetry = async (): Promise<void> => {
     setPending(true)
     setRetryError(undefined)
     try {
-      await retryStep({ instanceId: sessionId, stepId: data.stepId, mode, message })
+      const boundary = mode === 'revert' ? revertBoundary : undefined
+      await retryStep({ instanceId: sessionId, stepId: data.stepId, mode, message, ...(boundary === undefined ? {} : { revertBoundary: boundary }) })
       setRetryOpen(false)
     } catch (error) {
       setRetryError(describeError(error))
@@ -127,6 +158,42 @@ export function DagStepNodeView({ node, sessionId, openSession, retryStep, t }: 
                   </Pill>
                 ))}
               </div>
+              {mode === 'revert' && (
+                <div className={css.boundaryRow}>
+                  <label className={css.boundaryLabel} htmlFor={`sandore-step-boundary-${data.stepId}`}>
+                    {t('step.retry.boundary')}
+                  </label>
+                  {boundaryLoading ? (
+                    <span className={css.boundaryHint}>{t('step.retry.boundary.loading')}</span>
+                  ) : boundaryOptions.length === 0 ? (
+                    <select
+                      id={`sandore-step-boundary-${data.stepId}`}
+                      className={css.boundarySelect}
+                      value=""
+                      disabled
+                    >
+                      <option value="">{t('step.retry.boundary.empty')}</option>
+                    </select>
+                  ) : (
+                    <select
+                      id={`sandore-step-boundary-${data.stepId}`}
+                      className={css.boundarySelect}
+                      value={revertBoundary === undefined ? 'default' : String(revertBoundary)}
+                      onChange={event => {
+                        const value = event.target.value
+                        setRevertBoundary(value === 'default' ? undefined : Number(value))
+                      }}
+                    >
+                      <option value="default">{t('step.retry.boundary.default')}</option>
+                      {boundaryOptions.map(option => (
+                        <option key={option.seq} value={String(option.seq)}>
+                          {t('step.retry.boundary.turn', { n: option.turn + 1 })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
               <Input
                 value={message}
                 onChange={event => { setMessage(event.target.value) }}

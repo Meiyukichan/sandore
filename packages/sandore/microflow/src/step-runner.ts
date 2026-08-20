@@ -7,9 +7,9 @@
  * prompt Step 走三层 provider/model 回退（Step 定义 → 引擎 Config → `ctx.llm`
  * 目录兜底）后 `ctx.llm.stream()`，聚合 block-end 为 `ContentBlock[]`；agent /
  * skill / mcp 三类走可续接子代理（`startContinuable` → `ctx.agents.get(childId)`
- * → `whenIdle` → `finalAssistantOutput`），agent 定义 `agentParamsTemplate` 时先
- * `fillParams` 临时会话填充「### 当前Step参数」子节。所有提示词/命令构建前先
- * `replacePassThroughVars` 替换 `${xxx}` 透传变量（含循环上下文变量）。
+ * → settle（`awaitSubagentSettlement` 对齐 DSH `subagent/end`）→ final output），agent 定义
+ * `agentParamsTemplate` 时先 `fillParams` 临时会话填充「### 当前Step参数」子节。所有
+ * 提示词/命令构建前先 `replacePassThroughVars` 替换 `${xxx}` 透传变量（含循环上下文变量）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-runner
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -26,7 +26,7 @@ import {
   textSummary,
 } from './internal.ts';
 import { finalAssistantOutput, collectSessionMessages } from './subagents.ts';
-import type { Agent } from './subagents.ts';
+import type { Agent, SubagentSettlement } from './subagents.ts';
 import type { CommandConfig, SessionMessage, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import type { ShellExecRequest, ShellRunResult } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
 
@@ -70,7 +70,7 @@ export interface StepRunnerConfig {
   readonly hostAgent?: Agent;
   /**
    * 子代理真实 childId 就绪回调（由 workflow 层注入）：`startContinuable` 返回后、
-   * `whenIdle` 挂起前调用，把真实子代理 SessionId 上抛给引擎（供暂停反查 childId）。
+   * settle 等待前调用，把真实子代理 SessionId 上抛给引擎（供暂停反查 childId）。
    * 返回 Promise 时 runner 会 await（引擎借此把真实 childId 落盘后再继续）。
    */
   readonly onChildStarted?: (stepId: string, childId: string) => void | Promise<void>;
@@ -82,11 +82,18 @@ export interface StepRunnerConfig {
    */
   readonly onDelegatedAsk?: (input: DelegatedAskContext) => Promise<boolean> | boolean;
   /**
-   * 取消类错误下查询暂停登记表的回调（由 workflow 层注入，microflow 不 import
-   * workflow）：传入真实子代理 SessionId，返回 `true` 表示该 childId 已在暂停登记表
-   * （`interrupt` 打断应保持 paused 而非 failed）。
+   * 子代理 settle 终态等待回调（由 workflow 层注入，对齐 DSH `subagent/end`）。
+   *
+   * 传入子代理 SessionId 与取消信号，resolve 为该子代理的 settle 终态结算信号
+   * （{@link SubagentSettlement}：stopReason + 可选 output）。DSH continuable 子代理
+   * 「完成 = settle」：interrupt → settle(`aborted`)；自然完成 → settle(`completed`)；
+   * 模型/传输失败 → `error`。引擎实现经 `sandore/subagent-settled` 事件路由
+   * （DSH 适配层把 `subagent/end` 转译为该事件）。
+   *
+   * 缺省（未注入）时回退 `whenIdle()` + `finalAssistantOutput()`（兼容无注入场景，
+   * 如最小桩/不测 settle 的单测——此回退路径无法区分 abort，不适用于暂停语义）。
    */
-  readonly isPausedChild?: (childId: string) => boolean;
+  readonly awaitSubagentSettlement?: (childId: string, signal: AbortSignal) => Promise<SubagentSettlement>;
 }
 
 /** 前置 Step 的输出摘要（prompt 结构化提示词的参考信息）。 */
@@ -112,6 +119,13 @@ export interface StepRunRequest {
   readonly loopTurn?: number;
   /** 活跃循环 `maxIterations`（不在循环中缺省视为 0）。 */
   readonly loopMaxIterations?: number;
+  /**
+   * 当前 Step 解析后的任务规则（缺陷 7 修复：3 级合并 step ∪ stage → workflow.rules
+   * 查内容；由 {@link resolveStepRules} 在 {@link StageExecutor.processCommandNode}
+   * 计算）。非空时注入提示词 `## 任务规则` 节，prompt/agent/skill/mcp 四路 AI 提示词
+   * 同时生效；shell Step 无 AI 提示词不适用。缺省（无规则）时不注入该节。
+   */
+  readonly resolvedRules?: Readonly<Record<string, string>>;
 }
 
 /** 单 Step 执行结果附带的会话元数据（agent/skill/mcp 返回真实 childId）。 */
@@ -242,13 +256,18 @@ function buildTaskText(
 
 /**
  * 构建结构化提示词（主头部 + `## 你的任务` + `## 参考信息` + 可选
- * `### 当前Step参数` + `## 前置Steps输出与产物`）。
+ * `### 当前Step参数` + `## 前置Steps输出与产物` + 可选 `## 任务规则`）。
+ *
+ * `## 任务规则` 节位置对齐基准 `workflow-step.ts` L615-619（置于 `## 前置Steps
+ * 输出与产物` 之后）；仅当 `resolvedRules` 非空时渲染，逐键输出
+ * `- **{key}**: {content}`。prompt/agent/skill/mcp 四路 AI 提示词共用本函数注入。
  */
 function buildPromptText(
   taskText: string,
   originalInput: string,
   previousOutputs: readonly PreviousStepOutput[],
   paramsText: string | undefined,
+  resolvedRules?: Readonly<Record<string, string>>,
 ): string {
   const sections: string[] = [];
   sections.push(PROMPT_MAIN_HEADER);
@@ -264,6 +283,16 @@ function buildPromptText(
     sections.push(paramsText);
   }
   sections.push(...renderPreviousOutputs(previousOutputs));
+  // ## 任务规则（缺陷 7 修复）：非空时注入，对齐基准位置（前置输出之后）。
+  if (resolvedRules !== undefined) {
+    const ruleKeys = Object.keys(resolvedRules);
+    if (ruleKeys.length > 0) {
+      const ruleLines = ruleKeys.map(key => `- **${key}**: ${resolvedRules[key]}`).join('\n');
+      sections.push('');
+      sections.push('## 任务规则');
+      sections.push(ruleLines);
+    }
+  }
   return sections.join('\n');
 }
 
@@ -431,7 +460,7 @@ export class StepRunner {
       this.config.mcps,
       this.config.agents,
     );
-    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, undefined);
+    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, undefined, request.resolvedRules);
     const message = createUserMessage({
       source: { kind: 'user' },
       content: [{ type: 'text', text: promptText }],
@@ -470,7 +499,7 @@ export class StepRunner {
       this.config.mcps,
       this.config.agents,
     );
-    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, paramsText);
+    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, paramsText, request.resolvedRules);
     const started = await this.ctx.subagents.startContinuable({
       provider: route.provider,
       label: `step ${request.step.id}`,
@@ -482,47 +511,85 @@ export class StepRunner {
       signal: request.signal ?? new AbortController().signal,
     });
     await this.config.onChildStarted?.(request.step.id, started.childId);
-    return this.collectSubagentOutput(command.type, started.childId, request.step.id, request.stageId);
+    return this.collectSubagentOutput(command.type, started.childId, request.step.id, request.stageId, request.signal);
   }
 
   /**
-   * 暂停后恢复子代理 Step：重新 `whenIdle` + `finalAssistantOutput` + ask 转接循环。
+   * 暂停后恢复子代理 Step：重新 settle + final output + ask 转接循环。
    *
-   * 暂停登记表命中的子代理 Step 被 `interrupt` 打断后，`resumeStep` 的 `followup` 重新
-   * 驱动子代理；本方法在 `followup` 之后被引擎续跑路径调用，重新等待子代理静止并取回
-   * 最终 assistant 输出（等价于首次执行时的输出收集尾段）。
+   * 暂停的子代理 Step 被 `interrupt` 打断后（settle `aborted`），`resumeStep` 的
+   * `followup` cold-resume 重新驱动子代理；本方法在 `followup` 之后被引擎续跑路径调用，
+   * 重新等待子代理 settle 并取回最终 assistant 输出（等价于首次执行时的输出收集尾段）。
    */
   async resumeSubagent(
     commandType: 'agent' | 'skill' | 'mcp',
     childId: string,
     stepId: string,
     stageId: string,
+    signal?: AbortSignal,
   ): Promise<StepRunResult> {
-    return this.collectSubagentOutput(commandType, childId, stepId, stageId);
+    return this.collectSubagentOutput(commandType, childId, stepId, stageId, signal);
   }
 
-  /** 收集已启动子代理的最终输出（首次执行与暂停续跑共用：whenIdle + final output + ask 转接）。 */
+  /**
+   * 收集已启动子代理的最终输出（首次执行与暂停续跑共用：settle 终态 + final output + ask 转接）。
+   *
+   * 完成判定对齐 DSH `subagent/end`：等 `awaitSubagentSettlement`（由 workflow 层注入，
+   * 经 `sandore/subagent-settled` 事件路由 DSH settle 终态）。按 `stopReason` 区分：
+   * - `completed` → Step 完成，取 settle 载荷 `output`（缺省回退 `finalAssistantOutput`）。
+   * - `aborted`（interrupt 暂停）→ 不算完成，抛 `STEP_PAUSED` sentinel 供 stage-executor
+   *   路由为 paused（不再依赖暂停登记表兜底）。
+   * - `error`/`max-tokens`/`refusal` → 落 `STEP_EXECUTION`（failed）。
+   *
+   * `awaitSubagentSettlement` 缺省时回退 `whenIdle()` + `finalAssistantOutput()`（兼容无注入
+   * 场景；此回退无法区分 abort，不适用于暂停语义——暂停路径必经注入的 settle）。
+   */
   private async collectSubagentOutput(
     commandType: 'agent' | 'skill' | 'mcp',
     childId: string,
     stepId: string,
     stageId: string,
+    signal?: AbortSignal,
   ): Promise<StepRunResult> {
     const child = this.ctx.agents.get(childId);
     if (child === undefined) {
       throw new SandoreError(`subagent '${childId}' not found in registry`, 'STEP_EXECUTION');
     }
-    await child.whenIdle();
-    let output = finalAssistantOutput(child.session.events);
-    if (output === undefined) {
-      throw new SandoreError('subagent produced no assistant output', 'STEP_EXECUTION');
-    }
+    const awaitSettlement = this.config.awaitSubagentSettlement;
+    // settle 终态 → final output：只有 DSH settle（completed）才算完成；aborted 抛暂停
+    // sentinel；error/max-tokens/refusal 落 failed。未注入时回退 whenIdle + finalAssistantOutput。
+    const settle = async (): Promise<ContentBlock[]> => {
+      if (awaitSettlement === undefined) {
+        await child.whenIdle();
+        const fallback = finalAssistantOutput(child.session.events);
+        if (fallback === undefined) {
+          throw new SandoreError('subagent produced no assistant output', 'STEP_EXECUTION');
+        }
+        return fallback;
+      }
+      const settlement: SubagentSettlement = await awaitSettlement(childId, signal ?? new AbortController().signal);
+      if (settlement.stopReason === 'completed') {
+        // settle 载荷 output 为只读视图（对齐 DSH lastAssistantMessage 借用语义），拷贝为可变数组。
+        const out = settlement.output ?? finalAssistantOutput(child.session.events);
+        if (out === undefined) {
+          throw new SandoreError('subagent produced no assistant output', 'STEP_EXECUTION');
+        }
+        return [...out];
+      }
+      if (settlement.stopReason === 'aborted') {
+        // interrupt 暂停：不算完成，抛 STEP_PAUSED sentinel 供 stage-executor 路由为 paused。
+        throw new SandoreError(`subagent '${childId}' interrupted (settle aborted)`, 'STEP_PAUSED', { fatal: false });
+      }
+      // error / max-tokens / refusal（及未知 reason）→ failed。
+      throw new SandoreError(`subagent '${childId}' settle ${settlement.stopReason}`, 'STEP_EXECUTION');
+    };
+    let output = await settle();
     const onDelegatedAsk = this.config.onDelegatedAsk;
     if (onDelegatedAsk !== undefined) {
       // 子代理 ask 转接：final result 含标记块时回调 workflow 层解析/转接，答案 followup
-      // 注回后子代理续跑，重新取 final output（可多轮 ask，直至无标记块或转接方放弃）。
-      // 双保险守卫防无限重问：① 无进展（本轮 output 与上轮相同）即 break；② 超过最大
-      // 转接轮数即 break，均按普通输出处理。
+      // 注回后子代理续跑（cold-resume → 重新 settle），重新取 final output（可多轮 ask，
+      // 直至无标记块或转接方放弃）。双保险守卫防无限重问：① 无进展（本轮 output 与上轮
+      // 相同）即 break；② 超过最大转接轮数即 break，均按普通输出处理。
       let rounds = 0;
       while (hasDelegatedAskMarker(output) && rounds < MAX_DELEGATED_ASK_ROUNDS) {
         const delegated = await onDelegatedAsk({
@@ -535,20 +602,21 @@ export class StepRunner {
           break;
         }
         rounds += 1;
-        await child.whenIdle();
-        const next = finalAssistantOutput(child.session.events);
-        if (next === undefined || sameOutput(next, output)) {
+        const next = await settle();
+        if (sameOutput(next, output)) {
           break;
         }
         output = next;
       }
     }
+    // §3.8A：子代理消息持久化（settle 后采集，随结果带出 → finishCommandNode 写
+    // executed.sessionMessages → onPersist 定格；前端内嵌消息框/失败·暂停最近 N 条）。
+    // 取最新活 child（cold-resume 后的新 handle），回退 start child（mock FakeAgent 复用）。
+    const liveChild = this.ctx.agents.get(childId) ?? child;
     return {
       output,
       sessionMeta: { childId, synthetic: false, command: commandType },
-      // §3.8A：子代理消息持久化（whenIdle 后采集，随结果带出 → finishCommandNode 写
-      // executed.sessionMessages → onPersist 定格；前端内嵌消息框/失败·暂停最近 N 条）。
-      sessionMessages: collectSessionMessages(child.session.events),
+      sessionMessages: collectSessionMessages(liveChild.session.events),
     };
   }
 

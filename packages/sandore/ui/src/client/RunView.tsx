@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { ArtifactEntry } from '@deepseek-ai/dsh-sandore-workflow/remote'
+import type { RevertBoundaryOption } from '@deepseek-ai/dsh-sandore-workflow/types'
 import type { PendingPermissionEntry, PendingQuestionEntry, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/schema'
 
 import { unwrap } from './remote.ts'
@@ -47,8 +48,11 @@ export interface RunViewRemote {
   resumeAll(input: { instanceId: string; resumePrompt?: string }): Promise<RemoteResult<void>>
   pauseStep(input: { instanceId: string; stepId: string }): Promise<RemoteResult<void>>
   resumeStep(input: { instanceId: string; stepId: string; resumePrompt?: string }): Promise<RemoteResult<void>>
-  retryStep(input: { instanceId: string; stepId: string; mode: RetryMode; message: string }): Promise<RemoteResult<void>>
+  retryStep(input: { instanceId: string; stepId: string; mode: RetryMode; message: string; revertBoundary?: number }): Promise<RemoteResult<void>>
+  listRevertBoundaries(input: { instanceId: string; stepId: string }): Promise<RemoteResult<RevertBoundaryOption[]>>
+  sendStepMessage(input: { instanceId: string; stepId: string; message: string }): Promise<RemoteResult<void>>
   replyQuestion(input: { instanceId: string; requestId: string; answers: unknown }): Promise<RemoteResult<void>>
+  rejectQuestion(input: { instanceId: string; requestId: string }): Promise<RemoteResult<void>>
   replyPermission(input: { instanceId: string; requestId: string; reply: 'once' | 'always' | 'reject' }): Promise<RemoteResult<void>>
 }
 
@@ -153,9 +157,17 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
   const resumeAll = (resumePrompt: string): void => { void runAction(async () => { unwrap(await remote.resumeAll({ instanceId, resumePrompt })) }) }
   const abort = (): void => { void runAction(async () => { unwrap(await remote.abortInstance(instanceId)) }) }
   const resumeStep = (stepId: string, resumePrompt: string): void => { void runAction(async () => { unwrap(await remote.resumeStep({ instanceId, stepId, resumePrompt })) }) }
-  const retryStep = (stepId: string, mode: RetryMode, message: string): void => { void runAction(async () => { unwrap(await remote.retryStep({ instanceId, stepId, mode, message })) }) }
+  const retryStep = (stepId: string, mode: RetryMode, message: string, revertBoundary?: number): void => { void runAction(async () => { unwrap(await remote.retryStep({ instanceId, stepId, mode, message, ...(revertBoundary === undefined ? {} : { revertBoundary }) })) }) }
+  const sendStepMessage = (stepId: string, message: string): void => { void runAction(async () => { unwrap(await remote.sendStepMessage({ instanceId, stepId, message })) }) }
+  // listRevertBoundaries 是只读查询，不经 runAction（避免禁用 composer）；失败内联回传错误信息。
+  const listRevertBoundaries = async (stepId: string): Promise<RevertBoundaryOption[]> => {
+    return unwrap(await remote.listRevertBoundaries({ instanceId, stepId }))
+  }
   const replyQuestion = (requestId: string, answers: AnswerItem[]): void => {
     void runAction(async () => { unwrap(await remote.replyQuestion({ instanceId, requestId, answers: { answers } })) })
+  }
+  const rejectQuestion = (requestId: string): void => {
+    void runAction(async () => { unwrap(await remote.rejectQuestion({ instanceId, requestId })) })
   }
   const replyPermission = (requestId: string, reply: 'once' | 'always' | 'reject'): void => {
     void runAction(async () => { unwrap(await remote.replyPermission({ instanceId, requestId, reply })) })
@@ -255,7 +267,10 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
                 onResumeAll={resumeAll}
                 onResumeStep={resumeStep}
                 onRetryStep={retryStep}
+                onSendStepMessage={sendStepMessage}
+                onListRevertBoundaries={listRevertBoundaries}
                 onReplyQuestion={replyQuestion}
+                onRejectQuestion={rejectQuestion}
                 onReplyPermission={replyPermission}
                 onAbort={abort}
                 instanceId={instanceId}

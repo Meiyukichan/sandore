@@ -3,11 +3,13 @@
  * 右侧面板默认展示；选中 Stage/Step 时切换为节点配置）。
  *
  * 仅渲染 name / version / description / settings（defaultTimeout / maxConcurrentAgents）
- * 与工作流级 primary 门禁开关；字段变更经 `onChange` 直接更新宿主 `WorkflowDefinition`
- * （由 DagEditor 持有，保存/Ctrl+S 统一序列化）。不含 header 与保存按钮。
+ * 与工作流级 primary 门禁开关 + 工作流级任务规则键值对编辑（缺陷 7 修复：rules 内容表，
+ * 供 Stage/Step 级引用 + 运行时注入 AI 提示词 `## 任务规则` 节）；字段变更经 `onChange`
+ * 直接更新宿主 `WorkflowDefinition`（由 DagEditor 持有，保存/Ctrl+S 统一序列化）。
+ * 不含 header 与保存按钮。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/DefinitionDetail
  */
-import { Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconPlusOutline16, IconTrashOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkflowDefinition } from '@deepseek-ai/dsh-sandore-workflow/schema'
 
@@ -26,6 +28,8 @@ export interface WorkflowDetailFieldsProps {
 
 /** 渲染工作流详情字段表单（右侧面板默认视图）。 */
 export function WorkflowDetailFields({ t, definition, onChange }: WorkflowDetailFieldsProps) {
+  const rules = definition.rules ?? {}
+  const ruleEntries = Object.entries(rules)
   return (
     <div className={css.body}>
       <div className={css.sectionTitle}>{t('detail.title')}</div>
@@ -79,6 +83,44 @@ export function WorkflowDetailFields({ t, definition, onChange }: WorkflowDetail
           <span>{t('detail.primaryGate.enabled')}</span>
         </label>
       </label>
+
+      {/* 缺陷 7 修复：工作流级任务规则键值对编辑（内容表，供 Stage/Step 级引用）。 */}
+      <div className={css.sectionTitle}>{t('detail.rules')}</div>
+      <span className={css.label}>{t('detail.rules.hint')}</span>
+      {ruleEntries.map(([key, value], index) => (
+        <div key={index} className={css.rulesKvRow}>
+          <Input
+            className={css.rulesKeyInput ?? ''}
+            value={key}
+            onChange={event => {
+              const nextKey = trimToUndefined(event.target.value)
+              const rest = ruleEntries.filter((_, i) => i !== index)
+              const next = rest.reduce<Record<string, string>>((acc, [k, v]) => { acc[k] = v; return acc }, {})
+              if (nextKey !== undefined) { next[nextKey] = value }
+              onChange(Object.keys(next).length === 0 ? { ...definition, rules: undefined } : { ...definition, rules: next })
+            }}
+            placeholder={t('editor.field.ruleKey')}
+            aria-label={t('editor.field.ruleKey')}
+          />
+          <Input
+            value={value}
+            onChange={event => {
+              const next = { ...rules, [key]: event.target.value }
+              onChange({ ...definition, rules: next })
+            }}
+            placeholder={t('editor.field.ruleContent')}
+            aria-label={t('editor.field.ruleContent')}
+          />
+          <Button variant="ghost" size="sm" icon={<IconTrashOutline16 />} onClick={() => {
+            const rest = ruleEntries.filter((_, i) => i !== index)
+            const next = rest.reduce<Record<string, string>>((acc, [k, v]) => { acc[k] = v; return acc }, {})
+            onChange(Object.keys(next).length === 0 ? { ...definition, rules: undefined } : { ...definition, rules: next })
+          }} aria-label={t('editor.remove.item')} />
+        </div>
+      ))}
+      <Button variant="ghost" size="sm" icon={<IconPlusOutline16 />} onClick={() => { onChange({ ...definition, rules: { ...rules, '': '' } }) }}>
+        {t('editor.add.item')}
+      </Button>
     </div>
   )
 }

@@ -12,6 +12,7 @@ import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
 import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import {
   InteractionManager,
+  isRejectedAnswer,
   parseDelegatedAsk,
   type InteractionManagerOptions,
   type PermissionReply,
@@ -77,6 +78,7 @@ function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Age
   persist: ReturnType<typeof vi.fn>;
   emitQuestion: ReturnType<typeof vi.fn>;
   emitPermission: ReturnType<typeof vi.fn>;
+  emitQuestionRejected: ReturnType<typeof vi.fn>;
   followup: ReturnType<typeof vi.fn>;
 } {
   const userQuestions = options?.userQuestions ?? new FakeUserQuestions();
@@ -84,6 +86,7 @@ function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Age
   const persist = vi.fn();
   const emitQuestion = vi.fn();
   const emitPermission = vi.fn();
+  const emitQuestionRejected = vi.fn();
   const followup = vi.fn(async () => {});
   const deps: InteractionManagerOptions = {
     hostAgent,
@@ -91,9 +94,10 @@ function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Age
     persist,
     emitQuestion,
     emitPermission,
+    emitQuestionRejected,
     followup,
   };
-  return { deps, userQuestions, hostAgent, persist, emitQuestion, emitPermission, followup };
+  return { deps, userQuestions, hostAgent, persist, emitQuestion, emitPermission, emitQuestionRejected, followup };
 }
 
 describe('InteractionManager.addPendingQuestion / addPendingPermission', () => {
@@ -232,6 +236,83 @@ describe('InteractionManager.replyPermission', () => {
   });
 });
 
+describe('InteractionManager.rejectQuestion（缺陷 26：公开拒绝 → 终态化 + resolve 占位非 reject）', () => {
+  it('终态化（status rejected）+ 删 Map + resolve（非 reject）waiter 占位答案 + 持久化空列表 + 发 question_rejected', async () => {
+    const { deps, persist, emitQuestionRejected } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    const entry = questionEntry('req-1', singleQuestionPayload());
+    const asking = mgr.ask({ entry });
+
+    await mgr.rejectQuestion('req-1');
+
+    // waiter 以拒绝占位 resolve（非 reject——避免冒泡 runAndCatch 落实例 failed）。
+    const answer = await asking;
+    expect(answer).toEqual({ answers: [], rejected: true });
+    expect(isRejectedAnswer(answer)).toBe(true);
+    // 终态条目移出 pending Map → 持久化空列表（终态条目只留内存审计）。
+    const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingQuestionEntry[];
+    expect(lastCall).toEqual([]);
+    // 双发 sandore/question_rejected（供 UI 刷新）；载荷是终态化（rejected）条目。
+    expect(emitQuestionRejected).toHaveBeenCalledWith({ ...entry, status: 'rejected' });
+  });
+
+  it('拒绝后条目不再 pending（再次 reject/reply 抛 INVALID_OPERATION）', async () => {
+    const { deps } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    const entry = questionEntry('req-1', singleQuestionPayload());
+    const asking = mgr.ask({ entry });
+    await mgr.rejectQuestion('req-1');
+    await asking;
+
+    await expect(mgr.rejectQuestion('req-1')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    await expect(mgr.replyQuestion('req-1', answer(['A']))).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+
+  it('未知 requestId 抛 SandoreError(INVALID_OPERATION)', async () => {
+    const { deps } = makeDeps();
+    const mgr = new InteractionManager(deps);
+
+    await expect(mgr.rejectQuestion('nope')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+
+  it('resolve 占位答案与 cancelMatching 的 CANCELLED_ANSWER 区分（带 rejected 标记）', async () => {
+    const { deps } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    const entry = questionEntry('req-1', singleQuestionPayload());
+    const asking = mgr.ask({ entry });
+
+    await mgr.rejectQuestion('req-1');
+    const answer = await asking;
+
+    // 拒绝占位带 rejected:true 标记；clearAll/clearPendingInteractions 的 CANCELLED_ANSWER 无此标记。
+    expect(isRejectedAnswer(answer)).toBe(true);
+    expect(isRejectedAnswer({ answers: [] })).toBe(false);
+  });
+});
+
+describe('InteractionManager.delegateSubagentAsk（拒绝路径，缺陷 26）', () => {
+  it('问答被拒时抛 STEP_EXECUTION（供 StageExecutor try/catch 标 Step failed）且不 followup', async () => {
+    const { deps, followup, emitQuestion } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    const output: ContentBlock[] = [{ type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]' }];
+
+    const delegating = mgr.delegateSubagentAsk({
+      childId: 'child-1',
+      output,
+      stageId: 'stg-1',
+      stepId: 'step-1',
+      sessionId: 'inst-1',
+    });
+    // emitQuestion 在 ask 登记时同步触发（addPendingQuestion 内），携带 entry.requestId。
+    const firedEntry = emitQuestion.mock.calls[0]?.[0] as PendingQuestionEntry;
+    expect(firedEntry).toBeDefined();
+    await mgr.rejectQuestion(firedEntry.requestId);
+
+    await expect(delegating).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
+    expect(followup).not.toHaveBeenCalled();
+  });
+});
+
 describe('parseDelegatedAsk', () => {
   it('解析合法标记块返回载荷', () => {
     const text = '前置 [[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]] 后置';
@@ -308,5 +389,64 @@ describe('InteractionManager.delegateSubagentAsk', () => {
 
     expect(outcome).toEqual({ delegated: false });
     expect(followup).not.toHaveBeenCalled();
+  });
+});
+
+describe('InteractionManager.clearPendingInteractions / clearAll（缺陷 27 + 缺陷 9 崩溃恢复）', () => {
+  it('clearPendingInteractions(stepId) 终态化匹配条目 + resolve waiter 占位答案 + 持久化剩余 pending', async () => {
+    const { deps, persist } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    const step1Entry = questionEntry('req-1', singleQuestionPayload());
+    const step2Entry: PendingQuestionEntry = { ...questionEntry('req-2', singleQuestionPayload()), stepId: 'step-2' };
+
+    // 登记 step-1 的 ask（挂起 waiter）+ step-2 的 pending（不挂 waiter）。
+    const asking = mgr.ask({ entry: step1Entry });
+    mgr.addPendingQuestion(step2Entry);
+
+    mgr.clearPendingInteractions('step-1');
+
+    // step-1 waiter 以「已取消」占位答案 resolve（非 reject，避免冒泡 failed）。
+    await expect(asking).resolves.toEqual({ answers: [] });
+    // step-2 条目保留并重持久化（step-1 已清）。
+    const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingQuestionEntry[];
+    expect(lastCall).toEqual([step2Entry]);
+  });
+
+  it('clearPendingInteractions 无匹配 stepId 时不触发 syncState（无 spurious 持久化）', async () => {
+    const { deps, persist } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    mgr.addPendingQuestion(questionEntry('req-1', singleQuestionPayload()));
+    const callsBefore = persist.mock.calls.length;
+
+    mgr.clearPendingInteractions('step-missing');
+
+    expect(persist.mock.calls.length).toBe(callsBefore);
+    // 条目仍在（无匹配未清理）：replyQuestion 可正常终态化。
+    await expect(mgr.replyQuestion('req-1', answer(['A']))).resolves.toBeUndefined();
+  });
+
+  it('clearAll 终态化全部 pending（question+permission）+ resolve 全部 waiter + 持久化空列表', async () => {
+    const { deps, persist } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    const qEntry = questionEntry('req-q', singleQuestionPayload());
+    const pEntry = permissionEntry('req-p');
+    const asking = mgr.ask({ entry: qEntry });
+    mgr.addPendingPermission(pEntry);
+
+    mgr.clearAll();
+
+    await expect(asking).resolves.toEqual({ answers: [] });
+    const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingInteractionEntry[];
+    expect(lastCall).toEqual([]);
+  });
+
+  it('clearAll 在 Maps 为空时仍 syncState 覆盖 stale 快照 pendingInteractions（缺陷 9 崩溃恢复路径）', () => {
+    const { deps, persist } = makeDeps();
+    const mgr = new InteractionManager(deps);
+
+    // Maps 为空（崩溃恢复重建态）：clearAll 仍触发 syncState 持久化空 pending。
+    mgr.clearAll();
+
+    expect(persist).toHaveBeenCalledWith([]);
   });
 });

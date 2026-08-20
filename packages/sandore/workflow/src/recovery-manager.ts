@@ -10,13 +10,14 @@
  * `resumeExecution` 续跑。
  *
  * 重试三模式：`continue` 同会话 `followup`（sessionId 不变）；`revert` 计算最后一个
- * 闭合 turn 的末事件 seq 作安全边界 → `sessions.fork(childId, boundary)` 取前缀 →
- * `agents.create({ seed: forked.events, sessionId: 新合成 childId })`（新 session id，
- * `parentSessionId` 记旧值）；`fork` 省略 boundary 保留全量历史 → `agents.create({ seed })`
- * 新 agent 续跑。三模式共用重试续跑循环：置 `running` → 清残留字段 → `RetryRecord`
- * 入 `retryHistory` → 发射 `sandore/step-retried` → followup/续跑 → `resumeExecution`。
- * 仅 `failed` Step 可重试（completed 实例/Step 返回无害 no-op），执行中抛
- * `INVALID_OPERATION`。
+ * 闭合 turn 的末事件 seq 作安全边界（或用用户传入的 `revertBoundary` 选更早闭合 turn）
+ * → `sessions.fork(childId, boundary)` 取前缀 → `agents.create({ seed: forked.events,
+ * sessionId: 新合成 childId })`（新 session id，`parentSessionId` 记旧值）；`fork` 省略
+ * boundary 保留全量历史（尾部未闭合时自动回退到最后一个闭合 turn/end 防 OPEN_TURN）
+ * → `agents.create({ seed })` 新 agent 续跑。三模式共用重试续跑循环：置 `running` →
+ * 清残留字段 → `RetryRecord` 入 `retryHistory` → 发射 `sandore/step-retried` →
+ * followup/续跑 → `resumeExecution`。仅 `failed` Step 可重试（completed 实例/Step
+ * 返回无害 no-op），执行中抛 `INVALID_OPERATION`。
  *
  * 崩溃恢复：`recover()` 按快照 `executedSteps` 分类处理——合成 session（shell/prompt）
  * 标 `failed`、仅对第一个 `running`/`interacting` 子代理 Step `followup` 冷恢复（与引擎
@@ -39,6 +40,16 @@ type ExecutedStep = WorkflowTaskState['executedSteps'][number];
 /** fork 源会话最小结构（仅需 `events`，用于安全边界计算与 seed 提取）。 */
 export interface ForkSourceSession {
   readonly events: readonly SessionEvent[];
+}
+
+/** revert 回退点候选：一个闭合 turn 的末事件 seq + turn 编号 + assistant 文本预览。 */
+export interface RevertBoundaryOption {
+  /** 闭合 turn 的 `turn/end` 事件 seq（传给 `retryStep` 的 `revertBoundary`）。 */
+  readonly seq: number;
+  /** turn 编号（事件 `data.turn`；展示用「Turn N+1」）。 */
+  readonly turn: number;
+  /** 该 turn 内 assistant 文本块预览（前 80 字符；无 assistant 文本则为空串）。 */
+  readonly preview: string;
 }
 
 /** 单实例恢复例程的分类结果（供引擎决定是否重跑主循环）。 */
@@ -112,6 +123,75 @@ export function computeSafeRevertBoundary(events: readonly SessionEvent[]): numb
 }
 
 /**
+ * 判定会话事件流尾部是否存在未闭合 turn（最后一个 turn 边界为 `turn/start` 而非 `turn/end`）。
+ *
+ * DSH `sessions.fork` 默认 boundary（=最后事件 seq）在未闭合尾部下确定性抛 `OPEN_TURN`：
+ * 只要末事件落在某个 `turn/start` 之后且无匹配 `turn/end`，fork(undefined) 即失败。
+ * `retryStep` 的 fork 模式据此自动回退到最后一个闭合 turn/end，避免「子代理 turn 未闭合即失败」
+ * 的常见场景下直接抛错。
+ * @param events - 子代理会话事件流（含 `turn/start`/`turn/end` 边界事件）。
+ * @returns 末事件落在未闭合 turn 内为 true。
+ */
+export function hasUnclosedTurnTail(events: readonly SessionEvent[]): boolean {
+  let lastTurnBoundaryType: string | undefined;
+  for (const event of events) {
+    if (event.type === 'turn/start' || event.type === 'turn/end') {
+      lastTurnBoundaryType = event.type;
+    }
+  }
+  return lastTurnBoundaryType === 'turn/start';
+}
+
+/** 从 assistant/message 事件提取纯文本（仅 text 块；其余块忽略）。 */
+function assistantTextOf(event: SessionEvent): string {
+  const message = (event.data as { message?: { content?: ReadonlyArray<{ type: string; text?: string }> } } | undefined)?.message;
+  if (message === undefined) return '';
+  const content = message.content ?? [];
+  return content
+    .filter(block => block.type === 'text')
+    .map(block => block.text ?? '')
+    .join('');
+}
+
+/** 截断至 max 字符（超出加省略号）。 */
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * 列出会话事件流中所有闭合 turn 的回退点候选（UI revert 回退点选择的数据源）。
+ *
+ * 遍历事件，按 turn/start → … → turn/end 配对；每个闭合 turn 产出一个候选，
+ * `seq` = 该 turn/end 的事件 seq，`turn` = 该 turn 编号，`preview` = turn 内
+ * assistant 文本块拼接的前 80 字符。未闭合的尾部 turn（有 turn/start 无 turn/end）
+ * 不产出候选（与 `computeSafeRevertBoundary` 语义一致）。
+ * @param events - 子代理会话事件流。
+ * @returns 闭合 turn 回退点候选列表（按事件 seq 升序）。
+ */
+export function listClosedTurnBoundaries(events: readonly SessionEvent[]): RevertBoundaryOption[] {
+  const options: RevertBoundaryOption[] = [];
+  let currentTurn: number | undefined;
+  let currentPreview = '';
+  for (const event of events) {
+    if (event.type === 'turn/start') {
+      currentTurn = (event.data as { turn?: number } | undefined)?.turn ?? 0;
+      currentPreview = '';
+    } else if (event.type === 'assistant/message') {
+      const text = assistantTextOf(event);
+      if (text === '') continue;
+      currentPreview = currentPreview === '' ? text : `${currentPreview}\n${text}`;
+    } else if (event.type === 'turn/end') {
+      if (currentTurn !== undefined) {
+        options.push({ seq: event.seq, turn: currentTurn, preview: truncate(currentPreview, 80) });
+      }
+      currentTurn = undefined;
+      currentPreview = '';
+    }
+  }
+  return options;
+}
+
+/**
  * 恢复协调器。
  *
  * 持有注入的依赖，实现 `retryStep`（三模式重试）与 `recover`（Step 分类恢复）；
@@ -132,8 +212,10 @@ export class RecoveryManager {
    * @param stepId - 待重试 Step 的定义 id（或唯一执行 id）。
    * @param mode - 重试模式。
    * @param message - 重试附带的提示消息。
+   * @param revertBoundary - 可选：revert 模式用户所选闭合 turn/end 的事件 seq；
+   *   省略 = 最后一个闭合 turn/end（默认兼容，与改造前行为一致）。
    */
-  async retryStep(stepId: string, mode: RetryMode, message: string): Promise<void> {
+  async retryStep(stepId: string, mode: RetryMode, message: string, revertBoundary?: number): Promise<void> {
     const state = this.deps.readState();
     if (state.status === 'completed') {
       // completed 实例：结构化 no-op（不抛错、不改变状态）。
@@ -185,12 +267,29 @@ export class RecoveryManager {
         const sourceEvents = this.deps.getSession(childId)?.events ?? [];
         let boundary: number | undefined;
         if (mode === 'revert') {
-          boundary = computeSafeRevertBoundary(sourceEvents);
+          // revert 回退点可选：用户传入的 revertBoundary（闭合 turn/end seq）优先；
+          // 省略时回退到 computeSafeRevertBoundary（最后一个闭合 turn/end，默认兼容）。
+          boundary = revertBoundary ?? computeSafeRevertBoundary(sourceEvents);
           if (boundary === undefined) {
             throw new SandoreError(
               `cannot revert step '${stepId}': no closed turn boundary in child session`,
               'INVALID_OPERATION',
             );
+          }
+        } else {
+          // fork 防御（必要，非可选）：源会话存在未闭合尾部时 fork(undefined) 确定性
+          // 抛 OPEN_TURN（DSH sessions.fork 默认 boundary=末事件 seq，末事件落在未闭合
+          // turn 内即拒绝）。检测到未闭合尾部时自动回退到最后一个闭合 turn/end
+          // （对齐 computeSafeRevertBoundary 语义）；源会话无任何闭合 turn 时仍抛错
+          // （无法安全 fork）。源会话尾部已闭合时 boundary 保持 undefined（全量历史）。
+          if (hasUnclosedTurnTail(sourceEvents)) {
+            boundary = computeSafeRevertBoundary(sourceEvents);
+            if (boundary === undefined) {
+              throw new SandoreError(
+                `cannot fork step '${stepId}': source session has an open turn tail with no closed turn to fall back to`,
+                'INVALID_OPERATION',
+              );
+            }
           }
         }
         const forked = this.deps.forkSession(childId, boundary);
@@ -258,13 +357,14 @@ export class RecoveryManager {
       hasFailure = true;
     }
 
-    // 仅 followup 第一个可续跑（running/interacting 子代理）Step，与引擎 `resumeStageId`/
-    // `resumeInfo` 的 `.find()` 收口一致；其余并发 running Step 不 followup，避免「已
-    // followup 但引擎不收口」的半恢复态。合成 session 失败时整体失败，不发起 followup。
+    // 缺陷 10 多路恢复：遍历全部 running/interacting 子代理 Step 逐个 followup
+    // （对齐基准恢复 E 步）。并发落地后多个 Step 同时 running 为常态——全部 followup，
+    // 不再只取第一个（原 `.find()` 只取首条属防御性代码，并发后变真实缺陷）。
+    // 合成 session 失败时整体失败，不发起 followup。
     let hasResume = false;
     if (!hasFailure) {
-      const resumeStep = running.find(isSubagentStep);
-      if (resumeStep !== undefined) {
+      const resumeSteps = running.filter(isSubagentStep);
+      for (const resumeStep of resumeSteps) {
         const childId = childIdOf(resumeStep);
         await this.deps.followup(childId, textBlock(coldResumePrompt), this.deps.signal);
         hasResume = true;

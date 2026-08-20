@@ -95,3 +95,16 @@
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
 }
+
+/* 缺陷 7 修复：工作流级任务规则键值对编辑行（键+内容+删除横排，输入框等宽撑开）。 */
+.rulesKvRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 规则键输入框：占剩余宽度（与内容输入框等宽，删除按钮固定）。 */
+.rulesKeyInput {
+  flex: 1;
+  min-width: 0;
+}

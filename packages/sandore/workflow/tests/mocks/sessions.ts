@@ -25,7 +25,13 @@ export class FakeSession {
   }
 }
 
-/** 内存 mock SessionStore：`create` 返回新的 `FakeSession` 并登记。 */
+/**
+ * 内存 mock SessionStore：`create` 返回新的 `FakeSession` 并登记。
+ *
+ * `fork` 忠实模拟 DSH `sessions.fork` 的 OPEN_TURN 校验：boundary 省略（= 末事件 seq）
+ * 且末事件落在未闭合 turn 内（最后 turn 边界为 turn/start 而非 turn/end）时抛
+ * `OPEN_TURN`，使 retryStep fork 模式的未闭合尾部防御可被集成测试覆盖。
+ */
 export class FakeSessionStore {
   private readonly sessions = new Map<string, FakeSession>();
   private counter = 0;
@@ -50,8 +56,32 @@ export class FakeSessionStore {
     const sourceSession = this.sessions.get(source);
     const forked = new FakeSession();
     if (sourceSession !== undefined) {
-      const end = boundary === undefined ? sourceSession.events.length - 1 : boundary;
-      forked.events.push(...sourceSession.events.slice(0, end + 1));
+      const events = sourceSession.events;
+      // 对齐 DSH sessions.fork._forkSeed：boundary 省略时取末事件 seq；切片
+      // [0, boundary] 内最后 turn 边界若为 turn/start（即切片落在未闭合 turn 内）
+      // 则抛 OPEN_TURN。使 retryStep fork 模式的未闭合尾部防御可被集成测试覆盖。
+      let resolvedBoundary = boundary;
+      if (resolvedBoundary === undefined) {
+        const lastEvent = events.at(-1);
+        if (lastEvent === undefined) {
+          // 空会话：fork 出空会话（对齐 DSH 空 seed）。
+          const key = childSessionId ?? `session-${++this.counter}`;
+          this.sessions.set(key, forked);
+          return forked;
+        }
+        resolvedBoundary = lastEvent.seq;
+      }
+      const slice = events.filter(event => event.seq <= resolvedBoundary!);
+      let lastTurnBoundaryType: string | undefined;
+      for (const event of slice) {
+        if (event.type === 'turn/start' || event.type === 'turn/end') {
+          lastTurnBoundaryType = event.type;
+        }
+      }
+      if (lastTurnBoundaryType === 'turn/start') {
+        throw new Error(`fork boundary for session "${source}" ends inside open turn (OPEN_TURN)`);
+      }
+      forked.events.push(...slice);
     }
     const key = childSessionId ?? `session-${++this.counter}`;
     this.sessions.set(key, forked);

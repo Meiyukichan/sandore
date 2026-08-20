@@ -372,7 +372,7 @@ describe('GateEvaluator', () => {
     expect(result.gatesPassed).toBe(true);
   });
 
-  it('omits primary passed flags when only secondary is enabled', async () => {
+  it('omits primary passed flags when primary is explicitly disabled (only secondary runs)', async () => {
     const { llm, fs, gateEvaluator } = harness();
     llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
     fs.seedFile('/work/out/report.md');
@@ -380,7 +380,7 @@ describe('GateEvaluator', () => {
     const result = await gateEvaluator.evaluate({
       step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
       context: { input: 'req', output: 'out' },
-      gates: { secondary: { enabled: true, prompt: 'review' } },
+      gates: { primary: { enabled: false }, secondary: { enabled: true, prompt: 'review' } },
       workdir: '/work',
     });
 
@@ -392,6 +392,66 @@ describe('GateEvaluator', () => {
       secondary: { enabled: true, passed: true, prompt: 'review' },
     });
     expect(result.gateDetails?.primary).not.toHaveProperty('passed');
+  });
+
+  // ── 缺陷 5 次要差异：primary 默认 enabled=true（对齐基准 primary?.enabled ?? true） ──
+  // 修前 sandore primary 默认 enabled=false（=== true 判定）；用户只配置 secondary、
+  // 未配置 primary 时基准 primary 默认执行，sandore 默认不执行 → 行为分歧。修后
+  // primary 未配置即视为启用（!== false），与基准对齐。
+
+  it('defaults primary to enabled when only secondary is configured (aligns with baseline primary?.enabled ?? true)', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    // 未配置 primary，仅配置 secondary → primary 默认启用，双门禁均执行。
+    // call 0 = primary（返回 taskStatus:done），call 1 = secondary（返回 gateStatus:done）。
+    let call = 0;
+    llm.streamHandler = () => {
+      const text = call === 0 ? '{"taskStatus":"done"}' : '{"gateStatus":"done"}';
+      call += 1;
+      return textChunks(text);
+    };
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { secondary: { enabled: true, prompt: 'review' } },
+      workdir: '/work',
+    });
+
+    // primary 默认启用：primaryPassed 被置位（非 undefined），gateDetails.primary.enabled=true。
+    expect(result.primaryPassed).toBe(true);
+    expect(result.secondaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(true);
+    expect(result.gateDetails).toMatchObject({
+      primary: { enabled: true, passed: true },
+      secondary: { enabled: true, passed: true, prompt: 'review' },
+    });
+    expect(call).toBe(2);
+  });
+
+  it('defaults primary to enabled when neither primary nor secondary is configured but gates object exists', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    // gates: {}（三级合并后存在 gates 对象但 primary/secondary 均未配置）→
+    // primary 默认启用执行、secondary 默认禁用不执行。对齐基准：任一级配了 gates
+    // 对象即 primary 默认 enabled=true、secondary 默认 false。
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: {},
+      workdir: '/work',
+    });
+
+    expect(result.primaryPassed).toBe(true);
+    expect(result.secondaryPassed).toBeUndefined();
+    expect(result.gatesPassed).toBe(true);
+    expect(result.gateDetails).toMatchObject({
+      primary: { enabled: true, passed: true },
+      secondary: { enabled: false },
+    });
+    expect(llm.calls).toHaveLength(1);
   });
 
   it('verifies outputTo via regex when a regex is configured', async () => {
@@ -438,6 +498,200 @@ describe('GateEvaluator', () => {
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('missing\\.md');
   });
+
+  // ── 缺陷 6：非 glob path 精确存在性检查（替代 findFilesByRegex 误用） ──────────
+
+  it('reports missing for a non-glob literal path when the file is absent and no similar files exist', async () => {
+    const { llm, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-p', path: 'out/report.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+    });
+
+    expect(result.primaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(false);
+    expect(result.errorDetail).toContain('out/report.md');
+  });
+
+  it('passes a non-glob literal path with a ./ prefix when the file exists (no false missing)', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-p', path: './out/report.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+    });
+
+    // 旧实现用非锚定 RegExp('./out/report.md')：首字符 `.` 为正则元字符，相对路径
+    // 'out/report.md' 无前导字符 → 确定性误报缺失（门禁恒失败）。精确存在性检查只
+    // 查 join 后的 /work/out/report.md 本身 → 存在即通过。
+    expect(result.gatesPassed).toBe(true);
+  });
+
+  it('still reports missing for a non-glob literal path when a nested similar file would falsely match under regex', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    // 期望产物 output/result.txt 本身不存在；仅树内存在嵌套同名/相似文件。
+    // 旧实现用非锚定 RegExp(output/result.txt) 全树子串匹配会命中
+    // dist/output/result.txt（含子串 'output/result.txt'）→ 该报缺失却放行（漏报）。
+    // 精确存在性检查只查 /work/output/result.txt 本身 → 不被相似文件误命中 → 报缺失。
+    fs.seedFile('/work/dist/output/result.txt');
+    fs.seedFile('/work/output/result.txt.bak');
+    fs.seedFile('/work/result1txt');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-p', path: 'output/result.txt' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+    });
+
+    expect(result.gatesPassed).toBe(false);
+    expect(result.errorDetail).toContain('output/result.txt');
+  });
+
+  it('still resolves glob and regex outputTo branches after the non-glob fix (regression)', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+    fs.seedFile('/work/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({
+        outputTo: [
+          { id: 'opt-glob', path: 'out/*.md' },
+          { id: 'opt-re', regex: 'report\\.md' },
+        ],
+      }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+    });
+
+    // glob 分支仍走 findFilesByGlob（锚定 ^out/[^/]*\.md$）、regex 字段仍走
+    // findFilesByRegex（非锚定全树匹配，语义保留）；两者命中即通过。
+    expect(result.gatesPassed).toBe(true);
+  });
+
+  // ── 缺陷 19：isGlobPattern 全特征检测后，regex 写法入 path 字段不再误判 glob ──
+  // 联动缺陷 6（已修复）：非 glob → fileExists 精确存在性检查，不走 findFilesByRegex
+  // ——否则 `.*`→`new RegExp('.*')` 匹配一切→门禁恒放行。以下测试确认联动安全。
+
+  it('reports missing for path=.* (no literal file named .*) instead of 恒放行 via findFilesByRegex', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    // 播种一个普通产物文件（无点文件）：若缺陷 6 未修复，`.*` 非glob 会落入
+    // findFilesByRegex → `new RegExp('.*')` 匹配 report.md → 门禁恒放行（危险）。
+    // 缺陷 6 已修复：非glob → fileExists 精确查字面 `.*` → 不存在 → 报 missing。
+    fs.seedFile('/work/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-dotstar', path: '.*' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+    });
+
+    expect(result.primaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(false);
+    expect(result.errorDetail).toContain('.*');
+  });
+
+  it('reports missing for path=[^a]* and does not falsely pass via globToRegex silent match', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    // 播种一个修前 globToRegex 会静默误命中的文件：globToRegex('[^a]*')=^\[\^a\][^/]*$
+    // 匹配字面 `[^a]` 前缀 → 误命中 `[^a]note.md` → 门禁假放行（静默错误匹配）。
+    // 修后：`[^a]*` 命中 `[^` 特征 → 非glob → fileExists 精确查字面 `[^a]*` → 不存在 → 报 missing。
+    fs.seedFile('/work/[^a]note.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-negclass', path: '[^a]*' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+    });
+
+    expect(result.primaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(false);
+    expect(result.errorDetail).toContain('[^a]*');
+  });
+
+  // ── 缺陷 34：outputTo path/regex 含 ${xxx} 透传变量占位符的解析与延迟 ──────────
+
+  it('passes the gate when a ${xxx} path resolves via vars and the file exists', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/artifacts/my-project/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+      vars: { projectName: 'my-project' },
+    });
+
+    expect(result.gatesPassed).toBe(true);
+  });
+
+  it('reports missing when a ${xxx} path resolves via vars but the file is absent', async () => {
+    const { llm, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+      vars: { projectName: 'my-project' },
+    });
+
+    expect(result.gatesPassed).toBe(false);
+    // 报缺失的 pattern 是解析后的字面路径（含真实变量值），便于定位。
+    expect(result.errorDetail).toContain('artifacts/my-project/report.md');
+  });
+
+  it('reports missing when vars lack the variable (deferred literal ${xxx} never matches)', async () => {
+    const { llm, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    // 修前原实现：${projectName} 原样入 findFilesByRegex → new RegExp('${projectName}')
+    // 的 `$` 行尾锚 + 花括号字面量永不匹配 → 确定性报 missing。resolveOutputToVars
+    // 缺省 vars={} 时 deferred=true，字面占位路径走 fileExists 不命中 → 同样报 missing。
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+      // 不传 vars（缺省 {}）→ ${projectName} 未解析 → deferred → 字面不命中。
+    });
+
+    expect(result.gatesPassed).toBe(false);
+    expect(result.errorDetail).toContain('artifacts/${projectName}/report.md');
+  });
+
+  it('passes the gate when a ${xxx} regex resolves via vars and a file matches', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/out/my-project.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-re', regex: '^out/${projectName}\\.md$' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+      vars: { projectName: 'my-project' },
+    });
+
+    expect(result.gatesPassed).toBe(true);
+  });
 });
 
 describe('FinalizeManager.finalizeStep', () => {
@@ -449,6 +703,43 @@ describe('FinalizeManager.finalizeStep', () => {
       executedStep: executedStep(),
       context: { input: '', output: '' },
       workdir: '/work',
+    });
+
+    expect(outcome).toEqual({ type: 'done', completionType: 'completed' });
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  // ── 缺陷 5 次要差异：hasEnabledGates 短路（primary 默认 enabled=true 下的跳过语义） ──
+
+  it('skips finalize (zero AI calls) when gates is undefined (three-level all unconfigured)', async () => {
+    // mergeGates 三级均未配置 → 返回 undefined → hasEnabledGates(undefined)=false → 跳过。
+    // 显式传 undefined gates 锁定「三级全未配置时不跑门禁」语义（修后仍成立）。
+    const { llm, manager } = harness();
+
+    const outcome = await manager.finalizeStep({
+      step: step({ command: { type: 'shell', value: { command: 'echo hi' } } }),
+      executedStep: executedStep(),
+      context: { input: '', output: '' },
+      workdir: '/work',
+      gates: undefined,
+    });
+
+    expect(outcome).toEqual({ type: 'done', completionType: 'completed' });
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('skips finalize (zero AI calls) when both primary and secondary are explicitly disabled', async () => {
+    // gates 对象存在但 primary.enabled=false 且 secondary.enabled=false →
+    // hasEnabledGates：primary?.enabled !== false → false；secondary?.enabled === true → false
+    // → 短路返回 false → 跳过门禁（零 AI 调用）。锁定 !== false 语义下显式禁用仍跳过。
+    const { llm, manager } = harness();
+
+    const outcome = await manager.finalizeStep({
+      step: step({ command: { type: 'shell', value: { command: 'echo hi' } } }),
+      executedStep: executedStep(),
+      context: { input: '', output: '' },
+      workdir: '/work',
+      gates: { primary: { enabled: false }, secondary: { enabled: false } },
     });
 
     expect(outcome).toEqual({ type: 'done', completionType: 'completed' });
@@ -582,5 +873,80 @@ describe('FinalizeManager.finalizeStep', () => {
 
     expect(passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
     expect(passThroughVars['undeclared']).toBeUndefined();
+  });
+
+  // ── 缺陷 34：自引用变量在门禁时解析（vars = 累加器 + 当次 assess 提取值合并） ──
+
+  it('resolves a self-referential ${xxx} outputTo at gate time using merged vars (file exists → done)', async () => {
+    // 场景：Step 声明 projectName（值 ${projectName} 占位）并在自身 outputTo 引用它。
+    // assess 提取 projectName=my-project → 合并进 vars → 门禁 verifyArtifacts 解析
+    // artifacts/${projectName}/report.md → artifacts/my-project/report.md 命中文件 → 通过。
+    const { llm, fs, manager } = harness();
+    let call = 0;
+    llm.streamHandler = () => {
+      const text =
+        call === 0
+          ? '{"completionType":"completed","passThroughVars":{"projectName":"my-project"}}'
+          : '{"taskStatus":"done"}';
+      call += 1;
+      return textChunks(text);
+    };
+    fs.seedFile('/work/artifacts/my-project/report.md');
+    const passThroughVars: Record<string, PassThroughVarValue> = {
+      projectName: { value: '${projectName}', description: 'project' },
+    };
+
+    const outcome = await manager.finalizeStep({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+        outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }],
+      }),
+      executedStep: executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      gates: { primary: { enabled: true } },
+      passThroughVars,
+    });
+
+    expect(outcome.type).toBe('done');
+    expect(outcome.gateResult?.gatesPassed).toBe(true);
+    // 回写后累加器值已更新（persistFinalize 写回 extracted 值）。
+    expect(passThroughVars['projectName']).toEqual({ value: 'my-project', description: 'project' });
+  });
+
+  it('reports missing at gate time when a self-referential ${xxx} outputTo resolves but the file is absent', async () => {
+    // 同上，但文件缺失 → verifyArtifacts 解析后命中字面 artifacts/my-project/report.md
+    // 不存在 → 报 missing → gatesPassed=false → outcome.type=error。
+    const { llm, manager } = harness();
+    let call = 0;
+    llm.streamHandler = () => {
+      const text =
+        call === 0
+          ? '{"completionType":"completed","passThroughVars":{"projectName":"my-project"}}'
+          : '{"taskStatus":"done"}';
+      call += 1;
+      return textChunks(text);
+    };
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+
+    const outcome = await manager.finalizeStep({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+        outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      gates: { primary: { enabled: true } },
+    });
+
+    expect(outcome).toMatchObject({
+      type: 'error',
+      errorDetail: expect.stringContaining('artifacts/my-project/report.md'),
+    });
   });
 });

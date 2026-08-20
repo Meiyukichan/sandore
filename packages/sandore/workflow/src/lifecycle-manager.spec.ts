@@ -110,8 +110,8 @@ async function harness(config: SandoreConfig = {}): Promise<{
   const llm = new FakeLlm();
   const shell = new FakeShell();
   const sessions = new FakeSessionStore();
-  const subagents = new FakeSubagents();
   const agents = new FakeAgentRegistry(sessions);
+  const subagents = new FakeSubagents(ctx, (id) => agents.get(id));
   const subprocess = new FakeSubprocess();
   const userQuestions = new FakeUserQuestions();
   ctx.provide('llm', llm as unknown as LlmRuntime);
@@ -218,14 +218,18 @@ function minimalState(overrides: Partial<WorkflowTaskState> = {}): WorkflowTaskS
   };
 }
 
-/** 挂起 agent Step 的公共准备：注册真实 childId + running 状态 + 挂起 whenIdle。 */
-function prepareHangingAgent(agents: FakeAgentRegistry, status: 'idle' | 'running' = 'running'): { child: FakeAgent; gate: ReturnType<typeof deferred<void>> } {
+/** 挂起 agent Step 的公共准备：注册真实 childId + running 状态。settle 路径下子代理经
+ *  `awaitSubagentSettlement` 挂起（pending `sandore/subagent-settled`），不再依赖 `whenIdle`。 */
+function prepareHangingAgent(agents: FakeAgentRegistry, status: 'idle' | 'running' = 'running'): FakeAgent {
   const child = new FakeAgent('child-1');
   child.status = status;
-  const gate = deferred<void>();
-  child.whenIdle = () => gate.promise;
   agents.register(child);
-  return { child, gate };
+  return child;
+}
+
+/** 排空微任务：让 settle 事件 → collectSubagentOutput → stage-executor catch 传播完成。 */
+function flushMicrotasks(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 describe('LifecycleManager pause/resume via engine', () => {
@@ -234,7 +238,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const { child, gate } = prepareHangingAgent(agents);
+    const child = prepareHangingAgent(agents);
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
@@ -265,24 +269,23 @@ describe('LifecycleManager pause/resume via engine', () => {
     const session = sessions.get(run.instanceId);
     expect(session?.events.some(e => e.type === 'sandore/step-paused')).toBe(true);
 
-    // 清理：让挂起的 Step 正常完成，令 run 收敛。
+    // 清理：让挂起的 Step settle 完成（pauseStep 的 interrupt 已 settle aborted 使 run 收敛为
+    // paused；此处显式 settle completed 令残余 awaiter 释放，避免悬挂 run）。
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
-    gate.resolve();
+    subagents.settleChild('child-1', 'completed');
+    await flushMicrotasks();
   });
 
-  it('keeps a paused step paused (not failed) when interrupt rejects whenIdle with a cancellation error', async () => {
+  it('keeps a paused step paused (not failed) when interrupt settles aborted', async () => {
     const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
 
+    // settle 路径下子代理经 awaitSubagentSettlement 挂起；interrupt 自动 settle(aborted)。
     const child = new FakeAgent('child-1');
     child.status = 'running';
-    const gate = deferred<void>();
-    child.whenIdle = () => gate.promise;
     agents.register(child);
-    // interrupt 联动：pauseStep 的 interrupt 使 whenIdle 以取消类错误拒绝（模拟 cancel）。
-    subagents.whenIdleCancels.set('child-1', () => gate.reject(new SandoreError('agent cancelled', 'CANCELLED')));
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
@@ -292,8 +295,8 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     await engine.pauseStep(run.instanceId, 'step-agent');
 
-    // 排空微任务：让 whenIdle 的取消类错误传播到 stage-executor 的 catch 并被判定。
-    await new Promise(resolve => setTimeout(resolve, 0));
+    // 排空微任务：让 interrupt→settle(aborted)→STEP_PAUSED→stage-executor catch 传播完成。
+    await flushMicrotasks();
 
     const state = persistence.state.get(run.instanceId);
     const agent = state?.executedSteps.find(step => step.stepId === 'step-agent');
@@ -302,16 +305,14 @@ describe('LifecycleManager pause/resume via engine', () => {
     expect(records.filter(record => record.name === 'sandore/step-failed')).toHaveLength(0);
   });
 
-  it('fails a step when a cancellation error occurs without a matching pause registry entry', async () => {
-    const { ctx, engine, persistence, llm, shell, agents } = await harness();
+  it('fails a step when the child settles with error (no matching pause) ', async () => {
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
 
     const child = new FakeAgent('child-1');
     child.status = 'running';
-    const gate = deferred<void>();
-    child.whenIdle = () => gate.promise;
     agents.register(child);
 
     const records = recordSandoreEvents(ctx);
@@ -320,9 +321,9 @@ describe('LifecycleManager pause/resume via engine', () => {
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
-    // 未 pauseStep（登记表未命中）：直接以取消类错误拒绝 whenIdle，应落 failed。
-    gate.reject(new SandoreError('agent cancelled', 'CANCELLED'));
-    await new Promise(resolve => setTimeout(resolve, 0));
+    // 未 pauseStep：子代理 settle(error)（非 aborted）→ collectSubagentOutput 抛 STEP_EXECUTION → failed。
+    subagents.settleChild('child-1', 'error');
+    await flushMicrotasks();
 
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('failed');
@@ -334,7 +335,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const { child, gate } = prepareHangingAgent(agents, 'idle');
+    const child = prepareHangingAgent(agents, 'running');
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
@@ -342,6 +343,10 @@ describe('LifecycleManager pause/resume via engine', () => {
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
+    // settle 路径下 child 用 'running' 注册（避免 startContinuable 的 idle auto-settle
+    // 使 Step 提前 fail）；pauseStep 前切 'idle' 模拟「子代理恰在 interrupt 前空闲」的
+    // 竞态窗口，验证 pauseStep 的 idle 幂等 no-op（不 interrupt、不误标 paused）。
+    child.status = 'idle';
     await engine.pauseStep(run.instanceId, 'step-agent');
 
     expect(subagents.interrupts).toHaveLength(0);
@@ -351,16 +356,18 @@ describe('LifecycleManager pause/resume via engine', () => {
     expect(agent?.status).toBe('running');
     expect(records.some(r => r.name === 'sandore/step-paused')).toBe(false);
 
+    // 清理：idle child 未被 interrupt；显式 settle completed 令挂起 Step 收敛。
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
-    gate.resolve();
+    subagents.settleChild('child-1', 'completed');
+    await flushMicrotasks();
   });
 
   it('pauseStep throws INVALID_OPERATION for non-existent and terminal steps', async () => {
-    const { ctx, engine, persistence, llm, shell, agents } = await harness();
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const { child, gate } = prepareHangingAgent(agents);
+    const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
     const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
     await stepStarted;
@@ -370,7 +377,8 @@ describe('LifecycleManager pause/resume via engine', () => {
     await expect(engine.pauseStep(run.instanceId, 'step-shell')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
 
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
-    gate.resolve();
+    subagents.settleChild('child-1', 'completed');
+    await flushMicrotasks();
   });
 
   it('resumes a registered step: followup hostAgent + removed from registry + running + double event', async () => {
@@ -378,7 +386,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const { child, gate } = prepareHangingAgent(agents);
+    const child = prepareHangingAgent(agents);
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
@@ -412,15 +420,16 @@ describe('LifecycleManager pause/resume via engine', () => {
     expect(record?.args[4]).toBe('step-agent');
 
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
-    gate.resolve();
+    subagents.settleChild('child-1', 'completed');
+    await flushMicrotasks();
   });
 
   it('resumeStep throws INVALID_OPERATION for a non-paused step', async () => {
-    const { ctx, engine, persistence, llm, shell, agents } = await harness();
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const { child, gate } = prepareHangingAgent(agents);
+    const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
     const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
     await stepStarted;
@@ -429,7 +438,8 @@ describe('LifecycleManager pause/resume via engine', () => {
     await expect(engine.resumeStep(run.instanceId, 'step-agent')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
 
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
-    gate.resolve();
+    subagents.settleChild('child-1', 'completed');
+    await flushMicrotasks();
   });
 
   it('pauseAllSteps pauses only running steps and leaves completed untouched', async () => {
@@ -437,7 +447,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const { child, gate } = prepareHangingAgent(agents);
+    const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
     const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
     await stepStarted;
@@ -454,7 +464,8 @@ describe('LifecycleManager pause/resume via engine', () => {
     expect(subagents.interrupts).toHaveLength(1);
 
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
-    gate.resolve();
+    subagents.settleChild('child-1', 'completed');
+    await flushMicrotasks();
   });
 
   it('resumeAllSteps follows up each registered child and clears the registry', async () => {
@@ -462,7 +473,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     await putDefinition(persistence, 'wfl-pause', pauseYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const { child, gate } = prepareHangingAgent(agents);
+    const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
     const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
     await stepStarted;
@@ -479,7 +490,8 @@ describe('LifecycleManager pause/resume via engine', () => {
     expect(subagents.followups[0]?.content).toEqual([{ type: 'text', text: '全部继续' }]);
 
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
-    gate.resolve();
+    subagents.settleChild('child-1', 'completed');
+    await flushMicrotasks();
   });
 
   it('abortInstance interrupts registered children, marks aborted, cleans up, and rejects repeat', async () => {
@@ -518,12 +530,9 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const child = new FakeAgent('child-1');
     child.status = 'running';
-    const gate = deferred<void>();
-    child.whenIdle = () => gate.promise;
     agents.register(child);
-    // interrupt 联动：pauseStep 的 interrupt 使挂起的 whenIdle 以取消类错误拒绝，
-    // 让 stage-executor 判定 paused 并驱动主循环进入 waitForResume。
-    subagents.whenIdleCancels.set('child-1', () => gate.reject(new SandoreError('agent cancelled', 'CANCELLED')));
+    // settle 路径下：pauseStep 的 interrupt 自动 settle(aborted) → STEP_PAUSED →
+    // stage-executor 判定 paused 并驱动主循环进入 waitForResume 等待。
 
     // 捕获 execute 异步任务的完成 Promise，用于断言主循环收敛（不悬挂）。
     let executeSettled = false;
@@ -544,9 +553,9 @@ describe('LifecycleManager pause/resume via engine', () => {
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
     await engine.pauseStep(run.instanceId, 'step-agent');
-    // 排空微任务：让 whenIdle 取消类错误传播到 stage-executor 并被判定为 paused，
+    // 排空微任务：让 interrupt→settle(aborted)→STEP_PAUSED 传播到 stage-executor 并判为 paused，
     // 主循环随后进入 waitForResume 等待。
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await flushMicrotasks();
 
     const pausedState = persistence.state.get(run.instanceId);
     expect(pausedState?.executedSteps.find(s => s.stepId === 'step-agent')?.status).toBe('paused');
@@ -578,18 +587,9 @@ describe('LifecycleManager pause/resume full loop', () => {
 
     const child = new FakeAgent('child-1');
     child.status = 'running';
-    const gate = deferred<void>();
-    let idleCalls = 0;
-    child.whenIdle = () => {
-      idleCalls += 1;
-      if (idleCalls === 1) {
-        return gate.promise; // 首次：挂起，等待 pauseStep 的 interrupt 取消。
-      }
-      return Promise.resolve(); // 恢复后：立即 idle（最终输出已由测试注入）。
-    };
     agents.register(child);
-    // interrupt 联动：pauseStep 的 interrupt 使挂起的 whenIdle 以取消类错误拒绝。
-    subagents.whenIdleCancels.set('child-1', () => gate.reject(new SandoreError('agent cancelled', 'CANCELLED')));
+    // settle 路径：pauseStep → interrupt 自动 settle(aborted) → paused；resume → followup
+    // (cold-resume) → 测试 settleChild(completed) 令续跑收敛，最终输出由 child.session 注入。
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
@@ -599,8 +599,8 @@ describe('LifecycleManager pause/resume full loop', () => {
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
     await engine.pauseStep(run.instanceId, 'step-agent');
-    // 排空微任务：让 whenIdle 取消类错误传播到 stage-executor 并被判定为 paused。
-    await new Promise(resolve => setTimeout(resolve, 0));
+    // 排空微任务：让 interrupt→settle(aborted)→STEP_PAUSED 传播并判为 paused。
+    await flushMicrotasks();
 
     const pausedState = persistence.state.get(run.instanceId);
     expect(pausedState?.executedSteps.find(s => s.stepId === 'step-agent')?.status).toBe('paused');
@@ -608,6 +608,8 @@ describe('LifecycleManager pause/resume full loop', () => {
     // 注入最终输出后 resume：Step 应续跑到 completed 并推进 DAG 至实例 completed。
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'resumed output' }]));
     await engine.resumeStep(run.instanceId, 'step-agent', '请继续');
+    // resume 的 followup（cold-resume）后 settle completed 令续跑收敛。
+    subagents.settleChild('child-1', 'completed');
 
     await ended;
 

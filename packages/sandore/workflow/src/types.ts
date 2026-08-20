@@ -54,6 +54,8 @@ export type {
   ArtifactEntry,
   PingResponse,
   CreateDefinitionInput,
+  ImportDefinitionInput,
+  ImportDefinitionResult,
   UpdateDefinitionInput,
   StartInstanceInput,
   ReplyQuestionInput,
@@ -63,6 +65,10 @@ export type {
   PauseAllInput,
   ResumeAllInput,
   RetryStepInput,
+  RevertBoundaryOption,
+  ListRevertBoundariesInput,
+  RecoverInstanceInput,
+  RecoverOrphanedInstancesResult,
 } from './wire.ts'
 
 /** 用户问答选项（对齐 DSH `AskUserQuestionOption`）。 */

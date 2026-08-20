@@ -9,20 +9,30 @@ import { describe, expect, it } from 'vitest';
 
 import type { Agent, CreateAgentOptions } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { SandoreError } from './errors.ts';
-import { computeSafeRevertBoundary, RecoveryManager, synthesizeChildId } from './recovery-manager.ts';
-import type { ForkSourceSession, RetryMode } from './recovery-manager.ts';
+import { computeSafeRevertBoundary, hasUnclosedTurnTail, listClosedTurnBoundaries, RecoveryManager, synthesizeChildId } from './recovery-manager.ts';
+import type { ForkSourceSession, RevertBoundaryOption, RetryMode } from './recovery-manager.ts';
 import type { WorkflowTaskState } from './schema.ts';
 
 type ExecutedStep = WorkflowTaskState['executedSteps'][number];
 
 /** 构造一条 `turn/start` 事件（安全边界计算的 turn 边界标记）。 */
-function turnStartEvent(seq: number): DshSessionEvent {
-  return { type: 'turn/start', seq, time: 0, data: { turn: 0 } };
+function turnStartEvent(seq: number, turn = 0): DshSessionEvent {
+  return { type: 'turn/start', seq, time: 0, data: { turn } };
 }
 
 /** 构造一条 `turn/end` 事件（闭合 turn 结束标记）。 */
-function turnEndEvent(seq: number): DshSessionEvent {
-  return { type: 'turn/end', seq, time: 0, data: { turn: 0, reason: { kind: 'completed' } } };
+function turnEndEvent(seq: number, turn = 0): DshSessionEvent {
+  return { type: 'turn/end', seq, time: 0, data: { turn, reason: { kind: 'completed' } } };
+}
+
+/** 构造一条 `assistant/message` 事件（含 text 块，供 listClosedTurnBoundaries 提取预览）。 */
+function assistantMessageEvent(seq: number, text: string, turn = 0): DshSessionEvent {
+  return {
+    type: 'assistant/message',
+    seq,
+    time: 0,
+    data: { turn, step: 0, message: { content: [{ type: 'text', text }], source: { provider: 'mock', model: 'mock' } } },
+  };
 }
 
 /** 构造一个 failed 的 agent 子代理 Step。 */
@@ -101,6 +111,8 @@ function makeHarness(options?: {
   sessions?: Map<string, ForkSourceSession>;
   forked?: ForkSourceSession;
   onResume?: (state: WorkflowTaskState) => void;
+  /** 若为 true，forkSession 在 boundary 省略且源会话尾部未闭合时模拟 DSH OPEN_TURN 抛错。 */
+  enforceOpenTurn?: boolean;
 }) {
   let state = makeState(options?.step ?? makeFailedStep(), options?.status ?? 'failed');
   const followups: Array<{ childId: string; content: ContentBlock[] }> = [];
@@ -111,6 +123,7 @@ function makeHarness(options?: {
   let resumeCount = 0;
   const sessions = options?.sessions ?? new Map<string, ForkSourceSession>();
   let forked = options?.forked ?? { events: [] as readonly DshSessionEvent[] };
+  const enforceOpenTurn = options?.enforceOpenTurn ?? false;
   const signal = new AbortController().signal;
 
   const manager = new RecoveryManager({
@@ -132,6 +145,17 @@ function makeHarness(options?: {
     },
     getSession: (id) => sessions.get(id),
     forkSession: (source, boundary) => {
+      // 模拟 DSH sessions.fork 的 OPEN_TURN 校验：boundary 省略（= 末事件 seq）
+      // 且末事件落在未闭合 turn 内时抛 OPEN_TURN；defense 应保证 boundary 被显式传入。
+      if (enforceOpenTurn && boundary === undefined) {
+        const sourceSession = sessions.get(source);
+        if (sourceSession !== undefined && hasUnclosedTurnTail(sourceSession.events)) {
+          throw new SandoreError(
+            `fork boundary for session "${source}" ends inside open turn`,
+            'OPEN_TURN',
+          );
+        }
+      }
       forks.push({ source, boundary });
       return forked;
     },
@@ -172,6 +196,68 @@ describe('computeSafeRevertBoundary', () => {
   it('returns undefined when there is no closed turn (open turn)', () => {
     expect(computeSafeRevertBoundary([turnStartEvent(0)])).toBeUndefined();
     expect(computeSafeRevertBoundary([])).toBeUndefined();
+  });
+});
+
+describe('hasUnclosedTurnTail', () => {
+  it('returns true when the tail event is inside an open turn (turn/start with no matching turn/end)', () => {
+    expect(hasUnclosedTurnTail([turnStartEvent(0), assistantMessageEvent(1, 'hi')])).toBe(true);
+    // 前面有闭合 turn，尾部仍有未闭合 turn。
+    expect(hasUnclosedTurnTail([turnStartEvent(0), turnEndEvent(1), turnStartEvent(2), assistantMessageEvent(3, 'hi')])).toBe(true);
+  });
+
+  it('returns false when the tail is at or after a closed turn/end (no open turn)', () => {
+    expect(hasUnclosedTurnTail([turnStartEvent(0), turnEndEvent(1)])).toBe(false);
+    expect(hasUnclosedTurnTail([turnStartEvent(0), turnEndEvent(1), turnStartEvent(2), turnEndEvent(3)])).toBe(false);
+    expect(hasUnclosedTurnTail([])).toBe(false);
+    expect(hasUnclosedTurnTail([assistantMessageEvent(0, 'hi')])).toBe(false);
+  });
+});
+
+describe('listClosedTurnBoundaries', () => {
+  it('returns one option per closed turn with seq/turn/preview', () => {
+    const events = [
+      turnStartEvent(0, 0),
+      assistantMessageEvent(1, 'first answer', 0),
+      turnEndEvent(2, 0),
+      turnStartEvent(3, 1),
+      assistantMessageEvent(4, 'second answer', 1),
+      turnEndEvent(5, 1),
+    ];
+    const options = listClosedTurnBoundaries(events);
+    expect(options).toEqual<RevertBoundaryOption[]>([
+      { seq: 2, turn: 0, preview: 'first answer' },
+      { seq: 5, turn: 1, preview: 'second answer' },
+    ]);
+  });
+
+  it('truncates preview to 80 chars', () => {
+    const long = 'x'.repeat(120);
+    const events = [turnStartEvent(0, 0), assistantMessageEvent(1, long, 0), turnEndEvent(2, 0)];
+    const options = listClosedTurnBoundaries(events);
+    expect(options[0]?.preview).toBe(`${'x'.repeat(80)}…`);
+  });
+
+  it('skips the unclosed tail turn (turn/start with no turn/end)', () => {
+    const events = [
+      turnStartEvent(0, 0),
+      turnEndEvent(1, 0),
+      turnStartEvent(2, 1),
+      assistantMessageEvent(3, 'unmatched', 1),
+    ];
+    const options = listClosedTurnBoundaries(events);
+    expect(options).toEqual<RevertBoundaryOption[]>([{ seq: 1, turn: 0, preview: '' }]);
+  });
+
+  it('concatenates multiple assistant messages within one turn', () => {
+    const events = [
+      turnStartEvent(0, 0),
+      assistantMessageEvent(1, 'part one', 0),
+      assistantMessageEvent(2, 'part two', 0),
+      turnEndEvent(3, 0),
+    ];
+    const options = listClosedTurnBoundaries(events);
+    expect(options[0]?.preview).toBe('part one\npart two');
   });
 });
 
@@ -295,6 +381,45 @@ describe('RecoveryManager.retryStep revert mode', () => {
     expect(step?.retryHistory?.[0]?.result).toBe('failed');
     expect(harness.creates).toHaveLength(0);
   });
+
+  it('reverts to the user-supplied earlier turn/end boundary (not the last closed turn)', async () => {
+    // 源会话含两个闭合 turn（seq 2 与 5）；用户传 revertBoundary=2 选更早 turn。
+    const sessions = new Map<string, ForkSourceSession>();
+    sessions.set('child-1', {
+      events: [
+        turnStartEvent(0, 0), assistantMessageEvent(1, 'first', 0), turnEndEvent(2, 0),
+        turnStartEvent(3, 1), assistantMessageEvent(4, 'second', 1), turnEndEvent(5, 1),
+      ],
+    });
+    const forked = { events: [turnStartEvent(0, 0), assistantMessageEvent(1, 'first', 0), turnEndEvent(2, 0)] };
+    const harness = makeHarness({ sessions, forked });
+
+    await harness.manager.retryStep('step-1', 'revert', 'rollback', 2);
+
+    // 用户传入的更早 boundary（seq 2）直接透传给 forkSession，而非默认的最后一个闭合 turn（seq 5）。
+    expect(harness.forks).toEqual([{ source: 'child-1', boundary: 2 }]);
+    expect(harness.creates[0]?.seed).toEqual(forked.events);
+    expect(harness.creates[0]?.meta?.seedLength).toBe(3);
+    const step = newSegmentOf(harness.getState());
+    expect(step?.retryHistory?.[0]?.mode).toBe('revert');
+    expect(harness.followups[0]?.childId).toBe(harness.creates[0]?.sessionId);
+  });
+
+  it('falls back to the last closed turn when revertBoundary is omitted (default behavior unchanged)', async () => {
+    const sessions = new Map<string, ForkSourceSession>();
+    sessions.set('child-1', {
+      events: [
+        turnStartEvent(0, 0), turnEndEvent(2, 0),
+        turnStartEvent(3, 1), turnEndEvent(5, 1),
+      ],
+    });
+    const harness = makeHarness({ sessions });
+
+    await harness.manager.retryStep('step-1', 'revert', 'rollback');
+
+    // 未传 revertBoundary → computeSafeRevertBoundary = 最后一个闭合 turn/end seq（5）。
+    expect(harness.forks).toEqual([{ source: 'child-1', boundary: 5 }]);
+  });
 });
 
 describe('RecoveryManager.retryStep fork mode', () => {
@@ -313,6 +438,53 @@ describe('RecoveryManager.retryStep fork mode', () => {
     expect(step?.sessionMeta?.childId).toBe(newChildId);
     expect(step?.parentSessionId).toBe('child-1');
     expect(step?.retryHistory?.[0]?.mode).toBe('fork');
+  });
+
+  it('auto-reverts to the last closed turn/end when the source session has an unclosed tail (OPEN_TURN defense)', async () => {
+    // 源会话：turn 0 闭合（seq 2），turn 1 未闭合（turn/start seq 3 + assistant seq 4，无 turn/end）。
+    // fork(undefined) 在此会确定性抛 OPEN_TURN（末事件 4 落在未闭合 turn 1 内）。
+    const sessions = new Map<string, ForkSourceSession>();
+    sessions.set('child-1', {
+      events: [
+        turnStartEvent(0, 0), assistantMessageEvent(1, 'first', 0), turnEndEvent(2, 0),
+        turnStartEvent(3, 1), assistantMessageEvent(4, 'unmatched', 1),
+      ],
+    });
+    const forked = { events: [turnStartEvent(0, 0), assistantMessageEvent(1, 'first', 0), turnEndEvent(2, 0)] };
+    // enforceOpenTurn=true：模拟 DSH fork(undefined) 在未闭合尾部下抛 OPEN_TURN。
+    // defense 必须先算出 boundary（=2）再调 forkSession，从而避开 OPEN_TURN。
+    const harness = makeHarness({ sessions, forked, enforceOpenTurn: true });
+
+    await harness.manager.retryStep('step-1', 'fork', 'fork it');
+
+    // boundary 被显式设为最后一个闭合 turn/end seq（2），不是 undefined（全量历史）。
+    expect(harness.forks).toEqual([{ source: 'child-1', boundary: 2 }]);
+    expect(harness.creates).toHaveLength(1);
+    expect(harness.creates[0]?.seed).toEqual(forked.events);
+    const step = newSegmentOf(harness.getState());
+    expect(step?.retryHistory?.[0]?.mode).toBe('fork');
+    expect(step?.parentSessionId).toBe('child-1');
+    // followup 到新 childId 续跑，未抛 OPEN_TURN。
+    expect(harness.followups[0]?.childId).toBe(harness.creates[0]?.sessionId);
+  });
+
+  it('throws INVALID_OPERATION when forking a source with an unclosed tail and no prior closed turn', async () => {
+    // 源会话只有未闭合 turn（turn/start seq 0 + assistant seq 1，无任何 turn/end）。
+    const sessions = new Map<string, ForkSourceSession>();
+    sessions.set('child-1', { events: [turnStartEvent(0, 0), assistantMessageEvent(1, 'hi', 0)] });
+    const harness = makeHarness({ sessions, enforceOpenTurn: true });
+
+    await expect(harness.manager.retryStep('step-1', 'fork', 'fork it')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+
+    // 检测到未闭合尾部但 computeSafeRevertBoundary 无闭合 turn 可回退 → 抛错、不 fork、实例 failed。
+    expect(harness.forks).toHaveLength(0);
+    expect(harness.creates).toHaveLength(0);
+    const state = harness.getState();
+    expect(state.status).toBe('failed');
+    const step = newSegmentOf(state);
+    expect(step?.status).toBe('failed');
+    expect(step?.retryHistory?.[0]?.mode).toBe('fork');
+    expect(step?.retryHistory?.[0]?.result).toBe('failed');
   });
 });
 
@@ -369,7 +541,7 @@ describe('RecoveryManager.recover', () => {
     expect(harness.getState().executedSteps[0]?.status).toBe('paused');
   });
 
-  it('follows up only the first running subagent step when multiple are running', async () => {
+  it('follows up all running/interacting subagent steps when multiple are running (defect 10 multi-path recovery)', async () => {
     const first = makeFailedStep({ status: 'running', id: 'exec-1', sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' } });
     const second = makeFailedStep({ status: 'running', id: 'exec-2', stepId: 'step-2', sessionMeta: { childId: 'child-2', synthetic: false, command: 'agent' } });
     const harness = makeHarness({ step: first, status: 'running' });
@@ -377,10 +549,12 @@ describe('RecoveryManager.recover', () => {
 
     const result = await harness.manager.recover();
 
-    // 与引擎 resumeStageId/resumeInfo 的 .find() 收口一致：只 followup 第一个。
+    // 缺陷 10 多路恢复：并发落地后多个 running Step 全部被 followup
+    // （原 `.find()` 只取第一个 → 其余 running 不 followup → 半恢复态卡死）。
     expect(result).toEqual({ hasResume: true, hasFailure: false });
-    expect(harness.followups).toHaveLength(1);
-    expect(harness.followups[0]?.childId).toBe('child-1');
+    expect(harness.followups).toHaveLength(2);
+    const followedChildIds = harness.followups.map(f => f.childId).sort();
+    expect(followedChildIds).toEqual(['child-1', 'child-2']);
   });
 
   it('does not followup subagent steps when a synthetic step is unrecoverable', async () => {

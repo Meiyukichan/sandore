@@ -6,9 +6,14 @@
  * 经 `ctx.shell.run()`（简单命令）或 `ctx.subprocess.spawn()`（透传变量替换 →
  * 环境变量注入 → stdin 注入）直接执行（`sessionHandle = null`）。`collect(partial)`
  * 聚合 AI 输出文本（shell 直接返回 stdout）；`evaluate()` 一步完成两阶段。
+ * `evaluateCondition()` 在条件分支 AI 路径上叠加解析失败重试（首轮评估 +
+ * 最多 {@link MAX_BRANCH_EVAL_RETRIES} 次 follow-up 纠正），shell 路径直接委托
+ * `evaluate()`（走 matchesExpectation，无重试）。
  *
- * 另提供纯函数 `extractExpectation`（三级解析）、`extractBreakResult`（public，
- * 供 LoopManager 复用）与 `matchesExpectation`（regex 或字符串相等匹配）。
+ * 另提供纯函数 `extractShouldExecute`（条件分支 shouldExecute 两层解析，public；
+ * 解析失败返回 undefined 触发重试）、`extractBreakResult`（循环跳出 shouldBreak 三级
+ * 解析，public，供 LoopManager 复用；分场景字段互不复用）与 `matchesExpectation`
+ * （大小写不敏感+包含匹配；显式 `/.../ ` 定界时走正则）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/branch-evaluator
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -53,13 +58,6 @@ export interface BranchEvalPartial {
     readonly outputPromise: Promise<string>;
 }
 /**
- * 三级解析分支 expectation。
- *
- * ① JSON 解析取 `branchExpectation` 字段；② regex 回退
- * `/"branchExpectation"\s*:\s*"([^"]+)"/`；③ 原始输出 `raw.trim()`。
- */
-export declare function extractExpectation(raw: string): string;
-/**
  * 三级解析循环跳出结果（public）。
  *
  * ① JSON 解析取 `shouldBreak`（布尔转字符串，字符串 `"true"`/`"false"` 转小写）；
@@ -67,10 +65,28 @@ export declare function extractExpectation(raw: string): string;
  */
 export declare function extractBreakResult(raw: string): string;
 /**
- * 判定分支评估结果是否匹配 expectation：expectation 含 regex 特征时做正则匹配
- * （正则非法视为不匹配），否则字符串相等比较。
+ * 两层解析条件分支 shouldExecute 布尔（public）。
+ *
+ * ① JSON 解析取 `shouldExecute`（布尔直接返回；字符串 `"true"`/`"false"` 大小写
+ * 不敏感转布尔）；② regex 回退 `/\{"shouldExecute"\s*:\s*(true|false)/i`（匹配后
+ * 转小写判定）。两层均不满足返回 undefined（解析失败，触发
+ * {@link BranchEvaluator.evaluateCondition} 重试或由调用方按 false 处理）。
+ * **仅条件分支使用**——循环跳出走 {@link extractBreakResult} 的 shouldBreak 字段，
+ * 两者分场景字段互不复用。
  */
-export declare function matchesExpectation(result: string, expectation: string): boolean;
+export declare function extractShouldExecute(raw: string): boolean | undefined;
+/**
+ * 判定分支评估结果是否匹配 expectation。
+ *
+ * 语义对齐基准 `workflow-engine-helpers.matchesExpectation`：默认大小写不敏感 +
+ * 包含匹配（宽松，便于迁移工作流）。需正则时用**显式定界符**——expectation 以
+ * `/` 起始且以 `/` 结尾（如 `/build-[0-9]+/`）才视为正则，取中间 inner 用
+ * `new RegExp(inner)` 匹配；非法正则返回 false。无定界符一律走包含匹配，此时
+ * 字面量含 `.`、`\`、`%`、括号等不会被启发式误判为正则（废除旧
+ * `hasRegexMetacharacters` 启发式）。expectation 为 undefined 时返回 false（守卫，
+ * 避免静默变并行分支）。
+ */
+export declare function matchesExpectation(result: string, expectation: string | undefined): boolean;
 /**
  * 分支条件两阶段评估器。
  *
@@ -88,7 +104,21 @@ export declare class BranchEvaluator {
     collect(partial: BranchEvalPartial): Promise<BranchEvalResult>;
     /** 一步完成两阶段评估。 */
     evaluate(condition: CommandConfig, contextMessage: string, options?: BranchEvalOptions): Promise<BranchEvalResult>;
+    /**
+     * 条件分支评估（带解析失败重试）。
+     *
+     * shell 条件直接委托 {@link evaluate}（走 matchesExpectation，无重试）；AI 条件
+     * （agent/prompt/skill/mcp）首轮发送分支评估提示词，若 {@link extractShouldExecute}
+     * 解析失败（undefined），则把上一轮 AI 输出 + {@link SHOULD_EXECUTE_CORRECTION_HINT}
+     * 构造为 follow-up 多轮消息重新评估，最多重试 {@link MAX_BRANCH_EVAL_RETRIES} 次；
+     * 重试耗尽记日志（条件不通过由调用方 decideCondition 的 `extractShouldExecute === true`
+     * 判定兜底为 false）。仅条件分支使用——循环跳出仍走 {@link evaluate} +
+     * extractBreakResult（shouldBreak 字段，缺陷 4 范畴）。
+     */
+    evaluateCondition(condition: CommandConfig, contextMessage: string, options?: BranchEvalOptions): Promise<BranchEvalResult>;
     private startAi;
+    /** 单轮 AI 临时会话流式评估：聚合输出文本；error/aborted 抛 SandoreError。 */
+    private streamAi;
     private startShell;
     /** 聚合 AI 临时会话输出为文本；error/aborted 抛 SandoreError。 */
     private aggregate;

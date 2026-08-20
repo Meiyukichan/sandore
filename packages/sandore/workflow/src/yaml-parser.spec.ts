@@ -304,6 +304,30 @@ describe('parseWorkflowYaml', () => {
     expect(mcp?.command).toEqual({ type: 'mcp', value: { promptText: 'filesystem-mcp' } })
   })
 
+  it('缺陷 7：解析保留三级 rules 字段（workflow 级内容表 + stage/step 级键引用数组）', () => {
+    const definition = parseWorkflowYaml(appendixA1V2Yaml)
+    // 工作流级 rules：Record<string,string> 内容表（键值对）
+    expect(definition.rules).toEqual({
+      'chinese-output': '所有输出必须使用中文',
+      'no-direct-commit': '禁止直接执行 git commit',
+    })
+    // Stage 级 rules：string[] 键引用数组
+    expect(definition.stages[0]?.rules).toEqual(['chinese-output'])
+    // Step 级 rules：string[] 键引用数组（step-1 引用 chinese-output）
+    const step1 = definition.steps?.find(step => step.id === 'step-11111111-1111-1111-1111-111111111111')
+    expect(step1?.rules).toEqual(['chinese-output'])
+  })
+
+  it('缺陷 7：serialize/parse round-trip 保留三级 rules 字段', () => {
+    const definition = parseWorkflowYaml(appendixA1V2Yaml)
+    const roundTripped = parseWorkflowYaml(serializeWorkflowYaml(definition))
+    expect(roundTripped.rules).toEqual(definition.rules)
+    expect(roundTripped.stages[0]?.rules).toEqual(definition.stages[0]?.rules)
+    const step1 = roundTripped.steps?.find(step => step.id === 'step-11111111-1111-1111-1111-111111111111')
+    const step1Orig = definition.steps?.find(step => step.id === 'step-11111111-1111-1111-1111-111111111111')
+    expect(step1?.rules).toEqual(step1Orig?.rules)
+  })
+
   it('throws WorkflowYamlError YAML_PARSE with line info on syntax error', () => {
     try {
       parseWorkflowYaml('stages: [ Unclosed')
@@ -622,6 +646,64 @@ stages:
       expect((error as WorkflowYamlError).code).toBe('DEFINITION_INVALID')
     }
   })
+
+  it('缺陷 32：解包 workflow: 包装的 V2 YAML 与平铺解析等价', () => {
+    const flat = parseWorkflowYaml(v2Yaml)
+    // 将 v2Yaml 每行缩进 2 空格后包到 `workflow:` 顶层键下
+    const indented = v2Yaml
+      .split('\n')
+      .map(line => (line.length > 0 ? `  ${line}` : line))
+      .join('\n')
+    const wrappedYaml = `workflow:\n${indented}`
+    const wrapped = parseWorkflowYaml(wrappedYaml)
+    expect(wrapped).toEqual(flat)
+    // 包装键不应泄漏到解析结果
+    expect((wrapped as unknown as Record<string, unknown>).workflow).toBeUndefined()
+  })
+
+  it('缺陷 32：解包 workflow: 包装的 V1 YAML（解包先于 V1→V2 转换）', () => {
+    const v1WrappedYaml = `workflow:
+  id: code-review-workflow
+  name: 代码审查工作流
+  version: "1.0.0"
+  stages:
+    - id: stg-analyze
+      name: 代码分析
+      scenarios:
+        - id: sce-static-analysis
+          name: 静态分析
+          tasks:
+            - id: tsk-lint
+              name: 代码规范检查
+              prompt:
+                type: Bash
+                value:
+                  command: "npm run lint 2>&1"
+              outputTo:
+                - id: opt-lint-report
+                  path: "reports/lint.txt"
+`
+    const definition = parseWorkflowYaml(v1WrappedYaml)
+    expect(definition.id).toBe('code-review-workflow')
+    // 解包先于 V1 转换：内层 scenarios 被正常展平为分离式 steps[]
+    expect(definition.stages[0]).not.toHaveProperty('scenarios')
+    expect(definition.stages[0]?.steps).toHaveLength(1)
+    expect(definition.stages[0]?.steps[0]).toEqual({ id: 'tsk-lint' })
+    expect(definition.steps).toHaveLength(1)
+    expect(definition.steps?.[0]?.id).toBe('tsk-lint')
+    expect(definition.steps?.[0]?.command).toEqual({
+      type: 'shell',
+      value: { command: 'npm run lint 2>&1' },
+    })
+    expect((definition as unknown as Record<string, unknown>).workflow).toBeUndefined()
+  })
+
+  it('缺陷 32：workflow: 非对象（字符串/数组）不解包，仍抛 DEFINITION_INVALID', () => {
+    // workflow: 字符串 → isRecord 收窄排除，不解包；顶层缺失必填 → DEFINITION_INVALID
+    expectDefinitionInvalid('workflow: not-a-workflow\n', 'invalid workflow definition')
+    // workflow: 数组 → isRecord 收窄排除（Array.isArray），不解包；顶层缺失必填 → DEFINITION_INVALID
+    expectDefinitionInvalid('workflow:\n  - id: wfl-x\n', 'invalid workflow definition')
+  })
 })
 
 describe('serializeWorkflowYaml', () => {
@@ -629,5 +711,47 @@ describe('serializeWorkflowYaml', () => {
     const definition = parseWorkflowYaml(v2Yaml)
     const roundTripped = parseWorkflowYaml(serializeWorkflowYaml(definition))
     expect(roundTripped).toEqual(definition)
+  })
+
+  // ── 缺陷 34：outputTo 路径含 ${xxx} 透传变量占位符的 yaml 往返 ──────────────
+
+  it('round-trips an outputTo path containing a ${xxx} passthrough variable placeholder', () => {
+    // 设计内用例（dynamic-workflow-engine.md §15.1）：步骤 B 的 outputTo 路径
+    // artifacts/${projectName}/report.md 中的 ${projectName} 在运行时被替换。
+    // yaml 往返须保留占位符字面量（schema 无字段约束、序列化为平铺 YAML）。
+    const yamlWithVar = `id: wfl-var
+name: 变量产物工作流
+version: "2.0.0"
+stages:
+  - id: stg-1
+    name: 生成
+    steps:
+      - id: step-a
+steps:
+  - id: step-a
+    name: 生成报告
+    command:
+      type: prompt
+      value:
+        promptText: "生成报告"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: 项目名
+    outputTo:
+      - id: opt-report
+        path: "artifacts/\${projectName}/report.md"
+`
+    const definition = parseWorkflowYaml(yamlWithVar)
+    const stepA = definition.steps?.find(step => step.id === 'step-a')
+    expect(stepA?.outputTo).toEqual([{ id: 'opt-report', path: 'artifacts/${projectName}/report.md' }])
+    expect(stepA?.passThroughVars).toEqual([
+      { name: 'projectName', value: '${projectName}', description: '项目名' },
+    ])
+
+    const roundTripped = parseWorkflowYaml(serializeWorkflowYaml(definition))
+    expect(roundTripped).toEqual(definition)
+    const roundStepA = roundTripped.steps?.find(step => step.id === 'step-a')
+    expect(roundStepA?.outputTo).toEqual([{ id: 'opt-report', path: 'artifacts/${projectName}/report.md' }])
   })
 })

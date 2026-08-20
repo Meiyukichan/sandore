@@ -1,4 +1,4 @@
-import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
+import { BlockAssembler, createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm';
 import { SandoreError } from "./errors.js";
 import { replacePassThroughVars } from "./file-utils.js";
 import { buildShellEnv, resolvePassThroughVars, resolveProviderModel as resolveModelRoute, textSummary, } from "./internal.js";
@@ -9,6 +9,10 @@ const BRANCH_RED_LINES = [
     '禁止编辑、创建或删除任何文件',
     '禁止过度思考，你的职责是尽快判断分支并返回结果',
 ];
+/** 条件分支 AI 评估解析失败重试上限（首次评估 + 最多 N 次 follow-up 纠正重试）。 */
+const MAX_BRANCH_EVAL_RETRIES = 2;
+/** 重试时附给 AI 的纠正提示（要求仅返回合法 shouldExecute JSON）。 */
+const SHOULD_EXECUTE_CORRECTION_HINT = '未能从你的上一轮输出中解析出 shouldExecute 布尔值，请仅返回 JSON：{"shouldExecute": true} 或 {"shouldExecute": false}。';
 /** 构建结构化分支评估提示词（主头部 + 任务 + 上下文 + 分支列表 + 返回格式 + 红线规则）。 */
 function buildBranchPrompt(taskText, contextMessage, branches) {
     const sections = [BRANCH_PROMPT_HEADER];
@@ -54,27 +58,6 @@ function parseJsonObject(text) {
     return raw;
 }
 /**
- * 三级解析分支 expectation。
- *
- * ① JSON 解析取 `branchExpectation` 字段；② regex 回退
- * `/"branchExpectation"\s*:\s*"([^"]+)"/`；③ 原始输出 `raw.trim()`。
- */
-export function extractExpectation(raw) {
-    const parsed = parseJsonObject(raw);
-    if (parsed !== undefined) {
-        const branchExpectation = parsed['branchExpectation'];
-        if (typeof branchExpectation === 'string') {
-            return branchExpectation;
-        }
-    }
-    const match = raw.match(/"branchExpectation"\s*:\s*"([^"]+)"/);
-    const extracted = match?.[1];
-    if (extracted !== undefined) {
-        return extracted;
-    }
-    return raw.trim();
-}
-/**
  * 三级解析循环跳出结果（public）。
  *
  * ① JSON 解析取 `shouldBreak`（布尔转字符串，字符串 `"true"`/`"false"` 转小写）；
@@ -98,26 +81,65 @@ export function extractBreakResult(raw) {
     }
     return raw.trim();
 }
-/** 含 regex 元字符时判定 expectation 为正则，否则视为字面字符串。 */
-function hasRegexMetacharacters(value) {
-    return /[\\^$.*+?()[\]{}|]/.test(value);
+/**
+ * 两层解析条件分支 shouldExecute 布尔（public）。
+ *
+ * ① JSON 解析取 `shouldExecute`（布尔直接返回；字符串 `"true"`/`"false"` 大小写
+ * 不敏感转布尔）；② regex 回退 `/\{"shouldExecute"\s*:\s*(true|false)/i`（匹配后
+ * 转小写判定）。两层均不满足返回 undefined（解析失败，触发
+ * {@link BranchEvaluator.evaluateCondition} 重试或由调用方按 false 处理）。
+ * **仅条件分支使用**——循环跳出走 {@link extractBreakResult} 的 shouldBreak 字段，
+ * 两者分场景字段互不复用。
+ */
+export function extractShouldExecute(raw) {
+    const parsed = parseJsonObject(raw);
+    if (parsed !== undefined) {
+        const shouldExecute = parsed['shouldExecute'];
+        if (typeof shouldExecute === 'boolean') {
+            return shouldExecute;
+        }
+        if (typeof shouldExecute === 'string' && /^(true|false)$/i.test(shouldExecute)) {
+            return shouldExecute.toLowerCase() === 'true';
+        }
+    }
+    const match = raw.match(/\{"shouldExecute"\s*:\s*(true|false)/i);
+    const extracted = match?.[1];
+    if (extracted !== undefined) {
+        return extracted.toLowerCase() === 'true';
+    }
+    return undefined;
 }
 /**
- * 判定分支评估结果是否匹配 expectation：expectation 含 regex 特征时做正则匹配
- * （正则非法视为不匹配），否则字符串相等比较。
+ * 判定分支评估结果是否匹配 expectation。
+ *
+ * 语义对齐基准 `workflow-engine-helpers.matchesExpectation`：默认大小写不敏感 +
+ * 包含匹配（宽松，便于迁移工作流）。需正则时用**显式定界符**——expectation 以
+ * `/` 起始且以 `/` 结尾（如 `/build-[0-9]+/`）才视为正则，取中间 inner 用
+ * `new RegExp(inner)` 匹配；非法正则返回 false。无定界符一律走包含匹配，此时
+ * 字面量含 `.`、`\`、`%`、括号等不会被启发式误判为正则（废除旧
+ * `hasRegexMetacharacters` 启发式）。expectation 为 undefined 时返回 false（守卫，
+ * 避免静默变并行分支）。
  */
 export function matchesExpectation(result, expectation) {
-    if (hasRegexMetacharacters(expectation)) {
+    if (expectation === undefined) {
+        return false;
+    }
+    // 显式正则：`/pattern/` 定界（首尾均为 `/` 且长度 ≥ 2）。仅此形态走正则路径。
+    if (expectation.length >= 2 && expectation.startsWith('/') && expectation.endsWith('/')) {
+        const inner = expectation.slice(1, -1);
         let regex;
         try {
-            regex = new RegExp(expectation);
+            regex = new RegExp(inner);
         }
         catch {
             return false;
         }
         return regex.test(result);
     }
-    return result === expectation;
+    // 默认路径：大小写不敏感 + 包含匹配（与基准一致）。
+    const normalizedOutput = result.trim().toLowerCase();
+    const normalizedExpectation = expectation.trim().toLowerCase();
+    return normalizedOutput === normalizedExpectation || normalizedOutput.includes(normalizedExpectation);
 }
 /**
  * 分支条件两阶段评估器。
@@ -158,6 +180,47 @@ export class BranchEvaluator {
         const partial = await this.start(condition, contextMessage, options);
         return await this.collect(partial);
     }
+    /**
+     * 条件分支评估（带解析失败重试）。
+     *
+     * shell 条件直接委托 {@link evaluate}（走 matchesExpectation，无重试）；AI 条件
+     * （agent/prompt/skill/mcp）首轮发送分支评估提示词，若 {@link extractShouldExecute}
+     * 解析失败（undefined），则把上一轮 AI 输出 + {@link SHOULD_EXECUTE_CORRECTION_HINT}
+     * 构造为 follow-up 多轮消息重新评估，最多重试 {@link MAX_BRANCH_EVAL_RETRIES} 次；
+     * 重试耗尽记日志（条件不通过由调用方 decideCondition 的 `extractShouldExecute === true`
+     * 判定兜底为 false）。仅条件分支使用——循环跳出仍走 {@link evaluate} +
+     * extractBreakResult（shouldBreak 字段，缺陷 4 范畴）。
+     */
+    async evaluateCondition(condition, contextMessage, options = {}) {
+        if (condition.type === 'shell') {
+            return this.evaluate(condition, contextMessage, options);
+        }
+        const route = await this.resolveProviderModel(condition.value);
+        const taskText = replacePassThroughVars(condition.value.promptText, resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations));
+        const basePrompt = buildBranchPrompt(taskText, contextMessage, options.branches ?? []);
+        const sessionHandle = this.newSessionHandle();
+        const messages = [
+            createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: basePrompt }] }),
+        ];
+        let output = await this.streamAi(route, messages, options.signal);
+        let attempts = 0;
+        while (extractShouldExecute(output) === undefined && attempts < MAX_BRANCH_EVAL_RETRIES) {
+            attempts++;
+            messages.push(createAssistantMessage({
+                content: [{ type: 'text', text: output }],
+                source: { provider: route.provider, model: route.model },
+            }));
+            messages.push(createUserMessage({
+                source: { kind: 'user' },
+                content: [{ type: 'text', text: SHOULD_EXECUTE_CORRECTION_HINT }],
+            }));
+            output = await this.streamAi(route, messages, options.signal);
+        }
+        if (extractShouldExecute(output) === undefined) {
+            this.ctx.logger.warn(`sandore: branch condition shouldExecute unparseable after ${attempts} retry attempt(s); last output: ${output.slice(0, 200)}`);
+        }
+        return { output, sessionHandle };
+    }
     async startAi(condition, contextMessage, options) {
         const route = await this.resolveProviderModel(condition.value);
         const taskText = replacePassThroughVars(condition.value.promptText, resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations));
@@ -167,18 +230,22 @@ export class BranchEvaluator {
             content: [{ type: 'text', text: promptText }],
         });
         const sessionHandle = this.newSessionHandle();
+        return {
+            sessionHandle,
+            outputPromise: this.streamAi(route, [message], options.signal),
+        };
+    }
+    /** 单轮 AI 临时会话流式评估：聚合输出文本；error/aborted 抛 SandoreError。 */
+    async streamAi(route, messages, signal) {
         const generateOptions = {
             provider: route.provider,
             model: route.model,
-            messages: [message],
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            messages,
+            ...(signal === undefined ? {} : { signal }),
         };
         const assembler = new BlockAssembler();
         const stream = this.ctx.llm.stream(generateOptions);
-        return {
-            sessionHandle,
-            outputPromise: this.aggregate(stream, assembler),
-        };
+        return this.aggregate(stream, assembler);
     }
     async startShell(condition, options) {
         const command = replacePassThroughVars(condition.value.command, resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations));

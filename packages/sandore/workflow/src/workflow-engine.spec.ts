@@ -4,10 +4,10 @@
  * @module @deepseek-ai/dsh-sandore-workflow/src/workflow-engine.spec
  */
 import { Context } from '@deepseek-ai/cordis';
-import type { LlmRuntime } from '@deepseek-ai/dsh-llm';
+import type { LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';
 import type { SessionStore } from '@deepseek-ai/dsh-session';
 import type { DomainFacility } from '@deepseek-ai/dsh-storage-domain';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../tests/mocks/llm.ts';
@@ -49,6 +49,114 @@ steps:
       type: prompt
       value:
         promptText: "summarize"
+`;
+
+/** Stage 级条件分支：stg-entry 完成后按 branch.condition 选下一 Stage
+ *  （验证 tryAdvanceStage 评估 Stage branch.condition，不再盲取首个 Stage 目标）。 */
+const stageBranchYaml = `id: wfl-stage-branch
+name: stage-branch
+version: "1.0.0"
+stages:
+  - id: stg-entry
+    name: 入口
+    steps:
+      - id: step-entry
+    branches:
+      - condition:
+          type: prompt
+          value:
+            promptText: "判断是否进入分支B"
+        next: stg-b
+      - next: stg-default
+  - id: stg-b
+    name: 分支B
+    steps:
+      - id: step-b
+  - id: stg-c
+    name: 分支C
+    steps:
+      - id: step-c
+  - id: stg-default
+    name: 默认
+    steps:
+      - id: step-default
+steps:
+  - id: step-entry
+    command:
+      type: shell
+      value:
+        command: "echo entry"
+  - id: step-b
+    command:
+      type: shell
+      value:
+        command: "echo b"
+  - id: step-c
+    command:
+      type: shell
+      value:
+        command: "echo c"
+  - id: step-default
+    command:
+      type: shell
+      value:
+        command: "echo default"
+`;
+
+/** Stage 级多条件分支（无默认分支）：entry→[condA→stg-a, condB→stg-b]，
+ *  stageOrder=[entry, mid, a, b]，数组下一 of entry=stg-mid（≠ 条件目标，便于区分条件命中与兜底）。 */
+const stageBranchMultiYaml = `id: wfl-stage-multi
+name: stage-multi
+version: "1.0.0"
+stages:
+  - id: stg-entry
+    name: 入口
+    steps:
+      - id: step-entry
+    branches:
+      - condition:
+          type: prompt
+          value:
+            promptText: "判断是否进入A"
+        next: stg-a
+      - condition:
+          type: prompt
+          value:
+            promptText: "判断是否进入B"
+        next: stg-b
+  - id: stg-mid
+    name: 中转
+    steps:
+      - id: step-mid
+  - id: stg-a
+    name: A
+    steps:
+      - id: step-a
+  - id: stg-b
+    name: B
+    steps:
+      - id: step-b
+steps:
+  - id: step-entry
+    command:
+      type: shell
+      value:
+        command: "echo entry"
+  - id: step-mid
+    command:
+      type: shell
+      value:
+        command: "echo mid"
+  - id: step-a
+    command:
+      type: shell
+      value:
+        command: "echo a"
+  - id: step-b
+    command:
+      type: shell
+      value:
+        command: "echo b"
 `;
 
 /** 单 Stage 多 Step（A 输出被 B 引用）定义。 */
@@ -118,6 +226,29 @@ steps:
       type: shell
       value:
         command: "echo hi"
+`;
+
+/** 单 Stage 两步线性 shell（step-a → step-b 均成功，无 branches 数组顺序兜底），供 between-steps 崩溃恢复测试。 */
+const linearShellYaml = `id: wfl-linear-shell
+name: linear-shell
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 两步
+    steps:
+      - id: step-a
+      - id: step-b
+steps:
+  - id: step-a
+    command:
+      type: shell
+      value:
+        command: "echo a"
+  - id: step-b
+    command:
+      type: shell
+      value:
+        command: "echo b"
 `;
 
 /** 完整 DAG（分支 + 并行 + 汇合 + 循环 + 门禁 + 透传变量 + agent 子代理）。 */
@@ -202,6 +333,90 @@ steps:
         enabled: true
 `;
 
+/** 单 Stage 单 shell Step 引用 \${projectName}（无声明），供缺陷 15「崩溃恢复保留提取值」测试。 */
+const recoverPtvYaml = `id: wfl-recover-ptv
+name: recover-ptv
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 恢复
+    steps:
+      - id: step-use
+steps:
+  - id: step-use
+    command:
+      type: shell
+      value:
+        command: "echo \${projectName}"
+`;
+
+/** 两 Stage：stg-extract（prompt 提取 projectName=sandore）→ stg-use（shell 引用
+ *  \${projectName} 且声明同名默认值 "unknown"），供缺陷 15「跨 Stage 同名变量
+ *  A 提取 B 默认 → B 不覆盖 A」测试（残余差异二：initState 合并顺序）。 */
+const crossStagePtvYaml = `id: wfl-cross-stage-ptv
+name: cross-stage-ptv
+version: "1.0.0"
+stages:
+  - id: stg-extract
+    name: 提取
+    steps:
+      - id: step-extract
+  - id: stg-use
+    name: 使用
+    steps:
+      - id: step-use
+steps:
+  - id: step-extract
+    command:
+      type: prompt
+      value:
+        promptText: "extract projectName"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: "项目名"
+  - id: step-use
+    command:
+      type: shell
+      value:
+        command: "echo \${projectName}"
+    passThroughVars:
+      - name: projectName
+        value: "unknown"
+        description: "项目名默认"
+`;
+
+/** 两 Stage：stg-use（shell 引用 \${config}）→ stg-define（shell + 声明 config 默认值
+ *  "default-cfg"），供缺陷 15「先引用后定义」全局默认收集测试（残余差异一）。 */
+const forwardRefYaml = `id: wfl-forward-ref
+name: forward-ref
+version: "1.0.0"
+stages:
+  - id: stg-use
+    name: 使用
+    steps:
+      - id: step-use
+  - id: stg-define
+    name: 定义
+    steps:
+      - id: step-define
+steps:
+  - id: step-use
+    command:
+      type: shell
+      value:
+        command: "echo \${config}"
+  - id: step-define
+    command:
+      type: shell
+      value:
+        command: "echo defined"
+    passThroughVars:
+      - name: config
+        value: "default-cfg"
+        description: "配置"
+`;
+
 /** 分支无匹配（条件 false）→ 数组顺序兜底（用于验证兜底 + branchMeta 现场保留）。 */
 const branchFallbackYaml = `id: wfl-branch-fallback
 name: branch-fallback
@@ -234,7 +449,9 @@ steps:
         command: "echo matched"
 `;
 
-/** 嵌套循环定义：外层 2 次 × 内层 2 次（用于验证内层 visitCount 重置）。 */
+/** 嵌套循环定义：外层 3 次 × 内层 3 次（基准模型：路由门 body 跑 maxIter-1 次，
+ *  故 (3-1)×(3-1)=4 次 body 执行；外层重入内层时内层 visitCount 经 resetLoopVisitCounts
+ *  从 0 起重新计数——验证跳出时归零语义）。 */
 const nestedLoopYaml = `id: wfl-nested-loop
 name: nested-loop
 version: "1.0.0"
@@ -246,14 +463,14 @@ stages:
         branches:
           - next: step-inner-loop
             loop:
-              maxIterations: 2
+              maxIterations: 3
               next: step-inner-loop
               exitTo: step-done
       - id: step-inner-loop
         branches:
           - next: step-iter
             loop:
-              maxIterations: 2
+              maxIterations: 3
               next: step-iter
               exitTo: step-outer-loop
       - id: step-iter
@@ -310,6 +527,255 @@ steps:
       type: shell
       value:
         command: "echo done"
+`;
+
+/** 命令门循环：循环节点自身带 command 且自回边，每趟产生 executed 条目（验证命令门 visitCount 不双重计数）。 */
+const loopCommandGateYaml = `id: wfl-loop-command-gate
+name: loop-command-gate
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 命令门循环
+    steps:
+      - id: step-loop
+        branches:
+          - next: step-loop
+            loop:
+              maxIterations: 3
+              next: step-loop
+              exitTo: step-done
+      - id: step-done
+steps:
+  - id: step-loop
+    command:
+      type: shell
+      value:
+        command: "echo loop"
+  - id: step-done
+    command:
+      type: shell
+      value:
+        command: "echo done"
+`;
+
+/** 生成指定 maxIter 的命令门循环 YAML（loop head 自带 command + 自回边）。 */
+function commandGateYaml(maxIter: number): string {
+  return `id: wfl-cg-${maxIter}
+name: loop-command-gate
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 命令门循环
+    steps:
+      - id: step-loop
+        branches:
+          - next: step-loop
+            loop:
+              maxIterations: ${maxIter}
+              next: step-loop
+              exitTo: step-done
+      - id: step-done
+steps:
+  - id: step-loop
+    command:
+      type: shell
+      value:
+        command: "echo loop"
+  - id: step-done
+    command:
+      type: shell
+      value:
+        command: "echo done"
+`;
+}
+
+/** 带 breakCondition 但恒不跳出的循环（每趟评估都产出 loopMeta，不 break），验证 breakCondition 门 visitCount 不双重计数。 */
+const loopBreakNoBreakYaml = `id: wfl-loop-break-no-break
+name: loop-break-no-break
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 循环不跳出
+    steps:
+      - id: step-loop
+        branches:
+          - next: step-iter
+            loop:
+              maxIterations: 3
+              breakCondition:
+                type: prompt
+                value:
+                  promptText: "should we break?"
+              next: step-iter
+              exitTo: step-done
+      - id: step-iter
+        branches:
+          - next: step-loop
+      - id: step-done
+steps:
+  - id: step-loop
+  - id: step-iter
+    command:
+      type: shell
+      value:
+        command: "echo iter"
+  - id: step-done
+    command:
+      type: shell
+      value:
+        command: "echo done"
+`;
+
+/** 混合分支门循环：循环节点同时带 condition 分支与 loop 分支（isLoopControl=false），每趟回边都建路由条目并递增 visitCount（验证不与回边计数叠加）。 */
+const loopMixedGateYaml = `id: wfl-loop-mixed-gate
+name: loop-mixed-gate
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 混合门循环
+    steps:
+      - id: step-loop
+        branches:
+          - condition:
+              type: prompt
+              value:
+                promptText: "exit early?"
+            next: step-exit
+          - next: step-iter
+            loop:
+              maxIterations: 3
+              next: step-iter
+              exitTo: step-done
+      - id: step-iter
+        branches:
+          - next: step-loop
+      - id: step-exit
+      - id: step-done
+steps:
+  - id: step-loop
+  - id: step-iter
+    command:
+      type: shell
+      value:
+        command: "echo iter"
+  - id: step-exit
+    command:
+      type: shell
+      value:
+        command: "echo exit"
+  - id: step-done
+    command:
+      type: shell
+      value:
+        command: "echo done"
+`;
+
+/**
+ * 复杂工作流 e2e 定义（代码审查与修复流程）：覆盖 prompt 命令 + shell 命令 + 条件分支
+ * （shouldExecute）+ 并行分支（无 condition 多 next）+ 循环（loop + breakCondition
+ * shouldBreak + maxIterations）+ 收尾门禁（gates primary/secondary）+ 跨 Stage。
+ *
+ * Stage 1「代码审查与修复」：step-scan(shell) → step-route(路由门) 经条件分支(shouldExecute)
+ * 走 step-fix + 并行分支走 step-report，二者汇合 step-merge → step-loop(循环门) 循环体
+ * step-iter，breakCondition(shouldBreak) 跳出到 step-exit。
+ * Stage 2「门禁收尾」：step-finalize(prompt) 带透传变量(projectName) + 双门禁(primary +
+ * secondary)，assess 提取 projectName、primary/secondary 门禁判定产物合格。
+ */
+const complexReviewFixYaml = `id: wfl-complex
+name: complex-review-fix
+version: "1.0.0"
+stages:
+  - id: stg-review
+    name: 代码审查与修复
+    steps:
+      - id: step-scan
+      - id: step-route
+        branches:
+          - condition:
+              type: prompt
+              value:
+                promptText: "判断是否需要修复"
+            next: step-fix
+          - next: step-report
+      - id: step-fix
+        branches:
+          - next: step-merge
+      - id: step-report
+        branches:
+          - next: step-merge
+      - id: step-merge
+        branches:
+          - next: step-loop
+      - id: step-loop
+        branches:
+          - next: step-iter
+            loop:
+              maxIterations: 4
+              breakCondition:
+                type: prompt
+                value:
+                  promptText: "判断是否跳出循环"
+              next: step-iter
+              exitTo: step-exit
+      - id: step-iter
+        branches:
+          - next: step-loop
+      - id: step-exit
+  - id: stg-gate
+    name: 门禁收尾
+    steps:
+      - id: step-finalize
+steps:
+  - id: step-scan
+    command:
+      type: shell
+      value:
+        command: "echo scan"
+    outputTo:
+      - id: opt-scan
+        path: "scan-report.txt"
+  - id: step-route
+  - id: step-fix
+    command:
+      type: shell
+      value:
+        command: "echo fix"
+  - id: step-report
+    command:
+      type: shell
+      value:
+        command: "echo report"
+  - id: step-merge
+    command:
+      type: shell
+      value:
+        command: "echo merge"
+  - id: step-loop
+  - id: step-iter
+    command:
+      type: shell
+      value:
+        command: "echo iter"
+  - id: step-exit
+    command:
+      type: shell
+      value:
+        command: "echo stage1-done"
+  - id: step-finalize
+    command:
+      type: prompt
+      value:
+        promptText: "分析代码并生成最终报告"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: "项目名"
+    gates:
+      primary:
+        enabled: true
+      secondary:
+        enabled: true
+        prompt: "审查产物是否合格"
 `;
 
 /** 写入一条工作流定义记录。 */
@@ -449,6 +915,92 @@ function pausedSnapshot(instanceId: string, workflowId = 'wfl-agent-fail'): Work
   return stepSnapshot(instanceId, workflowId, agentStepSnapshot('paused'), 'paused');
 }
 
+/** 组装一条 between-steps 崩溃快照：step-a 已完成落盘、step-b 未执行（无活跃段），供缺陷 9 G 测试。 */
+function betweenStepsSnapshot(instanceId: string, workflowId = 'wfl-linear-shell'): WorkflowTaskState {
+  const createdAt = new Date().toISOString();
+  return {
+    taskId: instanceId,
+    workflowId,
+    cwd: '/tmp',
+    status: 'running',
+    originalInput: 'do it',
+    currentStageId: 'stg-1',
+    executedSteps: [{
+      id: 'exec-a',
+      stepId: 'step-a',
+      stageId: 'stg-1',
+      name: 'step-a',
+      status: 'completed',
+      command: { type: 'shell', value: { command: 'echo a' } },
+      sessionMeta: { childId: 'step-a-synthetic', synthetic: true, command: 'shell' },
+      visitCount: 1,
+      createdAt,
+      updatedAt: createdAt,
+      attemptIndex: 0,
+      output: [{ type: 'text', text: 'a' }],
+    }],
+    stageInfos: [{ id: 'stg-1', name: '两步', status: 'running' }],
+    pendingInteractions: [],
+    pendingQueue: [],
+    visitCounts: { 'step-a': 1 },
+    passThroughVars: {},
+    activeLoopIterationStack: [],
+    activeLoopNodeId: null,
+    activeLoopStack: [],
+    pausedChildIds: [],
+    stageContracts: {},
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** 组装一条含已提取透传变量（projectName=sandore）的 running 快照（无活跃段、无已完成
+ *  Step），供缺陷 15「崩溃恢复保留提取值」测试：recoverInstance 重跑 step-use 时
+ *  断言 shell 命令经 replacePassThroughVars 拿到提取值而非保留字面量。 */
+function extractedPtvSnapshot(instanceId: string, workflowId = 'wfl-recover-ptv'): WorkflowTaskState {
+  const createdAt = new Date().toISOString();
+  return {
+    taskId: instanceId,
+    workflowId,
+    cwd: '/tmp',
+    status: 'running',
+    originalInput: 'do it',
+    currentStageId: 'stg-1',
+    executedSteps: [],
+    stageInfos: [{ id: 'stg-1', name: '恢复', status: 'running' }],
+    pendingInteractions: [],
+    pendingQueue: [],
+    visitCounts: {},
+    passThroughVars: {
+      projectName: { value: 'sandore', description: '项目名' },
+    },
+    activeLoopIterationStack: [],
+    activeLoopNodeId: null,
+    activeLoopStack: [],
+    pausedChildIds: [],
+    stageContracts: {},
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/** 组装一条含 stale pendingInteractions 的快照（崩溃前 ask 挂起，恢复时需清理），供缺陷 9 B / 27 测试。 */
+function stalePendingSnapshot(instanceId: string): WorkflowTaskState {
+  const snapshot = pausedSnapshot(instanceId);
+  snapshot.pendingInteractions = [{
+    id: 'req-stale',
+    stageId: 'stg-1',
+    stepId: 'step-agent',
+    sessionId: instanceId,
+    requestId: 'req-stale',
+    kind: 'question',
+    status: 'pending',
+    payload: { questions: [{ id: 'q1', question: 'stale?' }] },
+    createdAt: '2026-08-16T00:00:00.000Z',
+  }];
+  return snapshot;
+}
+
 /** 组装集成测试 harness：注入内存 DSH 服务并加载引擎运行时。 */
 async function harness(config: SandoreConfig = {}): Promise<{
   ctx: Context;
@@ -471,8 +1023,8 @@ async function harness(config: SandoreConfig = {}): Promise<{
   const llm = new FakeLlm();
   const shell = new FakeShell();
   const sessions = new FakeSessionStore();
-  const subagents = new FakeSubagents();
   const agents = new FakeAgentRegistry(sessions);
+  const subagents = new FakeSubagents(ctx, (id) => agents.get(id));
   const subprocess = new FakeSubprocess();
   const userQuestions = new FakeUserQuestions();
   const sessionTitle = new FakeSessionTitle();
@@ -671,6 +1223,23 @@ describe('SandoreEngineRuntime startInstance', () => {
     }
     expect(caught).toBeInstanceOf(SandoreError);
     expect(caught).toMatchObject({ code: 'NODE_NOT_FOUND' });
+  });
+
+  it('seeds global default pass-through vars at start so a forward reference resolves (defect 15)', async () => {
+    const { ctx, engine, persistence, shell } = await harness();
+    await putDefinition(persistence, 'wfl-forward-ref', forwardRefYaml);
+    // shell 回显命令本身，便于断言经 replacePassThroughVars 替换后的实际命令。
+    shell.runHandler = async spec => successResult(spec, spec.command);
+
+    const ended = waitForEnd(ctx);
+    await engine.startInstance({ workflowId: 'wfl-forward-ref', originalInput: 'do it' });
+    await ended;
+
+    // 全局默认收集（first-wins，残余差异一）：step-use（Stage 1）引用 ${config}，而
+    // config 的字面量默认值 "default-cfg" 只在 Stage 2 的 step-define 声明。startInstance
+    // 全局播种后，Stage 1 执行时 replacePassThroughVars 拿到 'default-cfg' 而非保留
+    // 字面量 ${config}。修复前（passThroughVars 初始为 {}）此处为 'echo ${config}'。
+    expect(shell.specs.map(spec => spec.command)).toEqual(['echo default-cfg', 'echo defined']);
   });
 });
 
@@ -927,6 +1496,125 @@ describe('SandoreEngineRuntime abort', () => {
   });
 });
 
+describe('SandoreEngineRuntime setPermissionMode', () => {
+  /**
+   * 折叠读取 session.events 中最新 `sandbox/mode` 事件的 mode（对齐 DSH
+   * `setSandboxMode` 折叠语义：每次受限调用取最新 sandbox/mode 事件值，
+   * 而非创建时快照）。缺陷 29 验证运行中切换后宿主会话折叠值即时变化。
+   */
+  function effectiveSandboxMode(events: ReadonlyArray<{ type: string; data: unknown }>): string | undefined {
+    let mode: string | undefined;
+    for (const event of events) {
+      if (event.type === 'sandbox/mode' && event.data !== null && typeof event.data === 'object'
+        && 'mode' in (event.data as Record<string, unknown>)) {
+        mode = (event.data as { mode: string }).mode;
+      }
+    }
+    return mode;
+  }
+
+  /** 让 shell step 挂起（直到 abort signal 触发 finish），保持实例 running 不进入终态。 */
+  function hangingShell(shell: FakeShell): void {
+    shell.runHandler = spec => new Promise(resolve => {
+      const finish = (): void => { resolve(successResult(spec, '')); };
+      if (spec.signal?.aborted) { finish(); return; }
+      spec.signal?.addEventListener('abort', finish, { once: true });
+    });
+  }
+
+  it('re-applies sandbox mode on the host session and persists state.permission (缺陷 29)', async () => {
+    const { ctx, engine, persistence, shell, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+    hangingShell(shell);
+    const stepStarted = waitForStepStart(ctx);
+
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it', permission: 'read-only' });
+    await stepStarted;
+    const session = sessions.get(run.instanceId)!;
+
+    // 创建时应用 read-only：宿主 session 含 sandbox/mode=read-only 事件，快照 permission=read-only。
+    expect(effectiveSandboxMode(session.events)).toBe('read-only');
+    expect(persistence.state.get(run.instanceId)?.permission).toBe('read-only');
+
+    // 运行中切换到 workspace-write（复用 applyPermission 可重入：追加 sandbox/mode
+    // 事件 + setPolicy，DSH 折叠读取取最新，幂等重放不累积副作用）。
+    await engine.setPermissionMode(run.instanceId, 'workspace-write');
+
+    // 宿主 session 新增 sandbox/mode=workspace-write 事件（折叠后 effectiveSandboxMode 变化）。
+    expect(effectiveSandboxMode(session.events)).toBe('workspace-write');
+    // 快照 permission 同步更新并持久化（UI 列表/详情可读当前权限；recoverInstance 靠
+    // session 事件重放恢复权限，快照字段保持一致避免漂移）。
+    expect(persistence.state.get(run.instanceId)?.permission).toBe('workspace-write');
+
+    await engine.abortInstance(run.instanceId);
+  });
+
+  it('throws NODE_NOT_FOUND for an unknown instance (缺陷 29)', async () => {
+    const { engine } = await harness();
+    await expect(engine.setPermissionMode('inst-none', 'read-only')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+  });
+
+  it('rejects a terminal instance with INVALID_OPERATION (缺陷 29)', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+    shell.runHandler = async spec => successResult(spec, 'hello');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('summary');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it', permission: 'read-only' });
+    await ended;
+
+    await expect(engine.setPermissionMode(run.instanceId, 'workspace-write')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+
+  // ── 子代理快照契约（SA8 核实要求固化）──────────────────────────────────
+  // sandore Step 以子代理运行（step-runner.ts startContinuable，parent=宿主），委派时
+  // 快照宿主 sandbox+approval。故运行中切换权限对【宿主会话】与【切换后新委派的
+  // Step】即时生效，但【已运行 Step 子代理】保持其委派时的权限快照——与基准
+  // 「StepRunner 闭包 `() => this._permissionMode` 每次权限请求读最新值」语义不同。
+  // 此为既定架构差异，非缺陷。mock 不模拟真实 sandbox 折叠，故以「setPermissionMode
+  // 不触及 subagents 任何调用路径」+「宿主 effectiveSandboxMode 即时变化」为可观测契约
+  // 代理指标，固化「已委派子代理快照不被运行中切换回溯」的语义边界。
+  it('subagent delegation snapshot is not retroactively changed by runtime switch (缺陷 29 架构差异, 非缺陷)', async () => {
+    const { ctx, engine, persistence, shell, sessions, subagents } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+    hangingShell(shell);
+    const stepStarted = waitForStepStart(ctx);
+
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it', permission: 'read-only' });
+    await stepStarted;
+    const session = sessions.get(run.instanceId)!;
+
+    // 委派时刻基线：宿主会话 effectiveSandboxMode=read-only（子代理在 startContinuable
+    // 时快照此值——已运行 Step 子代理的权限请求按此旧值判定）。
+    expect(effectiveSandboxMode(session.events)).toBe('read-only');
+    const startsBefore = subagents.continuableStarts.length;
+
+    // 运行中切换到 workspace-write。
+    await engine.setPermissionMode(run.instanceId, 'workspace-write');
+
+    // ①宿主会话 effectiveSandboxMode 即时变为 workspace-write（折叠读取最新事件）。
+    //    切换后新委派的 Step 在 startContinuable 时会快照此新值 → 即时生效。
+    expect(effectiveSandboxMode(session.events)).toBe('workspace-write');
+
+    // ②setPermissionMode 不触及 subagents 任何调用路径：不触发新子代理委派、不
+    //    followup、不 interrupt 已运行子代理。sandore 子代理在 startContinuable 时
+    //    快照宿主 sandbox+approval，运行中切换只对宿主会话追加 sandbox/mode 事件，
+    //    不回溯已委派子代理——故已运行 Step 子代理的委派快照保持其创建时的值
+    //    （权限请求仍按旧模式判定）。【架构差异 vs 基准】基准 StepRunner 以闭包
+    //    `() => this._permissionMode` 每次权限请求读最新值，运行中切换对已运行 Step
+    //    也即时生效；sandore 因子代理委派快照机制，已运行 Step 保持旧快照。此差异
+    //    为既定架构，非缺陷。
+    expect(subagents.continuableStarts.length).toBe(startsBefore);
+    expect(subagents.followups).toHaveLength(0);
+    expect(subagents.interrupts).toHaveLength(0);
+
+    await engine.abortInstance(run.instanceId);
+  });
+});
+
 describe('SandoreEngineRuntime DAG execution', () => {
   it('routes branches, runs the loop, extracts pass-through vars and passes the gate to completed', async () => {
     const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
@@ -935,9 +1623,9 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
 
-    // 条件分支评估（布尔 true）→ agent 执行 → prompt 执行 → 收尾 assess → 门禁（按序供给 chunk 流）。
+    // 条件分支评估（shouldExecute JSON true）→ agent 执行 → prompt 执行 → 收尾 assess → 门禁（按序供给 chunk 流）。
     const responses = [
-      'true',
+      '{"shouldExecute": true}',
       'report done',
       '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
       '{"taskStatus":"done"}',
@@ -959,6 +1647,8 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(state?.status).toBe('completed');
 
     // 分支路由：匹配 agent 分支 + 并行分支；回退分支未执行；汇合节点仅执行一次。
+    // 注：基准模型下路由门+body 的 body 跑 maxIter-1 次（loop head 每 visit 一次，
+    // 末次 break 不路由到 body），故 step-loop(maxIter=3) 的 body(step-iter) 跑 2 次。
     const stepIds = state?.executedSteps.map(step => step.stepId);
     expect(stepIds).toEqual([
       'step-branch',
@@ -967,16 +1657,15 @@ describe('SandoreEngineRuntime DAG execution', () => {
       'step-merge',
       'step-iter',
       'step-iter',
-      'step-iter',
       'step-finalize',
     ]);
     expect(stepIds?.filter(id => id === 'step-fallback')).toHaveLength(0);
     expect(stepIds?.filter(id => id === 'step-merge')).toHaveLength(1);
 
-    // 分支决策点保留 branchMeta 评估现场（布尔判定输出）。
+    // 分支决策点保留 branchMeta 评估现场（shouldExecute JSON 判定输出）。
     const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
     expect(branchEntry?.branchMeta?.status).toBe('completed');
-    expect(branchEntry?.branchMeta?.result).toBe('true');
+    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": true}');
 
     // agent Step：真实 childId（synthetic:false）+ 子代理最终输出。
     const agentStep = state?.executedSteps.find(step => step.stepId === 'step-agent');
@@ -986,13 +1675,13 @@ describe('SandoreEngineRuntime DAG execution', () => {
     // hostAgent 注入：agent Step 的子代理 parent 即宿主主代理（id = instanceId）。
     expect(subagents.continuableStarts[0]?.request.parent.id).toBe(run.instanceId);
 
-    // 循环：3 次扁平迭代，loopIteration 嵌套路径；段 id 为纯 UUID（§3.3），
-    // 4 位 hex 后缀在 sessionMeta.childId（loopManager 合成占位）。
+    // 循环：2 次扁平迭代（路由门 body 跑 maxIter-1 次），loopIteration 嵌套路径；
+    // 段 id 为纯 UUID（§3.3），4 位 hex 后缀在 sessionMeta.childId（loopManager 合成占位）。
     const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
-    expect(iterations.map(step => step.loopIteration)).toEqual([[1], [2], [3]]);
+    expect(iterations.map(step => step.loopIteration)).toEqual([[1], [2]]);
     expect(iterations[0]?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(iterations[0]?.sessionMeta?.childId).toMatch(/^step-iter-[0-9a-f]{4}$/);
-    expect(iterations[2]?.visitCount).toBe(3);
+    expect(iterations[1]?.visitCount).toBe(2);
 
     // 透传变量回写：finalize 提取 projectName 并保留 description。
     expect(state?.passThroughVars['projectName']).toEqual({ value: 'sandore', description: '项目名' });
@@ -1012,8 +1701,8 @@ describe('SandoreEngineRuntime DAG execution', () => {
 
     // 循环内 Step 的 step-completed 事件载荷：name + 扁平迭代路径（末尾位置）。
     const iterCompleted = records.filter(record => record.name === 'sandore/step-completed' && record.args[1] === 'step-iter');
-    expect(iterCompleted.map(record => record.args[4])).toEqual(['step-iter', 'step-iter', 'step-iter']);
-    expect(iterCompleted.map(record => record.args[5])).toEqual([[1], [2], [3]]);
+    expect(iterCompleted.map(record => record.args[4])).toEqual(['step-iter', 'step-iter']);
+    expect(iterCompleted.map(record => record.args[5])).toEqual([[1], [2]]);
 
     // 两 Stage 均 completed，契约落盘。
     expect(state?.stageInfos.map(info => info.status)).toEqual(['completed', 'completed']);
@@ -1026,7 +1715,33 @@ describe('SandoreEngineRuntime DAG execution', () => {
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('false');
+    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    const stepIds = state?.executedSteps.map(step => step.stepId);
+    expect(stepIds).toEqual(['step-branch', 'step-fallback', 'step-matched']);
+
+    // branchMeta 保留原始评估结果（shouldExecute=false 证明条件分支未命中）。
+    const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
+    expect(branchEntry?.branchMeta?.status).toBe('completed');
+    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": false}');
+  });
+
+  it('retries an AI condition branch when the first output is unparseable then passes on the retry', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-branch-fallback', branchFallbackYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // 首轮返回乱码（不可解析 shouldExecute）→ evaluateCondition 触发 follow-up 重试 → 第二轮返回合法 JSON。
+    const responses = ['I cannot decide', '{"shouldExecute": true}'];
+    let callIndex = 0;
+    llm.streamHandler = () => textChunks(responses[callIndex++] ?? '');
 
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', originalInput: 'do it' });
@@ -1035,14 +1750,42 @@ describe('SandoreEngineRuntime DAG execution', () => {
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
 
-    // 条件 false → 分支未命中（branchMeta.result=false）→ 数组顺序兜底 step-fallback。
+    // 重试后条件通过 → step-matched 执行；step-fallback 未命中（条件分支优先于数组兜底）。
+    const stepIds = state?.executedSteps.map(step => step.stepId);
+    expect(stepIds).toEqual(['step-branch', 'step-matched']);
+
+    // 条件评估共 2 次 llm.stream 调用（首轮乱码 + 1 次纠正重试）。
+    expect(llm.calls).toHaveLength(2);
+    const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
+    expect(branchEntry?.branchMeta?.status).toBe('completed');
+    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": true}');
+  });
+
+  it('falls back to array order when an AI condition branch exhausts shouldExecute retries', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-branch-fallback', branchFallbackYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // 始终返回乱码：首轮 + MAX_BRANCH_EVAL_RETRIES(2) 次重试均不可解析 → 兜底 false。
+    llm.streamHandler = () => textChunks('totally not json');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+
+    // 重试耗尽 → 条件未通过 → 数组顺序兜底 step-fallback；step-matched 未执行。
     const stepIds = state?.executedSteps.map(step => step.stepId);
     expect(stepIds).toEqual(['step-branch', 'step-fallback', 'step-matched']);
 
-    // branchMeta 保留原始评估结果（false 证明条件分支未命中）。
+    // 条件评估共 3 次 llm.stream 调用（首轮 + 2 次重试）。
+    expect(llm.calls).toHaveLength(3);
     const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
     expect(branchEntry?.branchMeta?.status).toBe('completed');
-    expect(branchEntry?.branchMeta?.result).toBe('false');
+    expect(branchEntry?.branchMeta?.result).toBe('totally not json');
   });
 
   it('executes nested loops fully on every outer iteration (inner loop visitCount resets)', async () => {
@@ -1058,8 +1801,11 @@ describe('SandoreEngineRuntime DAG execution', () => {
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
 
-    // 内层循环体在每个外层迭代中均完整执行 2 次（而非第 2 次外层迭代时提前跳出），
-    // loopIteration 路径为嵌套数组 [[1,1],[1,2],[2,1],[2,2]]。
+    // 基准模型：路由门 body 跑 maxIter-1 次。外层 maxIter=3 → 外层 body(内层循环) 跑 2
+    // 次（外层 visit 1、2 继续，visit 3 跳出）；内层 maxIter=3 → 内层 body 跑 2 次。
+    // 故 (3-1)×(3-1)=4 次 body 执行，loopIteration 路径 [[1,1],[1,2],[2,1],[2,2]]。
+    // 外层重入内层时内层 visitCount 经 resetLoopVisitCounts 从 0 起重新计数
+    // （跳出时归零作用域语义），验证嵌套重入不残留旧计数。
     const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
     expect(iterations.map(step => step.loopIteration)).toEqual([[1, 1], [1, 2], [2, 1], [2, 2]]);
 
@@ -1068,13 +1814,126 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(iterCompleted.map(record => record.args[5])).toEqual([[1, 1], [1, 2], [2, 1], [2, 2]]);
   });
 
-  it('writes loopMeta to executedSteps when a breakCondition breaks the loop', async () => {
+  it('runs the loop to maxIterations when the output-driven breakCondition never signals done', async () => {
     const { ctx, engine, persistence, llm, shell } = await harness();
     await putDefinition(persistence, 'wfl-loop-break', loopBreakYaml);
     shell.runHandler = async spec => successResult(spec, 'iter');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('{"shouldBreak": true}');
+    // fork-based 改造（缺陷 4）：breakCondition 走 fork 会话注入全量历史；step-iter 为 shell
+    // 合成 session（无真实 session 可 fork）→ 判断降级为临时会话（judgePrompt 不含手动 I/O 块）。
+    // mock 恒返回 shouldBreak=false → 每趟不跳 → 跑满 maxIter=5 后硬上限 break。
+    llm.streamHandler = () => textChunks('{"shouldBreak": false}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-loop-break', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    // 循环体 step-iter 跑 maxIter-1 次（visit 1..4 继续，visit 5 硬上限 break）。
+    const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
+    expect(iterations).toHaveLength(4);
+    // 跑满 maxIter 后跳出，进入 step-done 收尾。
+    expect(state?.executedSteps.some(step => step.stepId === 'step-done')).toBe(true);
+    // fork-based 改造：breakCondition 走专用 shouldBreak 模板（不再手动注入 I/O 块——
+    // shell step 降级为临时会话，AI 依据 promptText 判断）。
+    const breakPrompt = llm.calls
+      .map(call => (call.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '')
+      .find(text => text.includes('shouldBreak'));
+    expect(breakPrompt).toBeDefined();
+  });
+
+  it('runs a command-gate loop exactly maxIterations times (loop head carries a command)', async () => {
+    const { ctx, engine, persistence, shell } = await harness();
+    await putDefinition(persistence, 'wfl-loop-command-gate', loopCommandGateYaml);
+    shell.runHandler = async spec => successResult(spec, 'loop');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-loop-command-gate', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+
+    // 命令门（loop head 自带 command + 自回边）：基准模型 maxIter = loop head 被 visit
+    // 的次数，命令门每 visit 一次就跑一次 command → 命令跑 maxIter 次。visitCount 递增
+    // 已统一移至 runLoop（单一递增点），checkLoopBreak 只读，根治双重计数。
+    const iterations = state?.executedSteps.filter(step => step.stepId === 'step-loop') ?? [];
+    expect(iterations).toHaveLength(3);
+    // 跳出后进入 step-done 收尾。
+    expect(state?.executedSteps.some(step => step.stepId === 'step-done')).toBe(true);
+  });
+
+  it('runs a command-gate loop exactly N times for maxIter=N (1..6)', async () => {
+    const { ctx, engine, persistence, shell } = await harness();
+    shell.runHandler = async spec => successResult(spec, 'loop');
+
+    for (let maxIter = 1; maxIter <= 6; maxIter += 1) {
+      const wfId = `wfl-cg-${maxIter}`;
+      await putDefinition(persistence, wfId, commandGateYaml(maxIter));
+
+      const ended = waitForEnd(ctx);
+      const run = await engine.startInstance({ workflowId: wfId, originalInput: 'do it' });
+      await ended;
+
+      const state = persistence.state.get(run.instanceId);
+      expect(state?.status).toBe('completed');
+      // 命令门：maxIter=N → command 跑 N 次（loop head 每 visit 一次即跑一次 command，
+      // 末次 visit 触发 break）。根治修前 maxIter=4 只跑 3 次的双重计数 bug。
+      const iterations = state?.executedSteps.filter(step => step.stepId === 'step-loop') ?? [];
+      expect(iterations).toHaveLength(maxIter);
+      // 跳出后进入 step-done 收尾。
+      expect(state?.executedSteps.some(step => step.stepId === 'step-done')).toBe(true);
+      // 清理实例避免跨轮干扰。
+      persistence.state.delete(run.instanceId);
+    }
+  });
+
+  it('runs a breakCondition loop exactly maxIterations times when shouldBreak stays false', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-loop-break-no-break', loopBreakNoBreakYaml);
+    shell.runHandler = async spec => successResult(spec, 'iter');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('{"shouldBreak": false}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-loop-break-no-break', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+
+    // breakCondition 门：loop-manager 每趟评估产出 loopMeta，step-navigator continue
+    // 与 break 分支均透传 loopMeta（缺陷 23）→ 每次评估都回写对应 step-loop 路由条目。
+    // 不双重计数：visitCount 递增仍由 runLoop 单一完成（缺陷 3 已重构），路由条目仅
+    // 快照当前值——continue 透传不触发提前跳出。基准模型下路由门 body 跑 maxIter-1 次，
+    // 故循环体执行 2 次。
+    const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
+    expect(iterations).toHaveLength(2);
+    expect(iterations.map(step => step.loopIteration)).toEqual([[1], [2]]);
+  });
+
+  it('writes loopMeta to step-loop routing entries on both continue and break (defect 23)', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-loop-break', loopBreakYaml);
+    shell.runHandler = async spec => successResult(spec, 'iter');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // fork-based 改造（缺陷 4）：breakCondition 走 fork 会话注入全量历史；step-iter 为 shell
+    // 合成 session（无真实 session 可 fork）→ 判断降级为临时会话。mock：首次评估 false（继续），
+    // 第二次评估 true（跳出）——验证 continue 与 break 两条 step-loop 路由条目均回写 loopMeta
+    // （缺陷 23：修复前 continue 分支丢弃 outcome.loopMeta，仅 break 条目回写）。
+    let breakCall = 0;
+    llm.streamHandler = (options) => {
+      const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
+      if (text.includes('shouldBreak')) {
+        breakCall += 1;
+        return textChunks(breakCall === 1 ? '{"shouldBreak": false}' : '{"shouldBreak": true}');
+      }
+      return textChunks('summary');
+    };
 
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-loop-break', originalInput: 'do it' });
@@ -1083,11 +1942,78 @@ describe('SandoreEngineRuntime DAG execution', () => {
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
 
-    // breakCondition 跳出后 loopMeta（checkLoopBreak 两阶段产出）回写到 executedSteps。
-    const loopMetaEntry = state?.executedSteps.find(step => step.loopMeta !== undefined);
-    expect(loopMetaEntry).toBeDefined();
-    expect(loopMetaEntry?.loopMeta?.status).toBe('completed');
-    expect(loopMetaEntry?.loopMeta?.result).toBe('{"shouldBreak": true}');
+    // 缺陷 23：continue 分支（首评 false）与 break 分支（次评 true）均透传 loopMeta →
+    // 两条 step-loop 路由条目均含 loopMeta(completed)。修复前 continue 分支不透传，
+    // 仅 break 条目回写（loop-manager.spec L174-175 实证 checkLoopBreak 在 shouldBreak=false
+    // 时同样产出 loopMeta(completed)）。
+    const loopEntries = state?.executedSteps.filter(step => step.stepId === 'step-loop') ?? [];
+    expect(loopEntries).toHaveLength(2);
+    expect(loopEntries.every(entry => entry.loopMeta?.status === 'completed')).toBe(true);
+    // 两条均携带 shouldBreak 评估现场（continue=false 现场、break=true 现场）。
+    expect(loopEntries[0]?.loopMeta?.result).toContain('shouldBreak');
+    expect(loopEntries[1]?.loopMeta?.result).toContain('shouldBreak');
+
+    // continue 透传不双重计数回归（缺陷 3 point ② 已由 runLoop 单一递增解决）：
+    // 循环体 step-iter 仅在首趟 continue 后跑一次（第二趟 break 直接跳出，未再跑 body）。
+    const iterEntries = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
+    expect(iterEntries).toHaveLength(1);
+    // 跳出后进入 step-done 收尾。
+    expect(state?.executedSteps.some(step => step.stepId === 'step-done')).toBe(true);
+  });
+
+  it('runs a mixed-gate loop exactly maxIterations times when the condition branch never matches', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-loop-mixed-gate', loopMixedGateYaml);
+    shell.runHandler = async spec => successResult(spec, 'iter');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // 条件分支恒不命中（shouldExecute=false）→ 循环跑到 maxIterations 硬上限。
+    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-loop-mixed-gate', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+
+    // 混合门（condition + loop，isLoopControl=false）：基准模型下路由门 body 跑
+    // maxIter-1 次。visitCount 递增已统一移至 runLoop（单一递增点），回边/checkLoopBreak
+    // 只读不递增，根治双重计数。故循环体执行 2 次。
+    const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
+    expect(iterations).toHaveLength(2);
+    expect(iterations.map(step => step.loopIteration)).toEqual([[1], [2]]);
+    // 条件分支恒不命中 → step-exit 未执行；跳出后进入 step-done 收尾。
+    expect(state?.executedSteps.some(step => step.stepId === 'step-exit')).toBe(false);
+    expect(state?.executedSteps.some(step => step.stepId === 'step-done')).toBe(true);
+  });
+
+  it('does not let a later stage default override an earlier stage extracted pass-through var (defect 15)', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-cross-stage-ptv', crossStagePtvYaml);
+    // shell 回显命令本身，便于断言 step-use 拿到的实际值。
+    shell.runHandler = async spec => successResult(spec, spec.command);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    // step-extract（prompt）执行 → finalize assess 提取 projectName=sandore；
+    // Stage 2 step-use 声明同名默认值 "unknown"（非 \${} 引用 → 不触发 assess）。
+    const responses = [
+      'extracted text',
+      '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
+    ];
+    let callIndex = 0;
+    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+
+    const ended = waitForEnd(ctx);
+    await engine.startInstance({ workflowId: 'wfl-cross-stage-ptv', originalInput: 'do it' });
+    await ended;
+
+    // 残余差异二修复（initState 合并顺序）：Stage 2 step-use 声明同名 projectName
+    // 默认值 "unknown"，但合并顺序已改为「input 提取值覆盖定义默认值」→ step-use
+    // 拿到 'sandore' 而非被 'unknown' 覆盖。修复前（旧合并顺序：定义值覆盖提取值）
+    // 此处为 'echo unknown'，破坏跨 Stage 变量传递链。
+    expect(shell.specs.map(spec => spec.command)).toEqual(['echo sandore']);
   });
 });
 
@@ -1165,6 +2091,94 @@ function waitForQuestion(ctx: Context): Promise<{ info: unknown; question: unkno
     ctx.once('sandore/question', (info, question) => resolve({ info, question }));
   });
 }
+
+describe('SandoreEngineRuntime Stage-level conditional branching', () => {
+  it('evaluates the Stage branch condition and routes to the matched Stage when shouldExecute is true', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-stage-branch', stageBranchYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Stage 条件评估（StageContract-based，非 fork）：shouldExecute=true → 取 stg-b。
+    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+
+    const records = recordSandoreEvents(ctx);
+    const ended = waitForEnd(ctx);
+    await engine.startInstance({ workflowId: 'wfl-stage-branch', originalInput: 'do it' });
+    await ended;
+
+    const completedStages = records
+      .filter(record => record.name === 'sandore/stage-completed')
+      .map(record => record.args[1]);
+    // 条件命中 stg-b → 数组顺序继续 stg-c → stg-default → 结束。
+    expect(completedStages).toEqual(['stg-entry', 'stg-b', 'stg-c', 'stg-default']);
+  });
+
+  it('skips a false Stage branch condition and falls through to the default (no-condition) branch', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-stage-branch', stageBranchYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Stage 条件评估：shouldExecute=false → 跳过 stg-b，走无 condition 的默认分支 stg-default。
+    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+
+    const records = recordSandoreEvents(ctx);
+    const ended = waitForEnd(ctx);
+    await engine.startInstance({ workflowId: 'wfl-stage-branch', originalInput: 'do it' });
+    await ended;
+
+    const completedStages = records
+      .filter(record => record.name === 'sandore/stage-completed')
+      .map(record => record.args[1]);
+    // 条件不命中 → 默认分支 stg-default（stg-default 为数组末位，无后续 → 结束），
+    // 不走盲取首个 Stage 目标（旧 tryAdvanceStage 会取 stg-b）。
+    expect(completedStages).toEqual(['stg-entry', 'stg-default']);
+  });
+
+  it('routes to Stage A when the first multi-condition branch matches (skips array-order stg-mid)', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-stage-multi', stageBranchMultiYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // 条件 A shouldExecute=true → 取 stg-a（首个条件命中，循环 break，condB 不评估）。
+    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+
+    const records = recordSandoreEvents(ctx);
+    const ended = waitForEnd(ctx);
+    await engine.startInstance({ workflowId: 'wfl-stage-multi', originalInput: 'do it' });
+    await ended;
+
+    const completedStages = records
+      .filter(record => record.name === 'sandore/stage-completed')
+      .map(record => record.args[1]);
+    // 条件命中 stg-a（跳过数组下一 stg-mid）→ stg-a 数组顺序继续 stg-b → 结束。
+    expect(completedStages).toEqual(['stg-entry', 'stg-a', 'stg-b']);
+  });
+
+  it('routes to Stage B when the first condition is false and the second matches', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-stage-multi', stageBranchMultiYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // 条件 A false → 跳过；条件 B true → 取 stg-b（第二条件命中）。
+    let call = 0;
+    llm.streamHandler = () => textChunks(call++ === 0 ? '{"shouldExecute": false}' : '{"shouldExecute": true}');
+
+    const records = recordSandoreEvents(ctx);
+    const ended = waitForEnd(ctx);
+    await engine.startInstance({ workflowId: 'wfl-stage-multi', originalInput: 'do it' });
+    await ended;
+
+    const completedStages = records
+      .filter(record => record.name === 'sandore/stage-completed')
+      .map(record => record.args[1]);
+    // 第二条件命中 stg-b（跳过数组下一 stg-mid 与 stg-a）→ stg-b 数组末位无后续 → 结束。
+    expect(completedStages).toEqual(['stg-entry', 'stg-b']);
+  });
+});
 
 describe('SandoreEngineRuntime interaction', () => {
   it('registers a pending question, asks via userQuestions (hostAgent), and resumes after the card reply', async () => {
@@ -1278,6 +2292,75 @@ describe('SandoreEngineRuntime interaction', () => {
     expect(askStep?.status).toBe('completed');
     expect(askStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
   });
+
+  it('rejectQuestion marks the ask Step failed + instance failed (no reject bubbling to runAndCatch, 缺陷 26)', async () => {
+    const { ctx, engine, persistence, llm } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // 不设 resolveNext / 不推 answers → FakeUserQuestions.ask 挂起，等待 rejectQuestion。
+    const responses = [
+      'work done',
+      '{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
+    ];
+    let callIndex = 0;
+    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+
+    const records = recordSandoreEvents(ctx);
+    const question = waitForQuestion(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it' });
+    const fired = await question;
+    const requestId = (fired.question as { requestId: string }).requestId;
+
+    // 拒绝问答：rejectQuestion resolve 占位解挂 waiter（非 reject），引擎检测后标 Step failed。
+    await engine.rejectQuestion(run.instanceId, requestId);
+    await waitForEnd(ctx);
+
+    const state = persistence.state.get(run.instanceId);
+    // 实例落 failed（经 handleRejectedQuestion 显式代码，非异常冒泡 runAndCatch）。
+    expect(state?.status).toBe('failed');
+    // ask Step 正确置 failed（非滞留 interacting）。
+    const askStep = state?.executedSteps.find(step => step.stepId === 'step-ask');
+    expect(askStep?.status).toBe('failed');
+    expect(askStep?.error).toBe('Question rejected by user');
+    // 双发 sandore/step-failed（StageExecutor 未对 interacting Step 触发，引擎显式补发）。
+    const stepFailed = records.find(record => record.name === 'sandore/step-failed');
+    expect(stepFailed?.args[1]).toBe('step-ask');
+    // 双发 sandore/end(failed)。
+    const ended = records.find(record => record.name === 'sandore/end');
+    expect((ended?.args[1] as { status: string }).status).toBe('failed');
+    // pending 条目已清（终态条目不进快照）。
+    expect(state?.pendingInteractions).toEqual([]);
+  });
+
+  it('rejectQuestion emits sandore/question_rejected for UI refresh (缺陷 26)', async () => {
+    const { ctx, engine, persistence, llm } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    const responses = [
+      'work done',
+      '{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
+    ];
+    let callIndex = 0;
+    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+
+    const rejectedFired: unknown[] = [];
+    ctx.on('sandore/question_rejected', (info, questionEntry) => rejectedFired.push({ info, questionEntry }));
+    const question = waitForQuestion(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it' });
+    const fired = await question;
+    const requestId = (fired.question as { requestId: string }).requestId;
+
+    await engine.rejectQuestion(run.instanceId, requestId);
+    await waitForEnd(ctx);
+
+    expect(rejectedFired).toHaveLength(1);
+    const entry = (rejectedFired[0] as { questionEntry: { kind: string; status: string; requestId: string } }).questionEntry;
+    expect(entry.kind).toBe('question');
+    expect(entry.status).toBe('rejected');
+    expect(entry.requestId).toBe(requestId);
+  });
 });
 
 describe('SandoreEngineRuntime delegated subagent ask', () => {
@@ -1291,16 +2374,14 @@ describe('SandoreEngineRuntime delegated subagent ask', () => {
     child.session.append(assistantMessageEvent([
       { type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Which?"}]}[[/SANDORE_ASK]]' },
     ]));
-    let idleCalls = 0;
-    child.whenIdle = async () => {
-      idleCalls += 1;
-      if (idleCalls === 2) {
-        child.session.append(assistantMessageEvent([{ type: 'text', text: 'final answer' }]));
-      }
-    };
     agents.register(child);
 
-    userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
+    // settle 路径下 child.whenIdle 不再被调用；答案 resolve 时回填 final output（followup
+    // 前追加 → cold-resume 的 auto-settle(completed) 读到 final answer）。
+    userQuestions.resolveNext = async () => {
+      child.session.append(assistantMessageEvent([{ type: 'text', text: 'final answer' }]));
+      return { answers: [{ id: 'q1', selected: ['A'] }] };
+    };
 
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-delegated', originalInput: 'do it' });
@@ -1580,6 +2661,146 @@ describe('SandoreEngineRuntime recovery', () => {
     expect(subagents.followups.some(item => item.childId === step?.sessionMeta?.childId)).toBe(true);
   });
 
+  it('retries a failed agent step with revert mode to a user-selected earlier turn boundary', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', originalInput: 'do it' });
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
+
+    // revert 源：两个闭合 turn（seq 2 与 5）+ 一个未闭合尾部 turn（seq 6 turn/start，无 turn/end）。
+    // 用户传 revertBoundary=2 选更早 turn（截断到 seq 2，丢弃 seq 3-6 的失败内容）。
+    const childSession = sessions.create('child-1');
+    childSession.append('turn/start', { turn: 0 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'first answer' }]).data);
+    childSession.append('turn/end', { turn: 0, reason: { kind: 'completed' } });
+    childSession.append('turn/start', { turn: 1 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'failed attempt' }]).data);
+    childSession.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+    childSession.append('turn/start', { turn: 2 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'unmatched tail' }]).data);
+
+    await engine.retryStep(run.instanceId, 'step-agent', 'revert', 'rollback', 2);
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
+    // seed 截断到 boundary=2（仅含 turn 0 的 first answer），后续 followup 续跑输出该文本。
+    expect(step?.output).toEqual([{ type: 'text', text: 'first answer' }]);
+    expect(step?.retryHistory?.[0]?.mode).toBe('revert');
+    expect(step?.retryHistory?.[0]?.result).toBe('completed');
+    expect(step?.parentSessionId).toBe('child-1');
+    expect(subagents.followups.some(item => item.childId === step?.sessionMeta?.childId)).toBe(true);
+  });
+
+  it('lists the available closed-turn revert boundaries for a failed agent step', async () => {
+    const { ctx: _ctx, engine, persistence, llm, agents, sessions } = await harness();
+    void _ctx;
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    // 不实际跑实例：直接放一个 running→failed 的 step 快照 + child-1 会话事件。
+    const now = new Date().toISOString();
+    const state: WorkflowTaskState = {
+      taskId: 'inst-list',
+      workflowId: 'wfl-agent-fail',
+      cwd: '/tmp',
+      status: 'failed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [{
+        id: 'exec-1',
+        stepId: 'step-agent',
+        stageId: 'stg-1',
+        name: 'step-agent',
+        status: 'failed',
+        command: { type: 'agent', value: { promptText: 'do' } },
+        sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' },
+        visitCount: 1,
+        error: 'boom',
+      }],
+      stageInfos: [{ id: 'stg-1', name: 'stage', status: 'failed' }],
+      pendingInteractions: [],
+      pendingQueue: [],
+      visitCounts: {},
+      passThroughVars: {},
+      activeLoopIterationStack: [],
+      activeLoopNodeId: null,
+      activeLoopStack: [],
+      pausedChildIds: [],
+      stageContracts: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+    void persistence.state.put('inst-list', state);
+
+    const childSession = sessions.create('child-1');
+    childSession.append('turn/start', { turn: 0 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'first' }]).data);
+    childSession.append('turn/end', { turn: 0, reason: { kind: 'completed' } });
+    childSession.append('turn/start', { turn: 1 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'second' }]).data);
+    childSession.append('turn/end', { turn: 1, reason: { kind: 'completed' } });
+    childSession.append('turn/start', { turn: 2 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'unmatched' }]).data);
+
+    const boundaries = engine.listRevertBoundaries('inst-list', 'step-agent');
+    // 仅两个闭合 turn 候选（seq 2、5）；未闭合尾部 turn 2（turn/start seq 6）不计入。
+    expect(boundaries).toEqual([
+      { seq: 2, turn: 0, preview: 'first' },
+      { seq: 5, turn: 1, preview: 'second' },
+    ]);
+  });
+
+  it('auto-reverts fork to the last closed turn/end when the source session has an unclosed tail', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+
+    const child = new FakeAgent('child-1');
+    agents.register(child);
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', originalInput: 'do it' });
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('failed');
+
+    // fork 源：turn 0 闭合（seq 0-2），turn 1 未闭合（turn/start seq 3 + assistant seq 4，无 turn/end）。
+    // FakeSessionStore.fork 忠实模拟 DSH：fork(undefined) 会抛 OPEN_TURN（末事件 4 落在未闭合 turn 1）。
+    // recovery-manager fork 防御必须先算 boundary=2（最后一个闭合 turn/end）再 fork，避开 OPEN_TURN。
+    const childSession = sessions.create('child-1');
+    childSession.append('turn/start', { turn: 0 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'fork output' }]).data);
+    childSession.append('turn/end', { turn: 0, reason: { kind: 'completed' } });
+    childSession.append('turn/start', { turn: 1 });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'unmatched tail' }]).data);
+
+    await engine.retryStep(run.instanceId, 'step-agent', 'fork', 'fork it');
+
+    const state = persistence.state.get(run.instanceId);
+    // 防御生效：未抛 OPEN_TURN，实例完成（新 agent 续跑输出 fork output）。
+    expect(state?.status).toBe('completed');
+    const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
+    expect(step?.output).toEqual([{ type: 'text', text: 'fork output' }]);
+    expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
+    expect(step?.parentSessionId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('fork');
+    expect(step?.retryHistory?.[0]?.result).toBe('completed');
+    expect(subagents.followups.some(item => item.childId === step?.sessionMeta?.childId)).toBe(true);
+  });
+
   it('truly re-runs an empty-executedSteps non-terminal snapshot to completed (no fake recovery)', async () => {
     const { ctx, engine, persistence, sessions } = await harness();
     await putDefinition(persistence, 'wfl-shell-only', shellOnlyYaml);
@@ -1724,7 +2945,7 @@ describe('SandoreEngineRuntime recovery', () => {
     ctx.provide('sessions', sessions as unknown as SessionStore);
     ctx.provide('sessionPersistence', {});
     ctx.provide('agents', agents);
-    ctx.provide('subagents', new FakeSubagents());
+    ctx.provide('subagents', new FakeSubagents(ctx, (id) => agents.get(id)));
     ctx.provide('llm', new FakeLlm() as unknown as LlmRuntime);
     ctx.provide('shell', new FakeShell() as unknown as ShellExecutor);
     ctx.provide('subprocess', new FakeSubprocess());
@@ -1737,5 +2958,550 @@ describe('SandoreEngineRuntime recovery', () => {
     // 启动扫描自动冷恢复宿主主代理（agents.resume setup 重跑）+ 实例进内存。
     expect(agents.setupCount).toBeGreaterThanOrEqual(1);
     expect(ctx.sandoreEngine.getState('inst-init').status).toBe('paused');
+  });
+
+  it('clears stale pendingInteractions from the snapshot during recovery (defect 9 B / 27)', async () => {
+    const { engine, persistence, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+
+    await persistence.state.put('inst-stale', stalePendingSnapshot('inst-stale'));
+    sessions.create('inst-stale');
+
+    const result = await engine.recoverInstance('inst-stale');
+    // paused-only 实例不重跑；恢复时 clearAll 清空快照 stale pendingInteractions。
+    expect(result.status).toBe('paused');
+    const state = persistence.state.get('inst-stale');
+    expect(state?.pendingInteractions).toEqual([]);
+    // 回复 stale requestId 抛 INVALID_OPERATION（InteractionManager Maps 已清空，无 ghost 条目）。
+    await expect(engine.replyQuestion('inst-stale', 'req-stale', { answers: [{ id: 'q1', selected: ['A'] }] }))
+      .rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+
+  it('resumes a between-steps crash without re-running the completed step (defect 9 G)', async () => {
+    const { ctx, engine, persistence, sessions, shell } = await harness();
+    await putDefinition(persistence, 'wfl-linear-shell', linearShellYaml);
+    shell.runHandler = async spec => successResult(spec, spec.command);
+
+    await persistence.state.put('inst-between', betweenStepsSnapshot('inst-between'));
+    sessions.create('inst-between');
+
+    const ended = waitForEnd(ctx);
+    const result = await engine.recoverInstance('inst-between');
+    expect(result.status).toBe('running');
+    await ended;
+
+    const state = persistence.state.get('inst-between');
+    expect(state?.status).toBe('completed');
+    // step-a 不重跑：仅 'exec-a' 一段（无新增 step-a 段 → 非恰好一次语义成立）。
+    const stepA = state?.executedSteps.filter(s => s.stepId === 'step-a') ?? [];
+    expect(stepA).toHaveLength(1);
+    expect(stepA[0]?.id).toBe('exec-a');
+    expect(stepA[0]?.status).toBe('completed');
+    // step-b 从 step-a 反推 DAG next 续跑一次完成。
+    const stepB = state?.executedSteps.filter(s => s.stepId === 'step-b') ?? [];
+    expect(stepB).toHaveLength(1);
+    expect(stepB[0]?.status).toBe('completed');
+  });
+
+  it('marks the instance failed and clears memory when recover() followup throws (defect 11)', async () => {
+    const { ctx, engine, persistence, sessions, subagents } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+
+    await persistence.state.put('inst-run', stepSnapshot('inst-run', 'wfl-agent-fail', agentStepSnapshot('running'), 'running'));
+    sessions.create('inst-run');
+    // 注入 followup 故障：recover() 冷恢复 followup 抛错（缺陷 11 真实可抛场景收敛点）。
+    subagents.followupError = new Error('cold resume boom');
+
+    const ended = waitForEnd(ctx);
+    const result = await engine.recoverInstance('inst-run');
+    // catch 落 failed 终态（对齐 runAndCatch 语义）。
+    expect(result.status).toBe('failed');
+    await ended;
+
+    const state = persistence.state.get('inst-run');
+    expect(state?.status).toBe('failed');
+    // 实例已从内存清除：二次 recoverInstance 读快照（failed 终态）抛 INVALID_OPERATION，
+    // 不卡 running（修复前 followup 抛错传播出 recoverInstance → 实例残留内存 running +
+    // 二次 recoverInstance no-op 永久卡 running）。
+    await expect(engine.recoverInstance('inst-run')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+
+  it('preserves extracted pass-through vars across crash recovery so the next step resolves them (defect 15)', async () => {
+    const { ctx, engine, persistence, sessions, shell } = await harness();
+    await putDefinition(persistence, 'wfl-recover-ptv', recoverPtvYaml);
+    // shell 回显命令本身，便于断言经 replacePassThroughVars 替换后的实际命令。
+    shell.runHandler = async spec => successResult(spec, spec.command);
+
+    // 快照：running、无活跃段、无已完成 Step，但 passThroughVars 已含提取值
+    // （模拟前置 Stage 已提取 projectName=sandore 后崩溃，恢复后续跑本 Stage）。
+    // 当前执行段模型：persistState 全量持久化含 passThroughVars → recoverInstance
+    // 全量读回 → StageExecutor.initState 播种提取值（合并顺序修复后 input 优先）→
+    // step-use 的 shell 命令拿到提取值，传递链不断。
+    await persistence.state.put('inst-ptv', extractedPtvSnapshot('inst-ptv'));
+    sessions.create('inst-ptv');
+
+    const ended = waitForEnd(ctx);
+    const result = await engine.recoverInstance('inst-ptv');
+    expect(result.status).toBe('running');
+    await ended;
+
+    const state = persistence.state.get('inst-ptv');
+    expect(state?.status).toBe('completed');
+    // 崩溃恢复保留：step-use 的 shell 命令拿到提取值 'sandore' 而非保留字面量 ${projectName}。
+    expect(shell.specs.map(spec => spec.command)).toEqual(['echo sandore']);
+    // 提取值原样保留在 state.passThroughVars（传递链不断）。
+    expect(state?.passThroughVars['projectName']).toEqual({ value: 'sandore', description: '项目名' });
+  });
+
+  it('follows up all running subagent steps during multi-running crash recovery (defect 10 multi-path)', async () => {
+    // 并发崩溃恢复：两个 running agent Step 同时存在快照中 → recover() 全部 followup。
+    // 对齐基准恢复 E 步（遍历全部 running/interacting Step 逐一入队）。
+    const multiAgentYaml = `id: wfl-multi-agent
+name: multi-agent
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 并行agent
+    steps:
+      - id: step-router
+        branches:
+          - next: step-a
+          - next: step-b
+      - id: step-a
+        branches:
+          - next: step-end
+      - id: step-b
+        branches:
+          - next: step-end
+      - id: step-end
+steps:
+  - id: step-router
+  - id: step-a
+    command:
+      type: agent
+      value:
+        promptText: "do A"
+  - id: step-b
+    command:
+      type: agent
+      value:
+        promptText: "do B"
+  - id: step-end
+    command:
+      type: shell
+      value:
+        command: "echo end"
+`;
+    const { ctx, engine, persistence, sessions, subagents, agents, llm } = await harness();
+    await putDefinition(persistence, 'wfl-multi-agent', multiAgentYaml);
+    provideLlmDirectory(llm);
+
+    // 快照：两个 running agent Step（step-a→child-1, step-b→child-2）同时存在。
+    const createdAt = new Date().toISOString();
+    const multiRunningSnapshot: WorkflowTaskState = {
+      taskId: 'inst-multi-run',
+      workflowId: 'wfl-multi-agent',
+      cwd: '/tmp',
+      status: 'running',
+      originalInput: 'do parallel work',
+      currentStageId: 'stg-1',
+      executedSteps: [
+        {
+          id: 'exec-router',
+          stepId: 'step-router',
+          stageId: 'stg-1',
+          name: 'step-router',
+          status: 'completed',
+          visitCount: 1,
+          createdAt,
+          attemptIndex: 0,
+          loopIteration: [],
+        },
+        {
+          id: 'exec-a',
+          stepId: 'step-a',
+          stageId: 'stg-1',
+          name: 'step-a',
+          status: 'running',
+          command: { type: 'agent', value: { promptText: 'do A' } },
+          sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' },
+          visitCount: 1,
+          createdAt,
+          attemptIndex: 0,
+        },
+        {
+          id: 'exec-b',
+          stepId: 'step-b',
+          stageId: 'stg-1',
+          name: 'step-b',
+          status: 'running',
+          command: { type: 'agent', value: { promptText: 'do B' } },
+          sessionMeta: { childId: 'child-2', synthetic: false, command: 'agent' },
+          visitCount: 1,
+          createdAt,
+          attemptIndex: 0,
+        },
+      ],
+      stageInfos: [{ id: 'stg-1', name: '并行agent', status: 'running' }],
+      pendingInteractions: [],
+      pendingQueue: ['step-end'],
+      visitCounts: { 'step-router': 1, 'step-a': 1, 'step-b': 1 },
+      passThroughVars: {},
+      activeLoopIterationStack: [],
+      activeLoopNodeId: null,
+      activeLoopStack: [],
+      pausedChildIds: [],
+      stageContracts: {},
+      createdAt,
+      updatedAt: createdAt,
+    };
+    await persistence.state.put('inst-multi-run', multiRunningSnapshot);
+    sessions.create('inst-multi-run');
+
+    // 注册两个子代理（冷恢复 followup 后 whenIdle + finalAssistantOutput）。
+    const child1 = new FakeAgent('child-1');
+    child1.session.append(assistantMessageEvent([{ type: 'text', text: 'recovered A' }]));
+    const child2 = new FakeAgent('child-2');
+    child2.session.append(assistantMessageEvent([{ type: 'text', text: 'recovered B' }]));
+    agents.register(child1);
+    agents.register(child2);
+
+    const ended = waitForEnd(ctx);
+    const result = await engine.recoverInstance('inst-multi-run');
+    expect(result.status).toBe('running');
+    await ended;
+
+    // 缺陷 10 多路恢复：两个 running agent Step 全部被 followup（不只是第一个）。
+    const followups = subagents.followups.filter(f => f.parent.id === 'inst-multi-run' || f.childId === 'child-1' || f.childId === 'child-2');
+    expect(followups.length).toBeGreaterThanOrEqual(2);
+    const followedChildIds = new Set(followups.map(f => f.childId));
+    expect(followedChildIds.has('child-1')).toBe(true);
+    expect(followedChildIds.has('child-2')).toBe(true);
+
+    // 恢复后实例完成（两个 agent 续跑 + step-end 执行）。
+    const state = persistence.state.get('inst-multi-run');
+    expect(state?.status).toBe('completed');
+  });
+});
+
+/**
+ * 可手动 resolve/reject 的挂起 Promise（模拟子代理 whenIdle 挂起，供 sendStepMessage
+ * 测试保持 agent Step running 不进入终态）。
+ */
+function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** 单 Stage 单 prompt Step（用于 sendStepMessage synthetic 拒绝测试：prompt 合成 sessionMeta）。 */
+const promptOnlyYaml = `id: wfl-prompt-only
+name: prompt-only
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 提示
+    steps:
+      - id: step-prompt
+steps:
+  - id: step-prompt
+    command:
+      type: prompt
+      value:
+        promptText: "do it"
+`;
+
+describe('SandoreEngineRuntime sendStepMessage (缺陷 31: @mention 讨论消息封装端点)', () => {
+  it('forwards the message to subagents.followup + persists userMessages kind:message + dual-emits sandore/step-message', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    provideLlmDirectory(llm);
+
+    // 注册挂起 agent：status='running' → 不自动 settle（collectSubagentOutput 挂起等待），
+    // 保持 step-agent running 不进入终态，供 sendStepMessage 测试。
+    const child = new FakeAgent('child-1');
+    child.status = 'running';
+    agents.register(child);
+
+    const messageEvents: Array<{ info: unknown; stepId: string; childId: string; message: string; name: string }> = [];
+    ctx.on('sandore/step-message', (info, stepId, childId, message, name) =>
+      messageEvents.push({ info, stepId, childId, message, name }),
+    );
+
+    const stepStarted = waitForStepStart(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', originalInput: 'do it' });
+    await stepStarted;
+    // 等待 onChildStarted 把 sessionMeta 切为 synthetic=false + childId='child-1'。
+    await vi.waitFor(() => {
+      const step = persistence.state.get(run.instanceId)?.executedSteps.find(s => s.stepId === 'step-agent');
+      expect(step?.sessionMeta?.synthetic).toBe(false);
+      expect(step?.sessionMeta?.childId).toBe('child-1');
+    });
+
+    await engine.sendStepMessage(run.instanceId, 'step-agent', '请确认参数');
+
+    // followup 收到消息：childId 指向运行中子代理，content 为用户消息文本。
+    expect(subagents.followups).toHaveLength(1);
+    expect(subagents.followups[0]?.childId).toBe('child-1');
+    expect(subagents.followups[0]?.content).toEqual([{ type: 'text', text: '请确认参数' }]);
+    expect(subagents.followups[0]?.options.source).toMatchObject({ kind: 'user' });
+
+    // userMessages 落盘 kind:'message'（非 'input'，避免污染 originalInput 语义）。
+    const state = persistence.state.get(run.instanceId);
+    const messages = state?.userMessages?.filter(m => m.kind === 'message') ?? [];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.target).toBe('step-agent');
+    expect(messages[0]?.content).toBe('请确认参数');
+
+    // 双发 sandore/step-message：Cordis emit（listener 触发）+ Session append。
+    expect(messageEvents).toHaveLength(1);
+    expect(messageEvents[0]?.stepId).toBe('step-agent');
+    expect(messageEvents[0]?.childId).toBe('child-1');
+    expect(messageEvents[0]?.message).toBe('请确认参数');
+    expect(messageEvents[0]?.name).toBe('step-agent');
+    expect(sessions.get(run.instanceId)?.events.some(e => e.type === 'sandore/step-message')).toBe(true);
+
+    // 清理：让挂起的 Step 正常完成（append assistant 输出 + settle completed），令 run 收敛。
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    subagents.settleChild('child-1', 'completed');
+    await waitForEnd(ctx);
+  });
+
+  it('rejects a synthetic (prompt) step with INVALID_OPERATION (no real subagent to message, 缺陷 31)', async () => {
+    const { ctx, engine, persistence, llm, shell, subagents } = await harness();
+    await putDefinition(persistence, 'wfl-prompt-only', promptOnlyYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    provideLlmDirectory(llm);
+    // prompt Step 挂起：streamHandler 等待 gate，保持 step-prompt running（合成 sessionMeta）。
+    const gate = deferred<void>();
+    llm.streamHandler = () => (async function* () {
+      await gate.promise;
+      yield* textChunks('done');
+    })();
+
+    const stepStarted = waitForStepStart(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-prompt-only', originalInput: 'do it' });
+    await stepStarted;
+    await vi.waitFor(() => {
+      const step = persistence.state.get(run.instanceId)?.executedSteps.find(s => s.stepId === 'step-prompt');
+      expect(step?.status).toBe('running');
+    });
+
+    await expect(engine.sendStepMessage(run.instanceId, 'step-prompt', 'hi')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+
+    // synthetic 拒绝：不调用 followup（无真实子代理）、不写 userMessages kind:message。
+    expect(subagents.followups).toHaveLength(0);
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.userMessages?.filter(m => m.kind === 'message')).toEqual([]);
+
+    gate.resolve();
+    await waitForEnd(ctx);
+  });
+
+  it('rejects a terminal instance with INVALID_OPERATION (缺陷 31)', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+    shell.runHandler = async spec => successResult(spec, 'hello');
+    provideLlmDirectory(llm);
+    llm.streamHandler = () => textChunks('summary');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'do it' });
+    await ended;
+    expect(persistence.state.get(run.instanceId)?.status).toBe('completed');
+
+    await expect(engine.sendStepMessage(run.instanceId, 'step-abc', 'hi')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+
+  it('throws NODE_NOT_FOUND for an unknown instance (缺陷 31)', async () => {
+    const { engine } = await harness();
+    await expect(engine.sendStepMessage('inst-none', 'step-agent', 'hi')).rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
+  });
+
+  it('throws INVALID_OPERATION for an unknown stepId (缺陷 31)', async () => {
+    const { ctx, engine, persistence, llm, agents, subagents } = await harness();
+    await putDefinition(persistence, 'wfl-agent-fail', agentFailYaml);
+    provideLlmDirectory(llm);
+
+    const child = new FakeAgent('child-1');
+    child.status = 'running';
+    agents.register(child);
+
+    const stepStarted = waitForStepStart(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-agent-fail', originalInput: 'do it' });
+    await stepStarted;
+    await vi.waitFor(() => {
+      const step = persistence.state.get(run.instanceId)?.executedSteps.find(s => s.stepId === 'step-agent');
+      expect(step?.sessionMeta?.childId).toBe('child-1');
+    });
+
+    await expect(engine.sendStepMessage(run.instanceId, 'step-missing', 'hi')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+
+    // 清理：让挂起的 Step 正常完成（append 输出 + settle completed），令 run 收敛。
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    subagents.settleChild('child-1', 'completed');
+    await waitForEnd(ctx);
+  });
+});
+
+/** 配置 agent Step 可解析的 provider/model 目录（resolveProviderModel L3 兜底）。 */
+function provideLlmDirectory(llm: FakeLlm): void {
+  llm.providers.push({ id: 'p', name: 'Provider' });
+  llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+}
+
+describe('complex workflow e2e', () => {
+  /**
+   * 复杂工作流 e2e：代码审查与修复流程，覆盖 prompt 命令 + shell 命令 + 条件分支
+   * （shouldExecute）+ 并行分支（无 condition 多 next）+ 循环（loop + breakCondition
+   * shouldBreak + maxIterations）+ 收尾门禁（gates primary/secondary）+ 跨 Stage。
+   *
+   * mock llm.streamHandler 按首条消息文本分发：含 'shouldExecute' → 条件分支 JSON；
+   * 含 'shouldBreak' → 循环跳出 JSON（首次 false 继续、二次 true 跳出）；含
+   * 'completionType' → 收尾 assess JSON（提取 projectName=sandore）；含 'taskStatus'
+   * → primary 门禁 JSON；含 'gateStatus' → secondary 门禁 JSON；其余为 prompt Step
+   * 自身执行输出。mock shell.runHandler 回显命令对应 stdout。
+   */
+  it('runs the review-fix flow across two stages with branches, parallel, loop, and gates to completed', async () => {
+    const { ctx, engine, persistence, llm, shell } = await harness();
+    await putDefinition(persistence, 'wfl-complex', complexReviewFixYaml);
+    provideLlmDirectory(llm);
+    // shell.runHandler：按命令回显对应 stdout（便于产物/事件断言）。
+    const stdoutByCommand: Record<string, string> = {
+      'echo scan': 'scan-output',
+      'echo fix': 'fix-output',
+      'echo report': 'report-output',
+      'echo merge': 'merge-output',
+      'echo iter': 'iter-output',
+      'echo stage1-done': 'stage1-done',
+    };
+    shell.runHandler = async spec => successResult(spec, stdoutByCommand[spec.command] ?? 'ok');
+
+    // 条件分支/循环跳出/收尾门禁各走专用模板（其「## 返回格式」节含对应字段名），
+    // mock 据首条消息文本含哪个字段名分发对应 JSON。循环跳出首次 false、二次 true
+    // （演示 continue 与 break 两条 loopMeta 路由条目均回写）。
+    let breakCall = 0;
+    llm.streamHandler = (options) => {
+      const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
+      if (text.includes('shouldExecute')) {
+        return textChunks('{"shouldExecute": true}');
+      }
+      if (text.includes('shouldBreak')) {
+        breakCall += 1;
+        return textChunks(breakCall === 1 ? '{"shouldBreak": false}' : '{"shouldBreak": true}');
+      }
+      if (text.includes('completionType')) {
+        return textChunks('{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}');
+      }
+      if (text.includes('taskStatus')) {
+        return textChunks('{"taskStatus":"done"}');
+      }
+      if (text.includes('gateStatus')) {
+        return textChunks('{"gateStatus":"done"}');
+      }
+      // prompt Step 自身执行（step-finalize 的 promptText 不含上述字段名）。
+      return textChunks('final-analysis');
+    };
+
+    const records = recordSandoreEvents(ctx);
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-complex', originalInput: 'do it' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+
+    const stepIds = state?.executedSteps.map(step => step.stepId) ?? [];
+
+    // ── 顺序：Stage 1 首步 step-scan → 路由门 step-route（条件评估现场保留）。
+    expect(stepIds[0]).toBe('step-scan');
+    expect(stepIds[1]).toBe('step-route');
+    const routeEntry = state?.executedSteps.find(step => step.stepId === 'step-route');
+    expect(routeEntry?.branchMeta?.status).toBe('completed');
+    expect(routeEntry?.branchMeta?.result).toBe('{"shouldExecute": true}');
+
+    // ── 并行分支（无 condition）+ 条件分支（shouldExecute=true）：step-fix 与 step-report
+    //    均执行（并发，Promise.all）；两者顺序不假定（mock 同步但并发调度），以 Set 断言
+    //    且确认二者均落在 step-route 之后、step-merge 之前。
+    const parallelPair = new Set(stepIds.slice(2, 4));
+    expect(parallelPair).toEqual(new Set(['step-fix', 'step-report']));
+    expect(stepIds[4]).toBe('step-merge');
+    // 汇合节点仅执行一次（nextBatch dedupe）。
+    expect(stepIds.filter(id => id === 'step-merge')).toHaveLength(1);
+
+    // ── 循环（loop + breakCondition shouldBreak + maxIterations）：循环门 step-loop 出现
+    //    两次（continue 透传 loopMeta + break 透传 loopMeta，缺陷 23）；循环体 step-iter
+    //    仅执行一次（首趟 continue 后跑一次，第二趟 break 直接跳出未再跑 body）。
+    expect(stepIds[5]).toBe('step-loop');
+    expect(stepIds[6]).toBe('step-iter');
+    expect(stepIds[7]).toBe('step-loop');
+    const loopEntries = state?.executedSteps.filter(step => step.stepId === 'step-loop') ?? [];
+    expect(loopEntries).toHaveLength(2);
+    // continue 与 break 两条路由条目均回写 loopMeta(completed) 且携带 shouldBreak 评估现场。
+    expect(loopEntries.every(entry => entry.loopMeta?.status === 'completed')).toBe(true);
+    expect(loopEntries[0]?.loopMeta?.result).toContain('shouldBreak');
+    expect(loopEntries[1]?.loopMeta?.result).toContain('shouldBreak');
+    // continue=false 现场（首趟）、break=true 现场（次趟）。
+    expect(loopEntries[0]?.loopMeta?.result).toBe('{"shouldBreak": false}');
+    expect(loopEntries[1]?.loopMeta?.result).toBe('{"shouldBreak": true}');
+    const iterEntries = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
+    expect(iterEntries).toHaveLength(1);
+
+    // ── 跨 Stage：Stage 1 收尾 step-exit → Stage 2 step-finalize。
+    expect(stepIds[8]).toBe('step-exit');
+    expect(stepIds[9]).toBe('step-finalize');
+    // 两个 Stage 均完成，契约落盘（跨 Stage 推进由 tryAdvanceStage 承接）。
+    expect(state?.stageInfos.map(info => info.status)).toEqual(['completed', 'completed']);
+    expect(Object.keys(state?.stageContracts ?? {})).toHaveLength(2);
+
+    // ── 收尾门禁（gates primary/secondary）：step-finalize 的 finalizeMeta 记录
+    //    gateResult（primaryPassed + secondaryPassed 均为 true → gatesPassed=true）。
+    const finalizeStep = state?.executedSteps.find(step => step.stepId === 'step-finalize');
+    expect(finalizeStep?.status).toBe('completed');
+    expect(finalizeStep?.finalizeMeta?.completionType).toBe('completed');
+    expect(finalizeStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
+    expect(finalizeStep?.finalizeMeta?.gateResult?.primaryPassed).toBe(true);
+    expect(finalizeStep?.finalizeMeta?.gateResult?.secondaryPassed).toBe(true);
+
+    // ── 产物收集：step-finalize prompt 自身输出为 'final-analysis'（mock 兜底分支）。
+    expect(finalizeStep?.output).toEqual([{ type: 'text', text: 'final-analysis' }]);
+
+    // ── 透传变量提取：assess 提取 projectName=sandore 并保留 Step 定义中的 description。
+    expect(state?.passThroughVars['projectName']).toEqual({ value: 'sandore', description: '项目名' });
+
+    // ── Stage 1 契约产物：step-scan 声明 outputTo(opt-scan)，契约 artifacts 含对应条目。
+    const reviewContract = state?.stageContracts['stg-review'];
+    expect(reviewContract?.status).toBe('completed');
+    expect(reviewContract?.artifacts.find(item => item.outputToId === 'opt-scan')?.stepId).toBe('step-scan');
+
+    // ── shell 命令覆盖：6 个 shell Step 各跑一次（step-finalize 为 prompt，不跑 shell）。
+    //    并行分支(step-report)在条件分支(step-fix)之前纳入 nextNodeIds（resolveNextNodes
+    //    先处理无 condition 的并行分支再评估条件分支），故 shell 调用序为 report → fix。
+    expect(shell.specs.map(spec => spec.command)).toEqual([
+      'echo scan',
+      'echo report',
+      'echo fix',
+      'echo merge',
+      'echo iter',
+      'echo stage1-done',
+    ]);
+
+    // ── llm 调用覆盖：条件分支 1 + 循环跳出 2 + prompt 执行 1 + assess 1 + primary 1 +
+    //    secondary 1 = 7 次（按字段名分发）。
+    expect(llm.calls).toHaveLength(7);
+
+    // ── 事件序：start → 两 Stage 各 stage-start/step-*/stage-completed → end。
+    expect(records[0]?.name).toBe('sandore/start');
+    expect(records[records.length - 1]?.name).toBe('sandore/end');
+    const stageStarts = records.filter(r => r.name === 'sandore/stage-start').map(r => r.args[1]);
+    expect(stageStarts).toEqual(['stg-review', 'stg-gate']);
+    const stageCompleted = records.filter(r => r.name === 'sandore/stage-completed').map(r => r.args[1]);
+    expect(stageCompleted).toEqual(['stg-review', 'stg-gate']);
+    // 终态 end 为 completed。
+    expect((records[records.length - 1]?.args[1] as { status: string }).status).toBe('completed');
   });
 });

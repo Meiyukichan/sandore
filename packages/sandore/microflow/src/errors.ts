@@ -26,6 +26,7 @@ export type SandoreErrorCode =
   // 运行时错误（fatal）
   | 'STEP_TIMEOUT'
   | 'STEP_EXECUTION'
+  | 'STEP_PAUSED'
   | 'INVALID_OPERATION'
   | 'CANCELLED'
   // 收尾/门禁/会话错误（fatal）

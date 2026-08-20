@@ -7,7 +7,7 @@
  * @module @deepseek-ai/dsh-sandore-microflow/src/loop-manager.spec
  */
 import { Context } from '@deepseek-ai/cordis';
-import type { LlmRuntime } from '@deepseek-ai/dsh-llm';
+import type { LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';
 import { describe, expect, it } from 'vitest';
 
 import { FakeLlm, textChunks } from '../../workflow/tests/mocks/llm.ts';
@@ -116,7 +116,7 @@ describe('LoopManager checkLoopBreak', () => {
       },
     };
 
-    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
+    const outcome = await manager.checkLoopBreak(node, 1);
 
     expect(outcome.shouldBreak).toBe(true);
     expect(outcome.loopMeta?.status).toBe('completed');
@@ -136,7 +136,7 @@ describe('LoopManager checkLoopBreak', () => {
       },
     };
 
-    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
+    const outcome = await manager.checkLoopBreak(node, 1);
 
     expect(outcome.shouldBreak).toBe(false);
   });
@@ -153,7 +153,7 @@ describe('LoopManager checkLoopBreak', () => {
       },
     };
 
-    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
+    const outcome = await manager.checkLoopBreak(node, 1);
 
     expect(outcome.shouldBreak).toBe(true);
   });
@@ -169,7 +169,7 @@ describe('LoopManager checkLoopBreak', () => {
       },
     };
 
-    const outcome = await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
+    const outcome = await manager.checkLoopBreak(node, 1);
 
     expect(outcome.shouldBreak).toBe(false);
     expect(outcome.loopMeta?.status).toBe('completed');
@@ -188,9 +188,107 @@ describe('LoopManager checkLoopBreak', () => {
       },
     };
 
-    await manager.checkLoopBreak(node, 1, { input: 'in', output: 'out' });
+    await manager.checkLoopBreak(node, 1);
 
     // breakCondition 统一经 ctx.shell 执行（branch-evaluator 新实现），env 随请求携带。
     expect(shell.specs[0]?.env).toEqual({ 'in-loop-turn': '1', 'all-loop-turn': '5' });
+  });
+
+  // 以下用例端到端覆盖重写后的 matchesExpectation 新语义（经 checkLoopBreak →
+  // decideBreak → matchesExpectation），确认 shell breakCondition 不再受旧 regex
+  // 元字符启发式与大小写敏感精确匹配的静默分歧影响。
+
+  it('breaks a shell breakCondition via case-insensitive contains match', async () => {
+    const { shell, manager } = harness();
+    shell.runHandler = async spec => successResult(spec, 'BUILD SUCCEEDED: 100%');
+    const node: LoopNode = {
+      id: 'loop-1',
+      loop: {
+        maxIterations: 5,
+        breakCondition: { type: 'shell', value: { command: 'check' } },
+        breakExpectation: '100%',
+      },
+    };
+
+    const outcome = await manager.checkLoopBreak(node, 1);
+
+    expect(outcome.shouldBreak).toBe(true);
+  });
+
+  it('breaks a shell breakCondition via an explicit /regex/ expectation', async () => {
+    const { shell, manager } = harness();
+    shell.runHandler = async spec => successResult(spec, 'build-42');
+    const node: LoopNode = {
+      id: 'loop-1',
+      loop: {
+        maxIterations: 5,
+        breakCondition: { type: 'shell', value: { command: 'check' } },
+        breakExpectation: '/build-.*/',
+      },
+    };
+
+    const outcome = await manager.checkLoopBreak(node, 1);
+
+    expect(outcome.shouldBreak).toBe(true);
+  });
+
+  it('does not break when an explicit regex expectation is invalid', async () => {
+    const { shell, manager } = harness();
+    shell.runHandler = async spec => successResult(spec, 'anything');
+    const node: LoopNode = {
+      id: 'loop-1',
+      loop: {
+        maxIterations: 5,
+        breakCondition: { type: 'shell', value: { command: 'check' } },
+        breakExpectation: '/[/',
+      },
+    };
+
+    const outcome = await manager.checkLoopBreak(node, 1);
+
+    // 非法正则 → 不匹配 → 不跳出；loopMeta 仍按完成态写入。
+    expect(outcome.shouldBreak).toBe(false);
+    expect(outcome.loopMeta?.status).toBe('completed');
+  });
+
+  it('treats a literal breakExpectation with regex metacharacters as a literal (not regex)', async () => {
+    const { shell, manager } = harness();
+    shell.runHandler = async spec => successResult(spec, 'rate is (high)');
+    const node: LoopNode = {
+      id: 'loop-1',
+      loop: {
+        maxIterations: 5,
+        breakCondition: { type: 'shell', value: { command: 'check' } },
+        // 含括号元字符但无 /.../ 定界 → 旧启发式会误判为正则；新语义走字面包含。
+        breakExpectation: '(high)',
+      },
+    };
+
+    const outcome = await manager.checkLoopBreak(node, 1);
+
+    expect(outcome.shouldBreak).toBe(true);
+  });
+
+  it('uses fork-based history for the breakCondition prompt (defect 4 fork-based)', async () => {
+    const { llm, manager } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('{"shouldBreak": false}');
+    const node: LoopNode = {
+      id: 'loop-1',
+      loop: {
+        maxIterations: 5,
+        breakCondition: { type: 'prompt', value: { promptText: 'check', providerId: 'p', modelId: 'm' } },
+      },
+    };
+
+    await manager.checkLoopBreak(node, 1);
+
+    // 缺陷 4（fork-based 改造）：无 stepSessionId 时降级为临时会话，专用 shouldBreak 模板
+    // 不再手动注入 I/O 块（fork 会话注入全量历史，AI 自行可见循环体 I/O）；模板分离仍保留
+    // （shouldBreak，不出现条件分支的 shouldExecute）。
+    const prompt = llm.calls[0]?.messages[0]?.content[0] as TextBlock | undefined;
+    expect(prompt?.text).toContain('shouldBreak');
+    expect(prompt?.text).not.toContain('shouldExecute');
   });
 });

@@ -202,13 +202,14 @@ function UserMsg({ item, t, nowIso }: {
   readonly nowIso: string
 }) {
   const rel = relativeTimeOf(item.time, nowIso)
-  // 消息种类徽标（input/resume/retry/answer）；旧实例无 messageKind 时省略。
+  // 消息种类徽标（input/resume/retry/answer/message）；旧实例无 messageKind 时省略。
   const kindKey = item.messageKind === undefined
     ? undefined
     : item.messageKind === 'input' ? 'run.user.kind.input'
     : item.messageKind === 'resume' ? 'run.user.kind.resume'
     : item.messageKind === 'retry' ? 'run.user.kind.retry'
     : item.messageKind === 'answer' ? 'run.user.kind.answer'
+    : item.messageKind === 'message' ? 'run.user.kind.message'
     : undefined
   return (
     <div className={css.userMsg} data-tl-user>

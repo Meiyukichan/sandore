@@ -15,8 +15,9 @@ import { SandoreError } from './errors.ts'
 import type { SandoreEngine } from './index.ts'
 import { SandorePersistence } from './persistence.ts'
 import { SandoreRemote } from './remote.ts'
-import type { WorkflowTaskState } from './schema.ts'
-import type { AskUserQuestionAnswer, DagRun, DagStartRequest } from './types.ts'
+import type { WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
+import type { AskUserQuestionAnswer, DagRun, DagStartRequest, RevertBoundaryOption } from './types.ts'
+import type { ImportDefinitionInput, RecoverOrphanedInstancesResult } from './wire.ts'
 import { parseWorkflowYaml } from './yaml-parser.ts'
 
 const validV2Yaml = `id: wfl-source
@@ -91,15 +92,21 @@ async function catchCodeAsync(fn: () => Promise<unknown>): Promise<string | unde
   }
 }
 
-/** mock 引擎的 7 个生命周期方法桩（`vi.fn` 记录调用，便于断言转调链路）。 */
+/** mock 引擎的生命周期方法桩（`vi.fn` 记录调用，便于断言转调链路）。 */
 interface MockLifecycleEngine {
   replyQuestion: ReturnType<typeof vi.fn>
+  rejectQuestion: ReturnType<typeof vi.fn>
   replyPermission: ReturnType<typeof vi.fn>
   pauseStep: ReturnType<typeof vi.fn>
   resumeStep: ReturnType<typeof vi.fn>
   pauseAllSteps: ReturnType<typeof vi.fn>
   resumeAllSteps: ReturnType<typeof vi.fn>
   retryStep: ReturnType<typeof vi.fn>
+  listRevertBoundaries: ReturnType<typeof vi.fn>
+  sendStepMessage: ReturnType<typeof vi.fn>
+  setPermissionMode: ReturnType<typeof vi.fn>
+  recoverInstance: ReturnType<typeof vi.fn>
+  recoverOrphanedInstances: ReturnType<typeof vi.fn>
 }
 
 /** 组装测试 harness：注入内存 storageDomain、mock llm 与 mock 引擎。 */
@@ -162,12 +169,18 @@ async function harness(): Promise<{
       await persistence.saveWorkflowState({ ...current, status: 'aborted', updatedAt: new Date().toISOString() })
     },
     replyQuestion: vi.fn(async (_instanceId: string, _requestId: string, _answers: AskUserQuestionAnswer) => {}),
+    rejectQuestion: vi.fn(async (_instanceId: string, _requestId: string) => {}),
     replyPermission: vi.fn(async (_instanceId: string, _requestId: string, _reply: 'once' | 'always' | 'reject') => {}),
     pauseStep: vi.fn(async (_instanceId: string, _stepId: string) => {}),
     resumeStep: vi.fn(async (_instanceId: string, _stepId: string, _resumePrompt?: string) => {}),
     pauseAllSteps: vi.fn(async (_instanceId: string) => {}),
     resumeAllSteps: vi.fn(async (_instanceId: string, _resumePrompt?: string) => {}),
-    retryStep: vi.fn(async (_instanceId: string, _stepId: string, _mode: 'continue' | 'revert' | 'fork', _message: string) => {}),
+    retryStep: vi.fn(async (_instanceId: string, _stepId: string, _mode: 'continue' | 'revert' | 'fork', _message: string, _revertBoundary?: number) => {}),
+    listRevertBoundaries: vi.fn((_instanceId: string, _stepId: string): RevertBoundaryOption[] => []),
+    sendStepMessage: vi.fn(async (_instanceId: string, _stepId: string, _message: string) => {}),
+    setPermissionMode: vi.fn(async (_instanceId: string, _mode: 'read-only' | 'workspace-write' | 'danger-full-access') => {}),
+    recoverInstance: vi.fn(async (instanceId: string): Promise<DagRun> => ({ instanceId, status: 'running' })),
+    recoverOrphanedInstances: vi.fn(async (): Promise<RecoverOrphanedInstancesResult> => ({ recovered: [], errors: [] })),
   }
   ctx.provide('sandoreEngine', engine as unknown as SandoreEngine)
 
@@ -284,6 +297,181 @@ stages:
   })
 })
 
+describe('SandoreRemote importDefinitionFromYaml RPC (缺陷 30)', () => {
+  // V1 三级 YAML（stages[].scenarios[].tasks[]）——parseWorkflowYaml 内建 convertLegacyToV2。
+  const v1Yaml = `id: code-review-workflow
+name: 代码审查工作流
+version: "1.0.0"
+settings:
+  defaultTimeout: 60
+stages:
+  - id: stg-analyze
+    name: 代码分析
+    scenarios:
+      - id: sce-static-analysis
+        name: 静态分析
+        tasks:
+          - id: tsk-lint
+            name: 代码规范检查
+            prompt:
+              type: Bash
+              value:
+                command: "npm run lint 2>&1"
+            outputTo:
+              - id: opt-lint-report
+                path: "reports/lint.txt"
+`
+
+  it('creates a new definition when no match exists (matchBy name default)', async () => {
+    const { remote } = await harness()
+
+    const result = await remote.importDefinitionFromYaml({ yaml: validV2Yaml })
+
+    expect(result.status).toBe('created')
+    expect(result.matchedCount).toBe(0)
+    expect(result.id).toMatch(/^wfl-/)
+    expect(result.name).toBe('demo')
+    // 复用 createDefinition：存储的 YAML 顶层 id 与记录键一致（哨兵 id 被改写）。
+    expect(parseWorkflowYaml(remote.getYaml(result.id)).id).toBe(result.id)
+  })
+
+  it('skips when an existing name match has the same version', async () => {
+    const { remote } = await harness()
+    const created = await remote.createDefinition({ yaml: validV2Yaml })
+
+    // 再次导入同一 YAML（同 name 同 version）→ skipped，不新增记录。
+    const result = await remote.importDefinitionFromYaml({ yaml: validV2Yaml })
+
+    expect(result.status).toBe('skipped')
+    expect(result.matchedCount).toBe(1)
+    expect(result.id).toBe(created.id)
+    expect(remote.listDefinitions()).toHaveLength(1)
+  })
+
+  it('updates when an existing name match has a different version', async () => {
+    const { remote } = await harness()
+    const created = await remote.createDefinition({ yaml: validV2Yaml })
+    const v2Yaml = validV2Yaml.replace('version: "1.0.0"', 'version: "2.0.0"')
+
+    const result = await remote.importDefinitionFromYaml({ yaml: v2Yaml })
+
+    expect(result.status).toBe('updated')
+    expect(result.matchedCount).toBe(1)
+    expect(result.id).toBe(created.id)
+    // 复用 updateYaml：元数据从新 YAML 同步，YAML 文本为传入原文。
+    const stored = remote.listDefinitions().find(entry => entry.id === created.id)
+    expect(stored?.version).toBe('2.0.0')
+    expect(stored?.name).toBe('demo')
+    expect(remote.getYaml(created.id)).toBe(v2Yaml)
+  })
+
+  it('resolves name multi-match by latest updatedAt and reports matchedCount (SA8)', async () => {
+    const { remote, persistence } = await harness()
+    // 直接写入两条同名同版本记录，控制 updatedAt 以验证确定性策略（取最新）。
+    const seed = (updatedAt: string): WorkflowDefinitionRecord => ({
+      yaml: validV2Yaml,
+      name: 'demo',
+      version: '1.0.0',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt,
+    })
+    await persistence.definitions.put('wfl-older', seed('2024-01-01T00:00:00.000Z'))
+    await persistence.definitions.put('wfl-newer', seed('2024-01-02T00:00:00.000Z'))
+
+    const v2Yaml = validV2Yaml.replace('version: "1.0.0"', 'version: "2.0.0"')
+    const result = await remote.importDefinitionFromYaml({ yaml: v2Yaml })
+
+    // 多匹配：取最新 updatedAt（wfl-newer）更新，matchedCount 注明歧义命中数。
+    expect(result.status).toBe('updated')
+    expect(result.matchedCount).toBe(2)
+    expect(result.id).toBe('wfl-newer')
+    expect(remote.getYaml('wfl-newer')).toBe(v2Yaml)
+    // 未命中的旧记录保持不变。
+    expect(parseWorkflowYaml(remote.getYaml('wfl-older')).version).toBe('1.0.0')
+  })
+
+  it('imports V1 YAML via built-in conversion and reports created with converted name/version', async () => {
+    const { remote } = await harness()
+
+    const result = await remote.importDefinitionFromYaml({ yaml: v1Yaml })
+
+    expect(result.status).toBe('created')
+    expect(result.matchedCount).toBe(0)
+    expect(result.name).toBe('代码审查工作流')
+    // V1 已自动转换为 V2：存储的 YAML 无 scenarios，name/version 与转换后一致。
+    const stored = remote.listDefinitions().find(entry => entry.id === result.id)
+    expect(stored?.version).toBe('1.0.0')
+    expect(stored?.name).toBe('代码审查工作流')
+    const reparsed = parseWorkflowYaml(remote.getYaml(result.id))
+    expect(reparsed.stages[0]).not.toHaveProperty('scenarios')
+    expect(reparsed.name).toBe('代码审查工作流')
+  })
+
+  it('skips a V1 re-import after conversion when name/version already match', async () => {
+    const { remote } = await harness()
+    const created = await remote.importDefinitionFromYaml({ yaml: v1Yaml })
+
+    // 同一 V1 文件重放：转换后 name/version 与已存记录相同 → skipped（幂等）。
+    const result = await remote.importDefinitionFromYaml({ yaml: v1Yaml })
+
+    expect(result.status).toBe('skipped')
+    expect(result.matchedCount).toBe(1)
+    expect(result.id).toBe(created.id)
+    expect(remote.listDefinitions()).toHaveLength(1)
+  })
+
+  it('matches by YAML top-level id when matchBy id is requested', async () => {
+    const { remote, persistence } = await harness()
+    // 以 YAML 顶层 id 为键直接写入一条记录（绕过 createDefinition 的 uuid 改写），
+    // 验证 matchBy:'id' 按 definitions.get(yamlId) 命中并做版本比对。
+    const seeded: WorkflowDefinitionRecord = {
+      yaml: validV2Yaml,
+      name: 'demo',
+      version: '1.0.0',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+    }
+    await persistence.definitions.put('wfl-source', seeded)
+
+    const sameVersion = await remote.importDefinitionFromYaml({ yaml: validV2Yaml, matchBy: 'id' })
+    expect(sameVersion.status).toBe('skipped')
+    expect(sameVersion.id).toBe('wfl-source')
+    expect(sameVersion.matchedCount).toBe(1)
+
+    const v2Yaml = validV2Yaml.replace('version: "1.0.0"', 'version: "2.0.0"')
+    const diffVersion = await remote.importDefinitionFromYaml({ yaml: v2Yaml, matchBy: 'id' })
+    expect(diffVersion.status).toBe('updated')
+    expect(diffVersion.id).toBe('wfl-source')
+    expect(diffVersion.matchedCount).toBe(1)
+    expect(remote.getYaml('wfl-source')).toBe(v2Yaml)
+  })
+
+  it('rejects a missing yaml field (zod, 缺陷 30)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.importDefinitionFromYaml({} as ImportDefinitionInput),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects an invalid matchBy enum value (zod, 缺陷 30)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.importDefinitionFromYaml({ yaml: validV2Yaml, matchBy: 'bad' as 'id' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects invalid YAML and leaves the definitions table empty (缺陷 30)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.importDefinitionFromYaml({ yaml: 'stages: [ broken' }),
+    ).rejects.toMatchObject({ code: 'YAML_PARSE' })
+    expect(remote.listDefinitions()).toHaveLength(0)
+  })
+})
+
 describe('SandoreRemote instance lifecycle', () => {
   it('startInstance returns a run and writes a readable state snapshot', async () => {
     const { remote, persistence } = await harness()
@@ -365,6 +553,30 @@ describe('SandoreRemote lifecycle RPCs', () => {
     expect(engine.replyQuestion).toHaveBeenCalledWith('inst-1', 'req-1', answers)
   })
 
+  it('rejectQuestion forwards instanceId/requestId to the engine (缺陷 26)', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.rejectQuestion({ instanceId: 'inst-1', requestId: 'req-1' })
+
+    expect(engine.rejectQuestion).toHaveBeenCalledWith('inst-1', 'req-1')
+  })
+
+  it('rejects a missing requestId on rejectQuestion (zod, 缺陷 26)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.rejectQuestion({ instanceId: 'inst-1' } as { instanceId: string; requestId: string }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects a missing instanceId on rejectQuestion (zod, 缺陷 26)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.rejectQuestion({ requestId: 'req-1' } as { instanceId: string; requestId: string }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
   it('replyPermission forwards instanceId/requestId/reply to the engine', async () => {
     const { remote, engine } = await harness()
 
@@ -421,12 +633,28 @@ describe('SandoreRemote lifecycle RPCs', () => {
     expect(engine.resumeAllSteps).toHaveBeenCalledWith('inst-1', 'go')
   })
 
-  it('retryStep forwards instanceId/stepId/mode/message to the engine', async () => {
+  it('retryStep forwards instanceId/stepId/mode/message/revertBoundary to the engine', async () => {
     const { remote, engine } = await harness()
 
-    await remote.retryStep({ instanceId: 'inst-1', stepId: 'step-1', mode: 'revert', message: 'retry now' })
+    await remote.retryStep({ instanceId: 'inst-1', stepId: 'step-1', mode: 'revert', message: 'retry now', revertBoundary: 5 })
 
-    expect(engine.retryStep).toHaveBeenCalledWith('inst-1', 'step-1', 'revert', 'retry now')
+    expect(engine.retryStep).toHaveBeenCalledWith('inst-1', 'step-1', 'revert', 'retry now', 5)
+  })
+
+  it('retryStep forwards revertBoundary as undefined when omitted', async () => {
+    const { remote, engine } = await harness()
+
+    await remote.retryStep({ instanceId: 'inst-1', stepId: 'step-1', mode: 'continue', message: 'go' })
+
+    expect(engine.retryStep).toHaveBeenCalledWith('inst-1', 'step-1', 'continue', 'go', undefined)
+  })
+
+  it('rejects a non-numeric revertBoundary (zod)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.retryStep({ instanceId: 'inst-1', stepId: 'step-1', mode: 'revert', message: 'x', revertBoundary: 'not-a-number' as unknown as number }),
+    ).rejects.toBeInstanceOf(ZodError)
   })
 
   it('rejects an invalid retry mode enum value (zod)', async () => {
@@ -437,6 +665,20 @@ describe('SandoreRemote lifecycle RPCs', () => {
     ).rejects.toBeInstanceOf(ZodError)
   })
 
+  it('listRevertBoundaries forwards instanceId/stepId to the engine and returns the boundary list', async () => {
+    const { remote, engine } = await harness()
+    const options: RevertBoundaryOption[] = [
+      { seq: 2, turn: 0, preview: 'first answer' },
+      { seq: 5, turn: 1, preview: 'second answer' },
+    ]
+    engine.listRevertBoundaries.mockReturnValueOnce(options)
+
+    const result = remote.listRevertBoundaries({ instanceId: 'inst-1', stepId: 'step-agent' })
+
+    expect(engine.listRevertBoundaries).toHaveBeenCalledWith('inst-1', 'step-agent')
+    expect(result).toEqual(options)
+  })
+
   it('passes through SandoreError from the engine without swallowing it', async () => {
     const { remote, engine } = await harness()
     engine.pauseStep.mockRejectedValueOnce(new SandoreError('step busy', 'INVALID_OPERATION'))
@@ -444,6 +686,201 @@ describe('SandoreRemote lifecycle RPCs', () => {
     await expect(remote.pauseStep({ instanceId: 'inst-1', stepId: 'step-1' })).rejects.toMatchObject({
       code: 'INVALID_OPERATION',
     })
+  })
+})
+
+describe('SandoreRemote updateInstancePermissionMode RPC', () => {
+  it('forwards instanceId/mode to the engine after passing the terminal guard (缺陷 29)', async () => {
+    const { remote, persistence, engine } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-1', status: 'running' }))
+
+    await remote.updateInstancePermissionMode({ instanceId: 'inst-1', mode: 'workspace-write' })
+
+    expect(engine.setPermissionMode).toHaveBeenCalledWith('inst-1', 'workspace-write')
+  })
+
+  it('rejects an invalid mode enum value (zod, 缺陷 29)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.updateInstancePermissionMode({ instanceId: 'inst-1', mode: 'bad' as 'read-only' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects a missing instanceId (zod, 缺陷 29)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.updateInstancePermissionMode({ mode: 'read-only' } as { instanceId: string; mode: 'read-only' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects a terminal instance with INVALID_OPERATION (terminal guard, 缺陷 29)', async () => {
+    const { remote, persistence } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-done', status: 'completed' }))
+
+    await expect(remote.updateInstancePermissionMode({ instanceId: 'inst-done', mode: 'read-only' })).rejects.toMatchObject({
+      code: 'INVALID_OPERATION',
+    })
+  })
+
+  it('throws NODE_NOT_FOUND when the instance snapshot is missing (缺陷 29)', async () => {
+    const { remote } = await harness()
+
+    expect(
+      await catchCodeAsync(() => remote.updateInstancePermissionMode({ instanceId: 'inst-nonexistent', mode: 'read-only' })),
+    ).toBe('NODE_NOT_FOUND')
+  })
+
+  it('passes through SandoreError from the engine without swallowing it (缺陷 29)', async () => {
+    const { remote, persistence, engine } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-1', status: 'running' }))
+    engine.setPermissionMode.mockRejectedValueOnce(new SandoreError('definition gone', 'NODE_NOT_FOUND'))
+
+    await expect(remote.updateInstancePermissionMode({ instanceId: 'inst-1', mode: 'read-only' })).rejects.toMatchObject({
+      code: 'NODE_NOT_FOUND',
+    })
+  })
+})
+
+describe('SandoreRemote sendStepMessage RPC', () => {
+  it('forwards instanceId/stepId/message to the engine after passing the terminal guard (缺陷 31)', async () => {
+    const { remote, persistence, engine } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-1', status: 'running' }))
+
+    await remote.sendStepMessage({ instanceId: 'inst-1', stepId: 'step-agent', message: '请确认参数' })
+
+    expect(engine.sendStepMessage).toHaveBeenCalledWith('inst-1', 'step-agent', '请确认参数')
+  })
+
+  it('rejects an empty message (zod min(1), 缺陷 31)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.sendStepMessage({ instanceId: 'inst-1', stepId: 'step-agent', message: '' }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects a missing stepId (zod, 缺陷 31)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.sendStepMessage({ instanceId: 'inst-1', message: 'hi' } as { instanceId: string; stepId: string; message: string }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects a missing instanceId (zod, 缺陷 31)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.sendStepMessage({ stepId: 'step-agent', message: 'hi' } as { instanceId: string; stepId: string; message: string }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects a terminal instance with INVALID_OPERATION (terminal guard, 缺陷 31)', async () => {
+    const { remote, persistence } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-done', status: 'completed' }))
+
+    await expect(remote.sendStepMessage({ instanceId: 'inst-done', stepId: 'step-agent', message: 'hi' })).rejects.toMatchObject({
+      code: 'INVALID_OPERATION',
+    })
+  })
+
+  it('throws NODE_NOT_FOUND when the instance snapshot is missing (缺陷 31)', async () => {
+    const { remote } = await harness()
+
+    expect(
+      await catchCodeAsync(() => remote.sendStepMessage({ instanceId: 'inst-nonexistent', stepId: 'step-agent', message: 'hi' })),
+    ).toBe('NODE_NOT_FOUND')
+  })
+
+  it('passes through SandoreError from the engine without swallowing it (缺陷 31)', async () => {
+    const { remote, persistence, engine } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-1', status: 'running' }))
+    engine.sendStepMessage.mockRejectedValueOnce(new SandoreError('step is synthetic', 'INVALID_OPERATION'))
+
+    await expect(remote.sendStepMessage({ instanceId: 'inst-1', stepId: 'step-shell', message: 'hi' })).rejects.toMatchObject({
+      code: 'INVALID_OPERATION',
+    })
+  })
+})
+
+describe('SandoreRemote recoverInstance RPC', () => {
+  it('forwards instanceId to the engine and returns the recovered DagRun', async () => {
+    const { remote, persistence, engine } = await harness()
+    // 内存未命中但快照非终态：recoverInstance 应转发引擎并返回非终态 DagRun
+    // （恢复后实例可被 pause/resume/retry/reply/abort 操作，UI 可用）。
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-orphan', status: 'running' }))
+
+    const run = await remote.recoverInstance({ instanceId: 'inst-orphan' })
+
+    expect(engine.recoverInstance).toHaveBeenCalledWith('inst-orphan')
+    expect(run).toEqual({ instanceId: 'inst-orphan', status: 'running' })
+  })
+
+  it('rejects a missing instanceId (zod validation)', async () => {
+    const { remote } = await harness()
+
+    await expect(
+      remote.recoverInstance({ instanceId: 123 as unknown as string }),
+    ).rejects.toBeInstanceOf(ZodError)
+  })
+
+  it('rejects a terminal instance with INVALID_OPERATION (terminal guard)', async () => {
+    const { remote, persistence } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-done', status: 'completed' }))
+
+    await expect(remote.recoverInstance({ instanceId: 'inst-done' })).rejects.toMatchObject({
+      code: 'INVALID_OPERATION',
+    })
+  })
+
+  it('throws NODE_NOT_FOUND when the instance snapshot is missing', async () => {
+    const { remote } = await harness()
+
+    expect(await catchCodeAsync(() => remote.recoverInstance({ instanceId: 'inst-nonexistent' }))).toBe('NODE_NOT_FOUND')
+  })
+
+  it('passes through SandoreError from the engine without swallowing it', async () => {
+    const { remote, persistence, engine } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-1', status: 'running' }))
+    engine.recoverInstance.mockRejectedValueOnce(new SandoreError('definition gone', 'NODE_NOT_FOUND'))
+
+    await expect(remote.recoverInstance({ instanceId: 'inst-1' })).rejects.toMatchObject({
+      code: 'NODE_NOT_FOUND',
+    })
+  })
+})
+
+describe('SandoreRemote recoverOrphanedInstances RPC', () => {
+  it('forwards to the engine with no input and returns the { recovered, errors } summary', async () => {
+    const { remote, persistence, engine } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-a', status: 'running' }))
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-b', status: 'paused' }))
+    engine.recoverOrphanedInstances.mockResolvedValueOnce({
+      recovered: ['inst-a', 'inst-b'],
+      errors: [],
+    })
+
+    const result = await remote.recoverOrphanedInstances()
+
+    expect(engine.recoverOrphanedInstances).toHaveBeenCalledWith()
+    expect(result).toEqual({ recovered: ['inst-a', 'inst-b'], errors: [] })
+  })
+
+  it('returns the errors array when some instances fail to recover (single-failure does not block)', async () => {
+    const { remote, persistence, engine } = await harness()
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-ok', status: 'running' }))
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-bad', status: 'running' }))
+    engine.recoverOrphanedInstances.mockResolvedValueOnce({
+      recovered: ['inst-ok'],
+      errors: [{ instanceId: 'inst-bad', error: 'definition gone' }],
+    })
+
+    const result = await remote.recoverOrphanedInstances()
+
+    expect(result.recovered).toEqual(['inst-ok'])
+    expect(result.errors).toEqual([{ instanceId: 'inst-bad', error: 'definition gone' }])
   })
 })
 

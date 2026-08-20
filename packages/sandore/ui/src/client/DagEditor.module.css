@@ -702,3 +702,10 @@
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
 }
+
+/* 内联提示文本（如「暂无工作流级规则」空态说明）。 */
+.hint {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-caption);
+}

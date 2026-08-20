@@ -249,7 +249,23 @@ export function parseWorkflowYaml(text: string): WorkflowDefinition {
     throw new WorkflowYamlError(`invalid YAML: ${detail}`, 'YAML_PARSE')
   }
 
-  const data = convertLegacyToV2(document.toJS())
+  let data: unknown = document.toJS()
+  // 缺陷 32：解包 `workflow:` 顶层包装（基准前端编辑器导出格式，
+  // workflow-lab-3 yaml-parser.ts:324-328 / workflow-mapper.ts:287-288 同样支持）。
+  // 必须前置到 V1 转换之前——包装是容器，内层才做 V1/V2 检测
+  // （包了 V1 的 `{ workflow: { stages: [{scenarios}] } }` 同样受益）。
+  // 用 isRecord 收窄：`workflow: "文本"` / `workflow: []` 不解包（isRecord 排除
+  // 数组），继续走 WorkflowDefinitionSchema.parse 抛 DEFINITION_INVALID
+  // （顶层缺失必填 id/name/version/stages）。schema 不加 .strict()：
+  // 避免平铺 + 未知顶层字段从 strip 宽容变拒绝的行为倒退。
+  if (isRecord(data) && isRecord(data.workflow)) data = data.workflow
+  data = convertLegacyToV2(data)
+  // TODO(缺陷 1 point 4, 附带建议)：DagBranchSchema 未开 `.strict()`，基准遗留的
+  // `branch.expectation` 字段会被 zod 静默剥离 → 该分支变并行（始终执行）而非
+  // 条件分支。迁移工作流时应把 `expectation` 改写为 `condition`（shell 命令） +
+  // `label`（匹配目标）。如需更安全的迁移防护，可在 convertLegacyToV2 转换层
+  // 预扫 branches 上的 `expectation` 键并 console.warn（或拒绝 DEFINITION_INVALID）。
+  // 此处暂不实现，避免在浏览器安全解析层引入副作用。
   let definition: WorkflowDefinition
   try {
     definition = WorkflowDefinitionSchema.parse(data)

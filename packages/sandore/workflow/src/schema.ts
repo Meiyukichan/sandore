@@ -318,11 +318,19 @@ export const RetryRecordSchema = z.object({
   result: z.enum(['running', 'completed', 'failed']),
 })
 
-/** 用户在执行过程中的消息（原始需求 / 恢复 / 重试，统一时间轴渲染）。 */
+/** 用户在执行过程中的消息（原始需求 / 恢复 / 重试 / @mention 讨论，统一时间轴渲染）。 */
 export const UserMessageRecordSchema = z.object({
   id: z.string(),
-  /** 消息种类：input=原始需求 / resume=继续消息 / retry=重试消息 / answer=ask 回答。 */
-  kind: z.enum(['input', 'resume', 'retry', 'answer']),
+  /**
+   * 消息种类：
+   * - input=原始需求（makeInitialState 写入）
+   * - resume=继续消息（resumeStep/resumeAllSteps）
+   * - retry=重试消息（retryStep）
+   * - answer=ask 回答（replyQuestion followup 注回）
+   * - message=@mention 讨论消息（sendStepMessage，缺陷 31）——独立于 input
+   *   以免污染 originalInput 语义；UI 时间轴按 kind 渲染徽标区分。
+   */
+  kind: z.enum(['input', 'resume', 'retry', 'answer', 'message']),
   /** 目标：'broadcast'（广播）或 Step 定义 id（定点）；input 时为 ''。 */
   target: z.string(),
   /** 用户消息文本。 */
@@ -414,7 +422,7 @@ export const WorkflowTaskStateSchema = z.object({
   executedSteps: z.array(ExecutedStepDefaultSchema),
   stageInfos: z.array(StageInfoSchema),
   pendingInteractions: z.array(z.union([PendingQuestionEntrySchema, PendingPermissionEntrySchema])),
-  pendingQueue: z.array(z.string()),
+  pendingQueue: z.array(z.string()).default([]),
   visitCounts: z.record(z.string(), z.number()),
   passThroughVars: z.record(z.string(), PassThroughVarValueSchema),
   activeLoopIterationStack: z.array(z.number()),

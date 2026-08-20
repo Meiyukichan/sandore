@@ -12,6 +12,7 @@ import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   PendingPermissionEntry, PendingQuestionEntry, WorkflowTaskState,
 } from '@deepseek-ai/dsh-sandore-workflow/schema'
+import type { RevertBoundaryOption } from '@deepseek-ai/dsh-sandore-workflow/types'
 
 /** 实例生命周期状态（从 `WorkflowTaskState` 派生，避免 dsh-llm 依赖）。 */
 export type DagRunStatus = WorkflowTaskState['status']
@@ -27,6 +28,9 @@ export type StageInfo = WorkflowTaskState['stageInfos'][number]
 
 /** 重试模式（对齐 `retryStep` 入参 `mode` 的 zod 枚举）。 */
 export type RetryMode = 'continue' | 'revert' | 'fork'
+
+/** revert 回退点候选（对齐 `listRevertBoundaries` 返回的 `RevertBoundaryOption`）。 */
+export type { RevertBoundaryOption }
 
 /** replyQuestion 单个问题的回答（对齐 Host 的 `AskUserQuestionAnswerItem`）。 */
 export interface AnswerItem {

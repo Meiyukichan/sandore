@@ -44,6 +44,7 @@ function makeEngine(status: DagRunStatus = 'running') {
     recoverInstance: vi.fn(async () => ({ instanceId: 'inst-new', status: 'running' as const })),
     replyQuestion: vi.fn(async () => {}),
     replyPermission: vi.fn(async () => {}),
+    rejectQuestion: vi.fn(async () => {}),
   };
 }
 

@@ -110,6 +110,54 @@
   gap: 4px;
 }
 
+/* ── revert 回退点下拉（仅 revert 模式时显示） ───────────────────────────── */
+
+.boundaryRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.boundaryLabel {
+  flex: none;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.boundaryHint {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.boundarySelect {
+  height: 28px;
+  max-width: 240px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-primary);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.boundarySelect:hover:not(:disabled) {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.boundarySelect:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.boundarySelect:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .retryError {
   margin: 0;
   font-size: 12px;

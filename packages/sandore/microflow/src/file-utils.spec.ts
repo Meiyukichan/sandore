@@ -10,15 +10,18 @@ import { describe, expect, it } from 'vitest';
 
 import type { ExecutedStepDefault } from '@deepseek-ai/dsh-sandore-workflow/src/types';
 import {
+  collectStepArtifacts,
   escapeRegexChar,
   findFilesByGlob,
   findFilesByRegex,
   globToRegex,
+  hasUnresolvedVars,
   idMatches,
   isGlobPattern,
   readOutputJson,
   replacePassThroughVars,
   resolveFromInputFrom,
+  resolveOutputToVars,
   resolvePathSegments,
   walkDir,
   writeOutputJson,
@@ -29,6 +32,8 @@ import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome, StepOutputFile }
 class FakeFs implements FileSystem {
   readonly files = new Map<string, string>();
   readonly dirs = new Set<string>();
+  /** 模拟权限拒绝：listDir 命中这些 targetKey 时抛错（缺陷 18 try/catch 容错测试）。 */
+  readonly listDirThrows = new Set<string>();
 
   seedFile(path: string, content = ''): void {
     this.files.set(path, content);
@@ -48,6 +53,9 @@ class FakeFs implements FileSystem {
   }
 
   async listDir(target: FsTarget): Promise<FsDirEntry[]> {
+    if (this.listDirThrows.has(target.targetKey)) {
+      throw new Error(`FS_PERMISSION_DENIED: ${target.displayPath}`);
+    }
     const prefix = target.targetKey === '/' ? '' : `${target.targetKey}/`;
     const names = new Set<string>();
     for (const dir of this.dirs) {
@@ -151,6 +159,33 @@ describe('isGlobPattern', () => {
     expect(isGlobPattern('plain/path.txt')).toBe(false);
     expect(isGlobPattern('foo(?=bar)')).toBe(false);
   });
+
+  // ── 缺陷 19：对齐基准 looksLikeGlob 全特征检测（原实现漏检 .* / .+ / [^ / \d 等） ──
+
+  it('rejects regex-style patterns that previously slipped through as glob (defect 19)', () => {
+    // 修前：这些含 `*`/`?` 且不含 `\` 与 `(?` → 被误判为 glob → globToRegex 静默错误匹配。
+    // 修后：命中 `.*` / `.+` / `[^` / `\d` 特征 → 正确判为非 glob → 走 fileExists 精确存在性检查。
+    expect(isGlobPattern('.*')).toBe(false);
+    expect(isGlobPattern('.+')).toBe(false);
+    expect(isGlobPattern('\\d*')).toBe(false);
+    expect(isGlobPattern('[^a]*')).toBe(false);
+    expect(isGlobPattern('foo.*')).toBe(false);
+  });
+
+  it('keeps legitimate globs unflipped after the full-feature detection (regression)', () => {
+    // 合法 glob 不含 `.*` / `.+` / `[^` / `\d` / `^…$` 特征，判定不变。
+    expect(isGlobPattern('out/*.log')).toBe(true);
+    expect(isGlobPattern('out/file?.txt')).toBe(true);
+    expect(isGlobPattern('**/*.ts')).toBe(true);
+    expect(isGlobPattern('build/**/report.md')).toBe(true);
+  });
+
+  it('still treats non-glob literal and regex-lookahead paths as non-glob', () => {
+    expect(isGlobPattern('plain/path.txt')).toBe(false);
+    expect(isGlobPattern('foo(?=bar)')).toBe(false);
+    expect(isGlobPattern('^.*$')).toBe(false);
+    expect(isGlobPattern('a{3}')).toBe(false);
+  });
 });
 
 describe('replacePassThroughVars', () => {
@@ -167,6 +202,75 @@ describe('replacePassThroughVars', () => {
 
   it('does not interpret $&/$1 sequences in replacement values', () => {
     expect(replacePassThroughVars('${a}', { a: 'x$&y$1z' })).toBe('x$&y$1z');
+  });
+});
+
+// ── 缺陷 33/34：hasUnresolvedVars + resolveOutputToVars（共享工具） ──────────────
+
+describe('hasUnresolvedVars', () => {
+  it('detects a ${xxx} placeholder as unresolved', () => {
+    expect(hasUnresolvedVars('artifacts/${projectName}/report.md')).toBe(true);
+    expect(hasUnresolvedVars('turn=${in-loop-turn}/${all-loop-turn}')).toBe(true);
+  });
+
+  it('returns false for a literal string without placeholders', () => {
+    expect(hasUnresolvedVars('artifacts/my-project/report.md')).toBe(false);
+    expect(hasUnresolvedVars('plain path with $ but no braces')).toBe(false);
+  });
+
+  it('returns false for empty string and for empty braces ${}', () => {
+    expect(hasUnresolvedVars('')).toBe(false);
+    // 正则要求 [^}]+（至少一个非 } 字符），空 ${} 不视为占位符。
+    expect(hasUnresolvedVars('text ${} more')).toBe(false);
+  });
+});
+
+describe('resolveOutputToVars', () => {
+  it('resolves a defined ${xxx} in path and marks not deferred', () => {
+    const result = resolveOutputToVars(
+      { path: 'artifacts/${projectName}/report.md' },
+      { projectName: 'my-project' },
+    );
+    expect(result.path).toBe('artifacts/my-project/report.md');
+    expect(result.regex).toBeUndefined();
+    expect(result.deferred).toBe(false);
+  });
+
+  it('resolves a defined ${xxx} in regex and marks not deferred', () => {
+    const result = resolveOutputToVars({ regex: '${var}\\.md$' }, { var: 'report' });
+    expect(result.regex).toBe('report\\.md$');
+    expect(result.path).toBeUndefined();
+    expect(result.deferred).toBe(false);
+  });
+
+  it('leaves an undefined ${xxx} verbatim and marks deferred', () => {
+    const result = resolveOutputToVars(
+      { path: 'artifacts/${projectName}/report.md' },
+      {},
+    );
+    expect(result.path).toBe('artifacts/${projectName}/report.md');
+    expect(result.deferred).toBe(true);
+  });
+
+  it('marks deferred when path is resolved but regex still has ${}', () => {
+    const result = resolveOutputToVars(
+      { path: '${a}/out.txt', regex: '${b}\\.md$' },
+      { a: 'dir' },
+    );
+    expect(result.path).toBe('dir/out.txt');
+    expect(result.regex).toBe('${b}\\.md$');
+    expect(result.deferred).toBe(true);
+  });
+
+  it('returns an empty object (deferred=false) for an item with no path/regex', () => {
+    const result = resolveOutputToVars({}, { a: '1' });
+    expect(result).toEqual({ deferred: false });
+  });
+
+  it('does not mutate the input item (pure function)', () => {
+    const item = { path: 'artifacts/${projectName}/report.md' };
+    resolveOutputToVars(item, { projectName: 'my-project' });
+    expect(item.path).toBe('artifacts/${projectName}/report.md');
   });
 });
 
@@ -214,6 +318,47 @@ describe('walkDir / findFilesByGlob / findFilesByRegex', () => {
   it('findFilesByRegex rejects an invalid regex with a readable error', async () => {
     const fs = seededFs();
     await expect(findFilesByRegex(fs, '/work', '[')).rejects.toThrow(/invalid regex/);
+  });
+
+  // ── 缺陷 18：walkDir 隐藏文件过滤差异（点目录跳/点文件留/node_modules跳/try-catch容错） ──
+
+  it('walkDir skips dot directories (.git/.vscode/.venv) without recursing', async () => {
+    const fs = new FakeFs();
+    fs.seedFile('/work/real.txt');
+    fs.seedFile('/work/.git/config');
+    fs.seedFile('/work/.vscode/settings.json');
+    fs.seedFile('/work/.venv/bin/python');
+    const found = await walkDir(fs, await fs.resolve('/work'));
+    expect(found).toEqual(['/work/real.txt']);
+  });
+
+  it('walkDir preserves dot files (.env/.gitignore) as collectible artifacts', async () => {
+    const fs = new FakeFs();
+    fs.seedFile('/work/.env', 'KEY=value');
+    fs.seedFile('/work/.gitignore', 'node_modules');
+    fs.seedFile('/work/out/.env', 'NESTED=value');
+    fs.seedFile('/work/real.txt');
+    const found = (await walkDir(fs, await fs.resolve('/work'))).sort();
+    expect(found).toEqual(['/work/.env', '/work/.gitignore', '/work/out/.env', '/work/real.txt']);
+  });
+
+  it('walkDir still skips node_modules directories (recursion pruned)', async () => {
+    const fs = new FakeFs();
+    fs.seedFile('/work/real.txt');
+    fs.seedFile('/work/node_modules/pkg/index.js');
+    fs.seedFile('/work/node_modules/.cache/data.json');
+    const found = await walkDir(fs, await fs.resolve('/work'));
+    expect(found).toEqual(['/work/real.txt']);
+  });
+
+  it('walkDir tolerates listDir permission errors on a subtree (skips silently, siblings preserved)', async () => {
+    const fs = new FakeFs();
+    fs.seedFile('/work/keep.txt');
+    fs.seedFile('/work/secret/hidden.txt');
+    fs.seedFile('/work/open/public.txt');
+    fs.listDirThrows.add('/work/secret');
+    const found = (await walkDir(fs, await fs.resolve('/work'))).sort();
+    expect(found).toEqual(['/work/keep.txt', '/work/open/public.txt']);
   });
 });
 
@@ -313,5 +458,147 @@ describe('resolvePathSegments / resolveFromInputFrom', () => {
       executedStep({ id: 'e-a', stepId: 'a', stageId: 'stg-1' }),
     ];
     expect(() => resolveFromInputFrom(executed, 1, [{ id: 'in', regex: '[' }])).toThrow(/invalid inputFrom regex/);
+  });
+});
+
+// ── 缺陷 16：collectStepArtifacts（outputTo → 实际文件列表收集） ────────────────
+
+describe('collectStepArtifacts', () => {
+  /** 通用产物播种 fs：out/report.md、out/notes.md、build/a/report.md、build/b/report.md。 */
+  function seededFs(): FakeFs {
+    const fs = new FakeFs();
+    fs.seedFile('/work/out/report.md');
+    fs.seedFile('/work/out/notes.md');
+    fs.seedFile('/work/build/a/report.md');
+    fs.seedFile('/work/build/b/report.md');
+    return fs;
+  }
+
+  it('returns an empty array when step has no outputTo', async () => {
+    const fs = seededFs();
+    expect(await collectStepArtifacts(fs, { outputTo: undefined }, '/work')).toEqual([]);
+    expect(await collectStepArtifacts(fs, { outputTo: [] }, '/work')).toEqual([]);
+  });
+
+  it('collects files via the glob path branch (findFilesByGlob, anchored)', async () => {
+    const fs = seededFs();
+    const result = await collectStepArtifacts(fs, { outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }, '/work');
+    expect(result).toHaveLength(1);
+    expect(result[0]!.id).toBe('opt-a');
+    expect(result[0]!.value.sort()).toEqual(['/work/out/notes.md', '/work/out/report.md']);
+  });
+
+  it('collects a single file via the non-glob literal path branch (reuses fileExists)', async () => {
+    const fs = seededFs();
+    const result = await collectStepArtifacts(fs, { outputTo: [{ id: 'opt-p', path: 'out/report.md' }] }, '/work');
+    expect(result).toEqual([{ id: 'opt-p', value: ['/work/out/report.md'] }]);
+  });
+
+  it('returns an empty value for a non-glob literal path when the file is absent', async () => {
+    const fs = seededFs();
+    const result = await collectStepArtifacts(fs, { outputTo: [{ id: 'opt-p', path: 'out/missing.md' }] }, '/work');
+    expect(result).toEqual([{ id: 'opt-p', value: [] }]);
+  });
+
+  it('does not falsely match a non-glob literal path against nested similar files', async () => {
+    const fs = new FakeFs();
+    // 期望产物 output/result.txt 本身不存在；仅树内存在嵌套同名/相似文件。
+    // 非 glob 分支用 fileExists 精确存在性检查（resolve + readText），不被相似文件误命中。
+    fs.seedFile('/work/dist/output/result.txt');
+    fs.seedFile('/work/output/result.txt.bak');
+    const result = await collectStepArtifacts(fs, { outputTo: [{ id: 'opt-p', path: 'output/result.txt' }] }, '/work');
+    expect(result).toEqual([{ id: 'opt-p', value: [] }]);
+  });
+
+  it('collects files via the regex branch (findFilesByRegex, unanchored tree scan)', async () => {
+    const fs = seededFs();
+    const result = await collectStepArtifacts(
+      fs,
+      { outputTo: [{ id: 'opt-re', regex: '^build/.+/report\\.md$' }] },
+      '/work',
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.value.sort()).toEqual(['/work/build/a/report.md', '/work/build/b/report.md']);
+  });
+
+  it('merges path and regex results for the same outputTo item', async () => {
+    const fs = seededFs();
+    const result = await collectStepArtifacts(
+      fs,
+      { outputTo: [{ id: 'opt-mix', path: 'out/*.md', regex: '^build/.+/report\\.md$' }] },
+      '/work',
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]!.value.sort()).toEqual([
+      '/work/build/a/report.md',
+      '/work/build/b/report.md',
+      '/work/out/notes.md',
+      '/work/out/report.md',
+    ]);
+  });
+
+  it('tolerates a bad regex pattern (skips silently, returns empty value)', async () => {
+    const fs = seededFs();
+    const result = await collectStepArtifacts(
+      fs,
+      { outputTo: [{ id: 'opt-bad', regex: '[' }] },
+      '/work',
+    );
+    expect(result).toEqual([{ id: 'opt-bad', value: [] }]);
+  });
+
+  it('returns one artifact entry per outputTo item, preserving id order', async () => {
+    const fs = seededFs();
+    const result = await collectStepArtifacts(
+      fs,
+      {
+        outputTo: [
+          { id: 'opt-1', path: 'out/report.md' },
+          { id: 'opt-2', regex: 'report\\.md' },
+        ],
+      },
+      '/work',
+    );
+    expect(result.map(a => a.id)).toEqual(['opt-1', 'opt-2']);
+  });
+
+  // ── 缺陷 34：collectStepArtifacts 用 vars 解析 outputTo 中的 ${xxx} ──────────
+
+  it('resolves ${xxx} in a path via vars before matching (collects the real file)', async () => {
+    const fs = new FakeFs();
+    fs.seedFile('/work/artifacts/my-project/report.md');
+    const result = await collectStepArtifacts(
+      fs,
+      { outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }] },
+      '/work',
+      { projectName: 'my-project' },
+    );
+    expect(result).toEqual([{ id: 'opt-var', value: ['/work/artifacts/my-project/report.md'] }]);
+  });
+
+  it('defers (empty value) an unresolved ${xxx} path when vars lack the variable', async () => {
+    const fs = new FakeFs();
+    // 播种解析后路径下的真实文件（artifacts/my-project/report.md），但字面占位路径
+    // artifacts/${projectName}/report.md 不存在 → vars 缺变量时 deferred → 空值。
+    fs.seedFile('/work/artifacts/my-project/report.md');
+    const result = await collectStepArtifacts(
+      fs,
+      { outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }] },
+      '/work',
+      {},
+    );
+    expect(result).toEqual([{ id: 'opt-var', value: [] }]);
+  });
+
+  it('resolves ${xxx} in a regex via vars before matching', async () => {
+    const fs = new FakeFs();
+    fs.seedFile('/work/out/my-project.md');
+    const result = await collectStepArtifacts(
+      fs,
+      { outputTo: [{ id: 'opt-re', regex: '^out/${projectName}\\.md$' }] },
+      '/work',
+      { projectName: 'my-project' },
+    );
+    expect(result).toEqual([{ id: 'opt-re', value: ['/work/out/my-project.md'] }]);
   });
 });

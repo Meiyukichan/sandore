@@ -77,6 +77,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
         },
         deleteDefinition: async (id: string) => unwrap(await sandore.deleteDefinition(id)),
         deleteInstance: async (instanceId: string) => unwrap(await sandore.deleteInstance(instanceId)),
+        recoverOrphanedInstances: async () => unwrap(await sandore.recoverOrphanedInstances()),
         getYaml: async (id: string) => unwrap(await sandore.getYaml(id)),
         save: createSandoreSave(sandore as unknown as SandoreSaveRemote),
         remote: sandore as unknown as RunViewRemote,
@@ -136,6 +137,7 @@ export async function apply(ctx: ClientContext): Promise<void> {
       inject: (): SandoreStepInjected => ({
         openSession: (id: SessionId) => { remoteCtx.sessions.open(id) },
         retryStep: async (input) => { unwrap(await sandore.retryStep(input)) },
+        listRevertBoundaries: async (input) => unwrap(await sandore.listRevertBoundaries(input)),
       }),
     }, DagStepNodeView))
   })

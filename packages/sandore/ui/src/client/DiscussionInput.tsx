@@ -4,16 +4,17 @@
  * 按 `docs/design/execution-detail-prototype.html` 原型实现：
  * - 正常态：DSH InputBar 风格 composer（22px 圆角卡片 + 透明 textarea + 底部工具行：
  *   左权限胶囊 / 右模型胶囊 + 圆形发送按钮）。状态语义保留：
- *   running → textarea 禁用 + ⏸ 暂停（trailing 主按钮）+ 中止 ghost；
+ *   running → 输入文本后切换为「向 @Step 发送 @mention 消息」（缺陷 31），无文本时
+ *   主按钮仍为 ⏸ 暂停（trailing 主按钮）+ 中止 ghost；
  *   paused → 发送 = 定点 `resumeStep`（@Step）或广播 `resumeAll`；
  *   failed → 发送 = `retryStep`（continue/revert/fork）；终态 → 禁用。
- *   @Step 目标选择与重试模式行做成 composer 上方仅在 paused/failed 出现的细工具条。
+ *   @Step 目标选择与重试模式行做成 composer 上方仅在 running/paused/failed 出现的细工具条。
  * - 接管态：存在 pending 权限 → ApprovalPanel 风格卡片（琥珀条 + headline + command
  *   + 拒绝/始终允许/允许一次）；否则存在 pending 问答 → QuestionComposer 风格卡片
  *   （header + 编号选项 + 自定义行 + pager + 跳过/提交）。接管面板隐藏 composer。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/DiscussionInput
  */
-import { useMemo, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type ChangeEvent, type KeyboardEvent } from 'react'
 import {
   IconChevronDownOutline14, IconChevronLeftOutline14, IconChevronRightOutline14,
   IconChevronUpOutline14, IconCloseOutline16, IconEditOutline16, IconStopFill16,
@@ -23,7 +24,7 @@ import type { PendingPermissionEntry, PendingQuestionEntry } from '@deepseek-ai/
 
 import {
   isBlank, stepIdOf, RETRY_MODES,
-  type AnswerItem, type DagRunStatus, type ExecutedStep, type RetryMode,
+  type AnswerItem, type DagRunStatus, type ExecutedStep, type RevertBoundaryOption, type RetryMode,
 } from './run-view-model.ts'
 import { ModelSelectSandore, PermissionSelectSandore } from './composer-selects.tsx'
 import type { ModelDirectoryFace, ObservableFace, PermissionSelectValue } from './model-faces.ts'
@@ -49,10 +50,16 @@ export interface DiscussionInputProps {
   onResumeAll(resumePrompt: string): void
   /** 定点恢复指定 Step。 */
   onResumeStep(stepId: string, resumePrompt: string): void
-  /** 重试指定 Step（失败态）。 */
-  onRetryStep(stepId: string, mode: RetryMode, message: string): void
+  /** 重试指定 Step（失败态；revert 模式可选 revertBoundary 指定更早闭合 turn/end）。 */
+  onRetryStep(stepId: string, mode: RetryMode, message: string, revertBoundary?: number): void
+  /** 向运行中 Step 子代理追加 @mention 消息（running 态；缺陷 31）。 */
+  onSendStepMessage(stepId: string, message: string): void
+  /** 查询某 Step 子代理会话中可用的闭合 turn 回退点候选（revert 回退点选择数据源）。 */
+  onListRevertBoundaries(stepId: string): Promise<RevertBoundaryOption[]>
   /** 回复问答（整批回答）。 */
   onReplyQuestion(requestId: string, answers: AnswerItem[]): void
+  /** 拒绝问答（标对应 Step failed，缺陷 26）。 */
+  onRejectQuestion(requestId: string): void
   /** 回复权限（once/always/reject）。 */
   onReplyPermission(requestId: string, reply: 'once' | 'always' | 'reject'): void
   /** 中止实例（running/paused 态 trailing 的 ghost 按钮）。 */
@@ -162,12 +169,13 @@ interface DraftAnswer {
   skipped: boolean
 }
 
-function QuestionCard({ entry, steps, t, pending, onReply }: {
+function QuestionCard({ entry, steps, t, pending, onReply, onReject }: {
   readonly entry: PendingQuestionEntry
   readonly steps: readonly ExecutedStep[]
   readonly t: TranslateNS<'sandore'>
   readonly pending: boolean
   readonly onReply: (requestId: string, answers: AnswerItem[]) => void
+  readonly onReject: (requestId: string) => void
 }) {
   const questions = entry.payload.questions
   const stepName = stepNameOf(steps, entry.stepId)
@@ -395,6 +403,14 @@ function QuestionCard({ entry, steps, t, pending, onReply }: {
                   type="button"
                   className={`${css.qBtn} ${css.qSkip}`}
                   disabled={pending}
+                  onClick={() => { onReject(entry.requestId) }}
+                >
+                  {t('run.question.reject')}
+                </button>
+                <button
+                  type="button"
+                  className={`${css.qBtn} ${css.qSkip}`}
+                  disabled={pending}
                   onClick={skipQuestion}
                 >
                   {t('run.question.skip')}
@@ -436,7 +452,7 @@ function PauseGlyph() {
   )
 }
 
-function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep, onAbort, instanceId, modelDirectory, sessionPermissions, runCommand, queryPermission }: {
+function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep, onSendStepMessage, onListRevertBoundaries, onAbort, instanceId, modelDirectory, sessionPermissions, runCommand, queryPermission }: {
   readonly t: TranslateNS<'sandore'>
   readonly status: DagRunStatus
   readonly steps: readonly ExecutedStep[]
@@ -444,7 +460,9 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
   readonly onPauseAll: () => void
   readonly onResumeAll: (resumePrompt: string) => void
   readonly onResumeStep: (stepId: string, resumePrompt: string) => void
-  readonly onRetryStep: (stepId: string, mode: RetryMode, message: string) => void
+  readonly onRetryStep: (stepId: string, mode: RetryMode, message: string, revertBoundary?: number) => void
+  readonly onSendStepMessage: (stepId: string, message: string) => void
+  readonly onListRevertBoundaries: (stepId: string) => Promise<RevertBoundaryOption[]>
   readonly onAbort: (() => void) | undefined
   readonly instanceId: string
   readonly modelDirectory: (sessionId: string) => ModelDirectoryFace
@@ -456,6 +474,10 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
   const [targetStepId, setTargetStepId] = useState<string | undefined>(undefined)
   const [retryMode, setRetryMode] = useState<RetryMode>('continue')
   const [pickerOpen, setPickerOpen] = useState(false)
+  // revert 模式可选回退点：undefined = 默认（最后一个闭合 turn）；数字 = 所选闭合 turn/end seq。
+  const [revertBoundary, setRevertBoundary] = useState<number | undefined>(undefined)
+  const [boundaryOptions, setBoundaryOptions] = useState<RevertBoundaryOption[]>([])
+  const [boundaryLoading, setBoundaryLoading] = useState(false)
 
   // 模型目录 / 权限投影：绑定当前实例会话（复用 DSH 数据与 RPC，行为与主 session 一致）。
   const directory = useMemo(() => modelDirectory(instanceId), [modelDirectory, instanceId])
@@ -470,13 +492,46 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
   const terminal = isTerminal(status)
   const showAbort = onAbort !== undefined && (running || paused)
 
-  // @Step 可选目标：paused / failed 的 Step（子代理可操作）。
-  const targetSteps = steps.filter(step => step.status === 'paused' || step.status === 'failed')
+  // @Step 可选目标：running 态展示 running/interacting Step（@mention 发消息，缺陷 31）；
+  // paused/failed 态展示 paused/failed Step（resume/retry 目标）。
+  const targetSteps = running
+    ? steps.filter(step => step.status === 'running' || step.status === 'interacting')
+    : steps.filter(step => step.status === 'paused' || step.status === 'failed')
   const firstFailedStepId = steps.find(step => step.status === 'failed')
-  const effectiveTarget = targetStepId ?? (failed && firstFailedStepId !== undefined ? stepIdOf(firstFailedStepId) : undefined)
+  // running 态：仅一个活跃 Step 时默认定点它（避免无目标广播语义——sendStepMessage 必须指定 stepId）；
+  // failed 态：默认首个失败 Step；paused 态：undefined 表示广播 resumeAll。
+  const defaultTarget = running
+    ? (targetSteps.length === 1 ? stepIdOf(targetSteps[0]!) : undefined)
+    : (failed && firstFailedStepId !== undefined ? stepIdOf(firstFailedStepId) : undefined)
+  const effectiveTarget = targetStepId ?? defaultTarget
   const targetName = targetStepId === undefined
     ? t('input.target.broadcast')
     : (steps.find(step => stepIdOf(step) === targetStepId)?.name ?? targetStepId)
+
+  // revert 模式 + 选定 failed 目标时拉取该 Step 子代理会话的闭合 turn 回退点候选，
+  // 供回退点下拉选择（continue/fork 模式或无目标时清空，不拉取）。
+  useEffect(() => {
+    setRevertBoundary(undefined)
+    if (!failed || retryMode !== 'revert' || effectiveTarget === undefined) {
+      setBoundaryOptions([])
+      setBoundaryLoading(false)
+      return
+    }
+    let cancelled = false
+    setBoundaryLoading(true)
+    void onListRevertBoundaries(effectiveTarget)
+      .then(options => {
+        if (cancelled) return
+        setBoundaryOptions(options)
+        setBoundaryLoading(false)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setBoundaryOptions([])
+        setBoundaryLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [failed, retryMode, effectiveTarget, onListRevertBoundaries])
 
   const placeholder = running
     ? t('input.placeholder.running')
@@ -486,13 +541,24 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
         ? t('input.placeholder.failed')
         : ''
 
-  const canSend = !terminal && !running && !isBlank(text)
+  // running 态：有文本 + 选定 @Step 即可发送 @mention 消息（缺陷 31）；
+  // paused/failed 态：有文本即可（广播/定点 resume 或 retry）。
+  const canSend = !terminal && !isBlank(text) && (running ? effectiveTarget !== undefined : true)
 
   const send = (): void => {
     if (!canSend || pending) return
+    if (running) {
+      // running 态：发送 @mention 消息到选定 @Step（必须选定目标，无广播语义）。
+      if (effectiveTarget !== undefined) {
+        onSendStepMessage(effectiveTarget, text)
+        setText('')
+      }
+      return
+    }
     if (failed) {
       if (effectiveTarget !== undefined) {
-        onRetryStep(effectiveTarget, retryMode, text)
+        const boundary = retryMode === 'revert' ? revertBoundary : undefined
+        onRetryStep(effectiveTarget, retryMode, text, boundary)
         setText('')
       }
       return
@@ -507,11 +573,14 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
     }
   }
 
-  const disabled = terminal || running || pending
+  // running 态允许输入（向 @Step 发 @mention 消息）；仅终态或动作进行中禁用。
+  const disabled = terminal || pending
+  // running 态有文本时切换为「发送消息」模式（send 按钮），无文本时保持「暂停」主按钮。
+  const runningSendMode = running && !isBlank(text)
 
   return (
     <div className={css.root} data-sandore-disc-input>
-      {(paused || failed) && (
+      {(running || paused || failed) && (
         <div className={css.toolbar}>
           <button
             type="button"
@@ -524,13 +593,15 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
           </button>
           {pickerOpen && targetSteps.length > 0 && (
             <div className={css.picker} data-sandore-step-picker>
-              <button
-                type="button"
-                className={targetStepId === undefined ? css.pickerActive : ''}
-                onClick={() => { setTargetStepId(undefined); setPickerOpen(false) }}
-              >
-                {t('input.target.broadcast')}
-              </button>
+              {(!running) && (
+                <button
+                  type="button"
+                  className={targetStepId === undefined ? css.pickerActive : ''}
+                  onClick={() => { setTargetStepId(undefined); setPickerOpen(false) }}
+                >
+                  {t('input.target.broadcast')}
+                </button>
+              )}
               {targetSteps.map(step => {
                 const id = stepIdOf(step)
                 return (
@@ -559,6 +630,40 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
                   {mode === 'continue' ? t('run.retry.mode.continue') : mode === 'revert' ? t('run.retry.mode.revert') : t('run.retry.mode.fork')}
                 </button>
               ))}
+              {retryMode === 'revert' && effectiveTarget !== undefined && (
+                <label className={css.boundaryPicker}>
+                  <span className={css.retryLabel}>{t('run.retry.boundary')}</span>
+                  {boundaryLoading ? (
+                    <span className={css.boundaryHint}>{t('run.retry.boundary.loading')}</span>
+                  ) : boundaryOptions.length === 0 ? (
+                    <select
+                      className={css.boundarySelect}
+                      value=""
+                      disabled
+                      aria-label={t('run.retry.boundary')}
+                    >
+                      <option value="">{t('run.retry.boundary.empty')}</option>
+                    </select>
+                  ) : (
+                    <select
+                      className={css.boundarySelect}
+                      value={revertBoundary === undefined ? 'default' : String(revertBoundary)}
+                      onChange={event => {
+                        const value = event.target.value
+                        setRevertBoundary(value === 'default' ? undefined : Number(value))
+                      }}
+                      aria-label={t('run.retry.boundary')}
+                    >
+                      <option value="default">{t('run.retry.boundary.default')}</option>
+                      {boundaryOptions.map(option => (
+                        <option key={option.seq} value={String(option.seq)}>
+                          {t('run.retry.boundary.turn', { n: option.turn + 1 })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              )}
             </div>
           )}
         </div>
@@ -605,12 +710,12 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
             <button
               type="button"
               className={css.sendBtn}
-              title={running ? t('input.pause') : `${t('input.send')} · ⌘↵`}
-              aria-label={running ? t('input.pause') : t('input.send')}
-              disabled={running ? pending : (!canSend || pending)}
-              onClick={running ? onPauseAll : send}
+              title={runningSendMode ? `${t('input.send')} · ⌘↵` : running ? t('input.pause') : `${t('input.send')} · ⌘↵`}
+              aria-label={runningSendMode ? t('input.send') : running ? t('input.pause') : t('input.send')}
+              disabled={runningSendMode ? (!canSend || pending) : running ? pending : (!canSend || pending)}
+              onClick={runningSendMode ? send : running ? onPauseAll : send}
             >
-              {running ? <PauseGlyph /> : <SendGlyph />}
+              {runningSendMode ? <SendGlyph /> : running ? <PauseGlyph /> : <SendGlyph />}
             </button>
           </div>
         </div>
@@ -620,14 +725,14 @@ function Composer({ t, status, steps, pending, onPauseAll, onResumeAll, onResume
 }
 
 /** 渲染执行详情底部（composer 或接管面板）。 */
-export function DiscussionInput({ t, status, steps, questions, permissions, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep, onReplyQuestion, onReplyPermission, onAbort, instanceId, modelDirectory, sessionPermissions, runCommand, queryPermission }: DiscussionInputProps) {
+export function DiscussionInput({ t, status, steps, questions, permissions, pending, onPauseAll, onResumeAll, onResumeStep, onRetryStep, onSendStepMessage, onListRevertBoundaries, onReplyQuestion, onRejectQuestion, onReplyPermission, onAbort, instanceId, modelDirectory, sessionPermissions, runCommand, queryPermission }: DiscussionInputProps) {
   // 接管面板：有 pending 权限 → ApprovalPanel；否则有 pending 问答 → QuestionComposer；
   // 均无 → 正常 composer（原型：接管时隐藏 composer）。
   if (permissions.length > 0) {
     return <ApprovalCard entry={permissions[0]!} steps={steps} t={t} pending={pending} onReply={onReplyPermission} />
   }
   if (questions.length > 0) {
-    return <QuestionCard entry={questions[0]!} steps={steps} t={t} pending={pending} onReply={onReplyQuestion} />
+    return <QuestionCard entry={questions[0]!} steps={steps} t={t} pending={pending} onReply={onReplyQuestion} onReject={onRejectQuestion} />
   }
   return (
     <Composer
@@ -639,6 +744,8 @@ export function DiscussionInput({ t, status, steps, questions, permissions, pend
       onResumeAll={onResumeAll}
       onResumeStep={onResumeStep}
       onRetryStep={onRetryStep}
+      onSendStepMessage={onSendStepMessage}
+      onListRevertBoundaries={onListRevertBoundaries}
       onAbort={onAbort}
       instanceId={instanceId}
       modelDirectory={modelDirectory}

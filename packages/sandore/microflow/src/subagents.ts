@@ -191,6 +191,35 @@ export interface SubagentResult {
 /** 子代理停止原因。 */
 export type SubagentStopReason = 'completed' | 'aborted' | 'error' | 'max-tokens' | 'refusal';
 
+/**
+ * 子代理 settle 终态结算信号（对齐 DSH `subagent/end` 生命周期事件载荷）。
+ *
+ * DSH continuable 子代理「完成 = settle」：`SubagentContinuationManager.watchSettlement`
+ * 在子代理静止（idle + 无 owned children + 无 accepted 唤醒）时 `dispose` →
+ * `notifySettlement`（向父 inbox 投 `subagent-settled` 消息）→ `observer.settle`（emit
+ * `subagent/end` 生命周期事件，载荷含 `stopReason` + `lastAssistantMessage`）。interrupt
+ * → 子代理静止 → settle(stopReason=`aborted`)；自然完成 → settle(`completed`)；模型/
+ * 传输失败 → settle(`error`)；token 上限 → `max-tokens`；hook 拒绝 → `refusal`。
+ *
+ * 本接缝不 import `@deepseek-ai/dsh-subagent` 类型（与既有结构类型哲学一致），故自行
+ * 声明 `sandore/subagent-settled` 事件作为 settle 观察通道：DSH 适配层把 DSH
+ * `subagent/end` 转译为本事件（见 workflow-engine），mock `FakeSubagents` 直接发射。
+ * `report`（子代理主动 `reportFrom` 投递，child 仍 alive，中间结果）是 DSH 另一条父
+ * 代理返回通道——sandore 子代理当前不使用 report 工具（走自有 `[[SANDORE_ASK]]` 标记
+ * + followup 转接），report 通道作为未来扩展保留（届时同样经此事件投递 `completed`）。
+ */
+export interface SubagentSettlement {
+  /** 结算的子代理 SessionId（对齐 DSH `SubagentRunEndInfo.id`）。 */
+  readonly childId: SessionId;
+  /** 终态停止原因（对齐 DSH `SubagentRunEndInfo.stopReason`）。 */
+  readonly stopReason: SubagentStopReason;
+  /**
+   * 最终 assistant 输出（对齐 DSH `SubagentRunEndInfo.lastAssistantMessage`）。
+   * 缺省时由消费方回退 `finalAssistantOutput(child.session.events)` 读取。
+   */
+  readonly output?: readonly ContentBlock[];
+}
+
 /** `listChildren` 返回的子代理条目（child/diagnostic 判别联合）。 */
 export type SubagentListEntry =
   | { readonly kind: 'child'; readonly id: SessionId; readonly activity: 'running' | 'inactive'; readonly hasChildren: boolean }
@@ -342,5 +371,21 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     subagents: SubagentRuntime;
     agents: AgentRegistry;
+  }
+
+  interface Events {
+    /**
+     * 子代理 settle 终态结算通知（对齐 DSH `subagent/end`）。
+     *
+     * 由 DSH 适配层（workflow-engine）在收到 DSH `subagent/end` 后转译发射；mock
+     * `FakeSubagents` 直接发射（`settleChild` / `interrupt` 自动）。载荷为
+     * {@link SubagentSettlement}（childId + stopReason + 可选 output），供
+     * `awaitSubagentSettlement` 路由到对应 childId 的等待者。
+     *
+     * `stopReason` 自然区分 completed/aborted/error：`completed` 才算 Step 完成；
+     * `aborted`（interrupt 暂停）不算完成；`error`/`max-tokens`/`refusal` 落 failed。
+     * @mode emit
+     */
+    'sandore/subagent-settled'(settlement: SubagentSettlement): void;
   }
 }

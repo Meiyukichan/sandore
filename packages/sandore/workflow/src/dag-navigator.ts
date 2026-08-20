@@ -1,70 +1,54 @@
 /**
- * 工作流 DAG 导航器（Task 3：Step 级 DAG 调度）。
+ * 工作流 DAG 导航器（Stage 级编排）。
  *
- * 构建 Stage/Step 统一节点索引 `nodeIndex`，`resolveNextNodes()` 作为 Step 级调度
- * 单一入口。**分支是唯一出边单元**（统一 `branches: [{ next, condition?, loop? }]`）：
- * 并行分支（无 `condition`）始终纳入下一批；条件分支（有 `condition`）逐条布尔评估
- * （AI 输出 true/false，shell 走 `matchesExpectation(breakExpectation)`）；循环分支
- * （有 `loop`，`next` 为回边）命中后经 `checkLoopBreak` 判定跳出（exitTo）或继续下一
- * 迭代。无分支或无命中时按定义数组顺序线性兜底；Stage 完成由 `tryAdvanceStage`
- * （数组顺序推断）推进。`branchMeta` / `loopMeta` 保留评估现场。
+ * **包职责边界（用户原则）**：workflow 只管 Stage——Stage→Stage 推进 + Stage 级编排 +
+ * 引擎 + Host RPC。本导航器持有 Stage 节点索引 `stageIndex`（Stage 节点图）、
+ * `stageContracts`（已完成 Stage 契约）、当前 Stage 指针，承担 Stage 级路由：
+ * {@link WorkflowDagNavigator.tryAdvanceStage} 基于 Stage `branch.condition` 评估选
+ * 下一 Stage（StageContract-based，**非 fork-based**）。
+ *
+ * **Step 级路由已迁 microflow**：`resolveNextNodes`（循环/条件/并行分支算下一批 Step）
+ * + 循环计数 + 判断 + 收尾全归 microflow 的 `StepNavigator`。一个 Stage 内部执行
+ * （含 Step 路由）自包含在 microflow 完成，才到本导航器 `tryAdvanceStage` 推进下一
+ * Stage。
+ *
+ * **Stage 级条件分支**：`WorkflowStage.branches` 可带 `condition`（CommandConfig：
+ * AI/shell）。`tryAdvanceStage` 在当前 Stage 完成后，对每个 Stage 分支评估 `condition`
+ * （AI 走 `ctx.llm.stream` 一次性会话 + StageContract 作 context；shell 走
+ * `matchesExpectation(label)`），命中条件的目标 Stage；无 `condition` 分支为默认
+ * （始终走）；无命中按定义数组顺序兜底。Stage 级条件评估是 workflow 级、基于
+ * StageContract——Stage 无单一 step 会话可 fork（fork 是 Step 级），Stage 条件基于
+ * 聚合 StageContract 判断。
  * @module @deepseek-ai/dsh-sandore-workflow/src/dag-navigator
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
+import type { GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm';
 
-import { BranchEvaluator, matchesExpectation } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
-import type { BranchEvalOptions, BranchEvaluatorConfig } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
-import { LoopManager } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
-import type { LoopState } from '@deepseek-ai/dsh-sandore-microflow/src/loop-manager';
+import { extractShouldExecute, matchesExpectation } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
+import type { BranchEvaluatorConfig } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
+import { describeError, resolveProviderModel, textSummary } from '@deepseek-ai/dsh-sandore-microflow/src/internal';
 
-import type { BranchMeta, CommandConfig, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from './schema.ts';
+import type { CommandConfig, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowTaskState } from './schema.ts';
+import type { ShellExecRequest, ShellRunResult } from './shell.ts';
 import type { StageContract } from './types.ts';
 
 /** 已保存 Stage 契约的运行时形状（与快照 `stageContracts` 值严格一致）。 */
 type StageContractValue = WorkflowTaskState['stageContracts'][string];
 
-/** 分离式合并后的完整 Step（顶层定义 + 流控 branches）。 */
-export type MergedStepRef = WorkflowStep & { readonly branches?: DagBranch[] | undefined };
+/** AI 条件评估命令的 value 取值域（provider/model 三层回退）。 */
+type AiConditionValue = { readonly promptText: string; readonly providerId?: string; readonly modelId?: string };
+/** shell 条件评估命令的 value。 */
+type ShellConditionValue = { readonly command: string };
 
-/** Stage 与 Step 在 DAG 调度层的统一节点视图（出边统一在 branches）。 */
-export interface DagNodeRef {
-  readonly kind: 'stage' | 'step';
-  /** 所属 Stage（始终可用）。 */
+/** Stage 节点视图（出边统一在 branches；Stage 级路由唯一目标单元）。 */
+export interface StageNodeRef {
   readonly stage: WorkflowStage;
-  /** 仅 kind === 'step' 时存在（合并后的完整 Step）。 */
-  readonly step?: MergedStepRef | undefined;
   readonly id: string;
   readonly name: string;
   readonly branches?: DagBranch[] | undefined;
 }
 
-/** `resolveNextNodes` 的调度上下文（由引擎注入的共享状态）。 */
-export interface ResolveNextNodesContext {
-  /** 节点访问计数（循环节点记为回边次数，初始 0）。 */
-  readonly visitCounts: Record<string, number>;
-  /** 已解析的透传变量（`${xxx}` → 值）。 */
-  readonly passThroughVars: Readonly<Record<string, string>>;
-  readonly signal?: AbortSignal;
-}
-
-/** `resolveNextNodes` 的返回：下一批节点 ID 与评估现场。 */
-export interface ResolveNextNodesResult {
-  readonly nextNodeIds: string[];
-  readonly branchMeta?: BranchMeta;
-  readonly loopMeta?: BranchMeta;
-}
-
-/** 去重并保序。 */
-function dedupe(ids: readonly string[]): string[] {
-  return [...new Set(ids)];
-}
-
-/**
- * 工作流 DAG 导航器。
- *
- * 保存 `nodeIndex`（nodeId → 统一节点视图）、`stageContracts`（已完成 Stage 契约）、
- * 当前 Stage 指针，并内置 `BranchEvaluator`/`LoopManager` 承担 Step 级分支/循环路由。
- */
 /** 导航器初始化播种（崩溃恢复/重试续跑时从快照重建执行位置）。 */
 export interface DagNavigatorSeed {
   /** 起始 Stage（从快照 `currentStageId` 播种，缺省为定义首个 Stage）。 */
@@ -73,27 +57,48 @@ export interface DagNavigatorSeed {
   readonly stageContracts?: Readonly<Record<string, StageContractValue>>;
 }
 
+/** Stage 级条件分支评估提示词主头部。 */
+const STAGE_BRANCH_PROMPT_HEADER =
+  '你是严谨准确的工作流 Stage 路由 Agent，你的任务是根据当前 Stage 的完成契约与分支条件，判断是否应推进到该分支的目标 Stage。';
+
+/** Stage 条件评估红线规则（只读，禁止文件改动与过度思考）。 */
+const STAGE_BRANCH_RED_LINES = [
+  '禁止编辑、创建或删除任何文件',
+  '禁止过度思考，你的职责是尽快判断分支并返回结果',
+] as const;
+
+/**
+ * 工作流 DAG 导航器（Stage 级）。
+ *
+ * 保存 `stageIndex`（stageId → Stage 节点视图）、`stageContracts`（已完成 Stage 契约）、
+ * 当前 Stage 指针。`tryAdvanceStage` 基于 StageContract 评估 Stage `branch.condition`
+ * 选下一 Stage。Step 级路由/循环已不在本导航器（归 microflow `StepNavigator`）。
+ */
 export class WorkflowDagNavigator {
-  private readonly nodeIndex = new Map<string, DagNodeRef>();
+  private readonly stageIndex = new Map<string, StageNodeRef>();
+  private readonly stageSet: ReadonlySet<string>;
   private readonly stageContracts = new Map<string, StageContractValue>();
   private readonly stageOrder: readonly string[];
   private currentStageId: string;
-  private readonly evaluator: BranchEvaluator;
-  private readonly loopManager: LoopManager;
+  private readonly ctx: Context;
+  private readonly config: BranchEvaluatorConfig;
+  private readonly cwd: string;
 
   constructor(
-    private readonly definition: WorkflowDefinition,
+    definition: WorkflowDefinition,
     ctx: Context,
     config: BranchEvaluatorConfig,
-    loopState: LoopState,
+    cwd: string,
     seed?: DagNavigatorSeed,
   ) {
-    this.buildNodeIndex(definition);
+    this.ctx = ctx;
+    this.config = config;
+    this.cwd = cwd;
+    this.buildStageIndex(definition);
+    this.stageSet = new Set(definition.stages.map(stage => stage.id));
     this.stageOrder = definition.stages.map(stage => stage.id);
     // 从快照播种当前 Stage（续跑入口）；缺省回退定义首个 Stage。
     this.currentStageId = seed?.currentStageId ?? this.stageOrder[0] ?? '';
-    this.evaluator = new BranchEvaluator(ctx, config);
-    this.loopManager = new LoopManager(ctx, config, loopState);
     if (seed?.stageContracts !== undefined) {
       for (const [id, contract] of Object.entries(seed.stageContracts)) {
         this.stageContracts.set(id, contract);
@@ -104,11 +109,6 @@ export class WorkflowDagNavigator {
   /** 当前 Stage ID（无 Stage 时为空字符串）。 */
   get currentNodeId(): string {
     return this.currentStageId;
-  }
-
-  /** 循环管理器（引擎/执行器共享，用于 ID 后缀与迭代路径）。 */
-  get loopManagerInstance(): LoopManager {
-    return this.loopManager;
   }
 
   /** 已完成 Stage 的契约（stageId → StageContract）只读快照。 */
@@ -143,23 +143,41 @@ export class WorkflowDagNavigator {
   }
 
   /**
-   * 推进到下一 Stage。
+   * 推进到下一 Stage（Stage 级条件分支评估）。
    *
-   * 仅在当前 Stage 已完成（`isStageAllDone`）时推进：优先跟随当前 Stage 的
-   * `branches`（首个同 Stage 有效目标，通常为串行/并行下一 Stage），否则按定义数组
-   * 顺序推断下一 Stage。无下一 Stage 返回 false。
+   * 仅在当前 Stage 已完成（`isStageAllDone`）时推进：对当前 Stage 的每个 `branch`
+   * （Stage 级出边）：
+   * ① 目标非 Stage 节点 → 跳过（Stage 路由只跟随 Stage 目标）；
+   * ② 无 `condition`（默认分支）→ 直接取该目标（首个有效 Stage 目标）；
+   * ③ 有 `condition` → 基于 StageContract 评估（AI 一次性会话 + StageContract context；
+   *    shell 走 `matchesExpectation(label)`），命中取该目标；
+   * 无命中按定义数组顺序推断下一 Stage。无下一 Stage 返回 false。
+   *
+   * Stage 级条件评估是 workflow 级、基于 StageContract——**不是 fork-based**（Stage 无
+   * 单一 step 会话可 fork；Stage 条件基于聚合 StageContract 判断）。
    */
-  tryAdvanceStage(): boolean {
+  async tryAdvanceStage(signal?: AbortSignal): Promise<boolean> {
     if (!this.isStageAllDone(this.currentStageId)) {
       return false;
     }
-    const current = this.nodeIndex.get(this.currentStageId);
-    if (current === undefined || current.kind !== 'stage') {
+    const current = this.stageIndex.get(this.currentStageId);
+    if (current === undefined) {
       return false;
     }
+    const contract = this.getStageContract(this.currentStageId);
     let nextId: string | undefined;
     for (const branch of current.branches ?? []) {
-      if (this.nodeIndex.get(branch.next)?.kind === 'stage') {
+      // Stage 路由只跟随 Stage 目标；非 Stage 目标（理论上 Stage 分支只指 Stage）跳过。
+      if (!this.stageSet.has(branch.next)) {
+        continue;
+      }
+      if (branch.condition === undefined) {
+        // 无 condition = 默认分支，始终走（首个有效 Stage 目标）。
+        nextId = branch.next;
+        break;
+      }
+      const passed = await this.evaluateStageBranch(branch, contract, signal);
+      if (passed) {
         nextId = branch.next;
         break;
       }
@@ -168,195 +186,176 @@ export class WorkflowDagNavigator {
       const index = this.stageOrder.indexOf(current.id);
       nextId = index >= 0 ? this.stageOrder[index + 1] : undefined;
     }
-    const next = nextId === undefined ? undefined : this.nodeIndex.get(nextId);
-    if (next === undefined || next.kind !== 'stage') {
+    if (nextId === undefined || !this.stageSet.has(nextId)) {
       return false;
     }
-    this.currentStageId = next.id;
+    this.currentStageId = nextId;
     return true;
   }
 
   /**
-   * Step 级调度单一入口。
+   * 评估单个 Stage 分支的 `condition` 是否通过（StageContract-based）。
    *
-   * 统一分支路由（branches 是唯一出边单元）：
-   * ① 并行分支（无 condition）始终纳入下一批（多条并发）；
-   * ② 条件分支（有 condition）逐条布尔评估（AI 输出 true/false；shell 走
-   *    `matchesExpectation(breakExpectation)`），true 纳入；
-   * ③ 循环分支（有 loop，next 为回边）：命中后经 `checkLoopBreak` 判定跳出
-   *    （走 `exitTo`）或继续下一迭代（回 `loop.next`）；
-   * ④ 无任何命中时按定义数组顺序线性兜底；无 Step 级目标返回空
-   *    （由引擎 `tryAdvanceStage` 跨阶段推进）。
+   * shell：经 `ctx.shell` 执行命令（StageContract 摘要作 stdin + 透传变量 env），成功取
+   * stdout，失败降级为空串（→ 条件不通过）；AI（agent/prompt/skill/mcp）：`ctx.llm.stream`
+   * 一次性会话（StageContract 摘要 + 分支条件作 context），聚合输出后提取 shouldExecute。
    */
-  async resolveNextNodes(nodeId: string, context: ResolveNextNodesContext): Promise<ResolveNextNodesResult> {
-    const node = this.nodeIndex.get(nodeId);
-    if (node === undefined || node.kind !== 'step') {
-      return { nextNodeIds: [] };
+  private async evaluateStageBranch(
+    branch: DagBranch,
+    contract: StageContractValue | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<boolean> {
+    const condition = branch.condition!;
+    const contractSummary = contract === undefined ? '(无已完成的 Stage 契约)' : this.summarizeStageContract(contract);
+    try {
+      const output = condition.type === 'shell'
+        ? await this.runStageShell(condition, contractSummary, signal)
+        : await this.runStageAi(condition, contractSummary, signal);
+      return this.decideStageCondition(condition, output, branch.label);
+    } catch (error) {
+      // 评估失败（shell 非零退出/超时、AI 会话错误）：降级为条件不通过（走兜底）。
+      this.ctx.logger.warn(`sandore: stage branch condition evaluation failed: ${describeError(error)}`);
+      return false;
     }
-    const branches = node.branches ?? [];
-    if (branches.length === 0) {
-      const arrayNext = this.arrayNextStep(node);
-      return arrayNext === undefined ? { nextNodeIds: [] } : { nextNodeIds: [arrayNext] };
-    }
-
-    const parallel = branches.filter(branch => branch.condition === undefined && branch.loop === undefined);
-    const conditional = branches.filter(branch => branch.condition !== undefined && branch.loop === undefined);
-    const loopBranches = branches.filter(branch => branch.loop !== undefined);
-
-    const nextNodeIds: string[] = [];
-    let branchMeta: BranchMeta | undefined;
-    for (const branch of parallel) {
-      if (this.sameStageStep(node, branch.next) !== undefined) {
-        nextNodeIds.push(branch.next);
-      }
-    }
-
-    // 条件分支：逐条布尔评估（AI true/false，shell 匹配 breakExpectation）。
-    for (const branch of conditional) {
-      const result = await this.evaluator.evaluate(branch.condition!, '', this.branchEvalOptions(node, context));
-      branchMeta = {
-        status: 'completed',
-        result: result.output,
-        ...(result.sessionHandle === null ? {} : { sessionId: result.sessionHandle }),
-      };
-      const passed = this.decideCondition(branch.condition!, result.output, branch.label);
-      if (passed && this.sameStageStep(node, branch.next) !== undefined) {
-        nextNodeIds.push(branch.next);
-      }
-    }
-
-    // 循环分支：优先处理（命中回边分支 → 循环；否则回边分支不作为前进目标）。
-    let loopResult: ResolveNextNodesResult | undefined;
-    for (const branch of loopBranches) {
-      const loop = branch.loop!;
-      if (this.loopManager.activeLoopNodeId === node.id) {
-        // 回边：累计访问计数，判定跳出或继续下一迭代。
-        const visitCount = (context.visitCounts[node.id] ?? 0) + 1;
-        context.visitCounts[node.id] = visitCount;
-        const outcome = await this.loopManager.checkLoopBreak(
-          { id: node.id, loop },
-          visitCount,
-          { input: '', output: '', passThroughVars: context.passThroughVars },
-        );
-        if (outcome.shouldBreak) {
-          this.loopManager.popActiveLoop();
-          const exitTo = loop.exitTo;
-          loopResult = {
-            nextNodeIds: exitTo !== undefined && this.sameStageStep(node, exitTo) !== undefined ? [exitTo] : [],
-            ...(outcome.loopMeta === undefined ? {} : { loopMeta: outcome.loopMeta }),
-          };
-          break;
-        }
-        this.loopManager.incrementLoopIteration();
-        const loopTo = loop.next;
-        if (loopTo !== undefined && this.sameStageStep(node, loopTo) !== undefined) {
-          loopResult = { nextNodeIds: [loopTo] };
-          break;
-        }
-        loopResult = { nextNodeIds: [] };
-        break;
-      }
-      // 首次进入循环：压栈，直接进入回边目标（迭代 1）。
-      context.visitCounts[node.id] = 0;
-      this.loopManager.pushActiveLoop(node.id, loop.maxIterations);
-      const loopTo = loop.next;
-      if (loopTo !== undefined && this.sameStageStep(node, loopTo) !== undefined) {
-        loopResult = { nextNodeIds: [loopTo] };
-        break;
-      }
-      // 回边目标无效（跨 Stage/缺失）：退出循环。
-      this.loopManager.popActiveLoop();
-      const exitTo = loop.exitTo;
-      loopResult = { nextNodeIds: exitTo !== undefined && this.sameStageStep(node, exitTo) !== undefined ? [exitTo] : [] };
-      break;
-    }
-
-    // 循环命中时，循环路由优先于前进分支（循环接管本轮调度）。
-    if (loopResult !== undefined) {
-      return loopResult;
-    }
-
-    // 无循环：前进分支 + 数组顺序兜底。
-    if (nextNodeIds.length > 0) {
-      return { nextNodeIds: dedupe(nextNodeIds), ...(branchMeta === undefined ? {} : { branchMeta }) };
-    }
-    const arrayNext = this.arrayNextStep(node);
-    if (arrayNext !== undefined) {
-      nextNodeIds.push(arrayNext);
-    }
-    return { nextNodeIds: dedupe(nextNodeIds), ...(branchMeta === undefined ? {} : { branchMeta }) };
   }
 
-  /** 按 condition 类型判定条件分支是否通过。 */
-  private decideCondition(condition: CommandConfig, output: string, expectation: string | undefined): boolean {
+  /** 按 condition 类型判定 Stage 分支是否通过（shell 匹配 label；AI 提取 shouldExecute）。 */
+  private decideStageCondition(condition: CommandConfig, output: string, expectation: string | undefined): boolean {
     if (condition.type === 'shell') {
       if (expectation === undefined) {
         return false;
       }
       return matchesExpectation(output.trim(), expectation);
     }
-    return output.trim().toLowerCase() === 'true';
+    // AI 条件：提取 shouldExecute 布尔（与 Stage 分支提示词要求的 JSON 格式对齐）；
+    // 解析失败（undefined）按 false 处理——条件分支不通过，走兜底。
+    return extractShouldExecute(output) === true;
   }
 
-  /** 数组顺序的下一 Step（同 Stage 内，线性兜底）。 */
-  private arrayNextStep(node: DagNodeRef): string | undefined {
-    if (node.kind !== 'step') {
-      return undefined;
-    }
-    const steps = node.stage.steps;
-    const index = steps.findIndex(step => step.id === node.id);
-    return index < 0 ? undefined : steps[index + 1]?.id;
-  }
-
-  /** 组装分支评估选项（候选分支 + 透传变量 + 循环上下文 + 取消信号）。 */
-  private branchEvalOptions(node: DagNodeRef, context: ResolveNextNodesContext): BranchEvalOptions {
-    const loopContext = this.loopManager.getLoopIterationContext();
-    return {
-      ...(node.branches === undefined ? {} : { branches: node.branches }),
-      passThroughVars: context.passThroughVars,
-      loopTurn: loopContext.loopTurn,
-      loopMaxIterations: loopContext.loopMaxIterations,
-      ...(context.signal === undefined ? {} : { signal: context.signal }),
+  /** Stage shell 条件：经 `ctx.shell` 执行命令，StageContract 摘要作 stdin。 */
+  private async runStageShell(
+    condition: Extract<CommandConfig, { type: 'shell' }>,
+    contractSummary: string,
+    signal: AbortSignal | undefined,
+  ): Promise<string> {
+    const request: ShellExecRequest = {
+      command: condition.value.command,
+      timeoutMs: this.config.defaultTimeoutMs,
+      workdir: this.cwd,
+      stdin: contractSummary,
+      ...(signal === undefined ? {} : { signal }),
     };
+    const spec = this.ctx.shell.resolve(request);
+    const result = await this.ctx.shell.run(spec);
+    return this.toStdout(result);
   }
 
-  /** 目标节点是否为同 Stage 内的 Step（跨阶段隔离：跨 Stage 目标返回 undefined）。 */
-  private sameStageStep(node: DagNodeRef, targetId: string): DagNodeRef | undefined {
-    const target = this.nodeIndex.get(targetId);
-    if (target === undefined || target.kind !== 'step') {
-      return undefined;
+  /** shell 结果 → stdout；非零退出/超时/中止抛错（由 evaluateStageBranch 捕获降级）。 */
+  private toStdout(result: ShellRunResult): string {
+    if (result.exitCode === 0 && !result.timedOut && !result.aborted) {
+      return result.stdout.text;
     }
-    if (target.stage.id !== node.stage.id) {
-      return undefined;
+    const stderr = result.stderr.text.trim();
+    const stderrSummary = stderr === '' ? '(no stderr)' : stderr;
+    if (result.timedOut) {
+      throw new Error(`stage shell condition timed out: ${stderrSummary}`);
     }
-    return target;
+    const reason = result.aborted
+      ? 'aborted'
+      : `exited with code ${result.exitCode === null ? 'signal' : String(result.exitCode)}`;
+    throw new Error(`stage shell condition ${reason}: ${stderrSummary}`);
   }
 
-  private buildNodeIndex(definition: WorkflowDefinition): void {
-    const definitions = new Map((definition.steps ?? []).map(step => [step.id, step] as const));
+  /**
+   * Stage AI 条件：`ctx.llm.stream` 一次性会话（StageContract 摘要 + 分支条件作 context）。
+   *
+   * 不 fork（Stage 无单一 step 会话可 fork）——一次性会话，StageContract 摘要拼进提示词
+   * 作 context。provider/model 三层回退（条件定义 → 引擎配置 → ctx.llm 目录兜底）。
+   */
+  private async runStageAi(
+    condition: Extract<CommandConfig, { type: 'agent' | 'prompt' | 'skill' | 'mcp' }>,
+    contractSummary: string,
+    signal: AbortSignal | undefined,
+  ): Promise<string> {
+    const value = condition.value as AiConditionValue;
+    const route = await resolveProviderModel(value, this.config, this.ctx.llm);
+    const promptText = this.buildStageBranchPrompt(value.promptText, contractSummary);
+    const message = createUserMessage({
+      source: { kind: 'user' },
+      content: [{ type: 'text', text: promptText }],
+    });
+    const messages: Message[] = [message];
+    const generateOptions: GenerateOptions = {
+      provider: route.provider,
+      model: route.model,
+      messages,
+      ...(signal === undefined ? {} : { signal }),
+    };
+    const assembler = new BlockAssembler();
+    const stream = this.ctx.llm.stream(generateOptions);
+    for await (const chunk of stream as AsyncIterable<StreamChunk>) {
+      assembler.push(chunk);
+    }
+    return textSummary(assembler.blocks());
+  }
+
+  /** 构造 Stage 分支评估提示词（主头部 + 任务 + Stage 契约 context + 返回格式 + 红线）。 */
+  private buildStageBranchPrompt(taskText: string, contractSummary: string): string {
+    const sections: string[] = [STAGE_BRANCH_PROMPT_HEADER];
+    sections.push('');
+    sections.push('## 你的任务');
+    sections.push(taskText);
+    sections.push('');
+    sections.push('## 当前 Stage 完成契约');
+    sections.push(contractSummary);
+    sections.push('');
+    sections.push('## 返回格式');
+    sections.push('请仅返回 JSON，格式为：{"shouldExecute": true} 或 {"shouldExecute": false}，其中 shouldExecute 表示是否应推进到该分支的目标 Stage。');
+    sections.push('');
+    sections.push('## 红线规则');
+    for (const rule of STAGE_BRANCH_RED_LINES) {
+      sections.push(`- ${rule}`);
+    }
+    return sections.join('\n');
+  }
+
+  /**
+   * 汇总 Stage 契约为紧凑文本（供 AI context / shell stdin）。
+   *
+   * 含 Stage 名/状态/产物（stepId → returnPrompt 摘要）/ 透传变量。避免全量 JSON 转储。
+   */
+  private summarizeStageContract(contract: StageContractValue): string {
+    const lines: string[] = [];
+    lines.push(`Stage: ${contract.stageName}（${contract.stageId}）`);
+    lines.push(`状态: ${contract.status}`);
+    if (contract.errorDetail !== undefined) {
+      lines.push(`错误: ${contract.errorDetail}`);
+    }
+    if (contract.artifacts.length > 0) {
+      lines.push('产物:');
+      for (const artifact of contract.artifacts) {
+        const prompt = artifact.returnPrompt === undefined ? '(无文本摘要)' : artifact.returnPrompt;
+        lines.push(`- step ${artifact.stepId} → ${artifact.outputToId}: ${prompt}`);
+      }
+    }
+    const vars = Object.entries(contract.passThroughVars);
+    if (vars.length > 0) {
+      lines.push('透传变量:');
+      for (const [name, value] of vars) {
+        lines.push(`- ${name}: ${value.value}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  private buildStageIndex(definition: WorkflowDefinition): void {
     for (const stage of definition.stages) {
-      this.nodeIndex.set(stage.id, {
-        kind: 'stage',
+      this.stageIndex.set(stage.id, {
         stage,
         id: stage.id,
         name: stage.name,
         branches: stage.branches,
       });
-      for (const step of stage.steps) {
-        // 分离式合并：stage.steps 提供 id + 流控（branches），definition.steps 提供完整定义。
-        const definitionStep = definitions.get(step.id);
-        const merged: MergedStepRef = definitionStep === undefined
-          ? step as MergedStepRef
-          : { ...definitionStep, ...(step.branches === undefined ? {} : { branches: step.branches }) };
-        this.nodeIndex.set(step.id, {
-          kind: 'step',
-          stage,
-          step: merged,
-          id: step.id,
-          name: merged.name ?? step.id,
-          branches: merged.branches,
-        });
-      }
     }
   }
 }

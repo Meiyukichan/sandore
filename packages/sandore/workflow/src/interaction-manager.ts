@@ -43,6 +43,8 @@ export interface InteractionManagerOptions {
   readonly emitQuestion: (entry: PendingQuestionEntry) => void;
   /** 双发 `sandore/permission` 事件（Cordis + Session append）。 */
   readonly emitPermission: (entry: PendingPermissionEntry) => void;
+  /** 双发 `sandore/question_rejected` 事件（Cordis + Session append，缺陷 26）。 */
+  readonly emitQuestionRejected: (entry: PendingQuestionEntry) => void;
   /** 子代理 ask 转接后的答案注回动作。 */
   readonly followup: (childId: string, content: ContentBlock[]) => Promise<void> | void;
 }
@@ -56,6 +58,39 @@ interface QuestionWaiter {
 /** 子代理 ask 标记块起止定界。 */
 const ASK_MARKER_START = '[[SANDORE_ASK]]';
 const ASK_MARKER_END = '[[/SANDORE_ASK]]';
+
+/**
+ * 取消占位答案：`clearPendingInteractions`/`clearAll` 解挂 question waiter 用。
+ *
+ * **必须 resolve（非 reject）**：reject 会冒泡到 `runAndCatch` 把实例落 failed；
+ * resolve 后主循环才能解挂走 paused 分支（缺陷 27 主循环路由修正，随 pause 接入
+ * 一并落地）。空 `answers` 即「已取消」语义占位。
+ */
+const CANCELLED_ANSWER: AskUserQuestionAnswer = { answers: [] };
+
+/**
+ * 拒绝占位答案：`rejectQuestion` 解挂 question waiter 用（缺陷 26）。
+ *
+ * 带 `rejected: true` 标记，引擎 ask 调用处经 {@link isRejectedAnswer} 检测后标
+ * Step failed（非冒泡——reject 会穿出 `runInstance` 落 `runAndCatch` 把整实例标
+ * failed 且 Step 滞留 interacting）。与 {@link CANCELLED_ANSWER}（空 answers、无标记）
+ * 区分：取消 = 续跑占位（缺陷 27 pause 路径），拒绝 = Step failed 语义。
+ */
+const REJECTED_ANSWER: AskUserQuestionAnswer & { readonly rejected: true } = {
+  answers: [],
+  rejected: true,
+};
+
+/**
+ * 检测答案是否为 `rejectQuestion` 的拒绝占位（缺陷 26）。
+ *
+ * 引擎 ask 调用处 await 后调用此守卫：命中则转 Step-failed 语义，否则按正常回答
+ * 处理。占位标记只在内存传递（`rejectQuestion` → waiter resolve → ask await），
+ * 不经 RPC/zod 序列化，故 `rejected` 字段不会被 strip。
+ */
+export function isRejectedAnswer(answer: AskUserQuestionAnswer): answer is AskUserQuestionAnswer & { rejected: true } {
+  return (answer as { rejected?: unknown }).rejected === true;
+}
 
 /** 生成请求关联 ID。 */
 function makeRequestId(): string {
@@ -226,6 +261,33 @@ export class InteractionManager {
   }
 
   /**
+   * 公开拒绝路径：按 requestId 终态化（`status:'rejected'`）+ 删 Map + **resolve**
+   * （非 reject）question waiter 占位答案（{@link REJECTED_ANSWER}），供引擎 ask 调用
+   * 处检测后标 Step failed（缺陷 26）。
+   *
+   * 镜像 {@link finishQuestion} 的幂等清理，但 resolve 等待 Promise（非 reject——避免
+   * 冒泡 `runAndCatch` 把整实例落 failed 且 Step 滞留 interacting）。终态条目入
+   * `resolvedEntries`（`status 'rejected'`），不进快照（与 `finishQuestion` 一致：
+   * 历史由 `userMessages` 与 `executedSteps` 承载）。双发 `sandore/question_rejected`
+   * 事件供 UI 刷新。未知/已终态 requestId 抛 `INVALID_OPERATION`。
+   * @param requestId - 待拒绝请求关联 ID。
+   */
+  async rejectQuestion(requestId: string): Promise<void> {
+    const entry = this.pendingQuestions.get(requestId);
+    if (entry === undefined) {
+      throw new SandoreError(`pending question '${requestId}' not found or already replied`, 'INVALID_OPERATION');
+    }
+    this.pendingQuestions.delete(requestId);
+    const rejected: PendingQuestionEntry = { ...entry, status: 'rejected' };
+    this.resolvedEntries.push(rejected);
+    this.syncState();
+    const waiter = this.questionWaiters.get(requestId);
+    this.questionWaiters.delete(requestId);
+    waiter?.resolve(REJECTED_ANSWER);
+    this.deps.emitQuestionRejected(rejected);
+  }
+
+  /**
    * 兼容回复路径：按 reply 取值终态化权限条目（once/always → replied，reject → rejected）。
    *
    * 不实现 permissionMode/自动审批；未知或已回复的 requestId 抛 `INVALID_OPERATION`。
@@ -278,6 +340,12 @@ export class InteractionManager {
       createdAt: new Date().toISOString(),
     };
     const answer = await this.ask({ entry, ...(input.signal === undefined ? {} : { signal: input.signal }) });
+    if (isRejectedAnswer(answer)) {
+      // 问答被拒绝（缺陷 26）：抛 STEP_EXECUTION 让 StageExecutor 的 try/catch 把
+      // 该 Step 标 failed（onStepFailed 钩子发 sandore/step-failed → result 'failed' →
+      // 引擎 L814 Stage/实例 failed）。引擎级 ask 路径在 workflow-engine.ts 自行处理。
+      throw new SandoreError(`question '${requestId}' rejected`, 'STEP_EXECUTION');
+    }
     await this.deps.followup(input.childId, [{ type: 'text', text: JSON.stringify(answer) }]);
     return { delegated: true };
   }
@@ -306,6 +374,71 @@ export class InteractionManager {
     const waiter = this.questionWaiters.get(entry.requestId);
     this.questionWaiters.delete(entry.requestId);
     waiter?.reject(error);
+  }
+
+  /**
+   * 按 stepId 批量清理 pending 交互（缺陷 27：供 pause/retry 调用）。
+   *
+   * 遍历 `pendingQuestions`/`pendingPermissions`，匹配 `entry.stepId`（终态化条目
+   * → 入 `resolvedEntries`（status `'rejected'`）+ 删 Map + 删 `questionWaiters` 并
+   * **resolve**「已取消」占位答案——reject 会冒泡到 `runAndCatch` 把实例落 failed，
+   * resolve 后主循环才能解挂走 paused 分支）。`syncState` 自动重持久化 → 快照/UI 自愈。
+   * @param stepId - 待清理 Step 的定义 id。
+   */
+  clearPendingInteractions(stepId: string): void {
+    if (this.cancelMatching(entry => entry.stepId === stepId)) {
+      this.syncState();
+    }
+  }
+
+  /**
+   * 全量清理 pending 交互（崩溃恢复用，对齐基准 recover 步骤 B `clearAll`）。
+   *
+   * 与 {@link clearPendingInteractions} 同语义但无 stepId 过滤：终态化全部 pending
+   * 条目 + resolve 全部 waiter 占位答案。**始终** `syncState`（即使 Maps 为空），
+   * 以空 pending 覆盖快照中残留的 stale `pendingInteractions`（缺陷 9 B / 缺陷 27
+   * 崩溃恢复路径：InteractionManager 重建时 Maps 为空、不 hydrate，ghost 条目留在
+   * 快照会被 UI 复弹且 `replyQuestion` 抛 `INVALID_OPERATION`）。
+   */
+  clearAll(): void {
+    this.cancelMatching(() => true);
+    this.syncState();
+  }
+
+  /**
+   * 批量取消匹配的 pending 交互（{@link clearPendingInteractions}/`clearAll` 共用）。
+   *
+   * 终态化匹配条目（入 `resolvedEntries`，status `'rejected'`）+ 删 Map +
+   * resolve（非 reject）question waiter 占位答案。不调用 `syncState`（由调用方按需调用，
+   * `clearAll` 始终调用以覆盖 stale 快照，`clearPendingInteractions` 仅在变更时调用）。
+   * @returns 是否有匹配并清理的条目（供调用方决定是否 `syncState`）。
+   */
+  private cancelMatching(match: (entry: PendingInteractionEntry) => boolean): boolean {
+    let changed = false;
+    // questions：终态化 + 删 Map + resolve waiter 占位答案（非 reject，避免冒泡 failed）。
+    for (const [requestId, entry] of this.pendingQuestions) {
+      if (!match(entry)) {
+        continue;
+      }
+      this.pendingQuestions.delete(requestId);
+      this.resolvedEntries.push({ ...entry, status: 'rejected' });
+      const waiter = this.questionWaiters.get(requestId);
+      if (waiter !== undefined) {
+        this.questionWaiters.delete(requestId);
+        waiter.resolve(CANCELLED_ANSWER);
+      }
+      changed = true;
+    }
+    // permissions：终态化 + 删 Map（无 waiter）。
+    for (const [requestId, entry] of this.pendingPermissions) {
+      if (!match(entry)) {
+        continue;
+      }
+      this.pendingPermissions.delete(requestId);
+      this.resolvedEntries.push({ ...entry, status: 'rejected' });
+      changed = true;
+    }
+    return changed;
   }
 
   /**

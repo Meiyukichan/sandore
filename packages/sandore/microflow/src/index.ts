@@ -11,6 +11,7 @@ export * from './file-utils.ts';
 export * from './branch-evaluator.ts';
 export * from './finalize-manager.ts';
 export * from './loop-manager.ts';
+export * from './rules-resolver.ts';
 export * from './step-runner.ts';
 export * from './stage-executor.ts';
 export * from './subagents.ts';
