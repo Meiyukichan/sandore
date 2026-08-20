@@ -25,5 +25,5 @@ docs/engine/dynamic-workflow-engine.md
 diff/
 
 # Build artifacts — packages rebuild lib/ on demand via `pnpm -r build` (publish pipeline)
-packages/*/lib/
+packages/**/lib/
 *.tsbuildinfo
