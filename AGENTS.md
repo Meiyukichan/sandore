@@ -7,7 +7,7 @@
 - DSH 源码路径 = `D:\projects-code\llm\sandore`
 
 # 测试启动（开发/生产端口隔离）
-- 生产实例（`dsh --profile web`，端口 3080）不加载 sandore 插件，保持干净
+- 生产实例（`dsh(这个文件应该在DSH源码路径下面) --profile web`，端口 3080）不加载 sandore 插件，保持干净
 - sandore 插件只挂载在开发 profile：`~/.dsh/profiles/dev/cordis.patch.yml`
 - 测试实例用另一个端口启动：`dsh --profile dev --port 3090`，访问 http://127.0.0.1:3090
 - 开发流程：改 sandore 代码 → 重启 dev 实例（3090）即可，生产实例完全不受影响
