@@ -276,20 +276,38 @@ describe('RecoveryManager.retryStep validation', () => {
     }
   });
 
-  it('throws INVALID_OPERATION for a failed non-subagent (shell/prompt) step with no side effects', async () => {
-    for (const type of ['shell', 'prompt'] as const) {
-      const step = makeFailedStep({
-        command: { type, value: type === 'shell' ? { command: 'echo hi' } : { promptText: 'do it' } } as ExecutedStep['command'],
-        sessionMeta: { childId: `step-1-${type}`, synthetic: true, command: type },
-      });
-      const harness = makeHarness({ step, status: 'failed' });
-      await expect(harness.manager.retryStep('step-1', 'continue', 'msg')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-      // 无虚假副作用：不 followup、不发 step-retried、不追加 retryHistory、实例保持 failed。
-      expect(harness.followups).toHaveLength(0);
-      expect(harness.retried).toHaveLength(0);
-      expect(harness.getState().executedSteps[0]?.retryHistory).toBeUndefined();
-      expect(harness.getState().status).toBe('failed');
-    }
+  it('throws INVALID_OPERATION for a failed non-subagent (shell) step with no side effects', async () => {
+    const type = 'shell' as const;
+    const step = makeFailedStep({
+      command: { type, value: { command: 'echo hi' } } as ExecutedStep['command'],
+      sessionMeta: { childId: `step-1-${type}`, synthetic: true, command: type },
+    });
+    const harness = makeHarness({ step, status: 'failed' });
+    await expect(harness.manager.retryStep('step-1', 'continue', 'msg')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    // 无虚假副作用：不 followup、不发 step-retried、不追加 retryHistory、实例保持 failed。
+    expect(harness.followups).toHaveLength(0);
+    expect(harness.retried).toHaveLength(0);
+    expect(harness.getState().executedSteps[0]?.retryHistory).toBeUndefined();
+    expect(harness.getState().status).toBe('failed');
+  });
+
+  it('retries a failed prompt step with continue mode (决策 D3: prompt 为真实子代理，可重试)', async () => {
+    const harness = makeHarness({
+      step: makeFailedStep({
+        command: { type: 'prompt', value: { promptText: 'do it' } } as ExecutedStep['command'],
+        sessionMeta: { childId: 'child-1', synthetic: false, command: 'prompt' },
+      }),
+    });
+    await harness.manager.retryStep('step-1', 'continue', 'please retry');
+
+    // prompt 与 agent/skill/mcp 同走子代理续跑：followup 原 childId + retryHistory 记录。
+    expect(harness.followups).toHaveLength(1);
+    expect(harness.followups[0]?.childId).toBe('child-1');
+    expect(harness.retried).toEqual([{ stepId: 'step-1', mode: 'continue', name: 'step-1' }]);
+    const step = newSegmentOf(harness.getState());
+    expect(step?.sessionMeta?.childId).toBe('child-1');
+    expect(step?.retryHistory?.[0]?.mode).toBe('continue');
+    expect(step?.retryHistory?.[0]?.userMessage).toBe('please retry');
   });
 
   it('returns a structured no-op for a completed instance', async () => {

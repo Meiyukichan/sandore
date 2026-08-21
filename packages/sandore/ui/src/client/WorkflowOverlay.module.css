@@ -216,19 +216,12 @@
   gap: 6px;
 }
 
-/* 批量恢复孤儿实例的结果摘要/错误内联提示（listToolbar 下方一行）。 */
-.recoverMessage {
-  flex: none;
-  margin: 4px 0 0;
-  padding: 0;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsh-alias-label-caption, var(--dsw-alias-label-caption));
-}
-
-.search {
+/* 搜索框与新增按钮（Button sm，28px）等高：覆盖 Input 原子默认 32px 高。 */
+.listToolbar .search {
   flex: 1;
   min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
 }
 
 .search input {

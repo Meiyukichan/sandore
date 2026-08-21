@@ -169,14 +169,19 @@ interface DraftAnswer {
   skipped: boolean
 }
 
-function QuestionCard({ entry, steps, t, pending, onReply, onReject }: {
+/** QuestionCard 接收的 props（讨论页接管面板 / 主会话 composer 问答卡共用）。 */
+export interface QuestionCardProps {
   readonly entry: PendingQuestionEntry
   readonly steps: readonly ExecutedStep[]
   readonly t: TranslateNS<'sandore'>
   readonly pending: boolean
   readonly onReply: (requestId: string, answers: AnswerItem[]) => void
   readonly onReject: (requestId: string) => void
-}) {
+  /** 实例标注（主会话 composer 多实例聚合时展示 `[workflowName]` 前缀；缺省不显示）。 */
+  readonly workflowLabel?: string | undefined
+}
+
+export function QuestionCard({ entry, steps, t, pending, onReply, onReject, workflowLabel }: QuestionCardProps) {
   const questions = entry.payload.questions
   const stepName = stepNameOf(steps, entry.stepId)
   const [index, setIndex] = useState(0)
@@ -288,6 +293,7 @@ function QuestionCard({ entry, steps, t, pending, onReply, onReject }: {
         <header className={css.qHeader}>
           <div className={css.qHeadingBlock}>
             <div className={css.qEyebrow}>
+              {workflowLabel !== undefined && <span className={css.qWorkflowTag}>{workflowLabel}</span>}
               {question.header ?? t('run.question.eyebrow', { step: stepName })}
             </div>
             <h2 className={css.qTitle}>{question.question}</h2>

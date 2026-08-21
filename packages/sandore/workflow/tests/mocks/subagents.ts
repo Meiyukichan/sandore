@@ -67,6 +67,11 @@ export class FakeSubagents implements SubagentRuntime {
   ) {}
 
   async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
+    // 本 mock 有意不校验 `spec.provider` 是否为已注册的 subagent provider 名（宽松接受
+    // 任意字符串，供各 spec 以任意 provider 启动）。真实 DSH 只认注册名（fork/spawn），
+    // 把模型 provider id 当 subagent provider 名传入会在运行时报
+    // `no subagent provider registered for "<model provider id>"`——该约束由
+    // step-runner.spec.ts 对 `continuableStarts[0].provider === 'fork'` 的显式断言覆盖。
     this.continuableStarts.push(spec);
     const index = this.continuableStarts.length;
     const childId = `child-${index}`;

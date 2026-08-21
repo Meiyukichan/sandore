@@ -19,7 +19,7 @@
  * followup/续跑 → `resumeExecution`。仅 `failed` Step 可重试（completed 实例/Step
  * 返回无害 no-op），执行中抛 `INVALID_OPERATION`。
  *
- * 崩溃恢复：`recover()` 按快照 `executedSteps` 分类处理——合成 session（shell/prompt）
+ * 崩溃恢复：`recover()` 按快照 `executedSteps` 分类处理——合成 session（shell）
  * 标 `failed`、仅对第一个 `running`/`interacting` 子代理 Step `followup` 冷恢复（与引擎
  * 单步续跑收口一致）、`paused` 交由引擎从 `pausedChildIds` 重建登记表等待手动 resume。
  * @module @deepseek-ai/dsh-sandore-workflow/src/recovery-manager
@@ -56,7 +56,7 @@ export interface RevertBoundaryOption {
 export interface RecoverResult {
   /** 存在可续跑的子代理 Step（running/interacting 已 followup 冷恢复）。 */
   readonly hasResume: boolean;
-  /** 存在合成 session Step（shell/prompt，已标 failed，实例不可恢复续跑）。 */
+  /** 存在合成 session Step（shell，已标 failed，实例不可恢复续跑）。 */
   readonly hasFailure: boolean;
 }
 
@@ -97,7 +97,7 @@ function textBlock(text: string): ContentBlock[] {
   return [{ type: 'text', text }];
 }
 
-/** 合成新子代理 SessionId（与 shell/prompt 的 `synthesizeChildId` 同规则）。 */
+/** 合成新子代理 SessionId（与 shell 的 `synthesizeChildId` 同规则）。 */
 export function synthesizeChildId(stepId: string): string {
   const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
   return `step-${stepId}-${execId}`;
@@ -231,10 +231,10 @@ export class RecoveryManager {
     if (step.status !== 'failed') {
       throw new SandoreError(`step '${stepId}' is '${step.status}', only failed steps can be retried`, 'INVALID_OPERATION');
     }
-    // shell/prompt 合成 session 无真实子代理可续跑：前置拦截（与 recover 分类语义一致），
+    // shell 合成 session 无真实子代理可续跑：前置拦截（与 recover 分类语义一致），
     // 避免 commitRunningStep/emitStepRetried/retryHistory 产生虚假重试历史与事件。
     if (!isSubagentStep(step)) {
-      throw new SandoreError(`step '${stepId}' is not a resumable subagent step (shell/prompt cannot be retried)`, 'INVALID_OPERATION');
+      throw new SandoreError(`step '${stepId}' is not a resumable subagent step (shell cannot be retried)`, 'INVALID_OPERATION');
     }
 
     // 1. 以 failed 段为基底追加新段（保留旧 failed 段定格快照）+ RetryRecord 入新段 retryHistory。
@@ -337,7 +337,7 @@ export class RecoveryManager {
    * 单实例恢复例程的 Step 分类处理（崩溃恢复）。
    *
    * 遍历快照 `executedSteps`：`running`/`interacting` 的子代理 Step 经 `followup`
-   * 冷恢复（absent child 自动从持久化 Session 恢复）；合成 session（shell/prompt）
+   * 冷恢复（absent child 自动从持久化 Session 恢复）；合成 session（shell）
    * 无真实子代理，标记 `failed`（不可恢复）；`completed`/`failed`/`paused` 无需处理
    * （paused 登记表由引擎从 `pausedChildIds` 重建，等待手动 resume）。
    * @returns 分类结果（是否有可续跑子代理 / 是否有合成 session 失败）。
@@ -347,7 +347,7 @@ export class RecoveryManager {
     const coldResumePrompt = '请从崩溃前的断点继续完成当前任务。';
     const running = state.executedSteps.filter(step => step.status === 'running' || step.status === 'interacting');
 
-    // shell/prompt 合成 session：子进程已丢失，标 failed（不可恢复）。
+    // shell 合成 session：子进程已丢失，标 failed（不可恢复）。
     let hasFailure = false;
     for (const step of running) {
       if (isSubagentStep(step)) {
@@ -441,10 +441,10 @@ function stepIdOf(step: ExecutedStep): string {
   return step.stepId ?? step.id;
 }
 
-/** 判定 Step 是否为可续接子代理 Step（agent/skill/mcp，非 shell/prompt 合成 session）。 */
+/** 判定 Step 是否为可续接子代理 Step（agent/skill/mcp/prompt，非 shell 合成 session）。 */
 function isSubagentStep(step: ExecutedStep): boolean {
   const command = step.sessionMeta?.command ?? step.command?.type;
-  return command === 'agent' || command === 'skill' || command === 'mcp';
+  return command === 'agent' || command === 'skill' || command === 'mcp' || command === 'prompt';
 }
 
 /** 清除上一轮重试的残留字段（暂停细节/门禁评估现场；保留 sessionMessages 供消息框展示）。 */

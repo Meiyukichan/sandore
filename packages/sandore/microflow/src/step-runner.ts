@@ -4,12 +4,13 @@
  * shell Step 走 `ctx.shell.resolve(request)` → `ctx.shell.run(spec)`（简单命令，
  * 无 stdin/env 注入需求）；存在 stdin（`inputFrom` 解析到内容）或非空透传变量
  * 注入需求时改走 `ctx.subprocess.spawn()`（`stdin: { data }` 写 JSON、`env` 合并）。
- * prompt Step 走三层 provider/model 回退（Step 定义 → 引擎 Config → `ctx.llm`
- * 目录兜底）后 `ctx.llm.stream()`，聚合 block-end 为 `ContentBlock[]`；agent /
- * skill / mcp 三类走可续接子代理（`startContinuable` → `ctx.agents.get(childId)`
- * → settle（`awaitSubagentSettlement` 对齐 DSH `subagent/end`）→ final output），agent 定义
- * `agentParamsTemplate` 时先 `fillParams` 临时会话填充「### 当前Step参数」子节。所有
- * 提示词/命令构建前先 `replacePassThroughVars` 替换 `${xxx}` 透传变量（含循环上下文变量）。
+ * prompt/agent/skill/mcp 四类 AI 会话统一走可续接子代理（设计决策 D3：
+ * `ctx.subagents.startContinuable` → `ctx.agents.get(childId)` → settle
+ * （`awaitSubagentSettlement` 对齐 DSH `subagent/end`）→ final output）——prompt
+ * 与 agent/skill/mcp 行为对齐（真实子代理会话：可暂停/恢复/重试/ask 转接/会话可点）。
+ * agent 定义 `agentParamsTemplate` 时先 `fillParams` 临时会话填充
+ * 「### 当前Step参数」子节。所有提示词/命令构建前先 `replacePassThroughVars`
+ * 替换 `${xxx}` 透传变量（含循环上下文变量）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-runner
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -36,8 +37,11 @@ type AgentCommand = Extract<CommandConfig, { type: 'agent' }>;
 type SkillCommand = Extract<CommandConfig, { type: 'skill' }>;
 type McpCommand = Extract<CommandConfig, { type: 'mcp' }>;
 
-/** 走可续接子代理的三种命令类型（与 prompt 的临时会话路径区分）。 */
+/** 走可续接子代理的命令类型（agent/skill/mcp/prompt；仅 shell 除外）。 */
 type SubagentCommand = AgentCommand | SkillCommand | McpCommand;
+
+/** 可续接子代理命令的 type 判别值（`collectSubagentOutput`/`resumeSubagent` 的 commandType 取值域）。 */
+type SubagentCommandType = 'agent' | 'skill' | 'mcp' | 'prompt';
 
 /** prompt/agent/skill/mcp 四种命令的 value（provider/model 三层回退的取值域）。 */
 type ModelRoutedValue =
@@ -60,6 +64,20 @@ export interface StepRunnerConfig {
   readonly defaultTimeoutMs: number;
   readonly defaultProvider?: string;
   readonly defaultModel?: string;
+  /**
+   * 可续接子代理的 DSH subagent provider 注册名（`startContinuable` 的 `provider`
+   * 参数），与模型路由解耦：子代理的模型路由经 `request.agentOptions`
+   * （`{ provider, model }`）承载（DSH `continuation.ts` 以
+   * `request.agentOptions?.provider ?? parent.options.provider` 解析）。DSH 默认
+   * bundle 已注册 `fork`（`subagent-fork-in-process`，支持 continuable：
+   * prepareContinuable + startContinuable + followup + interrupt + cold resume），
+   * 缺省即 `'fork'`，运行 agent/prompt/skill/mcp Step **无需任何额外 subagent
+   * provider 配置**。如需换用其他已注册 provider（如 `'spawn'`）可在此覆盖。
+   * **注意：模型 provider id（如 `xiaomi-token-plan-cn`）绝不能填到这里**——DSH 只
+   * 认注册的 subagent provider 名，否则运行时报
+   * `no subagent provider registered for "<model provider id>"`。
+   */
+  readonly subagentProvider?: string;
   /** 工作流级 skills 名称数组（skill 类型名称校验数据源）。 */
   readonly skills?: readonly string[];
   /** 工作流级 mcps 名称数组（mcp 类型名称校验数据源）。 */
@@ -128,7 +146,7 @@ export interface StepRunRequest {
   readonly resolvedRules?: Readonly<Record<string, string>>;
 }
 
-/** 单 Step 执行结果附带的会话元数据（agent/skill/mcp 返回真实 childId）。 */
+/** 单 Step 执行结果附带的会话元数据（prompt/agent/skill/mcp 返回真实 childId）。 */
 export interface StepRunSessionMeta {
   readonly childId?: string;
   readonly synthetic: boolean;
@@ -163,6 +181,29 @@ const DELEGATED_ASK_MARKER = '[[SANDORE_ASK]]';
 
 /** 子代理 ask 转接最大轮数（超过后按普通输出处理，防止无限重问）。 */
 const MAX_DELEGATED_ASK_ROUNDS = 3;
+
+/**
+ * 子代理「向用户提问」引导节（选 C：子代理禁用 DSH `ask_user_question` 工具）。
+ *
+ * 子代理经 `startContinuable`（parent=宿主主代理）创建时是 root（DSH 用私有 scope
+ * 作 ownerCtx），绕过 DELEGATED_CALLER 守卫——若可直调 `ask_user_question`，
+ * `question/requested` 帧会路由到子代理会话（childId），主会话看不到选择框 → 无人
+ * 回答 → 子代理 turn 挂起 → 工作流卡死。故随 `toolFilter: { deny: ['ask_user_question'] }`
+ * 一并注入本引导：问题统一走 `[[SANDORE_ASK]]` 标记块转接（delegateSubagentAsk →
+ * 引擎级 ask 在主会话可见可答 → 答案 followup 注回，返回结构与 DSH ask_user 一致；
+ * `options` 省略时用户可自由输入）。仅随子代理提示词注入（buildPromptText 只服务
+ * prompt/agent/skill/mcp 四路子代理，不涉及 branch-evaluator/loop-manager 的临时会话）。
+ */
+const ASK_GUIDANCE_SECTION = `## 向用户提问
+
+当你需要向用户确认或提问时，不要调用 ask_user_question 工具（该工具已被禁用）。
+改为在你的最终输出中附带一个 [[SANDORE_ASK]] 标记块，JSON 载荷格式如下：
+
+[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"你的问题","options":[{"label":"选项A"},{"label":"选项B"}]}]}[[/SANDORE_ASK]]
+
+- questions 为问题数组，每题必须有唯一 id 与 question 文本；
+- options 可省略：省略时用户可自由输入文本回答；提供时用户从选项中选择（每题可选 multi_select 允许多选）；
+- 标记块会转接到主会话向用户提问，问题随最终输出一并返回。`;
 
 /** 判定 final output 是否含子代理 ask 转接标记块（仅字符串检测，不做 JSON/schema 校验）。 */
 function hasDelegatedAskMarker(output: readonly ContentBlock[]): boolean {
@@ -255,8 +296,11 @@ function buildTaskText(
 }
 
 /**
- * 构建结构化提示词（主头部 + `## 你的任务` + `## 参考信息` + 可选
- * `### 当前Step参数` + `## 前置Steps输出与产物` + 可选 `## 任务规则`）。
+ * 构建结构化提示词（主头部 + 子代理「向用户提问」引导 + `## 你的任务` + `## 参考信息` +
+ * 可选 `### 当前Step参数` + `## 前置Steps输出与产物` + 可选 `## 任务规则`）。
+ *
+ * 「向用户提问」引导（选 C：禁用 ask_user_question 工具，改走 `[[SANDORE_ASK]]` 标记块
+ * 转接）固定注入于主头部之后；prompt/agent/skill/mcp 四路 AI 提示词共用本函数。
  *
  * `## 任务规则` 节位置对齐基准 `workflow-step.ts` L615-619（置于 `## 前置Steps
  * 输出与产物` 之后）；仅当 `resolvedRules` 非空时渲染，逐键输出
@@ -271,6 +315,8 @@ function buildPromptText(
 ): string {
   const sections: string[] = [];
   sections.push(PROMPT_MAIN_HEADER);
+  sections.push('');
+  sections.push(ASK_GUIDANCE_SECTION);
   sections.push('');
   sections.push('## 你的任务');
   sections.push(taskText);
@@ -365,14 +411,26 @@ function resolveShellStdin(step: WorkflowStep, previousOutputs: readonly Previou
  * 单 Step 执行器。
  *
  * 构造时绑定 `ctx` 与引擎级配置；`run()` 按 `step.command.type` 分发到
- * shell/prompt/agent/skill/mcp 五条路径。成功返回 `{ output: ContentBlock[] }`，
- * 失败抛 `SandoreError`（超时 → `STEP_TIMEOUT`，其余 → `STEP_EXECUTION`）。
+ * shell 与 prompt/agent/skill/mcp 两条路径（决策 D3：除 shell 外全部经可续接子代理）。
+ * 成功返回 `{ output: ContentBlock[] }`，失败抛 `SandoreError`
+ * （超时 → `STEP_TIMEOUT`，其余 → `STEP_EXECUTION`）。
  */
 export class StepRunner {
+  /**
+   * 可续接子代理的 DSH subagent provider 注册名（见
+   * {@link StepRunnerConfig.subagentProvider}）；缺省 `'fork'`（DSH base bundle 已注册）。
+   */
+  private readonly subagentProvider: string;
+
   constructor(
     private readonly ctx: Context,
     private readonly config: StepRunnerConfig,
-  ) {}
+  ) {
+    // 方案 2：复用 DSH 默认 fork subagent provider（支持 continuable），provider 参数
+    // 与模型路由解耦——模型路由经 request.agentOptions 传给子代理。缺省 'fork' 即满足
+    // agent/prompt/skill/mcp Step，无需任何额外 subagent provider 配置。
+    this.subagentProvider = config.subagentProvider ?? 'fork';
+  }
 
   /** 执行单个 Step；失败抛 `SandoreError`。 */
   async run(request: StepRunRequest): Promise<StepRunResult> {
@@ -384,10 +442,11 @@ export class StepRunner {
       case 'shell':
         return await this.runShell(command, request);
       case 'prompt':
-        return await this.runPrompt(command, request);
       case 'agent':
       case 'skill':
       case 'mcp':
+        // 设计决策 D3：除 shell 外，prompt/agent/skill/mcp 全部经可续接子代理
+        // （`startContinuable`）运行——prompt 与 agent/skill/mcp 行为对齐。
         return await this.runSubagent(command, request);
       default:
         // 穷尽 5 类型后 `command` 已收窄为 never；此处仅防御运行期注入的未知命令类型。
@@ -451,42 +510,20 @@ export class StepRunner {
     return step.timeout === undefined ? this.config.defaultTimeoutMs : step.timeout * 60_000;
   }
 
-  private async runPrompt(command: PromptCommand, request: StepRunRequest): Promise<StepRunResult> {
-    const route = await this.resolveProviderModel(command.value);
-    const taskText = buildTaskText(
-      command,
-      resolvePassThroughVars(request.passThroughVars, request.loopTurn, request.loopMaxIterations),
-      this.config.skills,
-      this.config.mcps,
-      this.config.agents,
-    );
-    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, undefined, request.resolvedRules);
-    const message = createUserMessage({
-      source: { kind: 'user' },
-      content: [{ type: 'text', text: promptText }],
-    });
-    const options: GenerateOptions = {
-      provider: route.provider,
-      model: route.model,
-      messages: [message],
-      ...(request.signal === undefined ? {} : { signal: request.signal }),
-    };
-    const assembler = new BlockAssembler();
-    for await (const chunk of this.ctx.llm.stream(options)) {
-      assembler.push(chunk);
-    }
-    const output = assembler.blocks();
-    const finish = assembler.finish;
-    if (finish.kind === 'error') {
-      throw new SandoreError(`prompt step failed: ${finish.failure.message}`, 'STEP_EXECUTION');
-    }
-    if (finish.kind === 'aborted') {
-      throw new SandoreError(`prompt step aborted: ${finish.failure.message}`, 'STEP_EXECUTION');
-    }
-    return { output };
-  }
-
-  private async runSubagent(command: SubagentCommand, request: StepRunRequest): Promise<StepRunResult> {
+  /**
+   * 经可续接子代理执行 prompt/agent/skill/mcp Step（设计决策 D3：AI 会话一律
+   * `startContinuable` 真实子代理，与临时 `ctx.llm.stream()` 区分）。
+   *
+   * agent 定义 `agentParamsTemplate` 时先 `fillParams` 临时会话填充
+   * 「### 当前Step参数」；prompt 无参数模板（paramsText 恒 undefined）。随后三层
+   * provider/model 回退 → 构建结构化提示词 → `startContinuable`（parent=宿主主代理；
+   * subagent provider 名与模型路由解耦——provider 参数用 DSH 注册的 `fork`，模型
+   * 路由经 `request.agentOptions`；**toolFilter deny 禁用 ask_user_question**，见
+   * {@link ASK_GUIDANCE_SECTION}——问题统一走 `[[SANDORE_ASK]]` 标记块转接）→
+   * `onChildStarted` 上抛真实 childId → `collectSubagentOutput` 等 settle 终态
+   * （completed/aborted/error 路由）+ final output + ask 转接。
+   */
+  private async runSubagent(command: SubagentCommand | PromptCommand, request: StepRunRequest): Promise<StepRunResult> {
     const paramsText =
       command.type === 'agent' && command.value.agentParamsTemplate !== undefined
         ? await this.fillParams(command, command.value.agentParamsTemplate, request)
@@ -501,12 +538,27 @@ export class StepRunner {
     );
     const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, paramsText, request.resolvedRules);
     const started = await this.ctx.subagents.startContinuable({
-      provider: route.provider,
+      // `provider` 是 DSH subagent provider 注册名（固定 `this.subagentProvider`，
+      // 缺省 'fork'，DSH base bundle 已注册），与模型路由完全解耦：模型路由经
+      // `request.agentOptions`（{ provider, model }）承载（DSH continuation.ts：
+      // `request.agentOptions?.provider ?? parent.options.provider`）。不要把模型
+      // provider id（`route.provider`）填到这里——DSH 只认注册的 subagent provider
+      // 名（fork/spawn），否则运行时报
+      // `no subagent provider registered for "<model provider id>"`。
+      provider: this.subagentProvider,
       label: `step ${request.step.id}`,
       request: {
         prompt: [{ type: 'text', text: promptText }],
         parent: this.resolveParent(),
         agentOptions: { provider: route.provider, model: route.model },
+        // 选 C：子代理禁用 DSH `ask_user_question` 工具。sandore 子代理经
+        // `startContinuable`（parent=宿主主代理）创建时是 root（DSH 用私有 scope 作
+        // ownerCtx），绕过 DELEGATED_CALLER 守卫——若可直调 ask_user，question 帧会
+        // 路由到子代理会话（childId），主会话看不到选择框 → 无人回答 → 子代理 turn
+        // 挂起 → 工作流卡死。toolFilter deny 移除该全局工具后，问题统一走提示词引导的
+        // `[[SANDORE_ASK]]` 标记块 → delegateSubagentAsk 转接（引擎级 ask 在主会话
+        // 可见可答 → 答案 followup 注回，返回结构与 DSH ask_user 一致）。
+        toolFilter: { deny: ['ask_user_question'] },
       },
       signal: request.signal ?? new AbortController().signal,
     });
@@ -522,7 +574,7 @@ export class StepRunner {
    * 重新等待子代理 settle 并取回最终 assistant 输出（等价于首次执行时的输出收集尾段）。
    */
   async resumeSubagent(
-    commandType: 'agent' | 'skill' | 'mcp',
+    commandType: SubagentCommandType,
     childId: string,
     stepId: string,
     stageId: string,
@@ -545,7 +597,7 @@ export class StepRunner {
    * 场景；此回退无法区分 abort，不适用于暂停语义——暂停路径必经注入的 settle）。
    */
   private async collectSubagentOutput(
-    commandType: 'agent' | 'skill' | 'mcp',
+    commandType: SubagentCommandType,
     childId: string,
     stepId: string,
     stageId: string,

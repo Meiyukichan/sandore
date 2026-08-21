@@ -1,7 +1,9 @@
 /**
  * step-runner.ts（StepRunner）的单元测试：shell 成功/非零退出/超时/中止/stdin
- * 注入，prompt 成功/终端失败/provider-model 三层回退/透传变量替换，agent 可续接
- * 子代理/fillParams，skill/mcp 名称校验与前缀。
+ * 注入，prompt 经可续接子代理成功/终端失败/provider-model 三层回退/透传变量替换，
+ * agent/skill/mcp 可续接子代理/fillParams，skill/mcp 名称校验与前缀，子代理 ask
+ * 转接（[[SANDORE_ASK]] 标记块）与选 C 引导（toolFilter 禁用 ask_user_question 工具
+ * + 提示词注入标记块说明）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-runner.spec
  */
 import { Context } from '@deepseek-ai/cordis';
@@ -367,24 +369,34 @@ describe('StepRunner shell', () => {
 });
 
 describe('StepRunner prompt', () => {
-  it('aggregates block-end into ContentBlock[] on success', async () => {
-    const { llm, runner } = harness();
-    llm.providers.push({ id: 'p', name: 'Provider' });
-    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('summary');
+  it('runs via continuable subagent and returns sessionMeta with real childId', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'summary' }]));
+    agents.register(child);
 
     const result = await runner.run(request(promptStep()));
+
+    // 决策 D3：prompt 经 startContinuable 拉起可续接子代理（非临时 llm.stream）。
+    expect(subagents.continuableStarts).toHaveLength(1);
+    expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).toContain('summarize the input');
     expect(result.output).toEqual([{ type: 'text', text: 'summary' }]);
+    expect(result.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'prompt' });
   });
 
-  it('throws STEP_EXECUTION with failure.message on finish error', async () => {
-    const { llm, runner } = harness();
-    llm.providers.push({ id: 'p', name: 'Provider' });
-    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('', { kind: 'error', failure: { message: 'model exploded', code: 'X' } });
+  it('throws STEP_EXECUTION when the subagent settle errors (model failure → failed)', async () => {
+    const child = new FakeAgent('child-1');
+    const ctrl = settleController();
+    const { agents, runner } = settleHarness(ctrl);
+    agents.register(child);
 
-    await expect(runner.run(request(promptStep()))).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
-    await expect(runner.run(request(promptStep()))).rejects.toThrow(/model exploded/);
+    const runP = runner.run(request(promptStep()));
+    ctrl.settle('child-1', 'error');
+    await expect(runP).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
   });
 
   it('throws STEP_EXECUTION with no LLM provider available when directory is empty', async () => {
@@ -393,32 +405,88 @@ describe('StepRunner prompt', () => {
   });
 
   it('prefers the step definition providerId over config and directory', async () => {
-    const { llm, runner } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'b', defaultModel: 'b-model' });
-    llm.providers.push({ id: 'c', name: 'Directory' });
-    llm.models.set('c', [{ provider: 'c', id: 'c-model', name: 'Directory Model' }]);
-    llm.streamHandler = () => textChunks('ok');
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'b',
+      defaultModel: 'b-model',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
 
     await runner.run(request(promptStep({ providerId: 'a', modelId: 'a-model' })));
 
-    expect(llm.calls[0]?.provider).toBe('a');
-    expect(llm.calls[0]?.model).toBe('a-model');
+    // provider 参数是 DSH subagent provider 注册名（缺省 'fork'），与模型路由解耦；
+    // 模型 provider 经 agentOptions 承载。
+    expect(subagents.continuableStarts[0]?.provider).toBe('fork');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.provider).toBe('a');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.model).toBe('a-model');
   });
 
   it('falls back to config provider/model when the step omits them', async () => {
-    const { llm, runner } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'b', defaultModel: 'b-model' });
-    llm.streamHandler = () => textChunks('ok');
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'b',
+      defaultModel: 'b-model',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
 
     await runner.run(request(promptStep()));
 
-    expect(llm.calls[0]?.provider).toBe('b');
-    expect(llm.calls[0]?.model).toBe('b-model');
+    expect(subagents.continuableStarts[0]?.provider).toBe('fork');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.provider).toBe('b');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.model).toBe('b-model');
+  });
+
+  it('keeps the DSH subagent provider decoupled from the model provider in agentOptions', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+
+    await runner.run(request(promptStep({ providerId: 'p', modelId: 'm' })));
+
+    // 回归防护：startContinuable 的 provider 参数必须是 DSH subagent provider 注册名
+    // （缺省 'fork'），绝不能是模型 provider id（'p'）——否则真实 DSH 运行时报
+    // `no subagent provider registered for "p"`。模型路由只经 agentOptions 承载。
+    expect(subagents.continuableStarts[0]?.provider).toBe('fork');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.provider).toBe('p');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.model).toBe('m');
+  });
+
+  it('honors a config subagentProvider override while keeping model routing in agentOptions', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      subagentProvider: 'spawn',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+
+    await runner.run(request(promptStep({ providerId: 'p', modelId: 'm' })));
+
+    expect(subagents.continuableStarts[0]?.provider).toBe('spawn');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.provider).toBe('p');
+    expect(subagents.continuableStarts[0]?.request.agentOptions?.model).toBe('m');
   });
 
   it('replaces ${projectName} with passThroughVar and leaves unknown vars intact', async () => {
-    const { llm, runner } = harness();
-    llm.providers.push({ id: 'p', name: 'Provider' });
-    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('ok');
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
 
     await runner.run(
       request(promptStep({ promptText: 'build ${projectName} for ${unknown}' }), {
@@ -426,7 +494,7 @@ describe('StepRunner prompt', () => {
       }),
     );
 
-    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).toContain('sandore');
     expect(promptText).not.toContain('${projectName}');
     expect(promptText).toContain('${unknown}');
@@ -670,6 +738,71 @@ describe('StepRunner delegated ask hook', () => {
   });
 });
 
+describe('StepRunner 子代理 ask 转接引导（选 C：禁用 ask_user_question 工具）', () => {
+  it('denies the ask_user_question tool on the subagent via toolFilter', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+
+    await runner.run(request(promptStep()));
+
+    // 选 C：sandore 子代理经 startContinuable（parent=宿主主代理）创建时是 root（DSH
+    // 用私有 scope 作 ownerCtx），绕过 DELEGATED_CALLER 守卫——若可直调 DSH
+    // ask_user_question，question/requested 帧会路由到子代理会话（childId），主会话
+    // 看不到选择框 → 无人回答 → 子代理 turn 挂起 → 工作流卡死。toolFilter deny 移除
+    // 该全局工具后，问题统一走 [[SANDORE_ASK]] 标记块转接。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
+  });
+
+  it('injects the [[SANDORE_ASK]] marker guidance into the subagent prompt', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+
+    await runner.run(request(promptStep()));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('## 向用户提问');
+    expect(promptText).toContain('[[SANDORE_ASK]]');
+    expect(promptText).toContain('ask_user_question');
+    // 引导节位于主头部之后、## 你的任务 节之前（醒目位置）。注意 PROMPT_MAIN_HEADER
+    // 本身含「`## 你的任务`」字样，故用 lastIndexOf 取真正的节标题。
+    const askIdx = promptText.indexOf('## 向用户提问');
+    const taskIdx = promptText.lastIndexOf('## 你的任务');
+    expect(askIdx).toBeGreaterThan(-1);
+    expect(askIdx).toBeLessThan(taskIdx);
+  });
+
+  it('applies the toolFilter and guidance to agent subagents as well (shared runSubagent path)', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'agent output' }]));
+    agents.register(child);
+
+    await runner.run(request(agentStep({ providerId: 'p', modelId: 'm' })));
+
+    // runSubagent 为 prompt/agent/skill/mcp 四路共用：agent 路同样禁用 ask_user 并注入引导。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('## 向用户提问');
+    expect(promptText).toContain('[[SANDORE_ASK]]');
+  });
+});
+
 describe('StepRunner skill/mcp', () => {
   it('prefixes skill prompt with 使用 skill： when name is in skills', async () => {
     const { subagents, agents, runner } = harness({
@@ -736,17 +869,21 @@ describe('StepRunner ## 任务规则 注入（缺陷 7）', () => {
   }
 
   it('prompt 路注入 ## 任务规则 节（非空 resolvedRules）', async () => {
-    const { llm, runner } = harness();
-    llm.providers.push({ id: 'p', name: 'Provider' });
-    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('ok');
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
 
     await runner.run(requestWithRules(promptStep(), {
       'chinese-output': '所有输出必须使用中文',
       'no-direct-commit': '禁止直接执行 git commit',
     }));
 
-    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).toContain('## 任务规则');
     expect(promptText).toContain('- **chinese-output**: 所有输出必须使用中文');
     expect(promptText).toContain('- **no-direct-commit**: 禁止直接执行 git commit');
@@ -812,26 +949,34 @@ describe('StepRunner ## 任务规则 注入（缺陷 7）', () => {
   });
 
   it('resolvedRules 缺省时不注入 ## 任务规则 节（向后兼容）', async () => {
-    const { llm, runner } = harness();
-    llm.providers.push({ id: 'p', name: 'Provider' });
-    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('ok');
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
 
     await runner.run(request(promptStep()));
 
-    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).not.toContain('## 任务规则');
   });
 
   it('resolvedRules 为空对象时不注入 ## 任务规则 节', async () => {
-    const { llm, runner } = harness();
-    llm.providers.push({ id: 'p', name: 'Provider' });
-    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('ok');
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
 
     await runner.run(requestWithRules(promptStep(), {}));
 
-    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).not.toContain('## 任务规则');
   });
 });

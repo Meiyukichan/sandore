@@ -206,6 +206,49 @@ describe('parseAssessResult', () => {
       { label: 'B' },
     ]);
   });
+
+  // ── 严重缺陷：```json markdown 围栏输出下 askQuestion/passThroughVars 被丢弃 ──
+  // 修前裸 JSON.parse 失败 → regex 回退只恢复 completionType='ask'、askQuestion 丢失
+  // → 假 ask → findAskStep 未命中 → 实例永久卡 interacting。修后围栏剥离再解析。
+
+  it('parses askQuestion and passThroughVars from a ```json-fenced output', () => {
+    const result = parseAssessResult(
+      '```json\n{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}\n```',
+    );
+    expect(result.completionType).toBe('ask');
+    expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
+    expect(result.askQuestion?.questions[0]).toMatchObject({ id: 'q1', question: '选择分支' });
+    expect(result.askQuestion?.questions[0]?.options).toEqual([{ label: 'A' }]);
+  });
+
+  it('parses a fenced JSON block wrapped in surrounding prose', () => {
+    const result = parseAssessResult(
+      '收尾评估结果：\n```json\n{"completionType":"completed","passThroughVars":{"a":"b"}}\n```\n请查收',
+    );
+    expect(result.completionType).toBe('completed');
+    expect(result.passThroughVars).toEqual({ a: 'b' });
+  });
+
+  it('tolerates an uppercase fence language tag', () => {
+    const result = parseAssessResult(
+      '```JSON\n{"completionType":"ask","passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Q"}]}}\n```',
+    );
+    expect(result.completionType).toBe('ask');
+    expect(result.askQuestion?.questions[0]?.id).toBe('q1');
+  });
+
+  it('falls back to completed when the fenced block contains invalid JSON', () => {
+    const result = parseAssessResult('```json\n{not valid json}\n```');
+    expect(result.completionType).toBe('completed');
+    expect(result.passThroughVars).toEqual({});
+    expect(result.askQuestion).toBeUndefined();
+  });
+
+  it('keeps regex fallback behavior for unfenced prose without valid JSON', () => {
+    const result = parseAssessResult('结果如下：\n这里没有 JSON\n请查收');
+    expect(result.completionType).toBe('completed');
+    expect(result.passThroughVars).toEqual({});
+  });
 });
 
 describe('parsePrimaryGate / parseSecondaryGate', () => {
@@ -226,6 +269,14 @@ describe('parsePrimaryGate / parseSecondaryGate', () => {
       detail: 'needs review',
     });
   });
+
+  it('parses fenced outputs for both gates (fence stripping is shared)', () => {
+    expect(parsePrimaryGate('```json\n{"taskStatus":"error","errorDetail":"missing"}\n```')).toEqual({
+      passed: false,
+      errorDetail: 'missing',
+    });
+    expect(parseSecondaryGate('```json\n{"gateStatus":"done"}\n```').passed).toBe(true);
+  });
 });
 
 describe('FinalizeAssessor', () => {
@@ -239,6 +290,22 @@ describe('FinalizeAssessor', () => {
       context: { input: 'req', output: 'out', artifacts: ['a.md'] },
     });
 
+    expect(sessions.forkedSources).toEqual(['step-session-1']);
+    expect(result.forkSessionId).toBe('session-1');
+    expect(result.completionType).toBe('completed');
+  });
+
+  it('forks the step session for a prompt-type step (决策 D3: prompt 为真实子代理会话)', async () => {
+    const { llm, sessions, assessor } = harness();
+    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
+
+    const result = await assessor.assess({
+      step: step({ command: { type: 'prompt', value: { promptText: 'do work' } } }),
+      stepSessionId: 'step-session-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    // prompt 与 agent/skill/mcp 同为 session 类型：走 sessions.fork 评估续接（不再降级）。
     expect(sessions.forkedSources).toEqual(['step-session-1']);
     expect(result.forkSessionId).toBe('session-1');
     expect(result.completionType).toBe('completed');
@@ -767,6 +834,54 @@ describe('FinalizeManager.finalizeStep', () => {
     expect(outcome.type).toBe('ask');
     expect(executed.status).toBe('interacting');
     expect(llm.calls).toHaveLength(1);
+  });
+
+  // ── 假 ask 防御：ask 判定但无 askQuestion 载荷 → 回落 completed（不置 interacting） ──
+  // 修前 completionType='ask' 但 askQuestion===undefined 时仍置 status:'ask' →
+  // findAskStep 未命中 → 实例永久卡 interacting、UI 无选择框。
+
+  it('treats ask without askQuestion payload as completed instead of fake ask', async () => {
+    const { llm, manager } = harness();
+    llm.streamHandler = () => textChunks('{"completionType":"ask","passThroughVars":{}}');
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+
+    const outcome = await manager.finalizeStep({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'v', value: '${v}', description: 'd' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+    });
+
+    expect(outcome.type).toBe('done');
+    expect(executed.status).toBe('completed');
+    expect(executed.finalizeMeta?.status).toBe('completed');
+    expect(executed.finalizeMeta?.completionType).toBe('completed');
+  });
+
+  it('treats a fenced ask-without-question output as completed too (fence + fake-ask combined)', async () => {
+    const { llm, manager } = harness();
+    llm.streamHandler = () =>
+      textChunks('```json\n{"completionType":"ask","passThroughVars":{}}\n```');
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+
+    const outcome = await manager.finalizeStep({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'v', value: '${v}', description: 'd' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+    });
+
+    expect(outcome.type).toBe('done');
+    expect(executed.status).toBe('completed');
+    expect(executed.finalizeMeta?.status).toBe('completed');
   });
 
   it('writes back extracted passThroughVars preserving the refresh flag', async () => {

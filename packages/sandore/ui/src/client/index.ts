@@ -5,6 +5,7 @@ import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import { sandoreRemote, unwrap } from './remote.ts'
@@ -15,10 +16,16 @@ import type { WorkflowOverlayFace } from './workflow-face.ts'
 import { WorkflowOverlay } from './WorkflowOverlay.tsx'
 import type { RunViewRemote } from './RunView.tsx'
 import { createSandoreSave, type SandoreSaveRemote } from './sandore-save.ts'
-import { toggleWorkflowOverlay } from './workflow-store.ts'
+import { closeWorkflowOverlay, toggleWorkflowOverlay } from './workflow-store.ts'
 import { DagStepNodeView, type SandoreStepInjected } from './DagStepNodeView.tsx'
 import { sandoreStepDefinition } from './sandore-step-definition.ts'
 import { SandoreModelDirectory, parsePermissionReport, type ModelDirectoryFace, type ObservableFace, type PermissionSelectValue, type SessionModelsApi } from './model-faces.ts'
+import { SandoreQuestionComposer, type SandoreQuestionComposerFace } from './SandoreQuestionComposer.tsx'
+import { installStepChatHost } from './step-session-chat-host.ts'
+import {
+  getSandoreQuestions, startSandoreQuestionsPolling, subscribeSandoreQuestions,
+  type SandoreQuestionsRemote,
+} from './sandore-questions.ts'
 
 /** Client 插件依赖的 cordis 服务键。 */
 export const inject = ['conversationEvents', 'slots', 'locale', 'remote', 'sessions', 'workspaces', 'connection']
@@ -35,6 +42,17 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // 注册 sandore-step 讨论节点 Definition（kind `sandore-step`、target `chat`），
   // 把 sandore/step-* 事件折叠为宿主会话的 Chat 节点（不依赖 `remote.sandore`）。
   ctx.conversationEvents.register(sandoreStepDefinition)
+
+  // 安装 StepSessionChat 的模块级宿主（运行中 step 内嵌子代理会话页需要
+  // sessions/slots/workspaces/locale 服务子集；时间线组件树不携带 ctx，故经
+  // 模块级单例注入，卸载时由 ctx.effect 清除）。
+  ctx.effect(() => installStepChatHost({
+    sessions: ctx.sessions,
+    slots: ctx.slots,
+    workspaces: ctx.workspaces,
+    locale: ctx.locale,
+    bindLocale: (ns: string) => ctx.locale.bind(ns),
+  }), 'ui-sandore: step-chat-host')
 
   // sidebar.footer.action 入口按钮：不依赖 remote，直接注册（点击切换 overlay 开关）。
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
@@ -77,11 +95,10 @@ export async function apply(ctx: ClientContext): Promise<void> {
         },
         deleteDefinition: async (id: string) => unwrap(await sandore.deleteDefinition(id)),
         deleteInstance: async (instanceId: string) => unwrap(await sandore.deleteInstance(instanceId)),
-        recoverOrphanedInstances: async () => unwrap(await sandore.recoverOrphanedInstances()),
         getYaml: async (id: string) => unwrap(await sandore.getYaml(id)),
         save: createSandoreSave(sandore as unknown as SandoreSaveRemote),
         remote: sandore as unknown as RunViewRemote,
-        openSession: (id: string) => { remoteCtx.sessions.open(id as SessionId) },
+        openSession: (id: string) => { closeWorkflowOverlay(); remoteCtx.sessions.open(id as SessionId) },
         // 模型目录：自实现轻量目录，直接走 connection.api.sessions.models/selectModel
         // （与 DSH ModelDirectory 同一 RPC、同一行为；不依赖会话 scope）。
         modelDirectory: (sessionId: string): ModelDirectoryFace => {
@@ -140,5 +157,61 @@ export async function apply(ctx: ClientContext): Promise<void> {
         listRevertBoundaries: async (input) => unwrap(await sandore.listRevertBoundaries(input)),
       }),
     }, DagStepNodeView))
+
+    // conversation.composer 主会话 ask 问答卡（BUG 1 修复，方案 A）：聚合 sandore
+    // 实例 pending questions，绕过 DSH 帧路由会话归属——question/requested 帧落在
+    // instanceId 会话，主会话无 PendingWait，DSH 原生 composer 不渲染选择框。
+    // select 为纯函数（chain 契约）：当前会话已有任何原生 pending 交互（question/
+    // approval/plan-review）时让原生条目接管（本条目 priority 0 先于 approval 的 1，
+    // 不拦截会抢占审批卡）；否则 sandore store 有 pending question 时返回 true。
+    const selectSandoreQuestion = ({ interactions }: ComposerChainProps): boolean | null => {
+      if (interactions.length > 0) return null
+      return getSandoreQuestions().length > 0 ? true : null
+    }
+
+    // 条目注册 + 轮询 + 选举唤醒：select 只在外层 SlotOutlet 重渲染时求值，而 store
+    // 由模块级轮询更新——pending 集合「空 ↔ 非空」翻转时 dispose + 重新 register，
+    // bump `conversation.composer` 版本触发 chain 选举重求值（挂卡/收卡）；无翻转时
+    // 组件自身经 useSyncExternalStore 跟随 store。disposer 经 ctx.effect 绑定插件 fiber。
+    ctx.effect(() => {
+      let disposeSandoreComposer: (() => void) | undefined
+      const registerSandoreComposer = (): void => {
+        if (disposeSandoreComposer !== undefined) {
+          disposeSandoreComposer()
+          disposeSandoreComposer = undefined
+        }
+        disposeSandoreComposer = remoteCtx.slots.register({
+          name: 'conversation.composer',
+          select: selectSandoreQuestion,
+          locale: NS,
+          inject: (): SandoreQuestionComposerFace => ({ remote: sandore as unknown as RunViewRemote }),
+        }, SandoreQuestionComposer)
+      }
+      registerSandoreComposer()
+
+      const stopPolling = startSandoreQuestionsPolling(sandore as unknown as SandoreQuestionsRemote)
+
+      let lastHasPending = getSandoreQuestions().length > 0
+      const unsubscribeStore = subscribeSandoreQuestions(() => {
+        try {
+          const hasPending = getSandoreQuestions().length > 0
+          if (hasPending === lastHasPending) return
+          lastHasPending = hasPending
+          registerSandoreComposer()
+        } catch (error) {
+          // 重注册失败不打断 store 通知链（其余订阅者照常收到）。
+          console.error('ui-sandore: composer re-registration failed', error)
+        }
+      })
+
+      return () => {
+        stopPolling()
+        unsubscribeStore()
+        if (disposeSandoreComposer !== undefined) {
+          disposeSandoreComposer()
+          disposeSandoreComposer = undefined
+        }
+      }
+    }, 'ui-sandore: questions-polling')
   })
 }

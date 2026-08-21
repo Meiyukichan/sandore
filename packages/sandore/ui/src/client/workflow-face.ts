@@ -5,7 +5,7 @@
  * 所需的全部 `ctx.remote.sandore` 访问面。`remote` 为 RunView 控件所需的最小 RPC 面。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/workflow-face
  */
-import type { DagRun, InstanceSummary, RecoverOrphanedInstancesResult, WorkflowDefinitionEntry } from '@deepseek-ai/dsh-sandore-workflow/remote'
+import type { DagRun, InstanceSummary, WorkflowDefinitionEntry } from '@deepseek-ai/dsh-sandore-workflow/remote'
 
 import type { SaveDefinition } from './sandore-save.ts'
 import type { RunViewRemote } from './RunView.tsx'
@@ -52,12 +52,6 @@ export interface WorkflowOverlayFace {
   deleteDefinition(id: string): Promise<boolean>
   /** 删除实例（RPC 已解包；state 表行级删除）。 */
   deleteInstance(instanceId: string): Promise<boolean>
-  /**
-   * 批量恢复孤儿实例（进程重启后内存未命中但快照非终态的实例）。
-   * 遍历 state 表全部非终态实例逐个 `recoverInstance`，单实例失败不阻断；
-   * 返回 `{ recovered, errors }` 摘要供 UI 内联呈现。
-   */
-  recoverOrphanedInstances(): Promise<RecoverOrphanedInstancesResult>
   /** 读取定义原始 YAML（RPC 已解包）。 */
   getYaml(id: string): Promise<string>
   /** DagEditor 保存回调（createSandoreSave 接线）。 */

@@ -903,7 +903,7 @@ export class StageExecutor {
     executed.updatedAt = now();
     executed.output = result.output;
     // §3.8A：真实子代理会话消息随结果带出，写入段快照（onPersist 持久化定格；
-    // shell/prompt 无该字段 → 前端走 fallback）。
+    // shell 无该字段 → 前端走 fallback）。
     if (result.sessionMessages !== undefined) {
       executed.sessionMessages = result.sessionMessages;
     }
@@ -1038,8 +1038,8 @@ export class StageExecutor {
     childId: string,
   ): Promise<'ok' | 'ask' | 'failed' | 'paused'> {
     const command = step.command;
-    if (command === undefined || (command.type !== 'agent' && command.type !== 'skill' && command.type !== 'mcp')) {
-      // 理论不可达：续跑仅对子代理 Step 生效（shell/prompt 由 recovery/lifecycle 守卫拦截）。
+    if (command === undefined || (command.type !== 'agent' && command.type !== 'skill' && command.type !== 'mcp' && command.type !== 'prompt')) {
+      // 理论不可达：续跑仅对子代理 Step 生效（shell 由 recovery/lifecycle 守卫拦截）。
       const message = `step '${step.id}' is not a resumable subagent step`;
       executed.status = 'failed';
       executed.error = message;
@@ -1090,17 +1090,23 @@ export class StageExecutor {
 
     // §3.6A：真实子代理（synthetic === false）的回答已被引擎 followup 注回，这里重新
     // 收集子代理基于回答产生的新 output，并以新 output 重跑**完整 finalize**（重新评估，
-    // 可能再次 ask → 挂回断点续问，受 MAX_FINALIZE_ASK_ROUNDS 上限保护）。
+    // 可能再次 ask → 挂回断点续问，受 MAX_FINALIZE_ASK_ROUNDS 上限保护）。prompt 与
+    // agent/skill/mcp 同为真实子代理（决策 D3），走同一续跑路径。
     const childId = executed.sessionMeta?.childId;
     const commandType = step.command?.type;
     const isRealSubagent = childId !== undefined
       && executed.sessionMeta?.synthetic === false
-      && (commandType === 'agent' || commandType === 'skill' || commandType === 'mcp');
+      && (commandType === 'agent' || commandType === 'skill' || commandType === 'mcp' || commandType === 'prompt');
 
     if (isRealSubagent) {
       const result = await this.runner.resumeSubagent(commandType!, childId!, step.id, stageDef.id, signal);
       executed.output = result.output;
       executed.updatedAt = now();
+      // 回答后恢复执行：首次 ask 时 finalizeStep 已把 executedStep.status 置为
+      // 'interacting'（finalize-manager L735），重跑完整 finalizeStep 的 completed 路径
+      // （finalizeAfterAssess）不会恢复——这里先置回 completed（若重评估再 ask 会被
+      // finalizeStep 重新置 interacting；error 则置 failed）。
+      executed.status = 'completed';
       // §3.8A：回答注回后子代理新产出 → 消息行随新输出更新。
       if (result.sessionMessages !== undefined) {
         executed.sessionMessages = result.sessionMessages;
@@ -1166,7 +1172,7 @@ export class StageExecutor {
       return 'ok';
     }
 
-    // 无真实会话（shell/prompt）：走原路径——评估已在首次 finalizeStep 完成，仅重跑门禁。
+    // 无真实会话（shell）：走原路径——评估已在首次 finalizeStep 完成，仅重跑门禁。
     // 缺陷 16：收集产物文件填 context.artifacts（门禁 AI <artifacts> 块）。
     // 缺陷 34：用引擎累加器值替换 outputTo 中的 ${xxx}（与门禁 verifyArtifacts 同源）。
     const artifacts = (await collectStepArtifacts(this.options.ctx.fs, step, sharedState.cwd, toVarMap(state.passThroughVars))).flatMap(a => a.value);

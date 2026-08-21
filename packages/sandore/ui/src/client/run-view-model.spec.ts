@@ -160,14 +160,14 @@ describe('stepIdOf', () => {
 })
 
 describe('isSubagentStep', () => {
-  it('is true for agent, skill and mcp command types', () => {
+  it('is true for agent, skill, mcp and prompt command types', () => {
     expect(isSubagentStep(step({ command: { type: 'agent', value: { promptText: 'x' } } }))).toBe(true)
     expect(isSubagentStep(step({ command: { type: 'skill', value: { promptText: 'x' } } }))).toBe(true)
     expect(isSubagentStep(step({ command: { type: 'mcp', value: { promptText: 'x' } } }))).toBe(true)
+    expect(isSubagentStep(step({ command: { type: 'prompt', value: { promptText: 'x' } } }))).toBe(true)
   })
 
-  it('is false for prompt and shell command types', () => {
-    expect(isSubagentStep(step({ command: { type: 'prompt', value: { promptText: 'x' } } }))).toBe(false)
+  it('is false for shell command type', () => {
     expect(isSubagentStep(step({ command: { type: 'shell', value: { command: 'ls' } } }))).toBe(false)
   })
 
@@ -175,15 +175,15 @@ describe('isSubagentStep', () => {
     expect(isSubagentStep(step())).toBe(false)
   })
 
-  it('is true when sessionMeta.command is agent, skill or mcp', () => {
+  it('is true when sessionMeta.command is agent, skill, mcp or prompt', () => {
     expect(isSubagentStep(step({ sessionMeta: sessionMeta('agent') }))).toBe(true)
     expect(isSubagentStep(step({ sessionMeta: sessionMeta('skill') }))).toBe(true)
     expect(isSubagentStep(step({ sessionMeta: sessionMeta('mcp') }))).toBe(true)
+    expect(isSubagentStep(step({ sessionMeta: sessionMeta('prompt') }))).toBe(true)
   })
 
-  it('is false when sessionMeta.command is shell or prompt', () => {
+  it('is false when sessionMeta.command is shell', () => {
     expect(isSubagentStep(step({ sessionMeta: sessionMeta('shell') }))).toBe(false)
-    expect(isSubagentStep(step({ sessionMeta: sessionMeta('prompt') }))).toBe(false)
   })
 
   it('prefers sessionMeta.command over command.type when both are present', () => {

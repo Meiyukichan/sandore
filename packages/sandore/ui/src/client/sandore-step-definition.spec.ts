@@ -115,7 +115,7 @@ describe('sandoreStepDefinition.start', () => {
       stepId: 'step-a', childId: 'child-1', name: 'Research',
     }), 'start')
     expect(sandoreStepDefinition.start(startContext(startMatch), startMatch, reader)).toEqual({
-      stepId: 'step-a', childId: 'child-1', name: 'Research', status: 'running',
+      stepId: 'step-a', childId: 'child-1', name: 'Research', status: 'running', synthetic: true,
     })
   })
 
@@ -174,6 +174,54 @@ describe('sandoreStepDefinition.update', () => {
     expect(retried.state.status).toBe('running')
   })
 
+  it('overrides childId with the real session id and clears synthetic on step-completed', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'step-a-abc12345', name: 'Research' }),
+      at(2, 'sandore/step-completed', {
+        stepId: 'step-a', childId: 'child-1', name: 'Research',
+        output: [{ type: 'text', text: 'done' }],
+      }),
+    ])
+    expect(context.state.status).toBe('completed')
+    expect(context.state.childId).toBe('child-1')
+    expect(context.state.synthetic).toBe(false)
+  })
+
+  it('keeps the synthetic placeholder when the payload childId is unchanged (shell)', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'step-a-abc12345', name: 'Shell' }),
+      at(2, 'sandore/step-completed', {
+        stepId: 'step-a', childId: 'step-a-abc12345', name: 'Shell',
+        output: [{ type: 'text', text: 'ok' }],
+      }),
+    ])
+    expect(context.state.status).toBe('completed')
+    expect(context.state.childId).toBe('step-a-abc12345')
+    expect(context.state.synthetic).toBe(true)
+  })
+
+  it('overrides childId and clears synthetic on step-paused/step-resumed', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'step-a-abc12345', name: 'Agent' }),
+      at(2, 'sandore/step-paused', { stepId: 'step-a', childId: 'child-1', name: 'Agent' }),
+      at(3, 'sandore/step-resumed', { stepId: 'step-a', childId: 'child-1', name: 'Agent' }),
+    ])
+    expect(context.state.status).toBe('running')
+    expect(context.state.childId).toBe('child-1')
+    expect(context.state.synthetic).toBe(false)
+  })
+
+  it('keeps childId and synthetic across step-retried (payload has no childId)', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-failed', { stepId: 'step-a', childId: 'child-1', error: 'boom', name: 'Research' }),
+      at(3, 'sandore/step-retried', { stepId: 'step-a', mode: 'revert', name: 'Research' }),
+    ])
+    expect(context.state.status).toBe('running')
+    expect(context.state.childId).toBe('child-1')
+    expect(context.state.synthetic).toBe(true)
+  })
+
   it('returns the same state for an unrelated update event', () => {
     const context = fold([
       at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
@@ -199,7 +247,7 @@ describe('sandoreStepDefinition.buildViewNode', () => {
     const data = node?.data as SandoreStepChatData
     expect(data).toEqual({
       stepId: 'step-a', childId: 'child-1', name: 'Research', status: 'completed',
-      loopLabel: '#1.2', output: [{ type: 'text', text: 'result' }],
+      loopLabel: '#1.2', synthetic: true, output: [{ type: 'text', text: 'result' }],
     })
   })
 

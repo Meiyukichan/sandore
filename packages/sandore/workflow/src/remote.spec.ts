@@ -114,6 +114,8 @@ async function harness(): Promise<{
   ctx: Context
   persistence: SandorePersistence
   remote: SandoreRemote
+  /** stub 引擎收到的全部 startInstance 请求（透传断言）。 */
+  startRequests: DagStartRequest[]
   engine: {
     startInstance: (request: DagStartRequest) => DagRun
     abortInstance: (instanceId: string) => Promise<void>
@@ -134,7 +136,9 @@ async function harness(): Promise<{
   }
   ctx.provide('llm', llm as unknown as LlmRuntime)
 
+  const startRequests: DagStartRequest[] = []
   const startInstance = (request: DagStartRequest): DagRun => {
+    startRequests.push(request)
     const instanceId = `inst-${globalThis.crypto.randomUUID().slice(0, 8)}`
     const now = new Date().toISOString()
     const state: WorkflowTaskState = {
@@ -185,7 +189,7 @@ async function harness(): Promise<{
   ctx.provide('sandoreEngine', engine as unknown as SandoreEngine)
 
   const remote = new SandoreRemote(ctx)
-  return { ctx, persistence, remote, engine }
+  return { ctx, persistence, remote, startRequests, engine }
 }
 
 describe('SandoreRemote definition CRUD', () => {
@@ -493,6 +497,19 @@ describe('SandoreRemote instance lifecycle', () => {
     await expect(remote.startInstance({ workflowId: 'wfl-nonexistent', originalInput: 'x' })).rejects.toMatchObject({
       code: 'INVALID_OPERATION',
     })
+  })
+
+  it('forwards the optional hostSessionId to the engine startInstance', async () => {
+    const { remote, startRequests } = await harness()
+    const definition = await remote.createDefinition({ yaml: validV2Yaml })
+
+    // 未传 hostSessionId：引擎请求不含该字段。
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'a' })
+    expect(startRequests[0]).not.toHaveProperty('hostSessionId')
+
+    // 传入 hostSessionId：原样透传（复用宿主主代理会话，不新建）。
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'b', hostSessionId: 'host-1' })
+    expect(startRequests[1]?.hostSessionId).toBe('host-1')
   })
 
   it('derives instance summaries for every state row (no job filter)', async () => {

@@ -41,6 +41,52 @@ const CLIENT_EXTERNALS = [
 const CSS_VIRTUAL_PREFIX = '\0sandore-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
 
+/**
+ * DSH 参考源码根（构建期源码级复用 ChatView / observableHook）。
+ * 默认指向本机 deepseek-harness 工作区（与 AGENTS.md / docs 中开发命令一致），
+ * 可用环境变量 `DSH_HARNESS_ROOT` 覆盖。DSH 源码只读：此处仅解析，绝不写入。
+ */
+const DSH_HARNESS_ROOT = process.env.DSH_HARNESS_ROOT ?? 'D:/project-code/llm/deepseek-harness'
+
+/** 源码级复用的 DSH 包前缀 → harness 源码目录（`@deepseek-ai/xxx/src/*` 形态）。 */
+const DSH_SOURCE_ROOTS: ReadonlyArray<readonly [string, string]> = [
+  ['@deepseek-ai/dsh-client-ui-conversation/src', resolvePath(DSH_HARNESS_ROOT, 'packages/client/ui-conversation/src')],
+  ['@deepseek-ai/dsh-client-ui-renderer/src', resolvePath(DSH_HARNESS_ROOT, 'packages/client/ui-renderer/src')],
+]
+
+/**
+ * DSH 源码别名插件：把 `@deepseek-ai/xxx/src/*` 解析到 harness 工作区源码文件。
+ *
+ * registry 版 DSH 包的 npm 产物不含 `src/`（`files` 仅 lib），而 ChatView /
+ * observableHook 只在源码里导出；本插件让 tsdown 直接把源码内联进 sandore 的
+ * client bundle（运行时不再 require 该 id——module 表无需这些子路径）。tsc 侧的
+ * 类型面由 `dsh-chat-shim.d.ts` ambient 垫片提供（构建期两侧签名已核对）。
+ */
+function dshSourceAliasPlugin(): NonNullable<UserConfig['plugins']>[number] {
+  return {
+    name: 'sandore-dsh-source-alias',
+    resolveId(source: string) {
+      for (const [prefix, root] of DSH_SOURCE_ROOTS) {
+        if (!source.startsWith(`${prefix}/`)) continue
+        const rel = source.slice(prefix.length + 1)
+        const candidates = [
+          resolvePath(root, rel),
+          resolvePath(root, `${rel}.tsx`),
+          resolvePath(root, `${rel}.ts`),
+          resolvePath(root, rel, 'index.tsx'),
+          resolvePath(root, rel, 'index.ts'),
+        ]
+        for (const candidate of candidates) {
+          if (existsSync(candidate)) return candidate
+        }
+        // 保留原始路径让 rolldown 报清晰错误（缺文件即构建失败，fail loud）。
+        return candidates[0]!
+      }
+      return null
+    },
+  }
+}
+
 /** Node builtin shim 虚拟 id 前缀：拦截被内联依赖（如 yaml 的 Node dist）的 require。 */
 const NODE_SHIM_PREFIX = '\0sandore-node-shim:'
 
@@ -244,7 +290,7 @@ export default defineConfig([
     clean: false,
     external: [...CLIENT_EXTERNALS],
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id as (typeof CLIENT_EXTERNALS)[number]) ? undefined : true),
-    plugins: [nodeBuiltinsShimPlugin(), cssModulesPlugin()],
+    plugins: [dshSourceAliasPlugin(), nodeBuiltinsShimPlugin(), cssModulesPlugin()],
     outputOptions: {
       entryFileNames: 'client.js',
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PLUGIN_ID)}, factory: (require) => {`,

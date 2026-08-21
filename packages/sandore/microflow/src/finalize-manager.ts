@@ -141,6 +141,20 @@ function parseJsonObject(text: string): Record<string, unknown> | undefined {
   return raw as Record<string, unknown>;
 }
 
+/**
+ * 剥离 markdown ```json 围栏，提取围栏内 JSON 文本。
+ *
+ * LLM 收尾输出常把 JSON 包进 ```json ... ``` 围栏（语言标记可大写/省略、围栏前可有
+ * 空格、围栏后可有散文）——直接 `JSON.parse` 必失败并落入 regex 回退，只恢复
+ * `completionType` 而丢弃 `askQuestion`/`passThroughVars`（假 ask → 实例卡
+ * interacting、UI 无选择框）。本函数提取首个围栏块内的文本；未命中围栏时原样返回，
+ * 保持既有解析路径不变。
+ */
+function stripJsonFence(raw: string): string {
+  const match = raw.match(/[ \t]*```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)(?:\r?\n)?[ \t]*```/i);
+  return match?.[1] ?? raw;
+}
+
 /** 收窄未知值为 completionType（仅 `'ask'` 判为 ask，其余回落 completed）。 */
 function parseCompletionType(value: unknown): 'completed' | 'ask' {
   return value === 'ask' ? 'ask' : 'completed';
@@ -299,9 +313,13 @@ function buildSecondaryGatePrompt(context: FinalizeStepContext, secondaryPrompt:
  * ① JSON 解析取 `completionType`/`passThroughVars`/`askQuestion`；② regex 回退
  * `/"completionType"\s*:\s*"([^"]+)"/`（透传变量回落空）；③ 原始输出回落
  * `completionType='completed'` + 空透传变量。
+ *
+ * **围栏兼容（缺陷定位）**：LLM 输出带 ```json 围栏时裸 `JSON.parse` 失败，旧实现
+ * 直接落入 regex 回退只恢复 completionType、askQuestion/passThroughVars 全丢（假
+ * ask → 实例卡 interacting）。现先裸解析，失败后剥离围栏再解析，仍失败才回退。
  */
 export function parseAssessResult(raw: string): AssessParsed {
-  const parsed = parseJsonObject(raw);
+  const parsed = parseJsonObject(raw) ?? parseJsonObject(stripJsonFence(raw));
   if (parsed !== undefined) {
     const askQuestion = parseAskQuestion(parsed['askQuestion']);
     return {
@@ -315,9 +333,9 @@ export function parseAssessResult(raw: string): AssessParsed {
   return { completionType, passThroughVars: {} };
 }
 
-/** 解析 primary 门禁输出（`taskStatus` + `errorDetail`）。 */
+/** 解析 primary 门禁输出（`taskStatus` + `errorDetail`）；带 ```json 围栏时同样剥离。 */
 export function parsePrimaryGate(raw: string): PrimaryGateParsed {
-  const parsed = parseJsonObject(raw);
+  const parsed = parseJsonObject(raw) ?? parseJsonObject(stripJsonFence(raw));
   const passed = parsed?.['taskStatus'] === 'done';
   const errorDetail = parsed?.['errorDetail'];
   return {
@@ -326,9 +344,9 @@ export function parsePrimaryGate(raw: string): PrimaryGateParsed {
   };
 }
 
-/** 解析 secondary 门禁输出（`gateStatus` + `gateDetail`）。 */
+/** 解析 secondary 门禁输出（`gateStatus` + `gateDetail`）；带 ```json 围栏时同样剥离。 */
 export function parseSecondaryGate(raw: string): SecondaryGateParsed {
-  const parsed = parseJsonObject(raw);
+  const parsed = parseJsonObject(raw) ?? parseJsonObject(stripJsonFence(raw));
   const passed = parsed?.['gateStatus'] === 'done';
   const detail = parsed?.['gateDetail'];
   return {
@@ -338,13 +356,13 @@ export function parseSecondaryGate(raw: string): SecondaryGateParsed {
 }
 
 /**
- * 判定 command 类型是否走 session 会话（agent/skill/mcp）。
+ * 判定 command 类型是否走 session 会话（agent/skill/mcp/prompt）。
  *
- * 探索修正（2026-08）：'prompt' 无真实会话（sessionMeta 为合成占位，`synthetic:true`），
- * 误入后 `sessions.fork(合成id)` 必抛 SESSION_NOT_FOUND → 每次收尾评估降级。
+ * 决策 D3 修复（2026-08）：'prompt' 现为真实可续接子代理会话（`synthetic:false` +
+ * 真实 childId），与 agent/skill/mcp 一致走 `sessions.fork(stepSessionId)` 评估续接。
  */
 function isSessionType(type: string | undefined): boolean {
-  return type === 'agent' || type === 'skill' || type === 'mcp';
+  return type === 'agent' || type === 'skill' || type === 'mcp' || type === 'prompt';
 }
 
 /** 判定 Step 是否含未解析透传变量（value 仍含 `${xxx}` 占位）。 */
@@ -696,12 +714,22 @@ export class FinalizeManager {
       return { type: 'done', completionType: 'completed' };
     }
 
-    const assessResult = await this.assessor.assess({
+    let assessResult = await this.assessor.assess({
       step,
       ...(request.stepSessionId === undefined ? {} : { stepSessionId: request.stepSessionId }),
       context: request.context,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
+
+    // 假 ask 防御（缺陷定位）：ask 判定但无 askQuestion 载荷时无法发起提问——置
+    // interacting 只会让实例永久卡 interacting、UI 无选择框。回落 completed 走普通
+    // 收尾（门禁 + 透传变量回写），并记 warn 暴露异常收尾。
+    if (assessResult.completionType === 'ask' && assessResult.askQuestion === undefined) {
+      this.ctx.logger.warn(
+        `sandore: step ${step.id} finalize assess returned ask without askQuestion payload; treating as completed`,
+      );
+      assessResult = { ...assessResult, completionType: 'completed' };
+    }
 
     if (assessResult.completionType === 'ask') {
       executedStep.status = 'interacting';

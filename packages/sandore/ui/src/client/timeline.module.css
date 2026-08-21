@@ -224,6 +224,32 @@
   box-shadow: var(--sd-shadow);
 }
 
+/* 运行中：内嵌 DSH 子代理会话页容器（[data-conversation-scroll] 外部滚动宿主，
+   ChatView 自动识别并让出 overflow；高度封顶，消息流内部滚动）。 */
+.stepSessionChat {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--sd-border);
+  border-radius: 10px;
+  background: var(--sd-surface);
+  box-shadow: var(--sd-shadow);
+}
+
+/* 会话页降级占位（宿主未装 / 会话不在列表）。 */
+.stepSessionChatEmpty {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 8px;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--sd-muted-foreground);
+  border: 1px dashed var(--sd-border);
+  border-radius: 10px;
+}
+
 .agentChatScroll {
   max-height: 220px;
   overflow-y: auto;

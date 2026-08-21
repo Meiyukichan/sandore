@@ -16,6 +16,7 @@ import type { SandoreKey } from './locales.ts'
 import {
   relativeTimeOf, type ChatLine, type RelativeTime, type StepStatus, type TimelineItem, type TimelineStepItem,
 } from './run-view-model.ts'
+import { StepSessionChat } from './StepSessionChat.tsx'
 import css from './timeline.module.css'
 
 /** Step 执行状态 → 本地化标签键（7 态）。 */
@@ -141,8 +142,8 @@ function AgentMsg({ item, t, nowIso, openSession }: {
 }) {
   const running = item.status === 'running' || item.status === 'interacting'
   const rel = relativeTimeOf(item.time, nowIso)
-  // 仅真实子代理步骤（agent/skill/mcp，非合成会话）的标题可点击跳 DSH 子代理页；
-  // shell/prompt 的 childId 是合成占位（无真实会话），点击无效，渲染为纯文本。
+  // 仅真实子代理步骤（prompt/agent/skill/mcp，非合成会话）的标题可点击跳 DSH 子代理页；
+  // shell 的 childId 是合成占位（无真实会话），点击无效，渲染为纯文本。
   const navigable = item.childId !== undefined && item.synthetic !== true
   return (
     <div className={css.agentMsg} data-tl-step>
@@ -176,17 +177,24 @@ function AgentMsg({ item, t, nowIso, openSession }: {
       )}
 
       {running && (
-        item.messages !== undefined && item.messages.length > 0
-          ? (
-            <div className={css.agentChat}>
-              <div className={css.agentChatScroll}>
-                {item.messages.map((line, index) => (
-                  <ChatLineRow key={index} line={line} />
-                ))}
-              </div>
-            </div>
+        // 真实子代理步骤（有 childId 且非合成会话）：直接内嵌 DSH 子代理会话页
+        // （复用 ChatView 渲染栈，step 运行中实时流式）；合成会话/无会话退化为
+        // 原有的消息框或「运行中…」占位。
+        item.childId !== undefined && item.synthetic !== true
+          ? <StepSessionChat sessionId={item.childId} t={t} />
+          : (
+            item.messages !== undefined && item.messages.length > 0
+              ? (
+                <div className={css.agentChat}>
+                  <div className={css.agentChatScroll}>
+                    {item.messages.map((line, index) => (
+                      <ChatLineRow key={index} line={line} />
+                    ))}
+                  </div>
+                </div>
+              )
+              : <div className={css.agentBodyRun}>{t('run.step.status.running')}…</div>
           )
-          : <div className={css.agentBodyRun}>{t('run.step.status.running')}…</div>
       )}
 
       {item.status === 'failed' && <LastMessages item={item} t={t} />}

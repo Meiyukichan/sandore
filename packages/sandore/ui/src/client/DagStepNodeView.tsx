@@ -82,6 +82,9 @@ export function DagStepNodeView({ node, sessionId, openSession, retryStep, listR
   const [boundaryLoading, setBoundaryLoading] = useState(false)
 
   const canRetry = data.status === 'failed' || data.status === 'completed'
+  // 仅真实子会话可点击跳转（synthetic 占位——shell 无真实子代理，childId 是合成
+  // id，sessions.open 会 throw）；对齐 UnifiedTimeline 的 `synthetic !== true` 守卫语义。
+  const navigable = data.childId !== undefined && data.synthetic !== true
 
   // revert 模式打开时拉取该 Step 子代理会话的闭合 turn 回退点候选，供回退点下拉选择。
   useEffect(() => {
@@ -125,14 +128,18 @@ export function DagStepNodeView({ node, sessionId, openSession, retryStep, listR
     <section className={css.root} data-sandore-step data-step-status={data.status}>
       <header className={css.header} data-step-status={data.status}>
         <StateDot state={dotState(data.status)} />
-        <button
-          type="button"
-          className={css.name}
-          aria-label={t('step.open', { name: data.name })}
-          onClick={() => { openSession(data.childId) }}
-        >
-          {data.name}
-        </button>
+        {navigable ? (
+          <button
+            type="button"
+            className={css.name}
+            aria-label={t('step.open', { name: data.name })}
+            onClick={() => { openSession(data.childId) }}
+          >
+            {data.name}
+          </button>
+        ) : (
+          <span className={css.nameStatic}>{data.name}</span>
+        )}
         {data.loopLabel !== undefined && <span className={css.loopLabel}>{data.loopLabel}</span>}
         <span className={css.status}>{t(STATUS_KEYS[data.status])}</span>
       </header>

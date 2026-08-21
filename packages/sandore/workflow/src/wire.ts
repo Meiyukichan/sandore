@@ -101,6 +101,11 @@ export const StartInstanceInputSchema = z.object({
   cwd: z.string().optional(),
   model: StartModelSelectionSchema.optional(),
   permission: z.string().optional(),
+  /**
+   * 可选：调用方（UI/上层）传入的已存在宿主主代理会话 id——复用该会话作为本实例
+   * 的 hostAgent（不新建）；省略时引擎新建（hostAgent 会话 id = instanceId）。
+   */
+  hostSessionId: z.string().optional(),
 })
 
 /** 单个问题回答的 zod 校验（对齐 DSH `AskUserQuestionAnswerItem`）。 */

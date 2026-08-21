@@ -257,6 +257,7 @@ export class SandoreRemote extends TypertRemoteService {
       ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
       ...(parsed.model === undefined ? {} : { model: parsed.model }),
       ...(parsed.permission === undefined ? {} : { permission: parsed.permission }),
+      ...(parsed.hostSessionId === undefined ? {} : { hostSessionId: parsed.hostSessionId }),
     } as DagStartRequest
     return await this.ctx.sandoreEngine.startInstance(request)
   }

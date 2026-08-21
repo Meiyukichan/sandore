@@ -30,6 +30,8 @@ export interface SandoreStepChatData {
   readonly childId: SessionId
   readonly name: string
   readonly status: SandoreStepStatus
+  /** childId 是否为合成占位（shell 无真实子会话，不可跳转；与 run-view-model 同语义）。 */
+  readonly synthetic?: boolean
   /** 循环迭代标签（如 `#1.2`），非循环 Step 缺省。 */
   readonly loopLabel?: string
   /** completed 态的内联结果文本块（缺省表示无文本输出）。 */
@@ -51,6 +53,8 @@ interface SandoreStepState {
   readonly childId: SessionId
   readonly name: string
   readonly status: SandoreStepStatus
+  /** childId 是否为合成占位（step-start 载荷为合成占位；update 收到真实会话 id 时置 false）。 */
+  readonly synthetic?: boolean
   readonly loopIteration?: readonly number[]
   readonly output?: readonly SandoreTextBlock[]
   readonly error?: string
@@ -68,6 +72,24 @@ export function loopLabelOf(loopIteration: readonly number[] | undefined): strin
   return loopIteration === undefined || loopIteration.length === 0
     ? undefined
     : `#${loopIteration.join('.')}`
+}
+
+/**
+ * 用 update 事件载荷的 childId 覆盖折叠状态，并按「childId 是否变化」推断 synthetic：
+ * 载荷与 start 的合成占位相同（shell 无真实子会话，stage-executor 回退同一
+ * 占位）→ 保持原 synthetic（true，不可跳转）；载荷换成真实会话 id
+ * （prompt/agent/skill/mcp 的 sessionMeta.childId）→ synthetic: false（可跳转）。
+ */
+function realChildIdOf(
+  state: { readonly childId: SessionId; readonly synthetic?: boolean },
+  childId: string,
+): Pick<SandoreStepState, 'childId' | 'synthetic'> {
+  // start 起 synthetic 恒有值；此处对 undefined 用省略式规避 exactOptionalPropertyTypes。
+  const synthetic = childId === state.childId ? state.synthetic : false
+  return {
+    childId: childId as SessionId,
+    ...(synthetic === undefined ? {} : { synthetic }),
+  }
 }
 
 /** 单个 Step 的讨论节点状态机（sandore 6 个 step-* 事件折叠）。 */
@@ -98,6 +120,9 @@ export const sandoreStepDefinition: ConversationNodeDefinition<SandoreStepState>
       childId: childId as SessionId,
       name,
       status: 'running',
+      // step-start 载荷 childId 是合成占位（stage-executor synthesizeChildId）；真实会话
+      // id 由后续 update 事件覆盖，同时把 synthetic 置 false。
+      synthetic: true,
       ...(loopIteration === undefined ? {} : { loopIteration }),
     }
   },
@@ -108,14 +133,25 @@ export const sandoreStepDefinition: ConversationNodeDefinition<SandoreStepState>
         for (const block of match.event.data.output) {
           if (block.type === 'text') output.push({ type: 'text', text: block.text })
         }
-        return { ...context.state, status: 'completed', output }
+        return { ...context.state, status: 'completed', output, ...realChildIdOf(context.state, match.event.data.childId) }
       }
       case 'sandore/step-failed':
-        return { ...context.state, status: 'failed', error: match.event.data.error }
+        return {
+          ...context.state,
+          status: 'failed',
+          error: match.event.data.error,
+          ...realChildIdOf(context.state, match.event.data.childId),
+        }
       case 'sandore/step-paused':
-        return { ...context.state, status: 'paused' }
+        return { ...context.state, status: 'paused', ...realChildIdOf(context.state, match.event.data.childId) }
       case 'sandore/step-resumed':
+        return {
+          ...context.state,
+          status: 'running',
+          ...realChildIdOf(context.state, match.event.data.childId),
+        }
       case 'sandore/step-retried':
+        // step-retried 载荷不含 childId（seam.ts），仅回到 running，保留原 childId/synthetic。
         return { ...context.state, status: 'running' }
       /* v8 ignore next -- update 仅对 match 命中的 5 个 step-* 事件派发。 */
       default:
@@ -139,6 +175,7 @@ export const sandoreStepDefinition: ConversationNodeDefinition<SandoreStepState>
         name: state.name,
         status: state.status,
         ...(state.loopIteration === undefined ? {} : { loopLabel: loopLabelOf(state.loopIteration) }),
+        ...(state.synthetic === undefined ? {} : { synthetic: state.synthetic }),
         ...(state.output === undefined ? {} : { output: state.output }),
         ...(state.error === undefined ? {} : { error: state.error }),
       },

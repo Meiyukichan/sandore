@@ -36,7 +36,7 @@ const TERMINAL_STEP_STATUSES: ReadonlySet<StepStatus> = new Set(['completed', 'f
 /** 恢复提示词的缺省值（`resumeStep`/`resumeAllSteps` 未显式提供时使用）。 */
 const DEFAULT_RESUME_PROMPT = '请继续完成当前任务。';
 
-/** 合成新子代理 SessionId（与 shell/prompt 的 `synthesizeChildId` 同规则）。 */
+/** 合成新子代理 SessionId（与 shell 的 `synthesizeChildId` 同规则）。 */
 export function synthesizeChildId(stepId: string): string {
   const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
   return `step-${stepId}-${execId}`;
@@ -117,7 +117,7 @@ export class LifecycleManager {
       throw new SandoreError(`step '${stepId}' not found`, 'INVALID_OPERATION');
     }
     if (this.isNonSubagentCommand(step)) {
-      // shell/prompt Step（sessionMeta.synthetic 合成占位，无真实子代理）不可暂停：
+      // shell Step（sessionMeta.synthetic 合成占位，无真实子代理）不可暂停：
       // interrupt 一个无活代理 id 是静默 no-op，会误标 paused（假暂停）。直接拒绝。
       throw new SandoreError(
         `step '${stepId}' is a non-subagent step (${step.command?.type}) and cannot be paused`,
@@ -245,10 +245,10 @@ export class LifecycleManager {
     return step.sessionMeta?.childId ?? step.id;
   }
 
-  /** 判定 Step 是否为非子代理命令（shell/prompt 合成占位，无真实子代理，不可暂停）。 */
+  /** 判定 Step 是否为非子代理命令（shell 合成占位，无真实子代理，不可暂停）。 */
   private isNonSubagentCommand(step: ExecutedStep): boolean {
     const type = step.command?.type;
-    return type === 'shell' || type === 'prompt';
+    return type === 'shell';
   }
 
   /** Step 对外展示 id（定义 stepId，缺省回退唯一执行 id）。 */

@@ -136,6 +136,14 @@ export interface DagStartRequest {
   model?: StartModelSelection
   /** 创建实例时选择的权限预设（read-only / workspace-write / danger-full-access）。 */
   permission?: string
+  /**
+   * 可选：调用方（UI/上层）传入的**已存在宿主主代理会话** id——复用该会话作为
+   * 本实例的 hostAgent（不新建）。省略时引擎以 `SessionId(instanceId)` 新建
+   * hostAgent（保持历史行为）。复用场景 hostAgent.id = hostSessionId ≠ instanceId，
+   * 冻结/解冻按 hostAgent.id 生效。注意：同一 hostSessionId 复用于多个并发实例时，
+   * 任一实例 completed 即解冻该 hostAgent（冻结状态按 hostAgent 主体登记）。
+   */
+  hostSessionId?: string
 }
 
 /** 工作流实例的运行句柄。 */

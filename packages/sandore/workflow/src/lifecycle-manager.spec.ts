@@ -48,7 +48,7 @@ steps:
         promptText: "do-work"
 `;
 
-/** 单 Step prompt 定义（prompt Step 为合成 sessionMeta，用于非子代理暂停守卫测试）。 */
+/** 单 Step prompt 定义（prompt Step 为真实可续接子代理（决策 D3），用于暂停测试）。 */
 const promptYaml = `id: wfl-prompt
 name: prompt
 version: "1.0.0"
@@ -64,17 +64,6 @@ steps:
       value:
         promptText: "do it"
 `;
-
-/** 可手动 resolve/reject 的挂起 Promise（模拟子代理 whenIdle 挂起或取消）。 */
-function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 /** 写入一条工作流定义记录。 */
 async function putDefinition(persistence: SandorePersistence, id: string, yaml: string): Promise<void> {
@@ -170,14 +159,6 @@ function waitForAborted(ctx: Context): Promise<void> {
 function waitForEnd(ctx: Context): Promise<void> {
   return new Promise<void>(resolve => {
     ctx.once('sandore/end', () => resolve());
-  });
-}
-
-/** 等待指定 stepId 的 Step 在持久化快照中变为 running（确认已开始执行并落盘）。 */
-async function waitForRunningStep(persistence: SandorePersistence, instanceId: string, stepId: string): Promise<void> {
-  await vi.waitFor(() => {
-    const step = persistence.state.get(instanceId)?.executedSteps.find(s => s.stepId === stepId);
-    expect(step?.status).toBe('running');
   });
 }
 
@@ -631,58 +612,55 @@ describe('LifecycleManager pause/resume full loop', () => {
 });
 
 describe('LifecycleManager non-subagent pause guard', () => {
-  it('pauseStep throws INVALID_OPERATION for a running prompt step (not marked paused)', async () => {
-    const { ctx, engine, persistence, llm, shell, subagents } = await harness();
+  it('pauses a running prompt step (决策 D3: prompt 为真实子代理，可暂停)', async () => {
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
     await putDefinition(persistence, 'wfl-prompt', promptYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const gate = deferred<void>();
-    llm.streamHandler = () => (async function* () {
-      await gate.promise;
-      yield* textChunks('done');
-    })();
+    // prompt Step 走可续接子代理：child status='running' 不自动 settle
+    // （collectSubagentOutput 挂起等待），保持 step-prompt running 供暂停测试。
+    const child = new FakeAgent('child-1');
+    child.status = 'running';
+    agents.register(child);
 
     const stepStarted = waitForStepId(ctx, 'step-prompt');
     const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it' });
     await stepStarted;
-    await waitForRunningStep(persistence, run.instanceId, 'step-prompt');
+    await waitForChildStarted(persistence, run.instanceId, 'step-prompt');
 
-    await expect(engine.pauseStep(run.instanceId, 'step-prompt')).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    // prompt 与 agent/skill/mcp 同为真实子代理：pauseStep 应正常 interrupt + 登记 + paused。
+    await engine.pauseStep(run.instanceId, 'step-prompt');
+    await flushMicrotasks();
 
     const state = persistence.state.get(run.instanceId);
-    const promptStep = state?.executedSteps.find(s => s.stepId === 'step-prompt');
-    expect(promptStep?.status).toBe('running');
-    expect(state?.pausedChildIds).toEqual([]);
-    expect(subagents.interrupts).toHaveLength(0);
-
-    gate.resolve();
+    expect(state?.executedSteps.find(s => s.stepId === 'step-prompt')?.status).toBe('paused');
+    expect(state?.pausedChildIds).toEqual(['child-1']);
+    expect(subagents.interrupts).toHaveLength(1);
+    expect(subagents.interrupts[0]?.targetSessionId).toBe('child-1');
   });
 
-  it('pauseAllSteps skips a running prompt step (not marked paused)', async () => {
-    const { ctx, engine, persistence, llm, shell, subagents } = await harness();
+  it('pauseAllSteps pauses a running prompt step (决策 D3)', async () => {
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
     await putDefinition(persistence, 'wfl-prompt', promptYaml);
     shell.runHandler = async spec => successResult(spec, 'ok');
     provideLlmDirectory(llm);
-    const gate = deferred<void>();
-    llm.streamHandler = () => (async function* () {
-      await gate.promise;
-      yield* textChunks('done');
-    })();
+    // prompt Step 走可续接子代理：child status='running' 不自动 settle，保持 running。
+    const child = new FakeAgent('child-1');
+    child.status = 'running';
+    agents.register(child);
 
     const stepStarted = waitForStepId(ctx, 'step-prompt');
     const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it' });
     await stepStarted;
-    await waitForRunningStep(persistence, run.instanceId, 'step-prompt');
+    await waitForChildStarted(persistence, run.instanceId, 'step-prompt');
 
     await engine.pauseAllSteps(run.instanceId);
+    await flushMicrotasks();
 
     const state = persistence.state.get(run.instanceId);
-    const promptStep = state?.executedSteps.find(s => s.stepId === 'step-prompt');
-    expect(promptStep?.status).toBe('running');
-    expect(state?.pausedChildIds).toEqual([]);
-    expect(subagents.interrupts).toHaveLength(0);
-
-    gate.resolve();
+    expect(state?.executedSteps.find(s => s.stepId === 'step-prompt')?.status).toBe('paused');
+    expect(state?.pausedChildIds).toEqual(['child-1']);
+    expect(subagents.interrupts).toHaveLength(1);
   });
 });
 

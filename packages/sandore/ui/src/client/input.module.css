@@ -403,6 +403,14 @@
   margin-top: 16px;
 }
 
+.composerError {
+  margin-bottom: 8px;
+  color: var(--sd-destructive);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
 .approvalCard {
   overflow: hidden;
   width: 100%;
@@ -549,6 +557,14 @@
   color: var(--sd-muted-foreground);
   font-size: 11px;
   line-height: 16px;
+}
+
+.qWorkflowTag {
+  margin-right: 6px;
+  color: var(--sd-brand);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
 }
 
 .qTitle {

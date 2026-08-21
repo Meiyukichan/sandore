@@ -159,18 +159,19 @@ export function stepIdOf(step: { readonly id: string; readonly stepId?: string |
 }
 
 /**
- * 判定 Step 是否为可续接的子代理 Step（agent/skill/mcp），非 shell/prompt 合成 session。
+ * 判定 Step 是否为可续接的子代理 Step（agent/skill/mcp/prompt），非 shell 合成 session。
  *
  * 对齐引擎侧 `recovery-manager.ts` 的 `isSubagentStep`：优先 `sessionMeta.command`
- * （运行时 session 元数据），缺省回退 `command.type`（定义态命令类型）。shell/prompt
+ * （运行时 session 元数据），缺省回退 `command.type`（定义态命令类型）。shell
  * 合成 session 无真实子代理，引擎对暂停/重试明确抛 `INVALID_OPERATION`，故 UI 不应
- * 对其渲染 pause/resume/retry 控件。
+ * 对其渲染 pause/resume/retry 控件；prompt 为真实子代理会话（决策 D3），与
+ * agent/skill/mcp 同语义。
  * @param step - 已执行 Step 快照。
  * @returns 子代理 Step（可暂停/恢复/重试）为 true。
  */
 export function isSubagentStep(step: ExecutedStep): boolean {
   const command = step.sessionMeta?.command ?? step.command?.type
-  return command === 'agent' || command === 'skill' || command === 'mcp'
+  return command === 'agent' || command === 'skill' || command === 'mcp' || command === 'prompt'
 }
 
 // ── 树形导航 / 统一时间线派生（纯函数，无 React 依赖） ─────────────────────
@@ -222,7 +223,7 @@ export interface TimelineStepItem {
   readonly error?: string | undefined
   /** 子代理会话 id（跳「查看详情」）。 */
   readonly childId?: string | undefined
-  /** 是否合成会话（shell/prompt 无真实子代理，标题不可点击跳子代理页）。 */
+  /** 是否合成会话（shell 无真实子代理，标题不可点击跳子代理页）。 */
   readonly synthetic?: boolean | undefined
   /** sessionMessages 展示行（内嵌消息框 / 失败·暂停最近 N 条）。 */
   readonly messages?: readonly ChatLine[] | undefined

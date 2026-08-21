@@ -42,7 +42,7 @@ export interface SandoreEngineSurface {
    *
    * 复用 DSH 宿主 `ctx.subagents.followup`（向子代理会话追加消息并取回新回复）：
    * requireActive + 终态守卫 → 按 stepId 反查最后活跃段 sessionMeta.childId →
-   * synthetic===false 才 followup（synthetic 步骤抛 INVALID_OPERATION——shell/prompt
+   * synthetic===false 才 followup（synthetic 步骤抛 INVALID_OPERATION——shell
    * 合成 session 无真实子代理可发消息）→ 追加 userMessages `{kind:'message',
    * target:stepId}`（不复用 'input' 以免污染 originalInput 语义）→ persistState →
    * 双发 `sandore/step-message`。@mention 由 UI 端 @Step 选择器产出 stepId，

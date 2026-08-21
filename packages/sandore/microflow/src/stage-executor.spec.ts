@@ -375,19 +375,25 @@ describe('StageExecutor 缺陷 7：解析并注入任务规则', () => {
 
   it('processCommandNode 解析 3 级合并 rules 并经 StepRunRequest 注入提示词 ## 任务规则', async () => {
     const { definition, stage } = rulesDefinition();
-    const { ctx, llm, makeExecutor } = harness();
+    const { ctx, llm, subagents, makeExecutor } = harness();
+    // prompt Step 走可续接子代理（决策 D3）：provider/model 走 llm 目录（L3）兜底，
+    // 注册真实 childId 并回填最终输出。
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('report content');
+    const agents = new FakeAgentRegistry();
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'report content' }]));
+    agents.register(child);
+    ctx.provide('agents', agents);
 
     const executor = makeExecutor({ stageDef: stage, workflowDef: definition });
     const result = await executor.execute();
 
     expect(result.status).toBe('completed');
-    // llm.calls[0] 是 prompt Step 的 stream 调用；其 messages[0].content[0].text
-    // 应含 ## 任务规则 节，且内容为 step.rules ∪ stage.rules 去重后查 workflow.rules。
-    expect(llm.calls).toHaveLength(1);
-    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    // startContinuable 的请求提示词应含 ## 任务规则 节，且内容为 step.rules ∪
+    // stage.rules 去重后查 workflow.rules。
+    expect(subagents.continuableStarts).toHaveLength(1);
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).toContain('## 任务规则');
     expect(promptText).toContain('- **chinese-output**: 所有输出必须使用中文');
     expect(promptText).toContain('- **no-direct-commit**: 禁止直接执行 git commit');
@@ -407,15 +413,21 @@ describe('StageExecutor 缺陷 7：解析并注入任务规则', () => {
       ...definition,
       steps: [promptStep],
     };
-    const { ctx, llm, makeExecutor } = harness();
+    const { ctx, llm, subagents, makeExecutor } = harness();
+    // prompt Step 走可续接子代理：provider/model 走 llm 目录（L3）兜底，注册真实 childId。
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('done');
+    const agents = new FakeAgentRegistry();
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    agents.register(child);
+    ctx.provide('agents', agents);
 
     const executor = makeExecutor({ stageDef: stage, workflowDef: promptDef });
-    await executor.execute();
+    const result = await executor.execute();
 
-    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    expect(result.status).toBe('completed');
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).not.toContain('## 任务规则');
   });
 });
@@ -530,20 +542,27 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     };
     const twoStepStage: WorkflowStage = { ...stage, steps: [{ id: 'step-a' }, { id: 'step-b' }] };
     const twoStepDef: WorkflowDefinition = { ...definition, stages: [twoStepStage], steps: [stepA, stepB] };
-    const { llm, shell, fs, makeExecutor } = harness();
+    const { ctx, llm, subagents, shell, fs, makeExecutor } = harness();
+    // prompt Step（step-b）走可续接子代理：provider/model 走 llm 目录（L3）兜底，
+    // 注册真实 childId 并回填最终输出。
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('ok');
+    const agents = new FakeAgentRegistry();
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    ctx.provide('agents', agents);
     shell.runHandler = async () => ({ exitCode: 0, stdout: 'done', stderr: '' });
     fs.seedFile('/tmp/out/report.md');
 
     const executor = makeExecutor({ stageDef: twoStepStage, workflowDef: twoStepDef });
-    await executor.execute();
+    const result = await executor.execute();
 
-    // step-a 是 shell（无 llm.stream）；step-b 是 prompt（llm.stream → calls[0]）
-    // step-b 无 gates 无未解析透传变量 → finalize 跳过 → 无 assess/gate stream
-    expect(llm.calls).toHaveLength(1);
-    const promptText = textOf(llm.calls[0]?.messages[0]?.content[0]);
+    expect(result.status).toBe('completed');
+    // step-a 是 shell（无 AI 调用）；step-b 是 prompt（startContinuable 提示词含前置产物）。
+    // step-b 无 gates 无未解析透传变量 → finalize 跳过 → 无 assess/gate stream。
+    expect(subagents.continuableStarts).toHaveLength(1);
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).toContain('## 前置Steps输出与产物');
     expect(promptText).toContain('<artifacts>');
     expect(promptText).toContain('/tmp/out/report.md');
