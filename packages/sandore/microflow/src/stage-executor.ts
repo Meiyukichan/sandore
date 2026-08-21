@@ -332,12 +332,11 @@ interface StageRunState {
   nextBatch: string[];
   status: StepStatus;
   errorDetail: string | undefined;
-  /** ask 断点：等待回复的 Step 及其收尾评估结果（resume 时重收集输出 + 重跑完整 finalize）。 */
+  /** ask 断点：等待回复的 Step（resume 时重收集输出 + 重跑完整 finalize）。 */
   pendingAsk: {
     readonly nodeId: string;
     readonly step: WorkflowStep;
     readonly executed: ExecutedStepDefault;
-    readonly assessResult: FinalizeAssessResult;
     /** 已发生的 ask 轮次数（防无限重问；达到上限后按普通输出推进）。 */
     readonly rounds: number;
   } | undefined;
@@ -927,7 +926,9 @@ export class StageExecutor {
     state: StageRunState,
   ): Promise<'ok' | 'ask' | 'failed'> {
     const { stageDef, hooks } = this.options;
-    executed.status = 'completed';
+    // 偏离 1：入口**不设 completed**——段保持 running 走完全部收尾阶段（Phase A/B/C），
+    // 由 completeAfterFinalize 末段统一置 completed（status 流：
+    // running → [interacting（仅 state.status）] → running → completed）。
     executed.updatedAt = now();
     executed.output = result.output;
     // §3.8A：真实子代理会话消息随结果带出，写入段快照（onPersist 持久化定格；
@@ -957,8 +958,8 @@ export class StageExecutor {
       return 'ask';
     }
 
-    // Phase B：收尾（透传变量回写）→ Phase C：门禁（真实 fork 会话）→ 尾段。
-    return await this.runPhasesBC(nodeId, step, childId, executed, context, gates, phaseA.assessResult, state);
+    // Phase B：收尾（重新 fork + 重新 assess）→ Phase C：门禁（真实 fork 会话）→ 尾段。
+    return await this.runPhasesBC(nodeId, step, childId, executed, context, gates, state);
   }
 
   /** 组装收尾上下文（input + output 文本 + 产物文件；缺陷 16/34：artifacts 直接收集）。 */
@@ -987,18 +988,19 @@ export class StageExecutor {
     executed: ExecutedStepDefault,
     context: FinalizeStepContext,
     gates: Gates | undefined,
-    assessResult: FinalizeAssessResult | undefined,
     state: StageRunState,
   ): Promise<'ok' | 'failed'> {
-    // Phase B：收尾（透传变量回写 + finalizeMeta currentPhase='finalizing'）。
-    await this.runPhaseB(step, executed, context, gates, assessResult, state);
+    // Phase B：**重新 fork + 重新 assess**（偏离 2：不复用 Phase A 结果——ask 轮次后
+    // 子代理会话已有新消息，必须从最新消息重新 fork 评估；透传变量回写 + finalizeMeta
+    // currentPhase='finalizing'）。
+    const phaseBAssessResult = await this.runPhaseB(step, executed, context, gates, state);
     // Phase C：门禁（真实 fork 会话）。
-    const phaseC = await this.runPhaseC(step, childId, executed, context, gates, assessResult, state);
+    const phaseC = await this.runPhaseC(step, childId, executed, context, gates, phaseBAssessResult, state);
     if (phaseC.kind === 'failed') {
       return 'failed';
     }
     // Phase C 后、completed 前：压缩输出 + finalizeMeta 终态 + 推进下一批。
-    await this.completeAfterFinalize(nodeId, step, childId, executed, context, gates, assessResult, phaseC.gateResult, state);
+    await this.completeAfterFinalize(nodeId, step, childId, executed, context, gates, phaseBAssessResult, phaseC.gateResult, state);
     return 'ok';
   }
 
@@ -1016,6 +1018,14 @@ export class StageExecutor {
    * 引用在评估返回后即释放（不常驻、不持久化到 state）；`assessSessionId` 自 Phase B
    * （收尾）起才经 finalizeMeta 持久化到 state（assessResult.forkSessionId 因 schema
    * 强约束随结果落 state）。
+   *
+   * **fork 会话回收（偏离 3，DSH API 查证）**：`ctx.sessions`（SessionStore）**无公共
+   * `delete` 方法**（公共 API：create/prepare/enter/fork/get/list），fork 返回的
+   * `Session` handle 亦无 `dispose()`——DSH 的会话清理是 **fiber 作用域生命周期**：
+   * `create`/`fork` 内部经 `ctx.effect` 把会话 detach 绑定到调用 fiber，fiber 卸载时
+   * 自动从 store 移除（emit `session/disposed`，持久化 coordinator 随之 retire）。
+   * 故 Phase A 临时评估 fork 会话的等价清理 = **不持久化、不保留引用 + 随执行 fiber
+   * 卸载自动回收**（本方法不做任何 `delete` 调用；见偏离 3 报告）。
    */
   private async runPhaseA(
     nodeId: string,
@@ -1037,8 +1047,10 @@ export class StageExecutor {
       this.buildFinalizeRequest(step, executed, context, gates, state),
     );
     if (assessResult.hasAsk && rounds < MAX_FINALIZE_ASK_ROUNDS) {
-      // ask 保底通道：评估判定需向用户提问 → Step 置 interacting（引擎 ask 闭环）。
-      executed.status = 'interacting';
+      // ask 保底通道：评估判定需向用户提问 → Step 保持 running（偏离 8：interacting
+      // 只设 state.status，executed.status 在 ask 中断 persist 时仍为 running），
+      // finalizeMeta currentPhase='ask-detect'（引擎 findAskStep 依 ask-detect 标记
+      // 而非 interacting status 定位 ask Step）。
       await finalizeManager.commitFinalize(
         this.buildFinalizeRequest(step, executed, context, gates, state),
         assessResult,
@@ -1046,9 +1058,9 @@ export class StageExecutor {
         'ask-detect',
         { recordAssessSession: false },
       );
-      // ask 中断点持久化（崩溃恢复需要 interacting Step 快照含 finalizeMeta）。
+      // ask 中断点持久化（崩溃恢复需要 running Step 快照含 finalizeMeta currentPhase='ask-detect'）。
       await this.persist(executed, state);
-      state.pendingAsk = { nodeId, step, executed, assessResult, rounds: rounds + 1 };
+      state.pendingAsk = { nodeId, step, executed, rounds: rounds + 1 };
       state.status = 'interacting';
       return { kind: 'ask' };
     }
@@ -1062,26 +1074,34 @@ export class StageExecutor {
   }
 
   /**
-   * Phase B：收尾——回写透传变量 + 组装 finalizeMeta（currentPhase='finalizing'，
-   * assessSessionId 持久化到 state）。仅评估已运行时生效（跳过路径无评估结果）。
+   * Phase B：收尾——**重新 fork + 重新 assess**（偏离 2 修复）。
+   *
+   * 不复用 Phase A 的评估结果：ask 轮次后真实子代理会话已基于回答产生新消息，
+   * Phase B 必须从最新会话状态重新 fork 并跑 `assessOnly`（提取透传变量 + 总结），
+   * 以该结果为权威（Phase C 门禁与 completed finalizeMeta 均以它为准）。返回
+   * Phase B 的评估结果；跳过检查与 Phase A 同谓词（无未解析透传变量且无门禁 →
+   * Phase A 未评估，Phase B 亦不重评估，保持零 AI 调用），此时返回 undefined。
+   *
+   * `commitFinalize('finalizing')` 把 Phase B 的 `forkSessionId` 持久化为顶层
+   * `assessSessionId`（偏离 3：Phase A 评估 fork 用完即删、不持久化；自 Phase B 起
+   * 才落 state）。
    */
   private async runPhaseB(
     step: WorkflowStep,
     executed: ExecutedStepDefault,
     context: FinalizeStepContext,
     gates: Gates | undefined,
-    assessResult: FinalizeAssessResult | undefined,
     state: StageRunState,
-  ): Promise<void> {
-    if (assessResult === undefined) {
-      return;
+  ): Promise<FinalizeAssessResult | undefined> {
+    if (!hasUnresolvedPassThroughVars(step) && !hasEnabledGates(gates)) {
+      return undefined;
     }
-    await this.options.finalizeManager.commitFinalize(
-      this.buildFinalizeRequest(step, executed, context, gates, state),
-      assessResult,
-      undefined,
-      'finalizing',
-    );
+    // 预置 currentPhase='finalizing'（评估耗时期间 UI 展示「收尾中」；commitFinalize 落终态）。
+    executed.finalizeMeta = { ...executed.finalizeMeta, currentPhase: 'finalizing' };
+    const request = this.buildFinalizeRequest(step, executed, context, gates, state);
+    const phaseBAssessResult = await this.options.finalizeManager.assessOnly(request);
+    await this.options.finalizeManager.commitFinalize(request, phaseBAssessResult, undefined, 'finalizing');
+    return phaseBAssessResult;
   }
 
   /**
@@ -1158,6 +1178,10 @@ export class StageExecutor {
     if (routed.loopMeta !== undefined) {
       executed.loopMeta = routed.loopMeta;
     }
+    // 偏离 1：收尾全流程保持 running，**最后才置 completed**（P3 completed 持久化携带
+    // 终态 status；无中间 completed 脏状态）。
+    executed.status = 'completed';
+    executed.updatedAt = now();
     // P3 completed 持久化（含 branchMeta/loopMeta 与终态 finalizeMeta）。
     await this.persist(executed, state);
     state.nextBatch.push(...routed.nextNodeIds);
@@ -1299,21 +1323,23 @@ export class StageExecutor {
 
   /**
    * ask 回复后从断点续跑（4.7 简化）：真实子代理先重收集新 output，随后统一走
-   * 3 阶段收尾（Phase A 重评估 → Phase B 收尾 → Phase C 门禁）→ 压缩 → 推进。
+   * 3 阶段收尾（Phase A 重评估 → Phase B 重新 fork + 重新 assess → Phase C 门禁）
+   * → 压缩 → 推进。
    *
    * 简化点（对比旧双路径实现）：
    * - 真实子代理（synthetic === false）重收集新 output 后与首次执行**共用**
    *   runPhaseA/B/C + completeAfterFinalize（不再重复 finalizeStep/finalizeStepAfterAsk
    *   两套近乎相同的代码路径）；
-   * - 无真实会话（shell 等合成 session）无新 output——**不再重评估**（同一输出反复
-   *   触发 ask 会直到轮次上限才停），复用首次评估结果直接跑 Phase B/C；
+   * - 无真实会话（shell 等合成 session）无新 output——Phase A 的重评估已消费回答，
+   *   直接跑 Phase B/C（Phase B 重新 fork + 重新 assess；Phase B 不处理 hasAsk，
+   *   同输出不会重复触发引擎级 ask 闭环）；
    * - 轮次上限（{@link MAX_FINALIZE_ASK_ROUNDS}）由 runPhaseA 内部守卫（rounds 入参），
    *   达到后把最后 output 视为完成（不再续问）。
    */
   private async resumePendingAsk(state: StageRunState): Promise<'ok' | 'ask' | 'failed'> {
     const pending = state.pendingAsk!;
     state.pendingAsk = undefined;
-    const { nodeId, step, executed, assessResult: firstAssessResult, rounds } = pending;
+    const { nodeId, step, executed, rounds } = pending;
 
     const childId = executed.sessionMeta?.childId;
     const commandType = step.command?.type;
@@ -1328,9 +1354,10 @@ export class StageExecutor {
       const result = await this.runner.resumeSubagent(commandType!, childId!, step.id, this.options.stageDef.id, this.options.signal);
       executed.output = result.output;
       executed.updatedAt = now();
-      // 首次 ask 时 executed.status 已被 runPhaseA 置为 'interacting'——先置回 completed
-      // （若重评估再 ask 会被重新置 interacting；error 则置 failed）。
-      executed.status = 'completed';
+      // 偏离 1/8：首次 ask 时 executed.status 保持 running（interacting 只设
+      // state.status）——重收集输出后置回 running（若重评估再 ask 仅 state.status
+      // 置 interacting；error 则置 failed），最终由 completeAfterFinalize 置 completed。
+      executed.status = 'running';
       // §3.8A：回答注回后子代理新产出 → 消息行随新输出更新。
       if (result.sessionMessages !== undefined) {
         executed.sessionMessages = result.sessionMessages;
@@ -1343,17 +1370,18 @@ export class StageExecutor {
       if (phaseA.kind === 'ask') {
         return 'ask';
       }
-      return await this.runPhasesBC(nodeId, step, childId, executed, context, gates, phaseA.assessResult, state);
+      return await this.runPhasesBC(nodeId, step, childId, executed, context, gates, state);
     }
 
-    // 无真实会话（shell）：无新 output，复用首次评估结果（hasAsk 已被回答消费，不再
-    // 重问——同输出反复触发 ask 只会空耗轮次），直接跑 Phase B/C + 尾段。首次 ask 时
-    // runPhaseA 已把 status 置为 'interacting'——先置回 completed（Phase B/C 不改状态）。
-    executed.status = 'completed';
+    // 无真实会话（shell）：无新 output，直接跑 Phase B/C + 尾段（Phase B 重新
+    // fork + 重新 assess——同输出不会重复触发引擎级 ask，Phase B 不处理 hasAsk）。
+    // 首次 ask 时 executed.status 保持 running（偏离 1/8）——最终由
+    // completeAfterFinalize 置 completed。
+    executed.status = 'running';
     executed.updatedAt = now();
     const context = await this.buildFinalizeContext(step, executed, state);
     const gates = mergeGates(this.options.workflowDef, this.options.stageDef, step);
-    return await this.runPhasesBC(nodeId, step, resumeChildId, executed, context, gates, firstAssessResult, state);
+    return await this.runPhasesBC(nodeId, step, resumeChildId, executed, context, gates, state);
   }
 
   /** 组装 Stage 执行结果（含 Stage 产物契约的异步产物收集）。 */

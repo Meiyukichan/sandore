@@ -511,8 +511,9 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     let call = 0;
     llm.streamHandler = () => {
       call += 1;
-      // calls: [0] assess（needsAssess=true 因 ${v}）, [1] primary gate
-      if (call === 1) return textChunks('{"completionType":"completed","passThroughVars":{}}');
+      // calls: [1] Phase A assess（needsAssess=true 因 ${v}）, [2] Phase B 重新评估
+      // （偏离 2：不复用 Phase A 结果，重新 fork + assess）, [3] primary gate
+      if (call === 1 || call === 2) return textChunks('{"completionType":"completed","passThroughVars":{}}');
       return textChunks('{"taskStatus":"done"}');
     };
     shell.runHandler = async () => ({ exitCode: 0, stdout: 'hi', stderr: '' });
@@ -521,9 +522,13 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     const executor = makeExecutor({ stageDef: stage, workflowDef: def });
     await executor.execute();
 
-    // shell 无 prompt stream → calls = [assess, gate]
-    expect(llm.calls).toHaveLength(2);
-    const gatePrompt = textOf(llm.calls[1]?.messages[0]?.content[0]);
+    // shell 无 prompt stream → calls = [Phase A assess, Phase B 重新 assess, gate]
+    expect(llm.calls).toHaveLength(3);
+    // Phase B 重新评估提示词同样含 <artifacts> 块（缺陷 16：收尾评估上下文带产物）。
+    const phaseBAssessPrompt = textOf(llm.calls[1]?.messages[0]?.content[0]);
+    expect(phaseBAssessPrompt).toContain('<artifacts>');
+    expect(phaseBAssessPrompt).toContain('/tmp/out/report.md');
+    const gatePrompt = textOf(llm.calls[2]?.messages[0]?.content[0]);
     expect(gatePrompt).toContain('<artifacts>');
     expect(gatePrompt).toContain('/tmp/out/report.md');
   });
@@ -873,18 +878,19 @@ describe('StageExecutor 5 阶段收尾（4.6/4.7：Phase A ask 保底 → Phase 
     };
     const executor = makeExecutor({ stageDef: stage, workflowDef: definition });
 
-    // 首次 execute：Phase A ask 保底 → Step interacting + 实例 interacting（引擎 ask 闭环）。
+    // 首次 execute：Phase A ask 保底 → 实例 interacting（引擎 ask 闭环）；Step 段
+    // 保持 running（偏离 8：interacting 只设 state.status）。
     const first = await executor.execute();
     expect(first.status).toBe('interacting');
-    expect(first.executedSteps[0]?.status).toBe('interacting');
+    expect(first.executedSteps[0]?.status).toBe('running');
     // Phase A 中断快照：currentPhase='ask-detect'，顶层 assessSessionId 不记录
     // （fork 用完即删不持久化；Phase B 收尾才落 assessSessionId）。
     expect(first.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('ask-detect');
     expect(first.executedSteps[0]?.finalizeMeta?.assessSessionId).toBeUndefined();
     expect(first.executedSteps[0]?.finalizeMeta?.assessResult?.hasAsk).toBe(true);
 
-    // 回答后再次 execute：resumePendingAsk（shell 无新 output，复用评估结果）→
-    // Phase B（finalizeMeta currentPhase='finalizing'）→ Phase C（无门禁 ok）→ 完成。
+    // 回答后再次 execute：resumePendingAsk（shell 无新 output）→ Phase B 重新 fork +
+    // 重新 assess（finalizeMeta currentPhase='finalizing'）→ Phase C（无门禁 ok）→ 完成。
     const second = await executor.execute();
     expect(second.status).toBe('completed');
     expect(second.executedSteps[0]?.status).toBe('completed');

@@ -320,6 +320,11 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
     expect(stepItem.finalizePhase).toBe('gating')
     // failed 态错误详情（门禁失败原因）。
     expect(stepItem.finalizeErrorDetail).toBe('missing output files: out/report.md')
+    // 偏离 6：可点击徽标与会话结果字段（Phase B/C fork 会话 id + assess/gate 结果）。
+    expect(stepItem.finalizeAssessSessionId).toBe('assess-1')
+    expect(stepItem.finalizeGateSessionId).toBe('gate-1')
+    expect(stepItem.finalizeAssessResult).toEqual({ assessmentRaw: '' })
+    expect(stepItem.finalizeGateResult).toEqual({ gatesPassed: false })
   })
 
   it('omits the finalize fields when finalizeMeta is absent', () => {
@@ -342,5 +347,9 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
     if (stepItem.kind !== 'step') return
     expect(stepItem.finalizePhase).toBeUndefined()
     expect(stepItem.finalizeErrorDetail).toBeUndefined()
+    expect(stepItem.finalizeAssessSessionId).toBeUndefined()
+    expect(stepItem.finalizeGateSessionId).toBeUndefined()
+    expect(stepItem.finalizeAssessResult).toBeUndefined()
+    expect(stepItem.finalizeGateResult).toBeUndefined()
   })
 })

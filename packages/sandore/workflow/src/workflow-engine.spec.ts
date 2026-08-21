@@ -1935,9 +1935,12 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
 
     // 条件分支评估（shouldExecute JSON true）→ agent 执行 → prompt 执行（子代理）→
-    // 收尾 assess → 门禁（按序供给 chunk 流；prompt Step 自身输出来自子代理会话）。
+    // 收尾 Phase A assess → Phase B 重新 fork + 重新 assess → 门禁（按序供给 chunk
+    // 流；prompt Step 自身输出来自子代理会话）。偏离 2：Phase B 不再复用 Phase A
+    // 结果、重新 assess，故 assess JSON 需供给两次。
     const responses = [
       '{"shouldExecute": true}',
+      '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
       '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
       '{"taskStatus":"done"}',
     ];
@@ -2600,9 +2603,12 @@ describe('SandoreEngineRuntime interaction', () => {
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
     agents.register(child);
 
-    // assess ①（ask JSON）→ 回答注回 → 重新评估 ②（completed JSON）→ 门禁（taskStatus done）。
+    // assess ①（ask JSON）→ 回答注回 → 重新评估 ②（completed JSON）→ Phase B 重新
+    // fork + 重新 assess ③（completed JSON）→ 门禁（taskStatus done）。偏离 2：
+    // Phase B 重新 assess，故 completed JSON 需供给两次。
     const responses = [
       '{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
+      '{"completionType":"completed","passThroughVars":{}}',
       '{"completionType":"completed","passThroughVars":{}}',
       '{"taskStatus":"done"}',
     ];
@@ -3996,9 +4002,10 @@ describe('complex workflow e2e', () => {
       'echo stage1-done',
     ]);
 
-    // ── llm 调用覆盖：条件分支 1 + 循环跳出 2 + assess 1 + primary 1 + secondary 1
-    //    = 6 次（按字段名分发；prompt Step 输出来自子代理会话，不消费 llm.stream）。
-    expect(llm.calls).toHaveLength(6);
+    // ── llm 调用覆盖：条件分支 1 + 循环跳出 2 + Phase A assess 1 + Phase B 重新
+    //    assess 1（偏离 2：不复用 Phase A 结果）+ primary 1 + secondary 1
+    //    = 7 次（按字段名分发；prompt Step 输出来自子代理会话，不消费 llm.stream）。
+    expect(llm.calls).toHaveLength(7);
 
     // ── 事件序：start → 两 Stage 各 stage-start/step-*/stage-completed → end。
     expect(records[0]?.name).toBe('sandore/start');

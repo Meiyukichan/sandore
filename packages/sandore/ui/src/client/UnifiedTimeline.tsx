@@ -152,6 +152,39 @@ function LastMessages({ item, t }: {
   )
 }
 
+/** 收尾阶段徽标（finalizeMeta.currentPhase）：Phase B「收尾中」/Phase C「门禁中」为
+ * 可点击按钮（openSession 打开对应 fork 会话）；Phase A「问题检测中」纯文本不可点。 */
+function PhaseBadge({ item, t, openSession }: {
+  readonly item: TimelineStepItem
+  readonly t: TranslateNS<'sandore'>
+  readonly openSession: (id: string) => void
+}) {
+  const phaseKey = finalizePhaseKey(item.finalizePhase)
+  if (phaseKey === undefined) return null
+  // 偏离 4：仅携带可打开会话 id 的收尾阶段可点击（finalizing → assessSessionId；
+  // gating → gateSessionId）；ask-detect（Phase A）纯文本不可点。
+  const assessTarget = item.finalizePhase === 'finalizing' && item.finalizeAssessSessionId !== undefined
+    ? item.finalizeAssessSessionId
+    : undefined
+  const gateTarget = item.finalizePhase === 'gating' && item.finalizeGateSessionId !== undefined
+    ? item.finalizeGateSessionId
+    : undefined
+  const target = assessTarget ?? gateTarget
+  if (target === undefined) {
+    return <span className={css.phaseLabel}>{t(phaseKey)}</span>
+  }
+  return (
+    <button
+      type="button"
+      className={css.phaseBtn}
+      title={t('step.open', { name: t(phaseKey) })}
+      onClick={() => { openSession(target) }}
+    >
+      {t(phaseKey)}
+    </button>
+  )
+}
+
 /** 单条 agent 消息（一个 executedStep）。 */
 function AgentMsg({ item, t, nowIso, openSession }: {
   readonly item: TimelineStepItem
@@ -164,7 +197,6 @@ function AgentMsg({ item, t, nowIso, openSession }: {
   const rel = relativeTimeOf(item.time, nowIso)
   // 状态按钮：点击折叠/展开消息区（正文按状态渲染）。
   const [collapsed, setCollapsed] = useState(false)
-  const phaseKey = finalizePhaseKey(item.finalizePhase)
   // 仅真实子代理步骤（prompt/agent/skill/mcp，非合成会话）才有真实会话：标题可点击跳
   // DSH 子代理页、正文内嵌该会话的 DSH 对话流；shell 的 childId 是合成占位（无真实
   // 会话），标题渲染为纯文本、正文走兜底。
@@ -201,14 +233,18 @@ function AgentMsg({ item, t, nowIso, openSession }: {
         >
           <StatusIcon status={item.status} />
           <span className={css.stLbl}>{t(STEP_STATUS_KEYS[item.status])}</span>
-          {phaseKey !== undefined && <span className={css.phaseLbl}>{t(phaseKey)}</span>}
+          <PhaseBadge item={item} t={t} openSession={openSession} />
         </button>
       </div>
 
       {!collapsed && (
         <>
-          {item.status === 'completed' && item.outputText !== undefined && (
-            <div className={css.md}><MessageText text={item.outputText} /></div>
+          {item.status === 'completed' && (
+            // 偏离 5：completed 优先展示收尾评估的 AI 总结（assessResult.assessmentRaw），
+            // 无评估结果（零 AI 跳过路径/旧记录）回退原始输出文本。
+            item.finalizeAssessResult?.assessmentRaw !== undefined
+              ? <div className={css.md}><MessageText text={item.finalizeAssessResult.assessmentRaw} /></div>
+              : item.outputText !== undefined && <div className={css.md}><MessageText text={item.outputText} /></div>
           )}
 
           {running && (
@@ -237,8 +273,14 @@ function AgentMsg({ item, t, nowIso, openSession }: {
             // 再展示子代理会话（真实会话 → DSH 对话流；合成会话 → 最近 N 条兜底）。
             <>
               {item.status === 'failed' && (item.error !== undefined || item.finalizeErrorDetail !== undefined) && (
-                <div className={css.agentErrDetail}>
-                  {item.finalizeErrorDetail ?? item.error}
+                <div className={css.errorBlock} role="alert">
+                  <span className={css.errorIcon} aria-hidden>
+                    <svg viewBox="0 0 14 14" fill="none">
+                      <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.4" />
+                      <path d="M4.6 4.6l4.8 4.8M9.4 4.6l-4.8 4.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                    </svg>
+                  </span>
+                  <span className={css.errorText}>{item.finalizeErrorDetail ?? item.error}</span>
                 </div>
               )}
               {realSession

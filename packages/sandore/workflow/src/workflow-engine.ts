@@ -159,13 +159,19 @@ function now(): string {
   return new Date().toISOString();
 }
 
-/** 从 executedSteps 中定位处于 interacting 且携带 ask 载荷的 Step。 */
+/**
+ * 从 executedSteps 中定位处于 ask 保底中断且携带 ask 载荷的 Step。
+ *
+ * 偏离 8：executed.status 在 ask 中断时保持 running（interacting 只设 state.status），
+ * 故以 finalizeMeta `currentPhase === 'ask-detect'` 标记（runPhaseA ask 分支 commitFinalize
+ * 写入）定位，而非旧 `status === 'interacting'` 过滤。
+ */
 function findAskStep(
   steps: WorkflowTaskState['executedSteps'],
 ): { step: WorkflowTaskState['executedSteps'][number]; payload: AskUserQuestionPayload } | undefined {
   for (const step of steps) {
     const payload = step.finalizeMeta?.assessResult?.askQuestion;
-    if (step.status === 'interacting' && payload !== undefined) {
+    if (step.finalizeMeta?.currentPhase === 'ask-detect' && payload !== undefined) {
       return { step, payload };
     }
   }
@@ -1180,7 +1186,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         ...(resumeFrom === undefined ? {} : { resumeFrom }),
         onPersist: async (executed, pendingQueue) => {
           // 逐 Step 持久化：每个 Step 完成后立即追加/更新到 executedSteps 并落盘。
-          // 按唯一执行 id upsert，避免 ask 回复续跑时同一 Step（interacting → completed）
+          // 按唯一执行 id upsert，避免 ask 回复续跑时同一 Step（running → completed）
           // 被重复追加；崩溃恢复时无需等待 Stage 结束即可读到已完成 Step 快照。
           // 缺陷 10 pendingQueue 持久化：snapshot ready/processing Step IDs →
           // WorkflowTaskState.pendingQueue → 崩溃恢复时直接读回 re-queue（精确重放，
@@ -1220,15 +1226,15 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           const ask = findAskStep(active.state.executedSteps);
           if (ask === undefined) {
             // 无 ask 载荷（异常收尾）：不再静默 return（实例永久卡 interacting、UI 无
-            // 选择框）——记 warn 并把滞留 interacting 的 Step 落 failed + 落 Stage/实例
+            // 选择框）——记 warn 并把滞留 ask-detect 的 Step 落 failed + 落 Stage/实例
             // failed + 双发 sandore/step-failed + sandore/end（对齐 runAndCatch 语义与
             // handleRejectedQuestion 的显式落态写法）。findAskStep 返回 undefined 意味着
-            // 所有 interacting Step 均无 askQuestion 载荷（有则必命中），故全部标 failed。
+            // 所有 ask-detect Step 均无 askQuestion 载荷（有则必命中），故全部标 failed。
             this.ctx.logger.warn(
               `sandore: instance ${active.state.taskId} stage ${stageId} interacting without ask payload; marking failed`,
             );
             const errorMessage = 'finalize assess returned ask without askQuestion payload';
-            const stuckSteps = active.state.executedSteps.filter(item => item.status === 'interacting');
+            const stuckSteps = active.state.executedSteps.filter(item => item.finalizeMeta?.currentPhase === 'ask-detect');
             for (const stuck of stuckSteps) {
               this.emitStepFailed(
                 session,
@@ -1245,7 +1251,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
             active.state = {
               ...active.state,
               executedSteps: active.state.executedSteps.map(item =>
-                item.status === 'interacting'
+                item.finalizeMeta?.currentPhase === 'ask-detect'
                   ? { ...item, status: 'failed' as StepStatus, error: errorMessage, updatedAt: now() }
                   : item,
               ),
@@ -1429,7 +1435,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     const childId = stepEntry.sessionMeta?.childId ?? stepEntry.id;
     const name = stepEntry.name;
     const errorMessage = 'Question rejected by user';
-    // 标 ask Step failed（写 executedSteps + persist）。该 Step 此前在 interacting，
+    // 标 ask Step failed（写 executedSteps + persist）。该 Step 此前在 ask 保底中断
+    // （executed.status=running + finalizeMeta currentPhase='ask-detect'，偏离 8），
     // StageExecutor 的 onStepFailed 钩子未对其触发（仅在 executor.execute() 内触发），
     // 故此处显式双发 sandore/step-failed。
     active.state = {

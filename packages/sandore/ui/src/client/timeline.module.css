@@ -154,8 +154,8 @@
   background: var(--sd-surface-hover);
 }
 
-/* 收尾阶段徽标（finalizeMeta.currentPhase：assess/finalize/gate）。 */
-.phaseLbl {
+/* 收尾阶段徽标（finalizeMeta.currentPhase：ask-detect/finalizing/gating）。 */
+.phaseLabel {
   flex: none;
   font-size: 11px;
   line-height: 16px;
@@ -164,6 +164,62 @@
   background: var(--sd-surface-hover);
   border-radius: 6px;
   padding: 1px 6px;
+}
+
+/* 收尾阶段徽标（可点击版）：Phase B「收尾中」/Phase C「门禁中」点击打开对应 fork 会话。 */
+.phaseBtn {
+  flex: none;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--sd-brand);
+  background: color-mix(in srgb, var(--sd-brand) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sd-brand) 22%, transparent);
+  border-radius: 6px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.phaseBtn:hover {
+  color: var(--sd-brand);
+  background: color-mix(in srgb, var(--sd-brand) 18%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* failed 态错误块（.errorBlock/.errorIcon/.errorText，计划命名；替代旧 .agentErrDetail）。 */
+.errorBlock {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sd-destructive) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sd-destructive) 24%, transparent);
+}
+
+.errorIcon {
+  flex: none;
+  display: inline-flex;
+  margin-top: 2px;
+  color: var(--sd-destructive);
+}
+
+.errorIcon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.errorText {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--sd-destructive);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* failed 态错误详情（段 error / 收尾 finalizeMeta.errorDetail）。 */

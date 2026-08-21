@@ -225,6 +225,14 @@ export interface TimelineStepItem {
   readonly finalizePhase?: string | undefined
   /** 收尾错误详情（finalizeMeta.errorDetail，如门禁失败原因；failed 态附加展示）。 */
   readonly finalizeErrorDetail?: string | undefined
+  /** Phase B 收尾评估 fork 会话 id（finalizeMeta.assessSessionId，供「收尾中」徽标点击打开）。 */
+  readonly finalizeAssessSessionId?: string | undefined
+  /** Phase C 门禁 fork 会话 id（finalizeMeta.gateSessionId，供「门禁中」徽标点击打开）。 */
+  readonly finalizeGateSessionId?: string | undefined
+  /** Phase B 收尾评估结果（finalizeMeta.assessResult；completed 态展示 AI 总结 assessmentRaw）。 */
+  readonly finalizeAssessResult?: { readonly assessmentRaw: string } | undefined
+  /** Phase C 门禁结果（finalizeMeta.gateResult）。 */
+  readonly finalizeGateResult?: { readonly gatesPassed: boolean } | undefined
   /** 子代理会话 id（跳「查看详情」）。 */
   readonly childId?: string | undefined
   /** 是否合成会话（shell 无真实子代理，标题不可点击跳子代理页）。 */
@@ -482,7 +490,15 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
       outputText: outputTextOf(step.output),
       error: step.error,
       finalizePhase: step.finalizeMeta?.currentPhase,
-      finalizeErrorDetail: step.finalizeMeta?.errorDetail,
+      finalizeErrorDetail: step.finalizeMeta?.errorDetail ?? step.error,
+      finalizeAssessSessionId: step.finalizeMeta?.assessSessionId,
+      finalizeGateSessionId: step.finalizeMeta?.gateSessionId,
+      finalizeAssessResult: step.finalizeMeta?.assessResult !== undefined
+        ? { assessmentRaw: step.finalizeMeta.assessResult.assessmentRaw }
+        : undefined,
+      finalizeGateResult: step.finalizeMeta?.gateResult !== undefined
+        ? { gatesPassed: step.finalizeMeta.gateResult.gatesPassed }
+        : undefined,
       childId: step.sessionMeta?.childId,
       synthetic: step.sessionMeta?.synthetic,
       messages: chatLinesOf(step),
