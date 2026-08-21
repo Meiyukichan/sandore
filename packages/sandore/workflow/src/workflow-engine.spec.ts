@@ -2001,10 +2001,10 @@ describe('SandoreEngineRuntime DAG execution', () => {
     // 透传变量回写：finalize 提取 projectName 并保留 description。
     expect(state?.passThroughVars['projectName']).toEqual({ value: 'sandore', description: '项目名' });
 
-    // 门禁通过：finalizeMeta 记录 gateResult。
+    // 门禁通过：finalizeMeta 记录 gateResult + currentPhase='completed'。
     const finalizeStep = state?.executedSteps.find(step => step.stepId === 'step-finalize');
     expect(finalizeStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
-    expect(finalizeStep?.finalizeMeta?.completionType).toBe('completed');
+    expect(finalizeStep?.finalizeMeta?.currentPhase).toBe('completed');
 
     // agent Step 的 step-completed 事件载荷：真实 childId + 最终 output + name；
     // 非循环 Step 无 loopIteration。
@@ -2386,7 +2386,7 @@ steps:
         command: "echo done"
 `;
 
-/** 单 Stage agent Step（子代理 final result 含 [[SANDORE_ASK]] 标记块触发转接）。 */
+/** 单 Stage agent Step（子代理 final result 含 [[SANDORE_ASK]] 标记块——双通道 ask 重构后按普通输出透传）。 */
 const delegatedAskYaml = `id: wfl-delegated
 name: delegated
 version: "1.0.0"
@@ -2699,10 +2699,37 @@ describe('SandoreEngineRuntime interaction', () => {
     expect(entry.status).toBe('rejected');
     expect(entry.requestId).toBe(requestId);
   });
+
+  it('caps finalize ask rounds at MAX_FINALIZE_ASK_ROUNDS (3) and completes with the last output (status 流转)', async () => {
+    const { ctx, engine, persistence, llm, agents, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
+    agents.register(child);
+    // 恒返回 hasAsk=true + askQuestion（评估永不判定完成）→ 引擎 ask 闭环反复触发。
+    llm.streamHandler = () => textChunks(
+      '{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
+    );
+    userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+
+    // 轮次上限（4.7）：最多 3 轮 ask（首次 + 2 次续问），之后 runPhaseA 把最后 output
+    // 视为完成（不再续问），实例收敛 completed。
+    expect(userQuestions.calls).toHaveLength(3);
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    const askStep = state?.executedSteps.find(step => step.stepId === 'step-ask');
+    expect(askStep?.status).toBe('completed');
+  });
 });
 
-describe('SandoreEngineRuntime delegated subagent ask', () => {
-  it('delegates a valid [[SANDORE_ASK]] marker block to an engine-level ask and re-reads the child output after followup', async () => {
+describe('SandoreEngineRuntime 双通道 ask（4.4：[[SANDORE_ASK]] 机制已删）', () => {
+  it('treats a [[SANDORE_ASK]] marker block as ordinary output (no delegation, no followup)', async () => {
     const { ctx, engine, persistence, llm, agents, subagents, userQuestions } = await harness();
     await putDefinition(persistence, 'wfl-delegated', delegatedAskYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
@@ -2714,28 +2741,18 @@ describe('SandoreEngineRuntime delegated subagent ask', () => {
     ]));
     agents.register(child);
 
-    // settle 路径下 child.whenIdle 不再被调用；答案 resolve 时回填 final output（followup
-    // 前追加 → cold-resume 的 auto-settle(completed) 读到 final answer）。
-    userQuestions.resolveNext = async () => {
-      child.session.append(assistantMessageEvent([{ type: 'text', text: 'final answer' }]));
-      return { answers: [{ id: 'q1', selected: ['A'] }] };
-    };
-
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-delegated', originalInput: 'do it', cwd: '/tmp' });
     await ended;
 
-    // 引擎级 ask 以 hostAgent（id = instanceId）身份触发。
-    expect(userQuestions.calls).toHaveLength(1);
-    expect(userQuestions.calls[0]?.agent?.id).toBe(run.instanceId);
-    // 答案经 followup 注回子代理。
-    expect(subagents.followups).toHaveLength(1);
-    expect(subagents.followups[0]?.childId).toBe('child-1');
-    // 子代理续跑后 Step 输出为重新取回的 final output（非标记块）。
+    // 标记块机制已删：不转接、不 ask、不 followup——输出原样透传（子代理提问走
+    // child-scope ask_user_question 工具，见 askFromSubagent 测试）。
+    expect(userQuestions.calls).toHaveLength(0);
+    expect(subagents.followups).toHaveLength(0);
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
     expect(state?.executedSteps.find(step => step.stepId === 'step-agent')?.output).toEqual([
-      { type: 'text', text: 'final answer' },
+      { type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Which?"}]}[[/SANDORE_ASK]]' },
     ]);
   });
 
@@ -2755,7 +2772,6 @@ describe('SandoreEngineRuntime delegated subagent ask', () => {
     const run = await engine.startInstance({ workflowId: 'wfl-delegated', originalInput: 'do it', cwd: '/tmp' });
     await ended;
 
-    // 非法标记块：不转接、不 ask、不 followup，按普通输出处理。
     expect(userQuestions.calls).toHaveLength(0);
     expect(subagents.followups).toHaveLength(0);
     const state = persistence.state.get(run.instanceId);
@@ -2763,6 +2779,151 @@ describe('SandoreEngineRuntime delegated subagent ask', () => {
     expect(state?.executedSteps.find(step => step.stepId === 'step-agent')?.output).toEqual([
       { type: 'text', text: '[[SANDORE_ASK]]not json[[/SANDORE_ASK]]' },
     ]);
+  });
+});
+
+describe('SandoreEngineRuntime askFromSubagent（双通道 ask 通道 1）', () => {
+  it('routes a subagent question to the engine-level ask (hostAgent identity) and returns the answer', async () => {
+    const { ctx, engine, persistence, llm, agents, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
+    agents.register(child);
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+
+    // 等待实例跑完（Step 段已写入 executedSteps，sessionMeta.childId = child-1）。
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+    // 真实 DSH：子代理 session.header.parentSession = 宿主主代理会话 id（childSessionMeta）；
+    // mock 手动补写（hostAgent.id = instanceId）。
+    child.session.header = { parentSession: run.instanceId };
+
+    const firedQuestions: unknown[] = [];
+    ctx.on('sandore/question', (info, question) => firedQuestions.push({ info, question }));
+    userQuestions.resolveNext = async request => {
+      expect(request.questions).toEqual([{ id: 'q1', question: 'Which?' }]);
+      return { answers: [{ id: 'q1', selected: ['A'] }] };
+    };
+    const answer = await engine.askFromSubagent(child, [{ id: 'q1', question: 'Which?' }]);
+
+    expect(answer).toEqual({ answers: [{ id: 'q1', selected: ['A'] }] });
+    // 以宿主主代理（id = instanceId）身份发起（非子代理自身——避免 DELEGATED_CALLER）。
+    expect(userQuestions.calls[userQuestions.calls.length - 1]?.agent?.id).toBe(run.instanceId);
+    // 提问登记期间发射 sandore/question（pending 条目；回答后已终态化，仅 pending 持久化）。
+    expect(firedQuestions).toHaveLength(1);
+    const firedEntry = firedQuestions[0] as { question: { kind: string; payload: { questions: Array<{ id: string }> } } };
+    expect(firedEntry.question.kind).toBe('question');
+    expect(firedEntry.question.payload.questions[0]?.id).toBe('q1');
+  });
+
+  it('throws STEP_EXECUTION when the question is rejected (缺陷 26 显式落态)', async () => {
+    const { ctx, engine, persistence, llm, agents, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
+    agents.register(child);
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+    child.session.header = { parentSession: run.instanceId };
+
+    const asking = engine.askFromSubagent(child, [{ id: 'q1', question: 'Which?' }]);
+    // 等 pending 条目登记后拒绝（resolve 占位 → askFromSubagent 抛 STEP_EXECUTION）。
+    await new Promise(resolve => setImmediate(resolve));
+    const state = persistence.state.get(run.instanceId);
+    const entry = state?.pendingInteractions.find(item => item.kind === 'question');
+    expect(entry).toBeDefined();
+    await engine.rejectQuestion(run.instanceId, (entry as { requestId: string }).requestId);
+
+    await expect(asking).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
+  });
+
+  it('throws INVALID_OPERATION for unknown parent session or unknown child', async () => {
+    const { ctx, engine, persistence, llm, agents } = await harness();
+    await putDefinition(persistence, 'wfl-ask', askYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
+    agents.register(child);
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+
+    // 无 parent session header → INVALID_OPERATION。
+    await expect(engine.askFromSubagent(
+      child,
+      [{ id: 'q1', question: 'Q?' }],
+    )).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    // parent session 命中但 child 不匹配任何 Step 段 → INVALID_OPERATION。
+    child.session.header = { parentSession: run.instanceId };
+    const unknownChild = new FakeAgent('no-such-child');
+    unknownChild.session.header = { parentSession: run.instanceId };
+    await expect(engine.askFromSubagent(
+      unknownChild,
+      [{ id: 'q1', question: 'Q?' }],
+    )).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+  });
+});
+
+describe('SandoreEngineRuntime registerContinuableSetup gate（4.3：仅当前非终态 sandore 实例的子代理）', () => {
+  it('registers a contribution and installs the child-scope ask tool only for non-terminal sandore instances', async () => {
+    const { ctx, engine, subagents, persistence, llm, agents } = await harness();
+    await putDefinition(persistence, 'wfl-prompt-only', promptOnlyYaml);
+    provideLlmDirectory(llm);
+    // prompt Step 挂起：child status='running' 不自动 settle → 实例保持 running（非终态）。
+    const child = new FakeAgent('child-1');
+    child.status = 'running';
+    agents.register(child);
+
+    const stepStarted = waitForStepStart(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-prompt-only', originalInput: 'do it', cwd: '/tmp' });
+    await stepStarted;
+
+    // 引擎启动时注册了 1 个贡献（Service.init → registerSandoreAskToolSetup）。
+    expect(subagents.continuableSetups).toHaveLength(1);
+    const contribution = subagents.continuableSetups[0]!;
+
+    // gate 未命中（parent 非任何 sandore 实例的宿主主代理）：不注册工具。
+    const toolsA = { register: vi.fn(() => () => {}) };
+    const disposeA = contribution({
+      tools: toolsA,
+      agent: { session: { header: { parentSession: 'some-other-session' } } },
+    } as unknown as Context);
+    expect(toolsA.register).not.toHaveBeenCalled();
+    disposeA();
+
+    // gate 命中（parent = 当前非终态 sandore 实例的宿主主代理会话 = instanceId）：
+    // 注册 child-scope ask_user_question。
+    const toolsB = { register: vi.fn(() => () => {}) };
+    const disposeB = contribution({
+      tools: toolsB,
+      agent: { session: { header: { parentSession: run.instanceId } } },
+    } as unknown as Context);
+    expect(toolsB.register).toHaveBeenCalledTimes(1);
+    expect(toolsB.register).toHaveBeenCalledWith(expect.objectContaining({ name: 'ask_user_question' }));
+    disposeB();
+
+    // 实例终态（completed）后：同一宿主主代理的后续子代理不再注入（避免误注入）。
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
+    subagents.settleChild('child-1', 'completed');
+    await waitForEnd(ctx);
+    const toolsC = { register: vi.fn(() => () => {}) };
+    const disposeC = contribution({
+      tools: toolsC,
+      agent: { session: { header: { parentSession: run.instanceId } } },
+    } as unknown as Context);
+    expect(toolsC.register).not.toHaveBeenCalled();
+    disposeC();
   });
 });
 
@@ -3705,7 +3866,7 @@ describe('complex workflow e2e', () => {
    *
    * mock llm.streamHandler 按首条消息文本分发：含 'shouldExecute' → 条件分支 JSON；
    * 含 'shouldBreak' → 循环跳出 JSON（首次 false 继续、二次 true 跳出）；含
-   * 'completionType' → 收尾 assess JSON（提取 projectName=sandore）；含 'taskStatus'
+   * 'hasAsk' → 收尾 assess JSON（提取 projectName=sandore）；含 'taskStatus'
    * → primary 门禁 JSON；其余 → secondary 门禁 JSON。prompt Step（step-finalize）自身
    * 输出来自可续接子代理会话（决策 D3）。mock shell.runHandler 回显命令对应 stdout。
    */
@@ -3742,8 +3903,8 @@ describe('complex workflow e2e', () => {
         breakCall += 1;
         return textChunks(breakCall === 1 ? '{"shouldBreak": false}' : '{"shouldBreak": true}');
       }
-      if (text.includes('completionType')) {
-        return textChunks('{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}');
+      if (text.includes('hasAsk')) {
+        return textChunks('{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}');
       }
       if (text.includes('taskStatus')) {
         return textChunks('{"taskStatus":"done"}');
@@ -3807,7 +3968,7 @@ describe('complex workflow e2e', () => {
     //    gateResult（primaryPassed + secondaryPassed 均为 true → gatesPassed=true）。
     const finalizeStep = state?.executedSteps.find(step => step.stepId === 'step-finalize');
     expect(finalizeStep?.status).toBe('completed');
-    expect(finalizeStep?.finalizeMeta?.completionType).toBe('completed');
+    expect(finalizeStep?.finalizeMeta?.currentPhase).toBe('completed');
     expect(finalizeStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
     expect(finalizeStep?.finalizeMeta?.gateResult?.primaryPassed).toBe(true);
     expect(finalizeStep?.finalizeMeta?.gateResult?.secondaryPassed).toBe(true);

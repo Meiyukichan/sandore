@@ -178,12 +178,12 @@ describe('FakeSessionStore fork', () => {
 });
 
 describe('FinalizeMetaSchema', () => {
-  it('accepts completionType/assessResult/gateResult', () => {
+  it('accepts currentPhase/assessResult/gateResult', () => {
     const parsed = FinalizeMetaSchema.parse({
-      status: 'completed',
-      completionType: 'completed',
+      currentPhase: 'completed',
+      assessSessionId: 'fork-1',
       assessResult: {
-        completionType: 'completed',
+        hasAsk: false,
         passThroughVars: { projectName: 'sandore' },
         forkSessionId: 'fork-1',
         assessmentRaw: 'raw',
@@ -194,17 +194,22 @@ describe('FinalizeMetaSchema', () => {
         gateSessionId: 'gate-1',
         assessmentRaw: 'raw',
       },
+      gateSessionId: 'gate-1',
     });
-    expect(parsed.completionType).toBe('completed');
-    expect(parsed.assessResult).toMatchObject({ forkSessionId: 'fork-1' });
+    expect(parsed.currentPhase).toBe('completed');
+    expect(parsed.assessSessionId).toBe('fork-1');
+    expect(parsed.gateSessionId).toBe('gate-1');
+    expect(parsed.assessResult).toMatchObject({ forkSessionId: 'fork-1', hasAsk: false });
     expect(parsed.gateResult).toMatchObject({ gatesPassed: true });
   });
 
-  it('still parses legacy finalize meta without the three new fields', () => {
-    const parsed = FinalizeMetaSchema.parse({ status: 'completed', sessionId: 's1' });
-    expect(parsed.status).toBe('completed');
-    expect(parsed.completionType).toBeUndefined();
+  it('parses a minimal finalize meta without the optional fields', () => {
+    const parsed = FinalizeMetaSchema.parse({ currentPhase: 'ask-detect' });
+    expect(parsed.currentPhase).toBe('ask-detect');
+    expect(parsed.assessSessionId).toBeUndefined();
     expect(parsed.assessResult).toBeUndefined();
     expect(parsed.gateResult).toBeUndefined();
+    // 旧字段（status/sessionId/completionType）已删除：zod 默认 strip 未知键。
+    expect((parsed as { status?: unknown }).status).toBeUndefined();
   });
 });

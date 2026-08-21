@@ -139,6 +139,49 @@
   white-space: nowrap;
 }
 
+/* 状态按钮（4.10）：状态 + 收尾阶段徽标，点击折叠/展开消息区。 */
+.stBtn {
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.stBtn:hover {
+  border-color: var(--sd-border);
+  background: var(--sd-surface-hover);
+}
+
+/* 收尾阶段徽标（finalizeMeta.currentPhase：assess/finalize/gate）。 */
+.phaseLbl {
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--sd-muted-foreground);
+  background: var(--sd-surface-hover);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+/* failed 态错误详情（段 error / 收尾 finalizeMeta.errorDetail）。 */
+.agentErrDetail {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sd-destructive) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sd-destructive) 24%, transparent);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--sd-destructive);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .st svg {
   width: 14px;
   height: 14px;

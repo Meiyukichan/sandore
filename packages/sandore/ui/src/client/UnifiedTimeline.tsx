@@ -12,6 +12,7 @@
  */
 import { IconSparkle16, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { useState } from 'react'
 
 import type { SandoreKey } from './locales.ts'
 import {
@@ -29,6 +30,20 @@ const STEP_STATUS_KEYS: Record<StepStatus, SandoreKey> = {
   completed: 'run.step.status.completed',
   failed: 'run.step.status.failed',
   paused: 'run.step.status.paused',
+}
+
+/** 收尾阶段（finalizeMeta.currentPhase）→ 本地化标签键（仅非终态阶段；completed 复用状态键）。 */
+function finalizePhaseKey(phase: string | undefined): SandoreKey | undefined {
+  switch (phase) {
+    case 'ask-detect':
+      return 'run.step.finalize.phase.askDetect'
+    case 'finalizing':
+      return 'run.step.finalize.phase.finalizing'
+    case 'gating':
+      return 'run.step.finalize.phase.gating'
+    default:
+      return undefined
+  }
 }
 
 /** 状态 → 展示色类（原型 .st 的 4 色）。 */
@@ -119,8 +134,11 @@ function LastMessages({ item, t }: {
   const lines = item.messages ?? []
   const failed = item.status === 'failed'
   const listClass = failed ? css.agentLastListFailed : css.agentLastListPaused
+  // failed 态错误行优先取收尾错误详情（门禁失败 finalizeMeta.errorDetail），其次段 error。
   const fallback = failed
-    ? (item.error !== undefined ? [{ who: `${item.name} · agent`, text: item.error, kind: 'assistant' as const }] : [])
+    ? (item.finalizeErrorDetail ?? item.error) !== undefined
+      ? [{ who: `${item.name} · agent`, text: item.finalizeErrorDetail ?? item.error ?? '', kind: 'assistant' as const }]
+      : []
     : [{ who: `${item.name} · agent`, text: t('step.paused.hint'), kind: 'assistant' as const }]
   const shown = lines.length > 0 ? lines.slice(-5) : fallback
   return (
@@ -144,6 +162,9 @@ function AgentMsg({ item, t, nowIso, openSession }: {
   const running = item.status === 'running' || item.status === 'interacting'
   const terminalChat = item.status === 'failed' || item.status === 'paused'
   const rel = relativeTimeOf(item.time, nowIso)
+  // 状态按钮：点击折叠/展开消息区（正文按状态渲染）。
+  const [collapsed, setCollapsed] = useState(false)
+  const phaseKey = finalizePhaseKey(item.finalizePhase)
   // 仅真实子代理步骤（prompt/agent/skill/mcp，非合成会话）才有真实会话：标题可点击跳
   // DSH 子代理页、正文内嵌该会话的 DSH 对话流；shell 的 childId 是合成占位（无真实
   // 会话），标题渲染为纯文本、正文走兜底。
@@ -169,44 +190,63 @@ function AgentMsg({ item, t, nowIso, openSession }: {
           <span className={css.loopLabel}>{t('run.step.attempt', { n: item.attemptIndex + 1 })}</span>
         )}
         {rel !== undefined && <span className={css.time}>{formatTime(t, rel)}</span>}
-        <span className={`${css.st} ${statusClass(item.status)}`}>
+        {/* 状态按钮：状态 + 收尾阶段徽标；点击折叠/展开消息区。 */}
+        <button
+          type="button"
+          className={`${css.st} ${css.stBtn} ${statusClass(item.status)}`}
+          title={t(STEP_STATUS_KEYS[item.status])}
+          aria-label={t(STEP_STATUS_KEYS[item.status])}
+          aria-expanded={!collapsed}
+          onClick={() => { setCollapsed(value => !value) }}
+        >
           <StatusIcon status={item.status} />
           <span className={css.stLbl}>{t(STEP_STATUS_KEYS[item.status])}</span>
-        </span>
+          {phaseKey !== undefined && <span className={css.phaseLbl}>{t(phaseKey)}</span>}
+        </button>
       </div>
 
-      {item.status === 'completed' && item.outputText !== undefined && (
-        <div className={css.md}><MessageText text={item.outputText} /></div>
-      )}
+      {!collapsed && (
+        <>
+          {item.status === 'completed' && item.outputText !== undefined && (
+            <div className={css.md}><MessageText text={item.outputText} /></div>
+          )}
 
-      {running && (
-        // 真实子代理步骤（有 childId 且非合成会话）：内嵌子代理会话对话区
-        // （抄自 DSH ChatView 渲染栈，最新 10 条，step 运行中实时流式）；
-        // 合成会话/无会话退化为原有的消息框或「运行中…」占位。
-        realSession
-          ? <StepChatPanel sessionId={item.childId} t={t} />
-          : (
-            item.messages !== undefined && item.messages.length > 0
-              ? (
-                <div className={css.agentChat}>
-                  <div className={css.agentChatScroll}>
-                    {item.messages.map((line, index) => (
-                      <ChatLineRow key={index} line={line} />
-                    ))}
-                  </div>
-                </div>
+          {running && (
+            // 真实子代理步骤（有 childId 且非合成会话）：内嵌子代理会话对话区
+            // （抄自 DSH ChatView 渲染栈，最新 10 条，step 运行中实时流式）；
+            // 合成会话/无会话退化为原有的消息框或「运行中…」占位。
+            realSession
+              ? <StepChatPanel sessionId={item.childId} t={t} />
+              : (
+                item.messages !== undefined && item.messages.length > 0
+                  ? (
+                    <div className={css.agentChat}>
+                      <div className={css.agentChatScroll}>
+                        {item.messages.map((line, index) => (
+                          <ChatLineRow key={index} line={line} />
+                        ))}
+                      </div>
+                    </div>
+                  )
+                  : <div className={css.agentBodyRun}>{t('run.step.status.running')}…</div>
               )
-              : <div className={css.agentBodyRun}>{t('run.step.status.running')}…</div>
-          )
-      )}
+          )}
 
-      {terminalChat && (
-        // 失败/暂停且真实子代理会话：与运行中完全一致的 DSH 对话流（StepChatPanel）。
-        // 会话已结束/暂停时 open() 仍拉历史（DSH 会话持久化），展示最新 10 条；
-        // 无真实会话（shell 等合成会话）退化为最近 N 条消息列表兜底。
-        realSession
-          ? <StepChatPanel sessionId={item.childId} t={t} />
-          : <LastMessages item={item} t={t} />
+          {terminalChat && (
+            // failed 态：先展示错误详情（段 error / 收尾 finalizeMeta.errorDetail），
+            // 再展示子代理会话（真实会话 → DSH 对话流；合成会话 → 最近 N 条兜底）。
+            <>
+              {item.status === 'failed' && (item.error !== undefined || item.finalizeErrorDetail !== undefined) && (
+                <div className={css.agentErrDetail}>
+                  {item.finalizeErrorDetail ?? item.error}
+                </div>
+              )}
+              {realSession
+                ? <StepChatPanel sessionId={item.childId} t={t} />
+                : <LastMessages item={item} t={t} />}
+            </>
+          )}
+        </>
       )}
     </div>
   )

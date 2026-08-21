@@ -254,9 +254,18 @@ export const PendingPermissionEntrySchema = z.object({
   createdAt: z.string(),
 })
 
-/** 收尾第 1 部分（Assessor）结果。 */
+/**
+ * 收尾第 1 部分（Assessor）结果。
+ *
+ * 双通道 ask 重构（Phase A）：`hasAsk` 取代旧 `completionType`——`hasAsk=true` 表示
+ * 评估判定 Step 未真正完成、需要向用户提问确认后继续（**ask 保底通道**：子代理未在
+ * 执行期经 child-scope `ask_user_question` 工具直接提问时的兜底）；`false` 表示 Step
+ * 已完成。`askQuestion` 为 `hasAsk=true` 时的提问载荷（缺失视为假 ask，回落 completed）。
+ */
 export const FinalizeAssessResultSchema = z.object({
-  completionType: z.enum(['completed', 'ask']),
+  // 向后兼容：旧持久化记录的 assessResult 无 hasAsk（旧 schema 用 completionType），
+  // 默认 false（视为无 ask）避免启动时 storage-domain 校验旧记录失败。
+  hasAsk: z.boolean().default(false),
   passThroughVars: z.record(z.string(), z.string()),
   askQuestion: AskUserQuestionPayloadSchema.optional(),
   errorDetail: z.string().optional(),
@@ -278,15 +287,31 @@ export const GateEvalResultSchema = z.object({
   assessmentRaw: z.string(),
 })
 
-/** Step 收尾状态元数据。 */
+/**
+ * Step 收尾状态元数据。
+ *
+ * 5 阶段收尾重构后，`status`/`sessionId`/`completionType` 由 `currentPhase` +
+ * `assessSessionId`（收尾评估 fork 会话 id，Phase B 收尾时持久化到 state）+
+ * `gateSessionId`（Phase C 门禁真实 fork 会话 id，持久化到 state）取代。
+ * `currentPhase` 供 UI 展示 Step 当前收尾阶段：
+ * `ask-detect`（Phase A 问题检测/评估中，含 ask 保底中断等待）/
+ * `finalizing`（Phase B 收尾中）/
+ * `gating`（Phase C 门禁中）/
+ * `completed`（全部完成）。
+ *
+ * 注：Phase A 评估 fork 会话**用完即删**（live 引用评估后释放、不常驻）——计划
+ * 「Phase A 不持久化 / Phase B、C 持久化到 state」指会话对象本身；id 字符串仍经
+ * `assessResult.forkSessionId` / `assessSessionId` 落 state（schema 强约束）。
+ */
 export const FinalizeMetaSchema = z.object({
-  status: z.enum(['evaluating', 'completed', 'ask']),
-  sessionId: z.string().optional(),
+  currentPhase: z.enum(['ask-detect', 'finalizing', 'gating', 'completed']).optional(),
+  /** 收尾评估 fork 会话 id（Phase B 收尾时持久化到 state，供 UI 打开）。 */
+  assessSessionId: z.string().optional(),
+  /** Phase C 门禁 fork 会话 id（真实 fork 会话，持久化到 state 供 UI 打开）。 */
   gateSessionId: z.string().optional(),
   directory: z.string().optional(),
   errorDetail: z.string().optional(),
   // Task 3 新增：完成判定与两会话结果（精确形状见上方 FinalizeAssessResultSchema/GateEvalResultSchema）。
-  completionType: z.enum(['completed', 'ask']).optional(),
   assessResult: FinalizeAssessResultSchema.optional(),
   gateResult: GateEvalResultSchema.optional(),
 })

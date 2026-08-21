@@ -221,6 +221,10 @@ export interface TimelineStepItem {
   readonly outputText?: string | undefined
   /** failed 态错误详情。 */
   readonly error?: string | undefined
+  /** 收尾阶段（finalizeMeta.currentPhase：assess/ask/finalize/gate/completed；供状态按钮徽标）。 */
+  readonly finalizePhase?: string | undefined
+  /** 收尾错误详情（finalizeMeta.errorDetail，如门禁失败原因；failed 态附加展示）。 */
+  readonly finalizeErrorDetail?: string | undefined
   /** 子代理会话 id（跳「查看详情」）。 */
   readonly childId?: string | undefined
   /** 是否合成会话（shell 无真实子代理，标题不可点击跳子代理页）。 */
@@ -477,6 +481,8 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
       time: step.createdAt ?? step.updatedAt ?? step.startedAt,
       outputText: outputTextOf(step.output),
       error: step.error,
+      finalizePhase: step.finalizeMeta?.currentPhase,
+      finalizeErrorDetail: step.finalizeMeta?.errorDetail,
       childId: step.sessionMeta?.childId,
       synthetic: step.sessionMeta?.synthetic,
       messages: chatLinesOf(step),

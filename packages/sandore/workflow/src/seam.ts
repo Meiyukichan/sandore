@@ -98,6 +98,19 @@ export abstract class SandoreEngine extends Service implements SandoreEngineSurf
   /** 回复一个待处理权限请求。 */
   abstract replyPermission(instanceId: string, requestId: string, reply: 'once' | 'always' | 'reject'): Promise<void>;
 
+  /**
+   * 子代理 child-scope `ask_user_question` 工具的执行入口（双通道 ask 通道 1）：
+   * 把子代理 turn 内的提问路由到主会话引擎级 ask（hostAgent 身份、UI 可见可答）。
+   *
+   * 引擎从 `subagent.session.header.parentSession`（= 宿主主代理会话 id）反查
+   * ActiveInstance，从 `subagent.id` 反查 Step 段。
+   */
+  abstract askFromSubagent(
+    subagent: Agent,
+    questions: readonly AskUserQuestionItem[],
+    signal?: AbortSignal,
+  ): Promise<AskUserQuestionAnswer>;
+
   /** 暂停单个 Step。 */
   abstract pauseStep(instanceId: string, stepId: string): Promise<void>;
   /** 恢复单个 Step（可选附带恢复提示词）。 */
@@ -200,6 +213,14 @@ export class SandoreEngineStub extends SandoreEngine {
 
   replyPermission(instanceId: string, requestId: string, reply: 'once' | 'always' | 'reject'): Promise<void> {
     throw new Error('SandoreEngineStub.replyPermission is not implemented');
+  }
+
+  askFromSubagent(
+    _subagent: Agent,
+    _questions: readonly AskUserQuestionItem[],
+    _signal?: AbortSignal,
+  ): Promise<AskUserQuestionAnswer> {
+    throw new Error('SandoreEngineStub.askFromSubagent is not implemented');
   }
 
   pauseStep(instanceId: string, stepId: string): Promise<void> {

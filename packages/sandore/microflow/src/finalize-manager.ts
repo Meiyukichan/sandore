@@ -1,17 +1,23 @@
 /**
  * Step 收尾拆分（finalize-manager）。
  *
- * `FinalizeAssessor`（收尾第 1 部分）按 Step 类型选择会话完成完成判定 + 透传变量提取
- * + ask 转换：session 类型（agent/prompt/skill/mcp）经 `ctx.sessions.fork(stepSessionId)`
- * 创建 fork 会话（boundary 省略取源最后一条事件，规避 OPEN_TURN），评估 LLM 请求携带
- * fork 会话 `sessionId` 作身份戳记（路由/重放）；fork 抛错时降级为一次性临时会话（省略
- * sessionId）且 Step 不失败；shell 类型经 `ctx.llm.stream()` 一次性临时会话（shell stdout
- * 作为输入）。完整注入 fork 会话历史留待 Task 4。
- * `GateEvaluator`（收尾第 2 部分）恒开独立新临时会话执行 primary/secondary 双门
- * 审查，`gatesPassed=true` 后再验证 outputTo 产物文件存在，缺失则覆盖为 false。
- * `FinalizeManager.finalizeStep` 编排：跳过检查（无未解析透传变量 + 无门禁）→ assess →
- * ask 置 interacting 中断门禁 / gate 审查 → 回写 passThroughVars（保留 refresh）→ 同步
- * finalizeMeta 到 executedSteps → persistState。
+ * 5 阶段收尾重构后按阶段拆分为三个公开入口（stage-executor 的 `runPhaseA/B/C` 直接调用）：
+ * - **Phase A（问题检测/评估，ask 保底）**：`assessOnly()` → `FinalizeAssessor` 完成判定 +
+ *   透传变量提取 + ask 保底判断。session 类型（agent/prompt/skill/mcp）经
+ *   `ctx.sessions.fork(stepSessionId)` 创建 fork 会话（boundary 省略取源最后一条事件，
+ *   规避 OPEN_TURN），评估 LLM 请求携带 fork 会话 `sessionId` 作身份戳记（路由/重放）；
+ *   fork 抛错时降级为一次性临时会话（省略 sessionId）且 Step 不失败；shell 类型经
+ *   `ctx.llm.stream()` 一次性临时会话（shell stdout 作为输入）。`hasAsk` + askQuestion
+ *   载荷 → Step 置 interacting（引擎级 ask 闭环，currentPhase='ask-detect'）；评估 fork
+ *   会话**用完即删**（live 引用评估后释放、不常驻；顶层 assessSessionId 不在此阶段记录）。
+ * - **Phase B（收尾）**：`commitFinalize(..., 'finalizing')` 回写透传变量（保留 refresh）+
+ *   组装 finalizeMeta（assessSessionId 持久化到 state）。
+ * - **Phase C（门禁）**：`evaluateGates()` → `GateEvaluator` 用**真实 fork 会话**执行
+ *   primary/secondary 双门审查（`gateSessionId` 为真实 fork id，持久化到 state），
+ *   `gatesPassed=true` 后再验证 outputTo 产物文件存在，缺失则覆盖为 false。
+ *
+ * `finalizeStep()` 保留为编排兼容入口（跳过检查 → assessOnly → ask? → evaluateGates →
+ * commitFinalize），供既有调用方/测试使用。
  * @module @deepseek-ai/dsh-sandore-microflow/src/finalize-manager
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -66,6 +72,15 @@ export interface FinalizeGateInput {
   readonly gates: Gates;
   readonly workdir: string;
   /**
+   * 门禁 fork 源会话 ID（session 类型 Step 的真实子代理会话）。
+   *
+   * 非省略时 `evaluate` 经 `ctx.sessions.fork(stepSessionId)` 创建**真实 fork 会话**
+   * 作为门禁 LLM 请求的路由戳记（`gateSessionId` 为真实 fork 会话 id，持久化到
+   * finalizeMeta 供 UI 打开）；fork 抛错（合成 session/非 live）或省略时降级为
+   * 一次性临时句柄（`eval-{random}`）。
+   */
+  readonly stepSessionId?: string;
+  /**
    * outputTo 路径解析用的透传变量映射（缺陷 34）。
    *
    * 由 `FinalizeManager` 合并 `request.passThroughVars`（引擎累加器）+ 当次
@@ -97,7 +112,11 @@ export interface FinalizeStepRequest {
 
 /** Assessor 解析出的完成判定结果（未含会话/原始输出字段）。 */
 export interface AssessParsed {
-  readonly completionType: 'completed' | 'ask';
+  /**
+   * 是否需要向用户提问确认后继续（ask 保底通道：`hasAsk=true` 且含 `askQuestion` 载荷
+   * 才真正提问；`hasAsk=true` 但无载荷为假 ask，回落 completed）。
+   */
+  readonly hasAsk: boolean;
   readonly passThroughVars: Record<string, string>;
   readonly askQuestion?: AskUserQuestionPayload;
 }
@@ -155,9 +174,11 @@ function stripJsonFence(raw: string): string {
   return match?.[1] ?? raw;
 }
 
-/** 收窄未知值为 completionType（仅 `'ask'` 判为 ask，其余回落 completed）。 */
-function parseCompletionType(value: unknown): 'completed' | 'ask' {
-  return value === 'ask' ? 'ask' : 'completed';
+/** 收窄未知值为 hasAsk（`true` 判为需提问；兼容旧 `completionType:'ask'` 字符串）。 */
+function parseHasAsk(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  // 旧版 completionType 兼容：'ask' → 需提问（回落 false）。
+  return value === 'ask';
 }
 
 /** 收窄未知值为透传变量记录（仅保留 string 值条目）。 */
@@ -265,7 +286,7 @@ function buildAssessPrompt(context: FinalizeStepContext, passThroughVars: readon
   const sections: string[] = [ASSESS_PROMPT_HEADER, '', buildStepContextBlock(context)];
   sections.push('');
   sections.push('## 你的任务');
-  sections.push('1. 判断当前 Step 是否真正完成（completionType: completed | ask）');
+  sections.push('1. 判断当前 Step 是否真正完成（hasAsk: false = 已完成；true = 需要向用户提问确认后继续）');
   sections.push('2. 提取透传变量值：对每个列出的透传变量，从 <output> 中提取其值并写入 passThroughVars；若变量值就是 <output> 的完整文本，直接使用它。');
   sections.push('');
   sections.push('## 透传变量');
@@ -277,7 +298,7 @@ function buildAssessPrompt(context: FinalizeStepContext, passThroughVars: readon
   }
   sections.push('');
   sections.push('## 返回格式（JSON）');
-  sections.push('{"completionType": "completed" | "ask", "passThroughVars": {}, "askQuestion": {"questions": []}}');
+  sections.push('{"hasAsk": false, "passThroughVars": {}, "askQuestion": {"questions": []}}');
   sections.push('');
   sections.push('## 红线规则');
   for (const rule of ASSESS_RED_LINES) {
@@ -310,9 +331,10 @@ function buildSecondaryGatePrompt(context: FinalizeStepContext, secondaryPrompt:
 /**
  * 三级解析收尾评估结果（public）。
  *
- * ① JSON 解析取 `completionType`/`passThroughVars`/`askQuestion`；② regex 回退
- * `/"completionType"\s*:\s*"([^"]+)"/`（透传变量回落空）；③ 原始输出回落
- * `completionType='completed'` + 空透传变量。
+ * ① JSON 解析取 `hasAsk`/`passThroughVars`/`askQuestion`（`hasAsk` 布尔；兼容旧
+ * `completionType` 字符串 `'ask'`）；② regex 回退（`"hasAsk": true` 或旧
+ * `"completionType": "ask"`，透传变量回落空）；③ 原始输出回落 `hasAsk=false` +
+ * 空透传变量。
  *
  * **围栏兼容（缺陷定位）**：LLM 输出带 ```json 围栏时裸 `JSON.parse` 失败，旧实现
  * 直接落入 regex 回退只恢复 completionType、askQuestion/passThroughVars 全丢（假
@@ -322,15 +344,18 @@ export function parseAssessResult(raw: string): AssessParsed {
   const parsed = parseJsonObject(raw) ?? parseJsonObject(stripJsonFence(raw));
   if (parsed !== undefined) {
     const askQuestion = parseAskQuestion(parsed['askQuestion']);
+    // hasAsk 主键；旧 completionType 兼容回退（LLM 仍可能输出旧格式）。
+    const hasAsk = parseHasAsk(parsed['hasAsk']) || parseHasAsk(parsed['completionType']);
     return {
-      completionType: parseCompletionType(parsed['completionType']),
+      hasAsk,
       passThroughVars: parsePassThroughVars(parsed['passThroughVars']),
       ...(askQuestion === undefined ? {} : { askQuestion }),
     };
   }
-  const match = raw.match(/"completionType"\s*:\s*"([^"]+)"/);
-  const completionType = match?.[1] === 'ask' ? 'ask' : 'completed';
-  return { completionType, passThroughVars: {} };
+  const matchAsk = raw.match(/"hasAsk"\s*:\s*(true|false)/);
+  const matchType = raw.match(/"completionType"\s*:\s*"([^"]+)"/);
+  const hasAsk = matchAsk !== null ? matchAsk[1] === 'true' : matchType?.[1] === 'ask';
+  return { hasAsk, passThroughVars: {} };
 }
 
 /** 解析 primary 门禁输出（`taskStatus` + `errorDetail`）；带 ```json 围栏时同样剥离。 */
@@ -366,7 +391,7 @@ function isSessionType(type: string | undefined): boolean {
 }
 
 /** 判定 Step 是否含未解析透传变量（value 仍含 `${xxx}` 占位）。 */
-function hasUnresolvedPassThroughVars(step: WorkflowStep): boolean {
+export function hasUnresolvedPassThroughVars(step: WorkflowStep): boolean {
   return (step.passThroughVars ?? []).some(variable => hasUnresolvedVars(variable.value));
 }
 
@@ -378,7 +403,7 @@ function hasUnresolvedPassThroughVars(step: WorkflowStep): boolean {
  * `undefined`（三级均未配置，`mergeGates` 返回 undefined）时返回 false，仍走
  * `finalizeStep` 的零 AI 调用跳过路径。
  */
-function hasEnabledGates(gates: Gates | undefined): gates is Gates {
+export function hasEnabledGates(gates: Gates | undefined): gates is Gates {
   return gates !== undefined && (gates.primary?.enabled !== false || gates.secondary?.enabled === true);
 }
 
@@ -432,12 +457,24 @@ function buildOutputToVars(
   return result;
 }
 
-/** 组装 finalizeMeta（status/completionType/assessResult + 可选 gateResult/gateSessionId）。 */
-function buildFinalizeMeta(assessResult: FinalizeAssessResult, gateResult: GateEvalResult | undefined): FinalizeMeta {
+/** 组装 finalizeMeta（currentPhase + assessSessionId/assessResult + 可选 gateResult/gateSessionId）。 */
+function buildFinalizeMeta(
+  assessResult: FinalizeAssessResult | undefined,
+  gateResult: GateEvalResult | undefined,
+  currentPhase: NonNullable<FinalizeMeta['currentPhase']>,
+  options?: { readonly recordAssessSession?: boolean },
+): FinalizeMeta {
   return {
-    status: assessResult.completionType === 'ask' ? 'ask' : 'completed',
-    completionType: assessResult.completionType,
-    assessResult,
+    currentPhase,
+    ...(assessResult === undefined
+      ? {}
+      : {
+          assessResult,
+          // Phase A（ask-detect）不持久化评估 fork 会话 id（计划：Phase A 用完即删、
+          // Phase B/C 才持久化到 state）——顶层 assessSessionId 自 Phase B 起记录；
+          // assessResult.forkSessionId 因 schema 强约束随结果落 state（见 schema 注释）。
+          ...(options?.recordAssessSession === false ? {} : { assessSessionId: assessResult.forkSessionId }),
+        }),
     ...(gateResult === undefined ? {} : { gateResult, gateSessionId: gateResult.gateSessionId }),
   };
 }
@@ -532,7 +569,7 @@ export class FinalizeAssessor {
     }, sessionId);
     const parsed = parseAssessResult(raw);
     return {
-      completionType: parsed.completionType,
+      hasAsk: parsed.hasAsk,
       passThroughVars: parsed.passThroughVars,
       ...(parsed.askQuestion === undefined ? {} : { askQuestion: parsed.askQuestion }),
       ...(errorDetail === undefined ? {} : { errorDetail }),
@@ -570,7 +607,24 @@ export class GateEvaluator {
     // enabled:true 才执行（与基准 secondary?.enabled ?? false 一致）。
     const primaryEnabled = input.gates.primary?.enabled !== false;
     const secondaryEnabled = input.gates.secondary?.enabled === true;
-    const gateSessionId = newSessionHandle();
+    // 真实 fork 会话（Phase C 门禁）：session 类型 Step 有真实子代理会话时 fork 出
+    // 门禁专用会话（`gateSessionId` = 真实 fork id，持久化到 finalizeMeta 供 UI 打开，
+    // 对齐 Phase B/C fork 会话持久化到 state 规则）；fork 失败（合成 session/非 live/
+    // OPEN_TURN 等）或非 session 类型降级为一次性临时句柄（不失败）。
+    let gateSessionId: string;
+    let sessionId: SessionId | undefined;
+    if (input.stepSessionId !== undefined) {
+      try {
+        const child = this.ctx.sessions.fork(SessionId(input.stepSessionId));
+        gateSessionId = child.id;
+        sessionId = child.id;
+      } catch (error) {
+        gateSessionId = newSessionHandle();
+        this.ctx.logger.warn(`sandore: gate fork session degraded to temp session: ${describeError(error)}`);
+      }
+    } else {
+      gateSessionId = newSessionHandle();
+    }
     const rawParts: string[] = [];
     const errorParts: string[] = [];
 
@@ -579,7 +633,7 @@ export class GateEvaluator {
       const raw = await runStream(this.ctx, this.config, buildPrimaryGatePrompt(input.context), input.signal, {
         code: 'GATE_FAILED',
         action: 'gate evaluation',
-      });
+      }, sessionId);
       rawParts.push(raw);
       const parsed = parsePrimaryGate(raw);
       primaryPassed = parsed.passed;
@@ -593,7 +647,7 @@ export class GateEvaluator {
       const raw = await runStream(this.ctx, this.config, buildSecondaryGatePrompt(input.context, input.gates.secondary?.prompt), input.signal, {
         code: 'GATE_FAILED',
         action: 'gate evaluation',
-      });
+      }, sessionId);
       rawParts.push(raw);
       const parsed = parseSecondaryGate(raw);
       secondaryPassed = parsed.passed;
@@ -688,9 +742,20 @@ export class GateEvaluator {
 /**
  * Step 收尾编排器。
  *
- * 组合 {@link FinalizeAssessor} 与 {@link GateEvaluator}，`finalizeStep()` 按序执行：跳过检查
- * （无未解析透传变量 + 无门禁 → 零 AI 调用直接 done）→ assess → ask 置 interacting 中断
- * 门禁 / gate 审查 → 回写 passThroughVars（保留 refresh）→ 同步 finalizeMeta → persistState。
+ * 组合 {@link FinalizeAssessor} 与 {@link GateEvaluator}，按 5 阶段收尾重构拆分
+ * （stage-executor 的 `runPhaseA/B/C` 直接调用本管理器的方法）：
+ * - **Phase A（问题检测/评估，ask 保底）**：`assessOnly()` 只跑评估（完成判定 + 透传
+ *   变量提取 + ask 保底判断）；`hasAsk` + askQuestion 载荷 → 调用方把 Step 置
+ *   interacting 中断（引擎级 ask 闭环），finalizeMeta currentPhase='ask-detect' 且
+ *   **不记录顶层 assessSessionId**（评估 fork 会话**用完即删**：live 引用评估后释放、
+ *   不持久化——计划「Phase A 不持久化」）。
+ * - **Phase B（收尾）**：`commitFinalize(..., 'finalizing')` 回写透传变量（保留
+ *   refresh）+ 组装 finalizeMeta（`assessSessionId` 持久化到 state）。
+ * - **Phase C（门禁）**：`evaluateGates()` 用**真实 fork 会话**跑门禁（`gateSessionId`
+ *   持久化到 state）；未通过由调用方落 failed（currentPhase='gating'）。
+ *
+ * `finalizeStep()` 保留为编排兼容入口（跳过检查 → assessOnly → ask? → evaluateGates →
+ * commitFinalize），供既有调用方/测试使用。
  */
 export class FinalizeManager {
   private readonly assessor: FinalizeAssessor;
@@ -704,79 +769,108 @@ export class FinalizeManager {
     this.gateEvaluator = new GateEvaluator(ctx, config);
   }
 
-  /** 编排单个 Step 的收尾，返回 `FinalizeOutcome`（done/ask/error 三态）。 */
+  /**
+   * Phase A：只跑评估（ask 保底判断）。
+   *
+   * 完成判定 + 透传变量提取 + ask 转换。假 ask 防御（`hasAsk` 但无 askQuestion 载荷）
+   * 回落 `hasAsk=false`。**不**跑门禁、**不**回写任何状态——调用方（stage-executor
+   * `runPhaseA`）根据返回值决定 ask 中断或继续 Phase B/C。
+   */
+  async assessOnly(request: FinalizeStepRequest): Promise<FinalizeAssessResult> {
+    let assessResult = await this.assessor.assess({
+      step: request.step,
+      ...(request.stepSessionId === undefined ? {} : { stepSessionId: request.stepSessionId }),
+      context: request.context,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
+    // 假 ask 防御（缺陷定位）：ask 判定但无 askQuestion 载荷时无法发起提问——置
+    // interacting 只会让实例永久卡 interacting、UI 无选择框。回落 hasAsk=false 走普通
+    // 收尾（门禁 + 透传变量回写），并记 warn 暴露异常收尾。
+    if (assessResult.hasAsk && assessResult.askQuestion === undefined) {
+      this.ctx.logger.warn(
+        `sandore: step ${request.step.id} finalize assess returned ask without askQuestion payload; treating as completed`,
+      );
+      return { ...assessResult, hasAsk: false };
+    }
+    return assessResult;
+  }
+
+  /**
+   * Phase C：门禁审查（GateEvaluator，真实 fork 会话）。
+   *
+   * 缺陷 34：合并引擎累加器 + 当次 assess 提取值为 outputTo 路径解析用 vars（独立副本，
+   * 不依赖提前持久化——避免 assess 与 gate 之间的变量竞态）。仅运行门禁，不回写状态。
+   */
+  async evaluateGates(request: FinalizeStepRequest, assessResult: FinalizeAssessResult): Promise<GateEvalResult> {
+    if (request.gates === undefined) {
+      // 理论不可达：evaluateGates 仅在 hasEnabledGates(request.gates) 时被调用。
+      throw new SandoreError('gate evaluation requires gates configuration', 'FINALIZE_FAILED');
+    }
+    const outputToVars = buildOutputToVars(request.passThroughVars, assessResult.passThroughVars);
+    return await this.gateEvaluator.evaluate({
+      step: request.step,
+      context: request.context,
+      gates: request.gates,
+      workdir: request.workdir,
+      vars: outputToVars,
+      ...(request.stepSessionId === undefined ? {} : { stepSessionId: request.stepSessionId }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
+  }
+
+  /**
+   * 收尾落点（Phase B / 门禁后）：回写 finalizeMeta + 透传变量 + onPersist。
+   *
+   * `currentPhase` 标注当前收尾阶段（`ask-detect`/`finalizing`/`gating`/`completed`），
+   * 供 UI 展示；`assessSessionId`（Phase B 起）/`gateSessionId`（Phase C）持久化到
+   * state。`options.recordAssessSession=false`（Phase A ask 保底中断）时不记录顶层
+   * assessSessionId（计划：Phase A fork 用完即删、不持久化；Phase B 收尾才落
+   * assessSessionId）。
+   * 透传变量提取回退：AI 未提取（fork 降级/模型行为）且步骤仅声明一个未解析变量、
+   * 输出非空时，以输出文本为该变量值（对齐「变量值从步骤输出提取」的文档语义，
+   * 避免单变量场景下提取落空）。
+   */
+  async commitFinalize(
+    request: FinalizeStepRequest,
+    assessResult: FinalizeAssessResult | undefined,
+    gateResult: GateEvalResult | undefined,
+    currentPhase: NonNullable<FinalizeMeta['currentPhase']>,
+    options?: { readonly recordAssessSession?: boolean },
+  ): Promise<void> {
+    request.executedStep.finalizeMeta = buildFinalizeMeta(assessResult, gateResult, currentPhase, options);
+    const extracted: Record<string, string> = { ...(assessResult?.passThroughVars ?? {}) };
+    fillUnresolvedSingleVar(request.step, extracted, request.context.output);
+    writeBackPassThroughVars(extracted, request.step, request.passThroughVars);
+    await request.onPersist?.(request.executedStep);
+  }
+
+  /** 编排单个 Step 的收尾（兼容入口），返回 `FinalizeOutcome`（done/ask/error 三态）。 */
   async finalizeStep(request: FinalizeStepRequest): Promise<FinalizeOutcome> {
     const { step, executedStep } = request;
     const needsAssess = hasUnresolvedPassThroughVars(step);
     const hasGates = hasEnabledGates(request.gates);
 
     if (!needsAssess && !hasGates) {
-      return { type: 'done', completionType: 'completed' };
+      // 零 AI 调用跳过路径：无未解析透传变量 + 无门禁 → 直接 done（不写 finalizeMeta）。
+      return { type: 'done' };
     }
 
-    let assessResult = await this.assessor.assess({
-      step,
-      ...(request.stepSessionId === undefined ? {} : { stepSessionId: request.stepSessionId }),
-      context: request.context,
-      ...(request.signal === undefined ? {} : { signal: request.signal }),
-    });
+    const assessResult = await this.assessOnly(request);
 
-    // 假 ask 防御（缺陷定位）：ask 判定但无 askQuestion 载荷时无法发起提问——置
-    // interacting 只会让实例永久卡 interacting、UI 无选择框。回落 completed 走普通
-    // 收尾（门禁 + 透传变量回写），并记 warn 暴露异常收尾。
-    if (assessResult.completionType === 'ask' && assessResult.askQuestion === undefined) {
-      this.ctx.logger.warn(
-        `sandore: step ${step.id} finalize assess returned ask without askQuestion payload; treating as completed`,
-      );
-      assessResult = { ...assessResult, completionType: 'completed' };
-    }
-
-    if (assessResult.completionType === 'ask') {
+    if (assessResult.hasAsk) {
       executedStep.status = 'interacting';
-      await this.persistFinalize(executedStep, assessResult, request, undefined);
+      // Phase A ask 保底中断：currentPhase='ask-detect'，不记录顶层 assessSessionId。
+      await this.commitFinalize(request, assessResult, undefined, 'ask-detect', { recordAssessSession: false });
       return { type: 'ask', assessResult };
     }
 
-    return this.finalizeAfterAssess(executedStep, assessResult, request);
-  }
-
-  /**
-   * ask 回复后重跑收尾（继续门禁审查）：
-   * 评估已在首次 finalizeStep 完成（completionType === 'ask'），此处仅重跑门禁并把
-   * executedStep 从 interacting 置回 completed/failed。
-   */
-  async finalizeStepAfterAsk(
-    request: FinalizeStepRequest,
-    assessResult: FinalizeAssessResult,
-  ): Promise<FinalizeOutcome> {
-    request.executedStep.status = 'completed';
-    return this.finalizeAfterAssess(request.executedStep, assessResult, request);
-  }
-
-  /** 评估完成后（completionType === 'completed' 或 ask 恢复后）的收尾：门禁审查 + 回写。 */
-  private async finalizeAfterAssess(
-    executedStep: ExecutedStepDefault,
-    assessResult: FinalizeAssessResult,
-    request: FinalizeStepRequest,
-  ): Promise<FinalizeOutcome> {
-    const hasGates = hasEnabledGates(request.gates);
     let gateResult: GateEvalResult | undefined;
-    if (hasGates) {
-      // 缺陷 34：合并引擎累加器 + 当次 assess 提取值为 outputTo 路径解析用 vars
-      // （独立副本，不依赖提前持久化——避免 assess 与 gate 之间的变量竞态）。
-      const outputToVars = buildOutputToVars(request.passThroughVars, assessResult.passThroughVars);
-      gateResult = await this.gateEvaluator.evaluate({
-        step: request.step,
-        context: request.context,
-        gates: request.gates,
-        workdir: request.workdir,
-        vars: outputToVars,
-        ...(request.signal === undefined ? {} : { signal: request.signal }),
-      });
+    if (hasEnabledGates(request.gates)) {
+      gateResult = await this.evaluateGates(request, assessResult);
     }
 
     if (gateResult !== undefined && !gateResult.gatesPassed) {
-      await this.persistFinalize(executedStep, assessResult, request, gateResult);
+      await this.commitFinalize(request, assessResult, gateResult, 'gating');
       return {
         type: 'error',
         errorDetail: gateResult.errorDetail ?? 'gate evaluation failed',
@@ -785,30 +879,12 @@ export class FinalizeManager {
       };
     }
 
-    await this.persistFinalize(executedStep, assessResult, request, gateResult);
+    await this.commitFinalize(request, assessResult, gateResult, 'completed');
     return {
       type: 'done',
-      completionType: 'completed',
       assessResult,
       ...(gateResult === undefined ? {} : { gateResult }),
     };
-  }
-
-  /** 回写 finalizeMeta + 透传变量 + onPersist（评估结果与门禁结果的统一落点）。 */
-  private async persistFinalize(
-    executedStep: ExecutedStepDefault,
-    assessResult: FinalizeAssessResult,
-    request: FinalizeStepRequest,
-    gateResult: GateEvalResult | undefined,
-  ): Promise<void> {
-    executedStep.finalizeMeta = buildFinalizeMeta(assessResult, gateResult);
-    // 透传变量提取回退：AI 评估未提取（fork 降级/模型行为）且步骤仅声明一个
-    // 未解析变量、输出非空时，以输出文本为该变量值（对齐「变量值从步骤输出
-    // 提取」的文档语义，避免单变量场景下提取落空）。
-    const extracted: Record<string, string> = { ...assessResult.passThroughVars };
-    fillUnresolvedSingleVar(request.step, extracted, request.context.output);
-    writeBackPassThroughVars(extracted, request.step, request.passThroughVars);
-    await request.onPersist?.(executedStep);
   }
 }
 

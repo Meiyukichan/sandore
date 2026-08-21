@@ -18,7 +18,7 @@ import type { FinalizeManagerConfig } from './finalize-manager.ts';
 import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome } from './file-utils.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
 import type { ExecutedStepDefault } from '@deepseek-ai/dsh-sandore-workflow/src/types';
-import type { WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { FinalizeAssessResult, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
 /** 记录 fork 调用并返回可注入 fork 结果的极简会话存储。 */
 class FakeForkedSession {
@@ -161,39 +161,54 @@ function harness(): {
 }
 
 describe('parseAssessResult', () => {
-  it('extracts completionType, passThroughVars and askQuestion from JSON', () => {
+  it('extracts hasAsk, passThroughVars and askQuestion from JSON', () => {
     const result = parseAssessResult(
-      '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
+      '{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}',
     );
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
     expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
     expect(result.askQuestion).toBeUndefined();
   });
 
-  it('preserves askQuestion id/question/options fields when completionType is ask', () => {
+  it('preserves askQuestion id/question/options fields when hasAsk is true', () => {
     const result = parseAssessResult(
-      '{"completionType":"ask","passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}',
+      '{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}',
     );
-    expect(result.completionType).toBe('ask');
+    expect(result.hasAsk).toBe(true);
     expect(result.askQuestion?.questions[0]).toMatchObject({ id: 'q1', question: '选择分支' });
     expect(result.askQuestion?.questions[0]?.options).toEqual([{ label: 'A' }]);
   });
 
-  it('falls back to regex completionType when JSON is wrapped in prose', () => {
-    const result = parseAssessResult('结果如下：\n{"completionType": "ask"}\n请查收');
-    expect(result.completionType).toBe('ask');
+  it('falls back to legacy completionType when JSON omits hasAsk (兼容旧输出)', () => {
+    const result = parseAssessResult(
+      '{"completionType":"ask","passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}',
+    );
+    expect(result.hasAsk).toBe(true);
+    expect(result.askQuestion?.questions[0]).toMatchObject({ id: 'q1', question: '选择分支' });
+    expect(result.askQuestion?.questions[0]?.options).toEqual([{ label: 'A' }]);
+  });
+
+  it('falls back to regex hasAsk when JSON is wrapped in prose', () => {
+    const result = parseAssessResult('结果如下：\n{"hasAsk": true}\n请查收');
+    expect(result.hasAsk).toBe(true);
     expect(result.passThroughVars).toEqual({});
   });
 
-  it('falls back to completed with empty vars for plain output', () => {
+  it('falls back to legacy regex completionType when JSON is wrapped in prose', () => {
+    const result = parseAssessResult('结果如下：\n{"completionType": "ask"}\n请查收');
+    expect(result.hasAsk).toBe(true);
+    expect(result.passThroughVars).toEqual({});
+  });
+
+  it('falls back to hasAsk=false with empty vars for plain output', () => {
     const result = parseAssessResult('  plain text  ');
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
     expect(result.passThroughVars).toEqual({});
   });
 
   it('preserves askQuestion header/option description/multi_select fields', () => {
     const result = parseAssessResult(
-      '{"completionType":"ask","passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"选择","header":"请选择","options":[{"label":"A","description":"方案A"},{"label":"B"}],"multi_select":true}]}}',
+      '{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"选择","header":"请选择","options":[{"label":"A","description":"方案A"},{"label":"B"}],"multi_select":true}]}}',
     );
     expect(result.askQuestion?.questions[0]).toMatchObject({
       id: 'q1',
@@ -208,14 +223,14 @@ describe('parseAssessResult', () => {
   });
 
   // ── 严重缺陷：```json markdown 围栏输出下 askQuestion/passThroughVars 被丢弃 ──
-  // 修前裸 JSON.parse 失败 → regex 回退只恢复 completionType='ask'、askQuestion 丢失
+  // 修前裸 JSON.parse 失败 → regex 回退只恢复完成判定、askQuestion 丢失
   // → 假 ask → findAskStep 未命中 → 实例永久卡 interacting。修后围栏剥离再解析。
 
   it('parses askQuestion and passThroughVars from a ```json-fenced output', () => {
     const result = parseAssessResult(
-      '```json\n{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}\n```',
+      '```json\n{"hasAsk":true,"passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}\n```',
     );
-    expect(result.completionType).toBe('ask');
+    expect(result.hasAsk).toBe(true);
     expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
     expect(result.askQuestion?.questions[0]).toMatchObject({ id: 'q1', question: '选择分支' });
     expect(result.askQuestion?.questions[0]?.options).toEqual([{ label: 'A' }]);
@@ -223,30 +238,30 @@ describe('parseAssessResult', () => {
 
   it('parses a fenced JSON block wrapped in surrounding prose', () => {
     const result = parseAssessResult(
-      '收尾评估结果：\n```json\n{"completionType":"completed","passThroughVars":{"a":"b"}}\n```\n请查收',
+      '收尾评估结果：\n```json\n{"hasAsk":false,"passThroughVars":{"a":"b"}}\n```\n请查收',
     );
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
     expect(result.passThroughVars).toEqual({ a: 'b' });
   });
 
   it('tolerates an uppercase fence language tag', () => {
     const result = parseAssessResult(
-      '```JSON\n{"completionType":"ask","passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Q"}]}}\n```',
+      '```JSON\n{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Q"}]}}\n```',
     );
-    expect(result.completionType).toBe('ask');
+    expect(result.hasAsk).toBe(true);
     expect(result.askQuestion?.questions[0]?.id).toBe('q1');
   });
 
-  it('falls back to completed when the fenced block contains invalid JSON', () => {
+  it('falls back to hasAsk=false when the fenced block contains invalid JSON', () => {
     const result = parseAssessResult('```json\n{not valid json}\n```');
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
     expect(result.passThroughVars).toEqual({});
     expect(result.askQuestion).toBeUndefined();
   });
 
   it('keeps regex fallback behavior for unfenced prose without valid JSON', () => {
     const result = parseAssessResult('结果如下：\n这里没有 JSON\n请查收');
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
     expect(result.passThroughVars).toEqual({});
   });
 });
@@ -282,7 +297,7 @@ describe('parsePrimaryGate / parseSecondaryGate', () => {
 describe('FinalizeAssessor', () => {
   it('forks the step session for a session-type step and records forkSessionId', async () => {
     const { llm, sessions, assessor } = harness();
-    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
     const result = await assessor.assess({
       step: step({ command: { type: 'agent', value: { promptText: 'do work' } } }),
@@ -292,12 +307,12 @@ describe('FinalizeAssessor', () => {
 
     expect(sessions.forkedSources).toEqual(['step-session-1']);
     expect(result.forkSessionId).toBe('session-1');
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
   });
 
   it('forks the step session for a prompt-type step (决策 D3: prompt 为真实子代理会话)', async () => {
     const { llm, sessions, assessor } = harness();
-    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
     const result = await assessor.assess({
       step: step({ command: { type: 'prompt', value: { promptText: 'do work' } } }),
@@ -308,12 +323,12 @@ describe('FinalizeAssessor', () => {
     // prompt 与 agent/skill/mcp 同为 session 类型：走 sessions.fork 评估续接（不再降级）。
     expect(sessions.forkedSources).toEqual(['step-session-1']);
     expect(result.forkSessionId).toBe('session-1');
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
   });
 
   it('degrades to a temp session when fork throws and does not fail the assess', async () => {
     const { llm, sessions, assessor } = harness();
-    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
     sessions.forkHandler = () => {
       throw new Error('SESSION_NOT_FOUND');
     };
@@ -326,13 +341,13 @@ describe('FinalizeAssessor', () => {
 
     expect(result.forkSessionId).toMatch(/^eval-/);
     expect(result.errorDetail).toContain('SESSION_NOT_FOUND');
-    expect(result.completionType).toBe('completed');
+    expect(result.hasAsk).toBe(false);
     expect(llm.calls[0]?.sessionId).toBeUndefined();
   });
 
   it('uses a temp session (no fork) for a shell-type step', async () => {
     const { llm, sessions, assessor } = harness();
-    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
     const result = await assessor.assess({
       step: step({ command: { type: 'shell', value: { command: 'echo hi' } } }),
@@ -346,7 +361,7 @@ describe('FinalizeAssessor', () => {
 
   it('stamps the fork session id onto the assess LLM request', async () => {
     const { llm, assessor } = harness();
-    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
     const result = await assessor.assess({
       step: step({ command: { type: 'agent', value: { promptText: 'do work' } } }),
@@ -399,6 +414,48 @@ describe('GateEvaluator', () => {
     expect(result.primaryPassed).toBe(true);
     expect(result.gatesPassed).toBe(true);
     expect(result.gateSessionId).toMatch(/^eval-/);
+  });
+
+  it('forks a real session for the gate when stepSessionId is provided (真实 fork 会话, 4.8)', async () => {
+    const { llm, fs, sessions, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out', artifacts: ['/work/out/report.md'] },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+      stepSessionId: 'step-session-1',
+    });
+
+    // Phase C 门禁 fork 真实会话：gateSessionId = 真实 fork id，LLM 请求带该 id 戳记。
+    expect(sessions.forkedSources).toEqual(['step-session-1']);
+    expect(result.gateSessionId).toBe('session-1');
+    expect(llm.calls[0]?.sessionId).toBe('session-1');
+    expect(result.primaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(true);
+  });
+
+  it('degrades to a temp session when the gate fork throws (合成/非 live 会话不失败)', async () => {
+    const { llm, fs, sessions, gateEvaluator } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+    sessions.forkHandler = () => {
+      throw new Error('SESSION_NOT_FOUND');
+    };
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out', artifacts: ['/work/out/report.md'] },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+      stepSessionId: 'missing-session',
+    });
+
+    expect(result.gateSessionId).toMatch(/^eval-/);
+    expect(llm.calls[0]?.sessionId).toBeUndefined();
+    expect(result.gatesPassed).toBe(true);
   });
 
   it('overrides gatesPassed to false when the AI passes but an outputTo file is missing', async () => {
@@ -772,7 +829,7 @@ describe('FinalizeManager.finalizeStep', () => {
       workdir: '/work',
     });
 
-    expect(outcome).toEqual({ type: 'done', completionType: 'completed' });
+    expect(outcome).toEqual({ type: 'done' });
     expect(llm.calls).toHaveLength(0);
   });
 
@@ -791,7 +848,7 @@ describe('FinalizeManager.finalizeStep', () => {
       gates: undefined,
     });
 
-    expect(outcome).toEqual({ type: 'done', completionType: 'completed' });
+    expect(outcome).toEqual({ type: 'done' });
     expect(llm.calls).toHaveLength(0);
   });
 
@@ -809,14 +866,14 @@ describe('FinalizeManager.finalizeStep', () => {
       gates: { primary: { enabled: false }, secondary: { enabled: false } },
     });
 
-    expect(outcome).toEqual({ type: 'done', completionType: 'completed' });
+    expect(outcome).toEqual({ type: 'done' });
     expect(llm.calls).toHaveLength(0);
   });
 
   it('marks the step interacting and skips the gate when assess returns ask', async () => {
     const { llm, manager } = harness();
     llm.streamHandler = () =>
-      textChunks('{"completionType":"ask","passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}');
+      textChunks('{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"选择分支","options":[{"label":"A"}]}]}}');
     const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
 
     const outcome = await manager.finalizeStep({
@@ -837,12 +894,12 @@ describe('FinalizeManager.finalizeStep', () => {
   });
 
   // ── 假 ask 防御：ask 判定但无 askQuestion 载荷 → 回落 completed（不置 interacting） ──
-  // 修前 completionType='ask' 但 askQuestion===undefined 时仍置 status:'ask' →
+  // 修前 hasAsk=true 但 askQuestion===undefined 时仍置 status:'ask' →
   // findAskStep 未命中 → 实例永久卡 interacting、UI 无选择框。
 
   it('treats ask without askQuestion payload as completed instead of fake ask', async () => {
     const { llm, manager } = harness();
-    llm.streamHandler = () => textChunks('{"completionType":"ask","passThroughVars":{}}');
+    llm.streamHandler = () => textChunks('{"hasAsk":true,"passThroughVars":{}}');
     const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
 
     const outcome = await manager.finalizeStep({
@@ -858,14 +915,14 @@ describe('FinalizeManager.finalizeStep', () => {
 
     expect(outcome.type).toBe('done');
     expect(executed.status).toBe('completed');
-    expect(executed.finalizeMeta?.status).toBe('completed');
-    expect(executed.finalizeMeta?.completionType).toBe('completed');
+    expect(executed.finalizeMeta?.currentPhase).toBe('completed');
+    expect(executed.finalizeMeta?.assessResult?.hasAsk).toBe(false);
   });
 
   it('treats a fenced ask-without-question output as completed too (fence + fake-ask combined)', async () => {
     const { llm, manager } = harness();
     llm.streamHandler = () =>
-      textChunks('```json\n{"completionType":"ask","passThroughVars":{}}\n```');
+      textChunks('```json\n{"hasAsk":true,"passThroughVars":{}}\n```');
     const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
 
     const outcome = await manager.finalizeStep({
@@ -881,7 +938,7 @@ describe('FinalizeManager.finalizeStep', () => {
 
     expect(outcome.type).toBe('done');
     expect(executed.status).toBe('completed');
-    expect(executed.finalizeMeta?.status).toBe('completed');
+    expect(executed.finalizeMeta?.currentPhase).toBe('completed');
   });
 
   it('writes back extracted passThroughVars preserving the refresh flag', async () => {
@@ -904,13 +961,13 @@ describe('FinalizeManager.finalizeStep', () => {
     expect(passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project', refresh: true });
   });
 
-  it('records a complete finalizeMeta with status/completionType/assessResult/gateResult', async () => {
+  it('records a complete finalizeMeta with currentPhase/assessSessionId/assessResult/gateResult', async () => {
     const { llm, fs, manager } = harness();
     let call = 0;
     llm.streamHandler = () => {
       const text =
         call === 0
-          ? '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}'
+          ? '{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}'
           : '{"taskStatus":"done"}';
       call += 1;
       return textChunks(text);
@@ -932,11 +989,13 @@ describe('FinalizeManager.finalizeStep', () => {
     });
 
     expect(outcome.type).toBe('done');
-    expect(executed.finalizeMeta?.status).toBe('completed');
-    expect(executed.finalizeMeta?.completionType).toBe('completed');
+    expect(executed.finalizeMeta?.currentPhase).toBe('completed');
     expect(executed.finalizeMeta?.assessResult).toBeDefined();
+    // Phase A 评估 fork 会话 id（用完即删：live 引用已释放，id 持久化到 state）。
+    expect(executed.finalizeMeta?.assessSessionId).toBe('session-1');
     expect(executed.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
-    expect(executed.finalizeMeta?.gateSessionId).toMatch(/^eval-/);
+    // Phase C 门禁真实 fork 会话 id（持久化到 state）。
+    expect(executed.finalizeMeta?.gateSessionId).toBe('session-2');
   });
 
   it('returns error with missing-file detail when the gate fails on outputTo', async () => {
@@ -1063,5 +1122,140 @@ describe('FinalizeManager.finalizeStep', () => {
       type: 'error',
       errorDetail: expect.stringContaining('artifacts/my-project/report.md'),
     });
+  });
+});
+
+describe('FinalizeManager 3 阶段拆分（assessOnly / evaluateGates / commitFinalize，5 阶段收尾）', () => {
+  it('assessOnly 只跑评估并返回 hasAsk（不跑门禁、不回写 finalizeMeta）', async () => {
+    const { llm, manager } = harness();
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}');
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+
+    const assessResult = await manager.assessOnly({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+    });
+
+    expect(assessResult.hasAsk).toBe(false);
+    expect(assessResult.passThroughVars).toEqual({ projectName: 'sandore' });
+    expect(llm.calls).toHaveLength(1);
+    // Phase A 不回写任何状态。
+    expect(executed.finalizeMeta).toBeUndefined();
+  });
+
+  it('assessOnly 假 ask 防御：hasAsk 但无 askQuestion 载荷回落 hasAsk=false', async () => {
+    const { llm, manager } = harness();
+    llm.streamHandler = () => textChunks('{"hasAsk":true,"passThroughVars":{}}');
+
+    const assessResult = await manager.assessOnly({
+      step: step({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      executedStep: executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+    });
+
+    expect(assessResult.hasAsk).toBe(false);
+  });
+
+  it('evaluateGates 只跑门禁（真实 fork 会话）并返回 gateResult（不回写状态）', async () => {
+    const { llm, fs, manager } = harness();
+    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+
+    const assessResult: FinalizeAssessResult = {
+      hasAsk: false,
+      passThroughVars: {},
+      forkSessionId: 'session-1',
+      assessmentRaw: '',
+    };
+    const gateResult = await manager.evaluateGates({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        outputTo: [{ id: 'opt-a', path: 'out/*.md' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      gates: { primary: { enabled: true } },
+    }, assessResult);
+
+    expect(gateResult.gatesPassed).toBe(true);
+    expect(gateResult.gateSessionId).toBe('session-1');
+    expect(executed.finalizeMeta).toBeUndefined();
+  });
+
+  it('commitFinalize 组装 finalizeMeta（currentPhase + assessSessionId/gateSessionId）并回写透传变量', async () => {
+    const { llm, manager } = harness();
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}');
+    const passThroughVars: Record<string, PassThroughVarValue> = {};
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    const assessResult = await manager.assessOnly({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      passThroughVars,
+    });
+
+    await manager.commitFinalize({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      passThroughVars,
+    }, assessResult, undefined, 'finalizing');
+
+    // Phase B 收尾：透传变量已回写（保留 refresh）。
+    expect(passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
+    // finalizeMeta：currentPhase='finalizing' + assessSessionId（Phase B 起持久化）。
+    expect(executed.finalizeMeta?.currentPhase).toBe('finalizing');
+    expect(executed.finalizeMeta?.assessSessionId).toBe('session-1');
+    expect(executed.finalizeMeta?.assessResult?.hasAsk).toBe(false);
+    expect(executed.finalizeMeta?.gateResult).toBeUndefined();
+  });
+
+  it('Phase A ask 保底中断的 finalizeMeta 不记录顶层 assessSessionId（fork 用完即删不持久化，4.6/4.1）', async () => {
+    const { llm, manager } = harness();
+    llm.streamHandler = () =>
+      textChunks('{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"确认继续？"}]}}');
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+
+    const outcome = await manager.finalizeStep({
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'v', value: '${v}', description: 'd' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+    });
+
+    expect(outcome.type).toBe('ask');
+    expect(executed.status).toBe('interacting');
+    // Phase A 中断快照：currentPhase='ask-detect'；顶层 assessSessionId 不持久化
+    // （计划：Phase A fork 用完即删、Phase B 收尾才落 assessSessionId）。
+    expect(executed.finalizeMeta?.currentPhase).toBe('ask-detect');
+    expect(executed.finalizeMeta?.assessSessionId).toBeUndefined();
+    // assessResult 仍随快照落 state（findAskStep 依赖 askQuestion；forkSessionId 为 schema 强约束）。
+    expect(executed.finalizeMeta?.assessResult?.hasAsk).toBe(true);
+    expect(executed.finalizeMeta?.assessResult?.forkSessionId).toBe('session-1');
   });
 });

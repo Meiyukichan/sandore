@@ -1,6 +1,5 @@
 /**
- * 交互管理器（引擎级 ask 主通道 + pending Map 镜像持久化 + 兼容回复路径 +
- * 子代理 ask 转接 + 权限镜像）。
+ * 交互管理器（引擎级 ask 主通道 + pending Map 镜像持久化 + 兼容回复路径 + 权限镜像）。
  *
  * `InteractionManager` 是「纯协调器」：维护 `pendingQuestions`/`pendingPermissions`
  * Map（requestId → 条目）与终态条目历史，在登记/回复/拒绝时经注入的
@@ -9,13 +8,14 @@
  * `sandore/permission` 事件。引擎级 ask 的权威路径是 `ctx.userQuestions.ask`
  * 的 await；`replyQuestion`/`replyPermission` 是兼容回复路径（resolve 内部等待
  * Promise，与 ask 的 await 汇合），供 DSH 卡片通道不可用（如 headless 测试）时使用。
+ *
+ * 双通道 ask 重构后**不再承载子代理 ask 转接**（`[[SANDORE_ASK]]` 标记块机制已删）：
+ * 子代理提问走 child-scope `ask_user_question` 工具（引擎 `askFromSubagent` → 本管理
+ * 器 `ask` 主通道，见 workflow-engine.ts / ask-tool.ts）。
  * @module @deepseek-ai/dsh-sandore-workflow/src/interaction-manager
  */
-import type { ContentBlock } from '@deepseek-ai/dsh-llm';
-
 import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import { SandoreError } from './errors.ts';
-import { AskUserQuestionPayloadSchema } from './schema.ts';
 import type { UserQuestions } from './seam.ts';
 import type {
   AskUserQuestionAnswer,
@@ -45,8 +45,6 @@ export interface InteractionManagerOptions {
   readonly emitPermission: (entry: PendingPermissionEntry) => void;
   /** 双发 `sandore/question_rejected` 事件（Cordis + Session append，缺陷 26）。 */
   readonly emitQuestionRejected: (entry: PendingQuestionEntry) => void;
-  /** 子代理 ask 转接后的答案注回动作。 */
-  readonly followup: (childId: string, content: ContentBlock[]) => Promise<void> | void;
 }
 
 /** 等待中的问答 Promise 解析器（`ask` 与 `replyQuestion` 汇合点）。 */
@@ -54,10 +52,6 @@ interface QuestionWaiter {
   readonly resolve: (answer: AskUserQuestionAnswer) => void;
   readonly reject: (reason: unknown) => void;
 }
-
-/** 子代理 ask 标记块起止定界。 */
-const ASK_MARKER_START = '[[SANDORE_ASK]]';
-const ASK_MARKER_END = '[[/SANDORE_ASK]]';
 
 /**
  * 取消占位答案：`clearPendingInteractions`/`clearAll` 解挂 question waiter 用。
@@ -95,17 +89,6 @@ export function isRejectedAnswer(answer: AskUserQuestionAnswer): answer is AskUs
 /** 生成请求关联 ID。 */
 function makeRequestId(): string {
   return globalThis.crypto.randomUUID();
-}
-
-/** 提取 ContentBlock[] 中的纯文本（仅 text 块）。 */
-function textOf(output: readonly ContentBlock[]): string {
-  const texts: string[] = [];
-  for (const block of output) {
-    if (block.type === 'text') {
-      texts.push(block.text);
-    }
-  }
-  return texts.join('\n');
 }
 
 /** 蛇形 `AskUserQuestionPayload` → 驼峰 `AskUserQuestionItem[]`（对齐 DSH）。 */
@@ -152,40 +135,6 @@ export function buildAnswerText(answer: AskUserQuestionAnswer): string {
     })
     .filter(part => part !== '')
     .join('\n');
-}
-
-/**
- * 解析子代理 final result 中的保守标记块 `[[SANDORE_ASK]]{...json...}[[/SANDORE_ASK]]`。
- *
- * 仅解析首个标记块；JSON 解析失败、`AskUserQuestionPayloadSchema` 校验不通过或
- * `questions` 为空均返回 `undefined`（按普通输出处理，不转接）。
- * @param text - 子代理 final result 的纯文本。
- * @returns 合法 ask 载荷，或无合法标记块时为 `undefined`。
- */
-export function parseDelegatedAsk(text: string): AskUserQuestionPayload | undefined {
-  const start = text.indexOf(ASK_MARKER_START);
-  if (start < 0) {
-    return undefined;
-  }
-  const jsonStart = start + ASK_MARKER_START.length;
-  const end = text.indexOf(ASK_MARKER_END, jsonStart);
-  if (end < 0) {
-    return undefined;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(jsonStart, end));
-  } catch {
-    return undefined;
-  }
-  const result = AskUserQuestionPayloadSchema.safeParse(parsed);
-  if (!result.success) {
-    return undefined;
-  }
-  if (result.data.questions.length === 0) {
-    return undefined;
-  }
-  return result.data;
 }
 
 /**
@@ -306,48 +255,6 @@ export class InteractionManager {
       answer: reply,
     });
     this.syncState();
-  }
-
-  /**
-   * 子代理 ask 转接：final result 含合法标记块时转引擎级 ask，答案 followup 注回子代理。
-   *
-   * 无合法标记块时按普通输出处理（不转接、不报错）。
-   * @param input - 子代理 childId、final result、以及构造 pending 条目的定位字段。
-   * @returns 是否发生转接。
-   */
-  async delegateSubagentAsk(input: {
-    childId: string;
-    output: ContentBlock[];
-    stageId: string;
-    stepId: string;
-    sessionId: string;
-    signal?: AbortSignal;
-  }): Promise<{ delegated: boolean }> {
-    const payload = parseDelegatedAsk(textOf(input.output));
-    if (payload === undefined) {
-      return { delegated: false };
-    }
-    const requestId = makeRequestId();
-    const entry: PendingQuestionEntry = {
-      id: requestId,
-      stageId: input.stageId,
-      stepId: input.stepId,
-      sessionId: input.sessionId,
-      requestId,
-      kind: 'question',
-      status: 'pending',
-      payload,
-      createdAt: new Date().toISOString(),
-    };
-    const answer = await this.ask({ entry, ...(input.signal === undefined ? {} : { signal: input.signal }) });
-    if (isRejectedAnswer(answer)) {
-      // 问答被拒绝（缺陷 26）：抛 STEP_EXECUTION 让 StageExecutor 的 try/catch 把
-      // 该 Step 标 failed（onStepFailed 钩子发 sandore/step-failed → result 'failed' →
-      // 引擎 L814 Stage/实例 failed）。引擎级 ask 路径在 workflow-engine.ts 自行处理。
-      throw new SandoreError(`question '${requestId}' rejected`, 'STEP_EXECUTION');
-    }
-    await this.deps.followup(input.childId, [{ type: 'text', text: JSON.stringify(answer) }]);
-    return { delegated: true };
   }
 
   /** 终态化一条问答条目并 resolve 其等待 Promise（幂等，兼容卡片/兼容路径竞态）。 */

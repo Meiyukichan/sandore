@@ -8,8 +8,8 @@ import { describe, expect, it } from 'vitest'
 import type { PendingPermissionEntry, PendingQuestionEntry } from '@deepseek-ai/dsh-sandore-workflow/schema'
 
 import {
-  isBlank, isRunningStatus, isSubagentStep, isTerminalStatus, partitionInteractions, RETRY_MODES, runDotState,
-  stepDotState, stepIdOf, relativeTimeOf, chatLinesOf,
+  buildTimeline, isBlank, isRunningStatus, isSubagentStep, isTerminalStatus, partitionInteractions, RETRY_MODES,
+  runDotState, stepDotState, stepIdOf, relativeTimeOf, chatLinesOf,
 } from './run-view-model.ts'
 import type { ExecutedStep } from './run-view-model.ts'
 
@@ -276,5 +276,71 @@ describe('chatLinesOf', () => {
 
   it('returns undefined without sessionMessages', () => {
     expect(chatLinesOf(step())).toBeUndefined()
+  })
+})
+
+describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail）', () => {
+  it('propagates finalizeMeta.currentPhase / errorDetail into the timeline step item', () => {
+    const executed = step({
+      status: 'failed',
+      finalizeMeta: {
+        currentPhase: 'gating',
+        assessSessionId: 'assess-1',
+        gateSessionId: 'gate-1',
+        assessResult: { hasAsk: false, passThroughVars: {}, forkSessionId: 'assess-1', assessmentRaw: '' },
+        gateResult: {
+          gatesPassed: false,
+          primaryPassed: false,
+          errorDetail: 'missing output files: out/report.md',
+          gateSessionId: 'gate-1',
+          assessmentRaw: '',
+        },
+        errorDetail: 'missing output files: out/report.md',
+      },
+    })
+    const state = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      status: 'failed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [executed],
+      stageInfos: [],
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildTimeline>[0]
+
+    const items = buildTimeline(state)
+    expect(items).toHaveLength(1)
+    const stepItem = items[0]
+    expect(stepItem.kind).toBe('step')
+    if (stepItem.kind !== 'step') return
+    // 收尾阶段徽标数据源（UnifiedTimeline 状态按钮渲染用）。
+    expect(stepItem.finalizePhase).toBe('gating')
+    // failed 态错误详情（门禁失败原因）。
+    expect(stepItem.finalizeErrorDetail).toBe('missing output files: out/report.md')
+  })
+
+  it('omits the finalize fields when finalizeMeta is absent', () => {
+    const state = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      status: 'completed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [step({ status: 'completed' })],
+      stageInfos: [],
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildTimeline>[0]
+
+    const items = buildTimeline(state)
+    const stepItem = items[0]
+    expect(stepItem.kind).toBe('step')
+    if (stepItem.kind !== 'step') return
+    expect(stepItem.finalizePhase).toBeUndefined()
+    expect(stepItem.finalizeErrorDetail).toBeUndefined()
   })
 })

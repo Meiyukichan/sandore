@@ -20,6 +20,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 
 import type {
   Agent,
+  ContinuableSetupContribution,
   ContinuableStart,
   ContinuableStartSpec,
   MessageId,
@@ -53,6 +54,8 @@ export class FakeSubagents implements SubagentRuntime {
   readonly interrupts: Array<{ targetSessionId: SessionId; authority: SubagentInterruptAuthority }> = [];
   readonly startCalls: Array<{ name: string; request: SubagentStartRequest }> = [];
   readonly listChildrenCalls: Array<{ parentSessionId: SessionId; signal?: AbortSignal }> = [];
+  /** 已注册的 continuable setup 贡献（registerContinuableSetup 记录，供 gate 断言）。 */
+  readonly continuableSetups: ContinuableSetupContribution[] = [];
   /** 已发射的 settle 事件载荷（按发射顺序，供断言）。 */
   readonly settlements: Array<SubagentSettlement> = [];
   /** 可选：followup 抛错注入（缺陷 11 测试：recover() followup 失败落 failed）。 */
@@ -122,6 +125,12 @@ export class FakeSubagents implements SubagentRuntime {
       });
     }
     return entries;
+  }
+
+  /** 记录注册的 continuable setup 贡献（不实际安装；测试可手动调用贡献模拟 child 安装）。 */
+  registerContinuableSetup(contribution: ContinuableSetupContribution): () => void {
+    this.continuableSetups.push(contribution);
+    return () => {};
   }
 
   /** 查询某可续接子代理当前状态（`startContinuable` 后为 running，interrupt 后为 interrupted）。 */

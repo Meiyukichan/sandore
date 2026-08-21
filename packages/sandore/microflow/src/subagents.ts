@@ -11,6 +11,7 @@
  * @module @deepseek-ai/dsh-sandore-microflow/src/subagents
  */
 import type { AssistantMessage, ContentBlock, MessageSource, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm';
+import type { Context } from '@deepseek-ai/cordis';
 import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
 import type { SessionMessage } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
@@ -33,6 +34,12 @@ export type AgentStatus = 'idle' | 'running';
 /** 会话最小结构：追加式事件日志的不可变快照。 */
 export interface Session {
   readonly events: readonly SessionEvent[];
+  /**
+   * DSH 会话 header（父会话/工作目录等；sandore 子代理经 DSH `childSessionMeta`
+   * 写入 `parentSession` = 宿主主代理会话 id）。仅承载身份/路由信息，不参与事件流。
+   * `askFromSubagent`（workflow-engine）据此反查 ActiveInstance。
+   */
+  readonly header?: { readonly parentSession?: string; readonly cwd?: string };
 }
 
 /** 可续接子代理的活代理引用（`ctx.agents.get` 返回的裸 Agent）。 */
@@ -156,6 +163,15 @@ export interface SubagentFollowupOptions {
   readonly signal: AbortSignal;
 }
 
+/**
+ * `registerContinuableSetup` 的贡献类型（对齐 DSH `ContinuableSetupContribution`）。
+ *
+ * 同步 child-scope 安装器：在 continuable child 的 unpublished scope（`childCtx`）
+ * 组合一项部署能力（如 `childCtx.tools.register(...)`），返回该安装的 disposer。
+ * 贡献在 Activation 发布前同步安装，随 child scope 释放自动撤销。
+ */
+export type ContinuableSetupContribution = (childCtx: Context) => () => void;
+
 /** `interrupt` 的授权凭证。 */
 export type SubagentInterruptAuthority =
   | { readonly kind: 'user'; readonly parentSessionId: SessionId }
@@ -205,8 +221,9 @@ export type SubagentStopReason = 'completed' | 'aborted' | 'error' | 'max-tokens
  * 声明 `sandore/subagent-settled` 事件作为 settle 观察通道：DSH 适配层把 DSH
  * `subagent/end` 转译为本事件（见 workflow-engine），mock `FakeSubagents` 直接发射。
  * `report`（子代理主动 `reportFrom` 投递，child 仍 alive，中间结果）是 DSH 另一条父
- * 代理返回通道——sandore 子代理当前不使用 report 工具（走自有 `[[SANDORE_ASK]]` 标记
- * + followup 转接），report 通道作为未来扩展保留（届时同样经此事件投递 `completed`）。
+ * 代理返回通道——sandore 子代理当前不使用 report 工具（提问走 child-scope
+ * `ask_user_question` 工具，见 workflow/ask-tool.ts），report 通道作为未来扩展保留
+ * （届时同样经此事件投递 `completed`）。
  */
 export interface SubagentSettlement {
   /** 结算的子代理 SessionId（对齐 DSH `SubagentRunEndInfo.id`）。 */
@@ -232,6 +249,13 @@ export interface SubagentRuntime {
   followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId>;
   interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;
   listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;
+  /**
+   * 注册可续接子代理创建期的 child-scope 能力贡献（对齐 DSH
+   * `subagents.registerContinuableSetup`）：每个新创建的 continuable child 的
+   * unpublished scope 同步安装该贡献（`childCtx.tools.register` 等），返回注册的
+   * disposer（随插件/贡献生命周期撤销，DSH 侧经 `ctx.effect` 绑定 ctx 生命周期）。
+   */
+  registerContinuableSetup(contribution: ContinuableSetupContribution): () => void;
   start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;
 }
 

@@ -53,6 +53,7 @@ import { WorkflowDagNavigator } from './dag-navigator.ts';
 import { SandoreError } from './errors.ts';
 import { createHostAgentSetup } from './host-agent.ts';
 import type { AgentPresetsSeam } from './host-agent.ts';
+import { installSandoreAskTool } from './ask-tool.ts';
 import { InteractionManager, buildAnswerText, isRejectedAnswer } from './interaction-manager.ts';
 import { LifecycleManager } from './lifecycle-manager.ts';
 import type { SandorePersistence } from './persistence.ts';
@@ -65,6 +66,7 @@ import type { SandoreConfig } from './seam.ts';
 import type { RevertBoundaryOption } from './wire.ts';
 import type {
   AskUserQuestionAnswer,
+  AskUserQuestionItem,
   AskUserQuestionPayload,
   DagResultInfo,
   DagRun,
@@ -86,7 +88,7 @@ import { StageExecutor } from '@deepseek-ai/dsh-sandore-microflow/src/stage-exec
 import type { StageExecutorResume, StageStepHooks } from '@deepseek-ai/dsh-sandore-microflow/src/stage-executor';
 import { StepNavigator } from '@deepseek-ai/dsh-sandore-microflow/src/step-navigator';
 import type { StepRunnerConfig } from '@deepseek-ai/dsh-sandore-microflow/src/step-runner';
-import type { Agent, SubagentSettlement, SubagentStopReason } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
+import type { Agent, ContinuableSetupContribution, SubagentSettlement, SubagentStopReason } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 
 /**
  * `agent/pre-step` 事件的最小结构面（sandore 不 import `@deepseek-ai/dsh-agent` 类型，
@@ -325,7 +327,44 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   protected async [Service.init](): Promise<void> {
     this.registerSubagentSettlementAdapter();
     this.registerHostAgentFreezeListener();
+    // 双通道 ask 通道 1：child-scope ask_user_question 工具注入（gate：仅 sandore 子代理）。
+    this.registerSandoreAskToolSetup();
     await this.recoverOrphanedInstances();
+  }
+
+  /**
+   * 注册 child-scope `ask_user_question` 工具安装贡献（双通道 ask 通道 1，4.3）。
+   *
+   * 经 `ctx.subagents.registerContinuableSetup` 把安装器组合进每个 continuable child
+   * 的 unpublished scope；安装器内做 **gate 校验**：child 的
+   * `session.header.parentSession` 必须命中**当前非终态 sandore 实例**的宿主主代理会话
+   * （反查 instances 表：`instances[].hostAgent.id === parentSession` 且实例状态非终态）
+   * 才注册工具（child-scope 同名注册遮蔽全局 DSH 版），否则返回空 disposer（不安装）。
+   *
+   * **与计划对齐（4.3）**：gate 为「当前有 sandore 实例匹配」，而非「曾创建过 sandore
+   * 宿主主代理」的永久登记——终态实例（completed/failed/aborted）仍留 instances 表
+   * （getState 兜底读快照），故显式排除终态，避免宿主主代理在工作流结束后普通 turn
+   * 委派的子代理误注入（误注入会令其提问路由到已结束实例的交互管理器）。
+   * `subagents` 服务缺失（最小桩部署）时静默跳过。
+   */
+  private registerSandoreAskToolSetup(): void {
+    const contribution: ContinuableSetupContribution = childCtx => {
+      // childCtx.agent 在 setup 期可用（对齐 DSH continuation.ts 的
+      // appendDelegatedPolicyOverrides 用法）；结构访问 header.parentSession。
+      const agent = (childCtx as { agent?: unknown }).agent as
+        | { readonly session: { readonly header: { readonly parentSession?: string } } }
+        | undefined;
+      const parentSession = agent?.session?.header?.parentSession;
+      const isSandoreChild = parentSession !== undefined
+        && [...this.instances.values()].some(instance =>
+          instance.hostAgent.id === parentSession && !TERMINAL_STATUSES.has(instance.state.status));
+      if (!isSandoreChild) {
+        // gate 未命中（非 sandore 子代理 / 终态实例的后续子代理）：不安装。
+        return () => {};
+      }
+      return installSandoreAskTool(childCtx as unknown as { readonly tools: { register(tool: unknown): () => void } }, this);
+    };
+    this.ctx.subagents.registerContinuableSetup(contribution);
   }
 
   /**
@@ -778,6 +817,77 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       throw new SandoreError(`instance '${instanceId}' not found`, 'NODE_NOT_FOUND');
     }
     await active.interactions.rejectQuestion(requestId);
+  }
+
+  /**
+   * 子代理 child-scope `ask_user_question` 工具的执行入口（双通道 ask **通道 1**）。
+   *
+   * 把子代理 turn 内的提问路由到**主会话**引擎级 ask（hostAgent 身份、UI 可见可答）：
+   * 从 `subagent.session.header.parentSession`（= 宿主主代理会话 id）反查
+   * ActiveInstance → 按 `subagent.id`（childId）反查 Step（`sessionMeta.childId`
+   * 匹配，取最后活跃段）→ 构造 pending 条目 → `interactions.ask`（与引擎级 ask 闭环
+   * 同一通道，registerPending + 双发 `sandore/question`）→ 返回答案。答案**不写
+   * userMessages**（作为普通 tool result 进入子代理会话，时间轴由子代理会话承载）。
+   *
+   * 问答被拒（`rejectQuestion` 占位答案）抛 `STEP_EXECUTION`（子代理工具调用失败 →
+   * 该 Step failed 语义，对齐缺陷 26 显式落态，不冒泡 runAndCatch）。
+   *
+   * @param subagent - 调用方子代理（`session.header.parentSession` = 宿主主代理会话
+   *   id；`id` = childId）。
+   * @param questions - 问题列表（DSH `AskUserQuestionItem` 驼峰形状，内部转蛇形载荷）。
+   * @param signal - 可选取消信号。
+   * @returns 用户整批回答（DSH `AskUserQuestionAnswer` 形状）。
+   */
+  async askFromSubagent(
+    subagent: Agent,
+    questions: readonly AskUserQuestionItem[],
+    signal?: AbortSignal,
+  ): Promise<AskUserQuestionAnswer> {
+    const parentSession = subagent.session.header?.parentSession;
+    if (parentSession === undefined) {
+      throw new SandoreError(`subagent '${subagent.id}' has no parent session`, 'INVALID_OPERATION');
+    }
+    const active = [...this.instances.values()].find(instance => instance.hostAgent.id === parentSession);
+    if (active === undefined) {
+      throw new SandoreError(`no active sandore instance for parent session '${parentSession}'`, 'INVALID_OPERATION');
+    }
+    // 按 childId 反查 Step（sessionMeta.childId 匹配；段模型取最后匹配段）。
+    const stepEntry = [...active.state.executedSteps].reverse()
+      .find(entry => entry.sessionMeta?.childId === subagent.id);
+    if (stepEntry === undefined) {
+      throw new SandoreError(`step for subagent '${subagent.id}' not found`, 'INVALID_OPERATION');
+    }
+    // DSH AskUserQuestionItem（驼峰 multiSelect）→ 持久化条目载荷（蛇形 multi_select）。
+    const payload: AskUserQuestionPayload = {
+      questions: questions.map(question => ({
+        id: question.id,
+        question: question.question,
+        ...(question.header === undefined ? {} : { header: question.header }),
+        ...(question.options === undefined ? {} : { options: [...question.options] }),
+        ...(question.multiSelect === undefined ? {} : { multi_select: question.multiSelect }),
+      })),
+    };
+    const requestId = globalThis.crypto.randomUUID();
+    const entry: PendingQuestionEntry = {
+      id: requestId,
+      stageId: stepEntry.stageId,
+      stepId: stepEntry.stepId ?? stepEntry.id,
+      sessionId: active.state.taskId,
+      requestId,
+      kind: 'question',
+      status: 'pending',
+      payload,
+      createdAt: now(),
+    };
+    const answer = await active.interactions.ask({
+      entry,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (isRejectedAnswer(answer)) {
+      // 问答被拒（缺陷 26）：抛 STEP_EXECUTION → 子代理工具调用失败 → Step failed。
+      throw new SandoreError(`question '${requestId}' rejected`, 'STEP_EXECUTION');
+    }
+    return answer;
   }
 
   /** 暂停单个 Step（委托生命周期协调器：反查 childId → interrupt → 登记表 → 状态 paused）。 */
@@ -1399,19 +1509,6 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           }, { once: true });
         });
       },
-      onDelegatedAsk: async ({ childId, output, stepId, stageId }) => {
-        // 子代理 final result 含 [[SANDORE_ASK]] 标记块：解析 + 转接引擎级 ask，
-        // 答案经 interactions.followup 注回子代理（microflow 续跑后重新取 final output）。
-        const result = await active.interactions.delegateSubagentAsk({
-          childId,
-          output,
-          stageId,
-          stepId,
-          sessionId: active.state.taskId,
-          ...(active.controller.signal === undefined ? {} : { signal: active.controller.signal }),
-        });
-        return result.delegated;
-      },
     };
   }
 
@@ -1434,12 +1531,6 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       emitQuestion: (entry) => this.emitQuestion(session, active, entry),
       emitPermission: (entry) => this.emitPermission(session, active, entry),
       emitQuestionRejected: (entry) => this.emitQuestionRejected(session, active, entry),
-      followup: async (childId, content) => {
-        await this.ctx.subagents.followup(hostAgent, childId, content, {
-          source: { kind: 'user' },
-          signal: controller.signal,
-        });
-      },
     });
     const lifecycle = new LifecycleManager({
       hostAgent,

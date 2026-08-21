@@ -28,6 +28,12 @@ import { FakeSessionStore } from './sessions.ts';
 /** 记录事件的最小 Session 形状。 */
 export class FakeSession implements Session {
   readonly events: SessionEvent[] = [];
+  /** 会话 header（父会话/工作目录；askFromSubagent 反查 ActiveInstance 用）。 */
+  header: Session['header'];
+
+  constructor(header?: Session['header']) {
+    this.header = header;
+  }
 
   append(event: SessionEvent): void {
     this.events.push(event);

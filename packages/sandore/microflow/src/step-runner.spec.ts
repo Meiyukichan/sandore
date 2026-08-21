@@ -1,9 +1,10 @@
 /**
  * step-runner.ts（StepRunner）的单元测试：shell 成功/非零退出/超时/中止/stdin
  * 注入，prompt 经可续接子代理成功/终端失败/provider-model 三层回退/透传变量替换，
- * agent/skill/mcp 可续接子代理/fillParams，skill/mcp 名称校验与前缀，子代理 ask
- * 转接（[[SANDORE_ASK]] 标记块）与选 C 引导（toolFilter 禁用 ask_user_question 工具
- * + 提示词注入标记块说明）。
+ * agent/skill/mcp 可续接子代理/fillParams，skill/mcp 名称校验与前缀。双通道 ask
+ * 重构（4.4）后不再有 `[[SANDORE_ASK]]` 标记块转接/引导——子代理提问走
+ * child-scope ask_user_question 工具（workflow/ask-tool.ts），本 spec 覆盖标记块
+ * 按普通输出透传 + 无 toolFilter deny + 无引导注入。
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-runner.spec
  */
 import { Context } from '@deepseek-ai/cordis';
@@ -608,158 +609,29 @@ describe('StepRunner agent', () => {
   });
 });
 
-describe('StepRunner delegated ask hook', () => {
-  it('invokes onDelegatedAsk when subagent output contains an ask marker and uses the re-read output', async () => {
+describe('StepRunner 双通道 ask 重构（4.4：[[SANDORE_ASK]] 机制已删除）', () => {
+  it('treats a [[SANDORE_ASK]] marker block as ordinary output (no delegation hook)', async () => {
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([
       { type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]' },
     ]));
-    let idleCalls = 0;
-    child.whenIdle = async () => {
-      idleCalls += 1;
-      if (idleCalls === 2) {
-        child.session.append(assistantMessageEvent([{ type: 'text', text: 'final answer' }]));
-      }
-    };
-    const delegated: Array<{ childId: string; output: ContentBlock[] }> = [];
     const { agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
       defaultModel: 'm',
-      onDelegatedAsk: async input => {
-        delegated.push({ childId: input.childId, output: input.output });
-        return true;
-      },
     });
     agents.register(child);
 
     const result = await runner.run(request(agentStep()));
 
-    expect(delegated).toHaveLength(1);
-    expect(delegated[0]?.childId).toBe('child-1');
-    expect(result.output).toEqual([{ type: 'text', text: 'final answer' }]);
+    // 标记块机制已删：输出原样透传（子代理提问走 child-scope ask_user_question 工具）。
+    expect(result.output).toEqual([
+      { type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]' },
+    ]);
     expect(result.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'agent' });
   });
 
-  it('keeps the original output when onDelegatedAsk returns false (invalid marker)', async () => {
-    const child = new FakeAgent('child-1');
-    child.session.append(assistantMessageEvent([
-      { type: 'text', text: '[[SANDORE_ASK]]not json[[/SANDORE_ASK]]' },
-    ]));
-    const { agents, runner } = harness({
-      defaultTimeoutMs: 60000,
-      defaultProvider: 'p',
-      defaultModel: 'm',
-      onDelegatedAsk: async () => false,
-    });
-    agents.register(child);
-
-    const result = await runner.run(request(agentStep()));
-
-    expect(result.output).toEqual([{ type: 'text', text: '[[SANDORE_ASK]]not json[[/SANDORE_ASK]]' }]);
-  });
-
-  it('terminates when the subagent keeps returning the same ask marker (no progress)', async () => {
-    const child = new FakeAgent('child-1');
-    const marker = '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]';
-    child.session.append(assistantMessageEvent([{ type: 'text', text: marker }]));
-    // 子代理在每轮 followup 后重新发出同一合法标记块（无进展）。
-    child.whenIdle = async () => {
-      child.session.append(assistantMessageEvent([{ type: 'text', text: marker }]));
-    };
-    let delegated = 0;
-    const { agents, runner } = harness({
-      defaultTimeoutMs: 60000,
-      defaultProvider: 'p',
-      defaultModel: 'm',
-      onDelegatedAsk: async () => {
-        delegated += 1;
-        return true;
-      },
-    });
-    agents.register(child);
-
-    const result = await runner.run(request(agentStep()));
-
-    // 无进展守卫：仅转接一轮即 break，按普通输出返回标记块。
-    expect(delegated).toBe(1);
-    expect(result.output).toEqual([{ type: 'text', text: marker }]);
-  });
-
-  it('terminates after MAX_DELEGATED_ASK_ROUNDS when the subagent keeps asking new questions', async () => {
-    const child = new FakeAgent('child-1');
-    const markerFor = (n: number) => `[[SANDORE_ASK]]{"questions":[{"id":"q${n}","question":"Q${n}?"}]}[[/SANDORE_ASK]]`;
-    child.session.append(assistantMessageEvent([{ type: 'text', text: markerFor(1) }]));
-    // 每轮 followup 后子代理都发出「不同」的合法标记块（无进展守卫不触发，靠最大轮数兜底）。
-    let idleCalls = 0;
-    child.whenIdle = async () => {
-      idleCalls += 1;
-      if (idleCalls >= 2) {
-        child.session.append(assistantMessageEvent([{ type: 'text', text: markerFor(idleCalls) }]));
-      }
-    };
-    let delegated = 0;
-    const { agents, runner } = harness({
-      defaultTimeoutMs: 60000,
-      defaultProvider: 'p',
-      defaultModel: 'm',
-      onDelegatedAsk: async () => {
-        delegated += 1;
-        return true;
-      },
-    });
-    agents.register(child);
-
-    const result = await runner.run(request(agentStep()));
-
-    // 最大轮数守卫：最多转接 MAX_DELEGATED_ASK_ROUNDS（3）轮即 break。
-    expect(delegated).toBe(3);
-    expect(result.output).toEqual([{ type: 'text', text: markerFor(4) }]);
-  });
-
-  it('does not call onDelegatedAsk when the output has no marker', async () => {
-    const child = new FakeAgent('child-1');
-    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ordinary output' }]));
-    let delegated = 0;
-    const { agents, runner } = harness({
-      defaultTimeoutMs: 60000,
-      defaultProvider: 'p',
-      defaultModel: 'm',
-      onDelegatedAsk: async () => {
-        delegated += 1;
-        return true;
-      },
-    });
-    agents.register(child);
-
-    await runner.run(request(agentStep()));
-
-    expect(delegated).toBe(0);
-  });
-});
-
-describe('StepRunner 子代理 ask 转接引导（选 C：禁用 ask_user_question 工具）', () => {
-  it('denies the ask_user_question tool on the subagent via toolFilter', async () => {
-    const { subagents, agents, runner } = harness({
-      defaultTimeoutMs: 60000,
-      defaultProvider: 'p',
-      defaultModel: 'm',
-    });
-    const child = new FakeAgent('child-1');
-    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
-    agents.register(child);
-
-    await runner.run(request(promptStep()));
-
-    // 选 C：sandore 子代理经 startContinuable（parent=宿主主代理）创建时是 root（DSH
-    // 用私有 scope 作 ownerCtx），绕过 DELEGATED_CALLER 守卫——若可直调 DSH
-    // ask_user_question，question/requested 帧会路由到子代理会话（childId），主会话
-    // 看不到选择框 → 无人回答 → 子代理 turn 挂起 → 工作流卡死。toolFilter deny 移除
-    // 该全局工具后，问题统一走 [[SANDORE_ASK]] 标记块转接。
-    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
-  });
-
-  it('injects the [[SANDORE_ASK]] marker guidance into the subagent prompt', async () => {
+  it('does not inject the [[SANDORE_ASK]] guidance section into the subagent prompt', async () => {
     const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
@@ -772,18 +644,29 @@ describe('StepRunner 子代理 ask 转接引导（选 C：禁用 ask_user_questi
     await runner.run(request(promptStep()));
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('## 向用户提问');
-    expect(promptText).toContain('[[SANDORE_ASK]]');
-    expect(promptText).toContain('ask_user_question');
-    // 引导节位于主头部之后、## 你的任务 节之前（醒目位置）。注意 PROMPT_MAIN_HEADER
-    // 本身含「`## 你的任务`」字样，故用 lastIndexOf 取真正的节标题。
-    const askIdx = promptText.indexOf('## 向用户提问');
-    const taskIdx = promptText.lastIndexOf('## 你的任务');
-    expect(askIdx).toBeGreaterThan(-1);
-    expect(askIdx).toBeLessThan(taskIdx);
+    // 引导节已删：不再出现「向用户提问」/ [[SANDORE_ASK]] 标记说明。
+    expect(promptText).not.toContain('## 向用户提问');
+    expect(promptText).not.toContain('[[SANDORE_ASK]]');
   });
 
-  it('applies the toolFilter and guidance to agent subagents as well (shared runSubagent path)', async () => {
+  it('does not deny ask_user_question via toolFilter (child-scope 同名工具遮蔽全局版)', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+
+    await runner.run(request(promptStep()));
+
+    // toolFilter deny 已删：子代理提问能力由 workflow 层 registerContinuableSetup 注入的
+    // child-scope ask_user_question 工具提供（child-scope 同名注册天然遮蔽全局版）。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toBeUndefined();
+  });
+
+  it('applies the no-toolFilter/no-guidance behavior to agent subagents as well (shared runSubagent path)', async () => {
     const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
@@ -795,11 +678,10 @@ describe('StepRunner 子代理 ask 转接引导（选 C：禁用 ask_user_questi
 
     await runner.run(request(agentStep({ providerId: 'p', modelId: 'm' })));
 
-    // runSubagent 为 prompt/agent/skill/mcp 四路共用：agent 路同样禁用 ask_user 并注入引导。
-    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
+    // runSubagent 为 prompt/agent/skill/mcp 四路共用：agent 路同样无 deny、无引导。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toBeUndefined();
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('## 向用户提问');
-    expect(promptText).toContain('[[SANDORE_ASK]]');
+    expect(promptText).not.toContain('[[SANDORE_ASK]]');
   });
 });
 

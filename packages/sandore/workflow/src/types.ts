@@ -242,7 +242,7 @@ export type PendingInteractionStatus = 'pending' | 'replied' | 'rejected'
 
 /** 收尾最终结果（done/ask/error 三态联合）。 */
 export type FinalizeOutcome =
-  | { type: 'done'; completionType: 'completed'; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
+  | { type: 'done'; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
   | { type: 'ask'; assessResult: FinalizeAssessResult }
   | { type: 'error'; errorDetail: string; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
 

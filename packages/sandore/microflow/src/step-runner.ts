@@ -7,7 +7,8 @@
  * prompt/agent/skill/mcp 四类 AI 会话统一走可续接子代理（设计决策 D3：
  * `ctx.subagents.startContinuable` → `ctx.agents.get(childId)` → settle
  * （`awaitSubagentSettlement` 对齐 DSH `subagent/end`）→ final output）——prompt
- * 与 agent/skill/mcp 行为对齐（真实子代理会话：可暂停/恢复/重试/ask 转接/会话可点）。
+ * 与 agent/skill/mcp 行为对齐（真实子代理会话：可暂停/恢复/重试/会话可点；提问经
+ * workflow 层注入的 child-scope `ask_user_question` 工具，见 workflow/ask-tool.ts）。
  * agent 定义 `agentParamsTemplate` 时先 `fillParams` 临时会话填充
  * 「### 当前Step参数」子节。所有提示词/命令构建前先 `replacePassThroughVars`
  * 替换 `${xxx}` 透传变量（含循环上下文变量）。
@@ -50,15 +51,6 @@ type ModelRoutedValue =
   | SkillCommand['value']
   | McpCommand['value'];
 
-/** 子代理 ask 转接回调的入参（microflow 检测到标记块后上抛给 workflow 层解析）。 */
-export interface DelegatedAskContext {
-  readonly childId: string;
-  /** 子代理 final result（可能含 `[[SANDORE_ASK]]` 标记块）。 */
-  readonly output: ContentBlock[];
-  readonly stepId: string;
-  readonly stageId: string;
-}
-
 /** StepRunner 的引擎级配置（provider/model 三层回退的 L2 来源 + 名称校验数据源）。 */
 export interface StepRunnerConfig {
   readonly defaultTimeoutMs: number;
@@ -92,13 +84,6 @@ export interface StepRunnerConfig {
    * 返回 Promise 时 runner 会 await（引擎借此把真实 childId 落盘后再继续）。
    */
   readonly onChildStarted?: (stepId: string, childId: string) => void | Promise<void>;
-  /**
-   * 子代理 ask 转接回调（由 workflow 层注入，microflow 不 import workflow 运行时）。
-   * 子代理 final result 含 `[[SANDORE_ASK]]` 标记块时调用；返回 `true` 表示已转接
-   * （引擎级 ask 完成、答案已 followup 注回），microflow 续跑子代理并重新取 final
-   * output；返回 `false` 表示未转接（非法标记块按普通输出处理）。
-   */
-  readonly onDelegatedAsk?: (input: DelegatedAskContext) => Promise<boolean> | boolean;
   /**
    * 子代理 settle 终态等待回调（由 workflow 层注入，对齐 DSH `subagent/end`）。
    *
@@ -176,58 +161,6 @@ const FILL_PARAMS_RED_LINES = [
   '不要过度思考，你的职责不是设计或者开发',
 ] as const;
 
-/** 子代理 ask 转接标记块起始定界（协议常量，与 workflow 层 interaction-manager 保持一致）。 */
-const DELEGATED_ASK_MARKER = '[[SANDORE_ASK]]';
-
-/** 子代理 ask 转接最大轮数（超过后按普通输出处理，防止无限重问）。 */
-const MAX_DELEGATED_ASK_ROUNDS = 3;
-
-/**
- * 子代理「向用户提问」引导节（选 C：子代理禁用 DSH `ask_user_question` 工具）。
- *
- * 子代理经 `startContinuable`（parent=宿主主代理）创建时是 root（DSH 用私有 scope
- * 作 ownerCtx），绕过 DELEGATED_CALLER 守卫——若可直调 `ask_user_question`，
- * `question/requested` 帧会路由到子代理会话（childId），主会话看不到选择框 → 无人
- * 回答 → 子代理 turn 挂起 → 工作流卡死。故随 `toolFilter: { deny: ['ask_user_question'] }`
- * 一并注入本引导：问题统一走 `[[SANDORE_ASK]]` 标记块转接（delegateSubagentAsk →
- * 引擎级 ask 在主会话可见可答 → 答案 followup 注回，返回结构与 DSH ask_user 一致；
- * `options` 省略时用户可自由输入）。仅随子代理提示词注入（buildPromptText 只服务
- * prompt/agent/skill/mcp 四路子代理，不涉及 branch-evaluator/loop-manager 的临时会话）。
- */
-const ASK_GUIDANCE_SECTION = `## 向用户提问
-
-当你需要向用户确认或提问时，不要调用 ask_user_question 工具（该工具已被禁用）。
-改为在你的最终输出中附带一个 [[SANDORE_ASK]] 标记块，JSON 载荷格式如下：
-
-[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"你的问题","options":[{"label":"选项A"},{"label":"选项B"}]}]}[[/SANDORE_ASK]]
-
-- questions 为问题数组，每题必须有唯一 id 与 question 文本；
-- options 可省略：省略时用户可自由输入文本回答；提供时用户从选项中选择（每题可选 multi_select 允许多选）；
-- 标记块会转接到主会话向用户提问，问题随最终输出一并返回。`;
-
-/** 判定 final output 是否含子代理 ask 转接标记块（仅字符串检测，不做 JSON/schema 校验）。 */
-function hasDelegatedAskMarker(output: readonly ContentBlock[]): boolean {
-  for (const block of output) {
-    if (block.type === 'text' && block.text.includes(DELEGATED_ASK_MARKER)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** 判定两轮 final output 内容是否相同（无进展检测：逐块序列化比较）。 */
-function sameOutput(a: readonly ContentBlock[], b: readonly ContentBlock[]): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i = 0; i < a.length; i += 1) {
-    if (JSON.stringify(a[i]) !== JSON.stringify(b[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
 /** 构造缺省 hostAgent 时的最小 parent 桩（每次返回新对象，避免跨 run 共享可变 `session.events`）。 */
 function createHostAgentStub(): Agent {
   return {
@@ -296,11 +229,12 @@ function buildTaskText(
 }
 
 /**
- * 构建结构化提示词（主头部 + 子代理「向用户提问」引导 + `## 你的任务` + `## 参考信息` +
- * 可选 `### 当前Step参数` + `## 前置Steps输出与产物` + 可选 `## 任务规则`）。
+ * 构建结构化提示词（主头部 + `## 你的任务` + `## 参考信息` + 可选
+ * `### 当前Step参数` + `## 前置Steps输出与产物` + 可选 `## 任务规则`）。
  *
- * 「向用户提问」引导（选 C：禁用 ask_user_question 工具，改走 `[[SANDORE_ASK]]` 标记块
- * 转接）固定注入于主头部之后；prompt/agent/skill/mcp 四路 AI 提示词共用本函数。
+ * 双通道 ask 重构后不再注入「向用户提问」引导节（`[[SANDORE_ASK]]` 标记块机制已删）：
+ * 子代理提问走 child-scope `ask_user_question` 工具（registerContinuableSetup 注入，
+ * 见 workflow/ask-tool.ts），prompt/agent/skill/mcp 四路 AI 提示词共用本函数。
  *
  * `## 任务规则` 节位置对齐基准 `workflow-step.ts` L615-619（置于 `## 前置Steps
  * 输出与产物` 之后）；仅当 `resolvedRules` 非空时渲染，逐键输出
@@ -315,8 +249,6 @@ function buildPromptText(
 ): string {
   const sections: string[] = [];
   sections.push(PROMPT_MAIN_HEADER);
-  sections.push('');
-  sections.push(ASK_GUIDANCE_SECTION);
   sections.push('');
   sections.push('## 你的任务');
   sections.push(taskText);
@@ -518,10 +450,11 @@ export class StepRunner {
    * 「### 当前Step参数」；prompt 无参数模板（paramsText 恒 undefined）。随后三层
    * provider/model 回退 → 构建结构化提示词 → `startContinuable`（parent=宿主主代理；
    * subagent provider 名与模型路由解耦——provider 参数用 DSH 注册的 `fork`，模型
-   * 路由经 `request.agentOptions`；**toolFilter deny 禁用 ask_user_question**，见
-   * {@link ASK_GUIDANCE_SECTION}——问题统一走 `[[SANDORE_ASK]]` 标记块转接）→
-   * `onChildStarted` 上抛真实 childId → `collectSubagentOutput` 等 settle 终态
-   * （completed/aborted/error 路由）+ final output + ask 转接。
+   * 路由经 `request.agentOptions`）。子代理提问能力由 workflow 层经
+   * `subagents.registerContinuableSetup` 注入 child-scope `ask_user_question` 工具
+   * （双通道 ask 通道 1，见 workflow/ask-tool.ts；不再 toolFilter deny 全局工具——
+   * child-scope 同名注册天然遮蔽全局版）→ `onChildStarted` 上抛真实 childId →
+   * `collectSubagentOutput` 等 settle 终态（completed/aborted/error 路由）+ final output。
    */
   private async runSubagent(command: SubagentCommand | PromptCommand, request: StepRunRequest): Promise<StepRunResult> {
     const paramsText =
@@ -551,14 +484,6 @@ export class StepRunner {
         prompt: [{ type: 'text', text: promptText }],
         parent: this.resolveParent(),
         agentOptions: { provider: route.provider, model: route.model },
-        // 选 C：子代理禁用 DSH `ask_user_question` 工具。sandore 子代理经
-        // `startContinuable`（parent=宿主主代理）创建时是 root（DSH 用私有 scope 作
-        // ownerCtx），绕过 DELEGATED_CALLER 守卫——若可直调 ask_user，question 帧会
-        // 路由到子代理会话（childId），主会话看不到选择框 → 无人回答 → 子代理 turn
-        // 挂起 → 工作流卡死。toolFilter deny 移除该全局工具后，问题统一走提示词引导的
-        // `[[SANDORE_ASK]]` 标记块 → delegateSubagentAsk 转接（引擎级 ask 在主会话
-        // 可见可答 → 答案 followup 注回，返回结构与 DSH ask_user 一致）。
-        toolFilter: { deny: ['ask_user_question'] },
       },
       signal: request.signal ?? new AbortController().signal,
     });
@@ -567,7 +492,7 @@ export class StepRunner {
   }
 
   /**
-   * 暂停后恢复子代理 Step：重新 settle + final output + ask 转接循环。
+   * 暂停后恢复子代理 Step：重新 settle + final output。
    *
    * 暂停的子代理 Step 被 `interrupt` 打断后（settle `aborted`），`resumeStep` 的
    * `followup` cold-resume 重新驱动子代理；本方法在 `followup` 之后被引擎续跑路径调用，
@@ -584,7 +509,7 @@ export class StepRunner {
   }
 
   /**
-   * 收集已启动子代理的最终输出（首次执行与暂停续跑共用：settle 终态 + final output + ask 转接）。
+   * 收集已启动子代理的最终输出（首次执行与暂停续跑共用：settle 终态 + final output）。
    *
    * 完成判定对齐 DSH `subagent/end`：等 `awaitSubagentSettlement`（由 workflow 层注入，
    * 经 `sandore/subagent-settled` 事件路由 DSH settle 终态）。按 `stopReason` 区分：
@@ -595,6 +520,10 @@ export class StepRunner {
    *
    * `awaitSubagentSettlement` 缺省时回退 `whenIdle()` + `finalAssistantOutput()`（兼容无注入
    * 场景；此回退无法区分 abort，不适用于暂停语义——暂停路径必经注入的 settle）。
+   *
+   * 双通道 ask 重构后**不再有 ask 转接循环**（`[[SANDORE_ASK]]` 标记块机制已删）：子代理
+   * 提问经 child-scope `ask_user_question` 工具在执行 turn 内同步完成（工具调用阻塞等待
+   * 引擎级 ask 答案），final output 即最终输出，无标记块解析。
    */
   private async collectSubagentOutput(
     commandType: SubagentCommandType,
@@ -635,32 +564,7 @@ export class StepRunner {
       // error / max-tokens / refusal（及未知 reason）→ failed。
       throw new SandoreError(`subagent '${childId}' settle ${settlement.stopReason}`, 'STEP_EXECUTION');
     };
-    let output = await settle();
-    const onDelegatedAsk = this.config.onDelegatedAsk;
-    if (onDelegatedAsk !== undefined) {
-      // 子代理 ask 转接：final result 含标记块时回调 workflow 层解析/转接，答案 followup
-      // 注回后子代理续跑（cold-resume → 重新 settle），重新取 final output（可多轮 ask，
-      // 直至无标记块或转接方放弃）。双保险守卫防无限重问：① 无进展（本轮 output 与上轮
-      // 相同）即 break；② 超过最大转接轮数即 break，均按普通输出处理。
-      let rounds = 0;
-      while (hasDelegatedAskMarker(output) && rounds < MAX_DELEGATED_ASK_ROUNDS) {
-        const delegated = await onDelegatedAsk({
-          childId,
-          output,
-          stepId,
-          stageId,
-        });
-        if (!delegated) {
-          break;
-        }
-        rounds += 1;
-        const next = await settle();
-        if (sameOutput(next, output)) {
-          break;
-        }
-        output = next;
-      }
-    }
+    const output = await settle();
     // §3.8A：子代理消息持久化（settle 后采集，随结果带出 → finishCommandNode 写
     // executed.sessionMessages → onPersist 定格；前端内嵌消息框/失败·暂停最近 N 条）。
     // 取最新活 child（cold-resume 后的新 handle），回退 start child（mock FakeAgent 复用）。

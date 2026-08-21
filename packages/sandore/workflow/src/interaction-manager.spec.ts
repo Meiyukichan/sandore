@@ -1,10 +1,13 @@
 /**
  * interaction-manager.ts 的单元测试：引擎级 ask 主通道（登记 + 事件 + 卡片 await）、
  * pending Map 镜像持久化、replyQuestion/replyPermission 兼容路径与 unknown
- * requestId 报错、子代理 ask 标记块解析与转接、权限镜像（无自动审批）。
+ * requestId 报错、权限镜像（无自动审批）。
+ *
+ * 双通道 ask 重构（4.4）后不再测试 `[[SANDORE_ASK]]` 标记块解析/转接——该机制已随
+ * delegateSubagentAsk/parseDelegatedAsk 删除（子代理提问走 child-scope
+ * ask_user_question 工具 → 引擎 askFromSubagent → 本管理器 ask 主通道）。
  * @module @deepseek-ai/dsh-sandore-workflow/src/interaction-manager.spec
  */
-import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { FakeAgent } from '../tests/mocks/agents.ts';
@@ -13,7 +16,6 @@ import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 import {
   InteractionManager,
   isRejectedAnswer,
-  parseDelegatedAsk,
   type InteractionManagerOptions,
   type PermissionReply,
 } from './interaction-manager.ts';
@@ -79,7 +81,6 @@ function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Age
   emitQuestion: ReturnType<typeof vi.fn>;
   emitPermission: ReturnType<typeof vi.fn>;
   emitQuestionRejected: ReturnType<typeof vi.fn>;
-  followup: ReturnType<typeof vi.fn>;
 } {
   const userQuestions = options?.userQuestions ?? new FakeUserQuestions();
   const hostAgent = options?.hostAgent ?? new FakeAgent('host-1');
@@ -87,7 +88,6 @@ function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Age
   const emitQuestion = vi.fn();
   const emitPermission = vi.fn();
   const emitQuestionRejected = vi.fn();
-  const followup = vi.fn(async () => {});
   const deps: InteractionManagerOptions = {
     hostAgent,
     userQuestions: () => userQuestions,
@@ -95,9 +95,8 @@ function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Age
     emitQuestion,
     emitPermission,
     emitQuestionRejected,
-    followup,
   };
-  return { deps, userQuestions, hostAgent, persist, emitQuestion, emitPermission, emitQuestionRejected, followup };
+  return { deps, userQuestions, hostAgent, persist, emitQuestion, emitPermission, emitQuestionRejected };
 }
 
 describe('InteractionManager.addPendingQuestion / addPendingPermission', () => {
@@ -290,107 +289,11 @@ describe('InteractionManager.rejectQuestion（缺陷 26：公开拒绝 → 终�
   });
 });
 
-describe('InteractionManager.delegateSubagentAsk（拒绝路径，缺陷 26）', () => {
-  it('问答被拒时抛 STEP_EXECUTION（供 StageExecutor try/catch 标 Step failed）且不 followup', async () => {
-    const { deps, followup, emitQuestion } = makeDeps();
-    const mgr = new InteractionManager(deps);
-    const output: ContentBlock[] = [{ type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]' }];
-
-    const delegating = mgr.delegateSubagentAsk({
-      childId: 'child-1',
-      output,
-      stageId: 'stg-1',
-      stepId: 'step-1',
-      sessionId: 'inst-1',
-    });
-    // emitQuestion 在 ask 登记时同步触发（addPendingQuestion 内），携带 entry.requestId。
-    const firedEntry = emitQuestion.mock.calls[0]?.[0] as PendingQuestionEntry;
-    expect(firedEntry).toBeDefined();
-    await mgr.rejectQuestion(firedEntry.requestId);
-
-    await expect(delegating).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
-    expect(followup).not.toHaveBeenCalled();
-  });
-});
-
-describe('parseDelegatedAsk', () => {
-  it('解析合法标记块返回载荷', () => {
-    const text = '前置 [[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]] 后置';
-    expect(parseDelegatedAsk(text)).toEqual({ questions: [{ id: 'q1', question: 'Q?' }] });
-  });
-
-  it('无标记块返回 undefined', () => {
-    expect(parseDelegatedAsk('ordinary output')).toBeUndefined();
-  });
-
-  it('标记块 JSON 解析失败返回 undefined', () => {
-    expect(parseDelegatedAsk('[[SANDORE_ASK]]not json[[/SANDORE_ASK]]')).toBeUndefined();
-  });
-
-  it('标记块 schema 校验不通过返回 undefined', () => {
-    expect(parseDelegatedAsk('[[SANDORE_ASK]]{"questions":[{"id":123}]}[[/SANDORE_ASK]]')).toBeUndefined();
-  });
-
-  it('标记块 questions 为空返回 undefined（伪造标记块不转接）', () => {
-    expect(parseDelegatedAsk('[[SANDORE_ASK]]{"questions":[]}[[/SANDORE_ASK]]')).toBeUndefined();
-  });
-});
-
-describe('InteractionManager.delegateSubagentAsk', () => {
-  it('子代理 final result 含合法标记块时转引擎级 ask 并 followup 注回答案', async () => {
-    const { deps, userQuestions, followup, hostAgent } = makeDeps();
-    const mgr = new InteractionManager(deps);
-    const result = answer(['A']);
-    userQuestions.answers.push(result);
-    const output: ContentBlock[] = [{ type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]' }];
-
-    const outcome = await mgr.delegateSubagentAsk({
-      childId: 'child-1',
-      output,
-      stageId: 'stg-1',
-      stepId: 'step-1',
-      sessionId: 'inst-1',
-    });
-
-    expect(outcome).toEqual({ delegated: true });
-    expect(userQuestions.calls[0]?.agent).toBe(hostAgent);
-    expect(followup).toHaveBeenCalledWith('child-1', [{ type: 'text', text: JSON.stringify(result) }]);
-  });
-
-  it('无标记块按普通输出处理（不转接、不 followup）', async () => {
-    const { deps, followup } = makeDeps();
-    const mgr = new InteractionManager(deps);
-    const output: ContentBlock[] = [{ type: 'text', text: 'ordinary output' }];
-
-    const outcome = await mgr.delegateSubagentAsk({
-      childId: 'child-1',
-      output,
-      stageId: 'stg-1',
-      stepId: 'step-1',
-      sessionId: 'inst-1',
-    });
-
-    expect(outcome).toEqual({ delegated: false });
-    expect(followup).not.toHaveBeenCalled();
-  });
-
-  it('标记块 schema 校验不通过不转接（按普通输出处理）', async () => {
-    const { deps, followup } = makeDeps();
-    const mgr = new InteractionManager(deps);
-    const output: ContentBlock[] = [{ type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":123}]}[[/SANDORE_ASK]]' }];
-
-    const outcome = await mgr.delegateSubagentAsk({
-      childId: 'child-1',
-      output,
-      stageId: 'stg-1',
-      stepId: 'step-1',
-      sessionId: 'inst-1',
-    });
-
-    expect(outcome).toEqual({ delegated: false });
-    expect(followup).not.toHaveBeenCalled();
-  });
-});
+// ── 双通道 ask 重构（4.4）后：delegateSubagentAsk / parseDelegatedAsk 已随
+// [[SANDORE_ASK]] 标记块机制删除——子代理提问走 child-scope ask_user_question 工具
+// （引擎 askFromSubagent → 本管理器 ask 主通道，见 workflow-engine.spec.ts 的
+// askFromSubagent 测试）。交互管理器保留的 ask 主通道/兼容回复/拒绝语义由上方
+// 各 describe 覆盖（登记 + 事件 + 卡片 await + replyQuestion/rejectQuestion）。
 
 describe('InteractionManager.clearPendingInteractions / clearAll（缺陷 27 + 缺陷 9 崩溃恢复）', () => {
   it('clearPendingInteractions(stepId) 终态化匹配条目 + resolve waiter 占位答案 + 持久化剩余 pending', async () => {

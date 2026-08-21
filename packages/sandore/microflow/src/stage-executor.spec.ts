@@ -850,3 +850,46 @@ describe('StageExecutor 补充 37：SessionIdleWaiter 多 child 并发', () => {
     expect(subagents.continuableStarts).toHaveLength(2);
   });
 });
+
+describe('StageExecutor 5 阶段收尾（4.6/4.7：Phase A ask 保底 → Phase B/C → resume 状态流转）', () => {
+  it('Phase A ask 保底置 interacting（finalizeMeta currentPhase=ask-detect），resume 后 Phase B/C 完成', async () => {
+    const { llm, makeExecutor } = harness();
+    let call = 0;
+    llm.streamHandler = () => {
+      // 首次评估判定需提问；回答后续跑重评估判定完成。
+      const askJson = '{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"确认继续？","options":[{"label":"A"}]}]}}';
+      return textChunks(call++ === 0 ? askJson : '{"hasAsk":false,"passThroughVars":{}}');
+    };
+    // shell Step 声明未解析透传变量 → needsAssess（Phase A 跑评估）。
+    const step: WorkflowStep = {
+      id: 'step-sh',
+      name: 'echo',
+      command: { type: 'shell', value: { command: 'echo hi' } },
+      passThroughVars: [{ name: 'v', value: '${v}', description: 'd' }],
+    };
+    const stage: WorkflowStage = { id: 'stg-1', name: 'Stage 1', steps: [{ id: 'step-sh' }] };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-1', name: 'wfl-1', version: '1', stages: [stage], steps: [step], settings: {},
+    };
+    const executor = makeExecutor({ stageDef: stage, workflowDef: definition });
+
+    // 首次 execute：Phase A ask 保底 → Step interacting + 实例 interacting（引擎 ask 闭环）。
+    const first = await executor.execute();
+    expect(first.status).toBe('interacting');
+    expect(first.executedSteps[0]?.status).toBe('interacting');
+    // Phase A 中断快照：currentPhase='ask-detect'，顶层 assessSessionId 不记录
+    // （fork 用完即删不持久化；Phase B 收尾才落 assessSessionId）。
+    expect(first.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('ask-detect');
+    expect(first.executedSteps[0]?.finalizeMeta?.assessSessionId).toBeUndefined();
+    expect(first.executedSteps[0]?.finalizeMeta?.assessResult?.hasAsk).toBe(true);
+
+    // 回答后再次 execute：resumePendingAsk（shell 无新 output，复用评估结果）→
+    // Phase B（finalizeMeta currentPhase='finalizing'）→ Phase C（无门禁 ok）→ 完成。
+    const second = await executor.execute();
+    expect(second.status).toBe('completed');
+    expect(second.executedSteps[0]?.status).toBe('completed');
+    expect(second.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('completed');
+    // Phase B 起持久化 assessSessionId（评估 fork id）。
+    expect(second.executedSteps[0]?.finalizeMeta?.assessSessionId).toMatch(/^eval-/);
+  });
+});
