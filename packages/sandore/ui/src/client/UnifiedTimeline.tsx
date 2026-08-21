@@ -4,9 +4,10 @@
  * multica Issue 评论流 × DSH 多 agent 对话流：用户输入 = 右侧气泡；每个
  * executedStep = 一条 agent 消息（左对齐，头像 + 可点击标题 → openSession 打开
  * DSH 现成子代理会话页 + 相对时间 + 状态图标）。正文按状态呈现：
- * completed → md 渲染块（MessageText，原型 .md 样式）；running/interacting →
- * 内嵌可滚动消息框（sessionMessages 行）；failed/paused → 最近 5 条消息列表
- * （末条按失败/暂停色）。旧实例无时间戳时头部省略时间。
+ * completed → md 渲染块（MessageText，原型 .md 样式）；running/interacting 与
+ * failed/paused（真实子代理会话）→ 内嵌 DSH 对话流（StepChatPanel，最新 10 条，
+ * 无边框平铺，风格与运行中完全一致）；failed/paused 无真实会话（shell 等合成
+ * 会话）→ 最近 5 条消息列表兜底（末条按失败/暂停色）。旧实例无时间戳时头部省略时间。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/UnifiedTimeline
  */
 import { IconSparkle16, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -16,7 +17,7 @@ import type { SandoreKey } from './locales.ts'
 import {
   relativeTimeOf, type ChatLine, type RelativeTime, type StepStatus, type TimelineItem, type TimelineStepItem,
 } from './run-view-model.ts'
-import { StepSessionChat } from './StepSessionChat.tsx'
+import { StepChatPanel } from './StepChatPanel.tsx'
 import css from './timeline.module.css'
 
 /** Step 执行状态 → 本地化标签键（7 态）。 */
@@ -110,7 +111,7 @@ function ChatLineRow({ line }: { readonly line: ChatLine }) {
   )
 }
 
-/** 最近 N 条消息列表（失败/暂停态）。 */
+/** 兜底：失败/暂停且无真实子代理会话（shell 等合成会话）时的最近 N 条消息列表。 */
 function LastMessages({ item, t }: {
   readonly item: TimelineStepItem
   readonly t: TranslateNS<'sandore'>
@@ -141,15 +142,17 @@ function AgentMsg({ item, t, nowIso, openSession }: {
   readonly openSession: (id: string) => void
 }) {
   const running = item.status === 'running' || item.status === 'interacting'
+  const terminalChat = item.status === 'failed' || item.status === 'paused'
   const rel = relativeTimeOf(item.time, nowIso)
-  // 仅真实子代理步骤（prompt/agent/skill/mcp，非合成会话）的标题可点击跳 DSH 子代理页；
-  // shell 的 childId 是合成占位（无真实会话），点击无效，渲染为纯文本。
-  const navigable = item.childId !== undefined && item.synthetic !== true
+  // 仅真实子代理步骤（prompt/agent/skill/mcp，非合成会话）才有真实会话：标题可点击跳
+  // DSH 子代理页、正文内嵌该会话的 DSH 对话流；shell 的 childId 是合成占位（无真实
+  // 会话），标题渲染为纯文本、正文走兜底。
+  const realSession = item.childId !== undefined && item.synthetic !== true
   return (
     <div className={css.agentMsg} data-tl-step>
       <div className={css.agentHead}>
         <span className={`${css.avatar} ${css.avatarAgent}`} aria-hidden><IconSparkle16 /></span>
-        {navigable ? (
+        {realSession ? (
           <button
             type="button"
             className={css.authorLink}
@@ -177,11 +180,11 @@ function AgentMsg({ item, t, nowIso, openSession }: {
       )}
 
       {running && (
-        // 真实子代理步骤（有 childId 且非合成会话）：直接内嵌 DSH 子代理会话页
-        // （复用 ChatView 渲染栈，step 运行中实时流式）；合成会话/无会话退化为
-        // 原有的消息框或「运行中…」占位。
-        item.childId !== undefined && item.synthetic !== true
-          ? <StepSessionChat sessionId={item.childId} t={t} />
+        // 真实子代理步骤（有 childId 且非合成会话）：内嵌子代理会话对话区
+        // （抄自 DSH ChatView 渲染栈，最新 10 条，step 运行中实时流式）；
+        // 合成会话/无会话退化为原有的消息框或「运行中…」占位。
+        realSession
+          ? <StepChatPanel sessionId={item.childId} t={t} />
           : (
             item.messages !== undefined && item.messages.length > 0
               ? (
@@ -197,8 +200,14 @@ function AgentMsg({ item, t, nowIso, openSession }: {
           )
       )}
 
-      {item.status === 'failed' && <LastMessages item={item} t={t} />}
-      {item.status === 'paused' && <LastMessages item={item} t={t} />}
+      {terminalChat && (
+        // 失败/暂停且真实子代理会话：与运行中完全一致的 DSH 对话流（StepChatPanel）。
+        // 会话已结束/暂停时 open() 仍拉历史（DSH 会话持久化），展示最新 10 条；
+        // 无真实会话（shell 等合成会话）退化为最近 N 条消息列表兜底。
+        realSession
+          ? <StepChatPanel sessionId={item.childId} t={t} />
+          : <LastMessages item={item} t={t} />
+      )}
     </div>
   )
 }

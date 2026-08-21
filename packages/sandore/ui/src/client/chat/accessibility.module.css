@@ -1,0 +1,9 @@
+/* accessibility.module.css：抄自 DSH ui-conversation chat/accessibility.module.css（视觉隐藏）。 */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

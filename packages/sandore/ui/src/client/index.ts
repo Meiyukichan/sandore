@@ -21,7 +21,7 @@ import { DagStepNodeView, type SandoreStepInjected } from './DagStepNodeView.tsx
 import { sandoreStepDefinition } from './sandore-step-definition.ts'
 import { SandoreModelDirectory, parsePermissionReport, type ModelDirectoryFace, type ObservableFace, type PermissionSelectValue, type SessionModelsApi } from './model-faces.ts'
 import { SandoreQuestionComposer, type SandoreQuestionComposerFace } from './SandoreQuestionComposer.tsx'
-import { installStepChatHost } from './step-session-chat-host.ts'
+import { installStepChatSessions, installStepChatWorkspaces } from './StepChatPanel.tsx'
 import {
   getSandoreQuestions, startSandoreQuestionsPolling, subscribeSandoreQuestions,
   type SandoreQuestionsRemote,
@@ -43,16 +43,12 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // 把 sandore/step-* 事件折叠为宿主会话的 Chat 节点（不依赖 `remote.sandore`）。
   ctx.conversationEvents.register(sandoreStepDefinition)
 
-  // 安装 StepSessionChat 的模块级宿主（运行中 step 内嵌子代理会话页需要
-  // sessions/slots/workspaces/locale 服务子集；时间线组件树不携带 ctx，故经
+  // 安装 StepChatPanel 的模块级 sessions 持有（运行中 step 内嵌子代理消息面板
+  // 需要 `sessions.binding(childId)` 订阅会话快照；时间线组件树不携带 ctx，故经
   // 模块级单例注入，卸载时由 ctx.effect 清除）。
-  ctx.effect(() => installStepChatHost({
-    sessions: ctx.sessions,
-    slots: ctx.slots,
-    workspaces: ctx.workspaces,
-    locale: ctx.locale,
-    bindLocale: (ns: string) => ctx.locale.bind(ns),
-  }), 'ui-sandore: step-chat-host')
+  ctx.effect(() => installStepChatSessions(ctx.sessions), 'ui-sandore: step-chat-sessions')
+  // 面板文件路径打开（tool 行 fileLink）：workspaces.openPath 经模块级单例注入。
+  ctx.effect(() => installStepChatWorkspaces(ctx.workspaces), 'ui-sandore: step-chat-workspaces')
 
   // sidebar.footer.action 入口按钮：不依赖 remote，直接注册（点击切换 overlay 开关）。
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
