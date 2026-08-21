@@ -33,6 +33,22 @@ type SessionAppendWithIgnorable = (
   opts?: { ignorable?: true },
 ) => unknown;
 
+/**
+ * `ctx.workspaceRegistry` 服务的最小面（由引擎 get 后窄断言使用，签名对齐 DSH
+ * `WorkspaceRegistry.resolveByPath`，不 import DSH workspace 包类型——保持
+ * browser-safe 接缝哲学，与 AgentPresetsSeam 同区）。
+ */
+interface WorkspaceRegistrySeam {
+  /** 按规范目录路径解析已登记的 workspace（无此路径的 workspace 时返回 undefined）。 */
+  resolveByPath(path: string): Promise<WorkspaceSeam | undefined>;
+}
+
+/** DSH `Workspace` 实体的最小面（签名对齐 `Workspace.attachSession`）。 */
+interface WorkspaceSeam {
+  /** 把会话挂到该 workspace 的成员账（DSH 侧校验会话 header cwd 与该 workspace 路径一致）。 */
+  attachSession(sessionId: SessionId): Promise<void>;
+}
+
 import { WorkflowDagNavigator } from './dag-navigator.ts';
 import { SandoreError } from './errors.ts';
 import { createHostAgentSetup } from './host-agent.ts';
@@ -419,8 +435,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     const definition = parseWorkflowYaml(record.yaml);
     const instanceId = makeInstanceId();
     const createdAt = now();
-    // 工作目录：显式 request.cwd（新增实例弹窗传入）→ 兜底 /tmp（去 job 概念）。
-    const cwd = request.cwd ?? '/tmp';
+    // 工作目录：request.cwd 必填（新增实例弹窗传入；hostAgent 据此 attach web workspace）。
+    const cwd = request.cwd;
     const state = makeInitialState({ instanceId, request, definition, createdAt, cwd });
     const controller = new AbortController();
     // 宿主主代理会话 id：调用方可传 `hostSessionId` 复用已存在的宿主会话（不新建）；
@@ -460,6 +476,10 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       } catch (error) {
         this.ctx.logger.warn(`sandore: set host session title failed: ${renderError(error)}`);
       }
+      // 宿主主代理 attach 到 web workspace（仅新建分支：子代理获得正确 durable parent，
+      // web sidebar 可见 / 暂停走 subagents.interrupt / ask 可答；复用分支的会话归属
+      // 由调用方负责，不在此重复 attach）。
+      await this.attachHostAgentToWorkspace(hostAgent, cwd);
     } else {
       // 复用调用方传入的宿主主代理会话（不新建）：校验 agent 存在（live，在注册表）。
       // 复用场景 hostAgent.id = hostSessionId ≠ instanceId——引擎只把它当 parent 身份
@@ -518,6 +538,31 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     } catch (error) {
       this.ctx.logger.warn(`sandore: apply approval policy failed: ${renderError(error)}`);
     }
+  }
+
+  /**
+   * 宿主主代理 attach 到 web workspace（web sidebar 分组可见）。
+   *
+   * `ctx.workspaceRegistry` 缺失（测试/headless 部署无 workspace 包）时静默跳过；
+   * `cwd` 未命中任何已登记 workspace 时抛 `INVALID_OPERATION`（提示选择 web
+   * workspace 目录）；命中后 `workspace.attachSession` 把 hostAgent 会话挂到该
+   * workspace 的成员账——子代理获得正确 durable parent（hostAgent），web sidebar
+   * 可见、暂停走 `subagents.interrupt`（不撞 agent-busy fence）、ask 可答。
+   */
+  private async attachHostAgentToWorkspace(hostAgent: Agent, cwd: string): Promise<void> {
+    const workspaceRegistry = this.ctx.get('workspaceRegistry') as WorkspaceRegistrySeam | undefined;
+    if (workspaceRegistry === undefined) {
+      // 测试/headless 部署无 workspace 包：静默跳过，不阻断实例启动。
+      return;
+    }
+    const workspace = await workspaceRegistry.resolveByPath(cwd);
+    if (workspace === undefined) {
+      throw new SandoreError(
+        `cwd '${cwd}' does not resolve to a registered web workspace; choose a web workspace directory`,
+        'INVALID_OPERATION',
+      );
+    }
+    await workspace.attachSession(SessionId(hostAgent.id));
   }
 
   /** 查询实例的当前状态快照（内存活跃实例优先，state 表兜底读）。 */
@@ -619,6 +664,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     if (session === undefined) {
       throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
     }
+    // 崩溃恢复重建 hostAgent 后重新 attach 到快照 cwd 对应的 web workspace（与
+    // startInstance 新建分支对齐；registry 缺失时静默跳过）。
+    await this.attachHostAgentToWorkspace(hostAgent, snapshot.cwd);
     const active = this.buildActiveInstance(controller, session, hostAgent, definition, snapshot);
     this.instances.set(instanceId, active);
     // 冻结宿主主代理（崩溃恢复重建 hostAgent 后重新冻结，直到工作流 completed 才解冻；

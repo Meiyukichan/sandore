@@ -71,7 +71,8 @@ type NoArgs = Record<string, never>;
 interface StartInstanceArgs {
   readonly workflowId: string;
   readonly originalInput: string;
-  readonly cwd?: string;
+  /** 必填工作目录：hostAgent 据此 attach 到对应的 web workspace。 */
+  readonly cwd: string;
 }
 
 /** `sandore_pauseStep` 的入参。 */
@@ -106,9 +107,9 @@ const START_INSTANCE_SCHEMA: Record<string, unknown> = {
   properties: {
     workflowId: { type: 'string', description: '工作流定义 ID。' },
     originalInput: { type: 'string', description: '用户原始需求。' },
-    cwd: { type: 'string', description: '可选工作目录。' },
+    cwd: { type: 'string', description: '必填工作目录：hostAgent 据此 attach 到对应的 web workspace。' },
   },
-  required: ['workflowId', 'originalInput'],
+  required: ['workflowId', 'originalInput', 'cwd'],
 };
 
 /** 单个 Step 参数的 JSON Schema。 */
@@ -291,7 +292,8 @@ export function createSandoreTools(options: CreateSandoreToolsOptions): SandoreT
         const request: DagStartRequest = {
           workflowId: args.workflowId,
           originalInput: args.originalInput,
-          ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
+          // cwd 必填（schema required 已校验）：hostAgent 据此 attach web workspace。
+          cwd: args.cwd,
         };
         return { ok: true, run: await engine.startInstance(request) };
       },

@@ -223,7 +223,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -270,7 +270,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -298,7 +298,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -320,7 +320,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -350,7 +350,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -371,7 +371,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -412,7 +412,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -430,7 +430,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -456,7 +456,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -482,7 +482,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -529,7 +529,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -575,7 +575,7 @@ describe('LifecycleManager pause/resume full loop', () => {
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -624,7 +624,7 @@ describe('LifecycleManager non-subagent pause guard', () => {
     agents.register(child);
 
     const stepStarted = waitForStepId(ctx, 'step-prompt');
-    const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-prompt');
 
@@ -650,7 +650,7 @@ describe('LifecycleManager non-subagent pause guard', () => {
     agents.register(child);
 
     const stepStarted = waitForStepId(ctx, 'step-prompt');
-    const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it' });
+    const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-prompt');
 

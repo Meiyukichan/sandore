@@ -24,7 +24,8 @@ export interface StartModelSelection {
 export interface StartInstanceParams {
   workflowId: string
   originalInput: string
-  cwd?: string
+  /** 必填工作目录：hostAgent 据此 attach 到对应的 web workspace。 */
+  cwd: string
   model?: StartModelSelection
   permission?: string
 }

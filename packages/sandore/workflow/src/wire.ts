@@ -98,7 +98,8 @@ export const StartModelSelectionSchema = z.object({
 export const StartInstanceInputSchema = z.object({
   workflowId: z.string(),
   originalInput: z.string(),
-  cwd: z.string().optional(),
+  // 必填工作目录：hostAgent 据此 attach 到对应的 web workspace（未命中抛 INVALID_OPERATION）。
+  cwd: z.string(),
   model: StartModelSelectionSchema.optional(),
   permission: z.string().optional(),
   /**

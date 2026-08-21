@@ -130,8 +130,11 @@ export interface DagStartRequest {
   workflowId: string
   /** 用户原始需求。 */
   originalInput: string
-  /** 可选工作目录。 */
-  cwd?: string
+  /**
+   * 必填工作目录：hostAgent 据此 attach 到对应的 web workspace（未命中任何已登记
+   * workspace 的路径抛 `INVALID_OPERATION`）。
+   */
+  cwd: string
   /** 创建实例时选择的模型（作为该实例 L2 默认模型路由）。 */
   model?: StartModelSelection
   /** 创建实例时选择的权限预设（read-only / workspace-write / danger-full-access）。 */

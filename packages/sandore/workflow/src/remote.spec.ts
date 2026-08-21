@@ -17,7 +17,7 @@ import { SandorePersistence } from './persistence.ts'
 import { SandoreRemote } from './remote.ts'
 import type { WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
 import type { AskUserQuestionAnswer, DagRun, DagStartRequest, RevertBoundaryOption } from './types.ts'
-import type { ImportDefinitionInput, RecoverOrphanedInstancesResult } from './wire.ts'
+import type { ImportDefinitionInput, RecoverOrphanedInstancesResult, StartInstanceInput } from './wire.ts'
 import { parseWorkflowYaml } from './yaml-parser.ts'
 
 const validV2Yaml = `id: wfl-source
@@ -144,7 +144,8 @@ async function harness(): Promise<{
     const state: WorkflowTaskState = {
       taskId: instanceId,
       workflowId: request.workflowId,
-      cwd: request.cwd ?? '/tmp',
+      // cwd 必填（wire schema 已校验），mock 原样透传。
+      cwd: request.cwd,
       status: 'running',
       originalInput: request.originalInput,
       currentStageId: '',
@@ -481,7 +482,7 @@ describe('SandoreRemote instance lifecycle', () => {
     const { remote, persistence } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
 
-    const run = await remote.startInstance({ workflowId: definition.id, originalInput: '测试需求' })
+    const run = await remote.startInstance({ workflowId: definition.id, originalInput: '测试需求', cwd: '/tmp' })
     expect(run.instanceId).toBeTruthy()
     expect(run.status).toBe('running')
 
@@ -494,9 +495,19 @@ describe('SandoreRemote instance lifecycle', () => {
   it('rejects startInstance for a nonexistent workflowId', async () => {
     const { remote } = await harness()
 
-    await expect(remote.startInstance({ workflowId: 'wfl-nonexistent', originalInput: 'x' })).rejects.toMatchObject({
+    await expect(remote.startInstance({ workflowId: 'wfl-nonexistent', originalInput: 'x', cwd: '/tmp' })).rejects.toMatchObject({
       code: 'INVALID_OPERATION',
     })
+  })
+
+  it('rejects a missing cwd on startInstance (wire schema, cwd required)', async () => {
+    const { remote } = await harness()
+    const definition = await remote.createDefinition({ yaml: validV2Yaml })
+
+    // cwd 已改为必填：缺 cwd 的请求在 wire schema 层被拒（ZodError），不会到达引擎。
+    await expect(
+      remote.startInstance({ workflowId: definition.id, originalInput: 'x' } as StartInstanceInput),
+    ).rejects.toBeInstanceOf(ZodError)
   })
 
   it('forwards the optional hostSessionId to the engine startInstance', async () => {
@@ -504,19 +515,19 @@ describe('SandoreRemote instance lifecycle', () => {
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
 
     // 未传 hostSessionId：引擎请求不含该字段。
-    await remote.startInstance({ workflowId: definition.id, originalInput: 'a' })
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'a', cwd: '/tmp' })
     expect(startRequests[0]).not.toHaveProperty('hostSessionId')
 
     // 传入 hostSessionId：原样透传（复用宿主主代理会话，不新建）。
-    await remote.startInstance({ workflowId: definition.id, originalInput: 'b', hostSessionId: 'host-1' })
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'b', cwd: '/tmp', hostSessionId: 'host-1' })
     expect(startRequests[1]?.hostSessionId).toBe('host-1')
   })
 
   it('derives instance summaries for every state row (no job filter)', async () => {
     const { remote } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    await remote.startInstance({ workflowId: definition.id, originalInput: 'a' })
-    await remote.startInstance({ workflowId: definition.id, originalInput: 'b' })
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'a', cwd: '/tmp' })
+    await remote.startInstance({ workflowId: definition.id, originalInput: 'b', cwd: '/tmp' })
 
     const instances = remote.listInstances()
     expect(instances).toHaveLength(2)
@@ -527,7 +538,7 @@ describe('SandoreRemote instance lifecycle', () => {
   it('removes the snapshot on deleteInstance', async () => {
     const { remote } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
-    const run = await remote.startInstance({ workflowId: definition.id, originalInput: 'x' })
+    const run = await remote.startInstance({ workflowId: definition.id, originalInput: 'x', cwd: '/tmp' })
 
     await remote.deleteInstance(run.instanceId)
     expect(catchCode(() => remote.getInstanceState(run.instanceId))).toBe('NODE_NOT_FOUND')

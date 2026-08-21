@@ -46,7 +46,7 @@ export function EditorPane({ t, face, onSaved }: EditorPaneProps) {
               initialId={selectedDefinition?.id}
               save={face.save}
               onSaved={onSaved}
-              startInstance={face.startInstance}
+              face={face}
             />
           )
         ) : selectedInstanceId === undefined ? (

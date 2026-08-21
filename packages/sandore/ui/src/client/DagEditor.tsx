@@ -26,7 +26,6 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
   DagBranch, Gates, InputFromItem, OutputToItem, WorkflowDefinition, WorkflowStage, WorkflowStep,
 } from '@deepseek-ai/dsh-sandore-workflow/schema'
-import type { DagRun } from '@deepseek-ai/dsh-sandore-workflow/remote'
 import { parseWorkflowYaml, serializeWorkflowYaml } from '@deepseek-ai/dsh-sandore-workflow/yaml'
 
 import {
@@ -38,12 +37,12 @@ import { CommandEditor } from './CommandEditor.tsx'
 import { WorkflowDetailFields } from './DefinitionDetail.tsx'
 import { FlowEditor, type FlowFields, type FlowTarget } from './FlowEditor.tsx'
 import { describeSaveError, type SaveDefinition } from './sandore-save.ts'
-import { describeError } from './describe-error.ts'
-import type { StartInstanceParams } from './workflow-face.ts'
+import { NewInstanceDialog } from './NewInstanceDialog.tsx'
+import type { WorkflowOverlayFace } from './workflow-face.ts'
 import { selectInstance } from './workflow-store.ts'
 import css from './DagEditor.module.css'
 
-/** DagEditor 接收的最小业务 props：初始定义 + 保存回调 + locale。 */
+/** DagEditor 接收的最小业务 props：初始定义 + 保存回调 + face + locale。 */
 export interface DagEditorProps {
   /** 类型化的翻译函数（sandore 命名空间）。 */
   t: TranslateNS<'sandore'>
@@ -55,8 +54,8 @@ export interface DagEditorProps {
   save: SaveDefinition
   /** 保存成功回调（携带持久化后的 id），供宿主刷新定义列表等。 */
   onSaved?: (id: string) => void
-  /** 启动实例（「▶ 测试运行」直接以当前定义启动，无 job 概念）。 */
-  startInstance(input: StartInstanceParams): Promise<DagRun>
+  /** 业务 face（「▶ 测试运行」复用 NewInstanceDialog 选工作目录后启动实例，无 job 概念）。 */
+  face: WorkflowOverlayFace
 }
 
 /** 保存流程本地状态。 */
@@ -749,7 +748,7 @@ function RulesRefEditor({ selected, options, onChange, t }: {
 // ── 主组件 ─────────────────────────────────────────────────────────────────
 
 /** 渲染 DagEditor（两层 DAG 画布 + 编辑侧栏 + YAML 预览）。 */
-export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInstance }: DagEditorProps) {
+export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: DagEditorProps) {
   const [definition, setDefinition] = useState<WorkflowDefinition>(() =>
     initialYaml === undefined ? createBlankDefinition() : parseWorkflowYaml(initialYaml))
   const [id, setId] = useState<string | undefined>(initialId)
@@ -762,9 +761,8 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInsta
   const [selectedStageId, setSelectedStageId] = useState<string | undefined>(undefined)
   const [selectedStepId, setSelectedStepId] = useState<string | undefined>(undefined)
   const [previewOpen, setPreviewOpen] = useState(false)
-  /** ▶ 测试运行状态：运行中禁用按钮；失败内联呈现错误。 */
-  const [running, setRunning] = useState(false)
-  const [runError, setRunError] = useState<string | undefined>(undefined)
+  /** ▶ 测试运行弹窗开关：复用 NewInstanceDialog 选工作目录后启动实例。 */
+  const [testRunOpen, setTestRunOpen] = useState(false)
 
   const preview = useMemo(() => serializeWorkflowYaml(definition), [definition])
 
@@ -1021,20 +1019,13 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInsta
     URL.revokeObjectURL(url)
   }
 
-  /** ▶ 测试运行：直接以当前定义启动实例（无 job 概念），成功后切执行态并选中新实例。 */
-  const runTest = async (): Promise<void> => {
+  /** ▶ 测试运行：打开 NewInstanceDialog（预绑定当前定义 + 预填测试需求文本），
+   *  用户选择工作目录（cwd 必填）后经弹窗创建实例，成功后切执行态并选中新实例。
+   *  复用弹窗而非直接 RPC——DagEditor 无 cwd 状态，工作目录必须由用户选择。 */
+  const runTest = (): void => {
     const definitionId = id ?? definition.id
     if (definitionId === undefined) return
-    setRunning(true)
-    setRunError(undefined)
-    try {
-      const run = await startInstance({ workflowId: definitionId, originalInput: t('editor.testRun') })
-      selectInstance(run.instanceId)
-    } catch (error) {
-      setRunError(describeError(error))
-    } finally {
-      setRunning(false)
-    }
+    setTestRunOpen(true)
   }
 
   return (
@@ -1061,7 +1052,7 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInsta
           </Button>
           {/* 测试运行：置于导出右、保存左；样式与保存一致（primary 背景框）。 */}
           {id !== undefined && (
-            <Button size="sm" variant="primary" icon={<IconPlayOutline16 />} disabled={running} onClick={() => { void runTest() }}>
+            <Button size="sm" variant="primary" icon={<IconPlayOutline16 />} onClick={runTest}>
               {t('editor.test')}
             </Button>
           )}
@@ -1077,9 +1068,6 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInsta
             ? t('editor.save.failed', { message: saveState.message })
             : t('editor.save.failed', { message: `${saveState.message} — ${saveState.details}` })}
         </p>
-      )}
-      {runError !== undefined && (
-        <p className={css.error} role="alert">{t('panel.error', { message: runError })}</p>
       )}
 
       <div className={css.canvasRow}>
@@ -1193,6 +1181,22 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, startInsta
       {/* 保存成功轻提示：顶部居中临时横幅，4s 自动淡出；key=seq 使重复保存重启动画。 */}
       {toast !== undefined && (
         <Toast key={toast.seq} text={toast.message} onDone={() => { setToast(undefined) }} />
+      )}
+
+      {/* ▶ 测试运行：复用 NewInstanceDialog 选工作目录（cwd 必填，hostAgent 据此
+          attach web workspace），预绑定当前定义 + 预填测试需求文本。 */}
+      {testRunOpen && (
+        <NewInstanceDialog
+          t={t}
+          face={face}
+          initialWorkflowId={id ?? definition.id}
+          initialRequirement={t('editor.testRun')}
+          onClose={() => { setTestRunOpen(false) }}
+          onCreated={instanceId => {
+            setTestRunOpen(false)
+            selectInstance(instanceId)
+          }}
+        />
       )}
     </section>
   )

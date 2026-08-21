@@ -43,6 +43,10 @@ export interface NewInstanceDialogProps {
   t: TranslateNS<'sandore'>
   /** 业务 face（RPC 已解包）。 */
   face: WorkflowOverlayFace
+  /** 预选的工作流 id（「测试运行」复用弹窗时传入；缺省不预选）。 */
+  initialWorkflowId?: string
+  /** 预填的作业需求（「测试运行」复用弹窗时传入；缺省空）。 */
+  initialRequirement?: string
   /** 关闭弹窗。 */
   onClose(): void
   /** 创建成功回调（携带实例 id，供宿主切执行态并选中）。 */
@@ -81,11 +85,11 @@ function permissionGlyph(value: string) {
 }
 
 /** 渲染「新增实例」弹窗。 */
-export function NewInstanceDialog({ t, face, onClose, onCreated }: NewInstanceDialogProps) {
+export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequirement, onClose, onCreated }: NewInstanceDialogProps) {
   // 表单字段：工作目录 / 作业需求 / 绑定工作流 / 模型 / 权限。
   const [cwd, setCwd] = useState<string | undefined>(undefined)
-  const [requirement, setRequirement] = useState('')
-  const [workflowId, setWorkflowId] = useState<string | undefined>(undefined)
+  const [requirement, setRequirement] = useState(initialRequirement ?? '')
+  const [workflowId, setWorkflowId] = useState<string | undefined>(initialWorkflowId)
   const [model, setModel] = useState<StartInstanceParams['model']>(undefined)
   // 权限默认 workspace-write（与触发器显示一致；提交时始终携带，引擎据此应用沙箱/审批）。
   const [permission, setPermission] = useState<string>('workspace-write')
@@ -145,7 +149,12 @@ export function NewInstanceDialog({ t, face, onClose, onCreated }: NewInstanceDi
     ? t('composer.model.fallback')
     : selectedModel.m.name
 
-  const canSubmit = submitting === false && workflowId !== undefined && requirement.trim() !== ''
+  // cwd 必填：未选择工作目录（或为空）时禁用创建（hostAgent 需据此 attach web workspace）。
+  const canSubmit = submitting === false
+    && workflowId !== undefined
+    && requirement.trim() !== ''
+    && cwd !== undefined
+    && cwd.trim() !== ''
 
   /** 打开 DSH 原生目录选择器，选中后回填（取消保持原值）。 */
   const browse = async (): Promise<void> => {
@@ -160,13 +169,15 @@ export function NewInstanceDialog({ t, face, onClose, onCreated }: NewInstanceDi
   /** 确定：收集全部参数创建实例。 */
   const submit = async (): Promise<void> => {
     if (!canSubmit) return
+    // canSubmit 已保证 cwd 非空；显式收窄以便类型系统接受直接 cwd（必填）。
+    if (cwd === undefined || cwd.trim() === '') return
     setSubmitting(true)
     setErrorMessage(undefined)
     try {
       const input: StartInstanceParams = {
         workflowId,
         originalInput: requirement,
-        ...(cwd === undefined ? {} : { cwd }),
+        cwd,
         ...(model === undefined ? {} : { model }),
         ...(permission === undefined ? {} : { permission }),
       }

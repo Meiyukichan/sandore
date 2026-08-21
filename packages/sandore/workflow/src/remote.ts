@@ -254,7 +254,8 @@ export class SandoreRemote extends TypertRemoteService {
     const request = {
       workflowId: parsed.workflowId,
       originalInput: parsed.originalInput,
-      ...(parsed.cwd === undefined ? {} : { cwd: parsed.cwd }),
+      // cwd 必填（wire schema 已校验）：直接透传，hostAgent 据此 attach web workspace。
+      cwd: parsed.cwd,
       ...(parsed.model === undefined ? {} : { model: parsed.model }),
       ...(parsed.permission === undefined ? {} : { permission: parsed.permission }),
       ...(parsed.hostSessionId === undefined ? {} : { hostSessionId: parsed.hostSessionId }),

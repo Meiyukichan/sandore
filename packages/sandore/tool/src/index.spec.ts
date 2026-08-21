@@ -104,13 +104,14 @@ describe('createSandoreTools', () => {
     const result = await run(toolByName(tools, 'sandore_startInstance'), {
       workflowId: 'wfl-1',
       originalInput: 'do it',
+      cwd: '/tmp',
     });
 
-    expect(engine.startInstance).toHaveBeenCalledWith({ workflowId: 'wfl-1', originalInput: 'do it' });
+    expect(engine.startInstance).toHaveBeenCalledWith({ workflowId: 'wfl-1', originalInput: 'do it', cwd: '/tmp' });
     expect(result).toMatchObject({ ok: true, run: { instanceId: 'inst-new', status: 'running' } });
   });
 
-  it('sandore_startInstance forwards optional cwd when provided', async () => {
+  it('sandore_startInstance forwards cwd to engine.startInstance', async () => {
     const engine = makeEngine();
     const tools = createSandoreTools({ instanceId: 'inst-1', engine: engine as unknown as SandoreEngineSurface });
 
