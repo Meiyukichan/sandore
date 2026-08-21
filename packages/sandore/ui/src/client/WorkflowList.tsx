@@ -17,7 +17,7 @@ import { DefinitionList } from './DefinitionList.tsx'
 import { NewInstanceDialog } from './NewInstanceDialog.tsx'
 import type { WorkflowOverlayFace } from './workflow-face.ts'
 import {
-  getWorkflowState, newDefinition, selectDefinition, selectInstance, setWorkflowState, subscribeWorkflowState,
+  getWorkflowState, newDefinition, selectDefinition, selectInstance, setWorkflowState, subscribeWorkflowState, toggleListCollapse,
 } from './workflow-store.ts'
 import css from './WorkflowOverlay.module.css'
 
@@ -51,7 +51,24 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
     <section className={css.list} style={{ width }} data-sandore-wf-list>
       <header className={css.listHeader}>
         <div className={css.listTitleRow}>
-          <span className={css.listTitle}>{t('panel.title')}</span>
+          <div className={css.listTitleGroup}>
+            <span className={css.listTitle}>{t('panel.title')}</span>
+            {/* 收起左栏：切换为窄条 rail（展开 + 新增）。 */}
+            <button
+              type="button"
+              className={css.railBtn}
+              title={t('list.collapse')}
+              aria-label={t('list.collapse')}
+              onClick={toggleListCollapse}
+            >
+              {/* panel-left-close：收起左栏。 */}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M9 3v18" />
+                <path d="m16 15-3-3 3-3" />
+              </svg>
+            </button>
+          </div>
           {/* 实例/编排 开关：胶囊轨道 + 滑块，点击切换激活侧。 */}
           <div className={css.toggle} role="tablist" aria-label={t('list.mode.switch')}>
             <span className={`${css.toggleThumb} ${listMode === 'definition' ? css.toggleThumbRight : ''}`} />

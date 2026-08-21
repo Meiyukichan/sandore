@@ -46,6 +46,8 @@ export interface WorkflowUiState {
   readonly preview: PreviewTarget | null
   /** 左列表列宽（px）。 */
   readonly listWidth: number
+  /** 左列表是否收起（收起时仅保留窄条 rail：展开 + 新增）。 */
+  readonly listCollapsed: boolean
   /** RunView 树形导航列宽（px）。 */
   readonly treeWidth: number
   /** RunView 预览列宽（px）。 */
@@ -61,6 +63,7 @@ const INITIAL: WorkflowUiState = {
   creatingNew: false,
   preview: null,
   listWidth: 360,
+  listCollapsed: false,
   treeWidth: 360,
   previewWidth: 380,
 }
@@ -131,6 +134,11 @@ export function newDefinition(): void {
     selectedInstanceId: undefined,
     preview: null,
   })
+}
+
+/** 切换左列表收起/展开（收起时仅保留窄条 rail；跨 overlay 开合保留）。 */
+export function toggleListCollapse(): void {
+  setWorkflowState({ listCollapsed: !state.listCollapsed })
 }
 
 /** 更新列表列宽（拖拽分隔条，带边界钳制）。 */

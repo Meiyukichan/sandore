@@ -9,14 +9,14 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowOverlay
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { GlobalStandardProps, InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GlobalStandardProps, InjectFace, PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 
 import { WorkflowList } from './WorkflowList.tsx'
 import { EditorPane } from './EditorPane.tsx'
 import { DragHandle } from './DragHandle.tsx'
 import type { WorkflowOverlayFace } from './workflow-face.ts'
 import {
-  getWorkflowState, resizeListWidth, subscribeWorkflowState,
+  getWorkflowState, newDefinition, resizeListWidth, subscribeWorkflowState, toggleListCollapse,
 } from './workflow-store.ts'
 import css from './WorkflowOverlay.module.css'
 
@@ -31,6 +31,7 @@ export function WorkflowOverlay({
 }: WorkflowOverlayProps) {
   const open = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().open)
   const listWidth = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().listWidth)
+  const listCollapsed = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().listCollapsed)
   const workspaces = useWorkspaces(state => state.items)
   const [refreshKey, setRefreshKey] = useState(0)
   const layerRef = useRef<HTMLDivElement>(null)
@@ -72,8 +73,15 @@ export function WorkflowOverlay({
     <div className={css.layer} ref={layerRef} data-sandore-overlay-layer>
       <div className={css.overlay} data-sandore-overlay>
         <div className={css.body}>
-          <WorkflowList t={t} workspaces={workspaces} face={face} refreshKey={refreshKey} width={listWidth} />
-          <DragHandle side="list" className={css.dragHandle} onDrag={resizeListWidth} />
+          {listCollapsed ? (
+            // 收起态：窄条 rail（展开 + 新增）；右栏 EditorPane flex:1 自动占满。
+            <ListRail t={t} onExpand={toggleListCollapse} />
+          ) : (
+            <>
+              <WorkflowList t={t} workspaces={workspaces} face={face} refreshKey={refreshKey} width={listWidth} />
+              <DragHandle side="list" className={css.dragHandle} onDrag={resizeListWidth} />
+            </>
+          )}
           <EditorPane
             t={t}
             face={face}
@@ -81,6 +89,48 @@ export function WorkflowOverlay({
           />
         </div>
       </div>
+    </div>
+  )
+}
+
+/** 收起态左栏窄条 rail：展开按钮 + 新增按钮。
+ *
+ * 新增按钮直接调 `workflow-store.newDefinition`（与展开态 WorkflowList「新增定义」
+ * 同一动作；face 无 newDefinition 字段），overlay 开合间能力保留。 */
+function ListRail({ t, onExpand }: {
+  t: TranslateNS<'sandore'>
+  /** 点击展开左栏（→ toggleListCollapse）。 */
+  onExpand(): void
+}) {
+  return (
+    <div className={css.listRail} data-sandore-wf-rail>
+      <button
+        type="button"
+        className={css.railBtn}
+        title={t('list.expand')}
+        aria-label={t('list.expand')}
+        onClick={onExpand}
+      >
+        {/* panel-left-open：展开左栏。 */}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M9 3v18" />
+          <path d="m14 9 3 3-3 3" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className={css.railBtn}
+        title={t('panel.add.definition')}
+        aria-label={t('panel.add.definition')}
+        onClick={() => { newDefinition() }}
+      >
+        {/* plus：新增定义（切编排态 + 空白 DagEditor）。 */}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M5 12h14" />
+          <path d="M12 5v14" />
+        </svg>
+      </button>
     </div>
   )
 }
