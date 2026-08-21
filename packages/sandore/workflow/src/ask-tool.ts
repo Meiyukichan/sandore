@@ -100,54 +100,53 @@ export function installSandoreAskTool(
     name: 'ask_user_question',
     description: ASK_TOOL_DESCRIPTION,
     parameters: {
-      questions: {
-        type: 'array',
-        required: true,
-        description: 'Questions to ask the user before continuing.',
-        items: {
-          type: 'object',
-          additionalProperties: true,
-          properties: {
-            id: { type: 'string', required: true, description: 'Stable id for this question; echoed in the answer.' },
-            question: { type: 'string', required: true, description: 'The specific question to ask the user.' },
-            header: {
-              type: 'string',
-              description: 'Optional short heading for the question, such as "Confirm" or "Choose Mode".',
-            },
-            options: {
-              type: 'array',
-              description: 'Optional choices to show the user. If you recommend one, put it first and append "(Recommended)" to that label.',
-              items: {
-                type: 'object',
-                additionalProperties: true,
-                properties: {
-                  label: { type: 'string', required: true, description: 'Short user-facing option label.' },
-                  description: { type: 'string', description: 'One sentence explaining the tradeoff or impact.' },
+      // 规范化 JSON Schema：required 只在 object 节点上用字符串数组（父节点 required 数组），
+      // 不再使用子属性 `required: true` 简写（该形态非标准，传给 LLM 不可靠）。
+      type: 'object',
+      required: ['questions'],
+      properties: {
+        questions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'question'],
+            properties: {
+              id: { type: 'string', description: '问题唯一标识' },
+              question: { type: 'string', description: '问题文本' },
+              header: { type: 'string', description: '可选标题' },
+              options: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string' },
+                    description: { type: 'string' },
+                  },
                 },
               },
-            },
-            multi_select: {
-              type: 'boolean',
-              description: 'Whether the user may select more than one option. Defaults to false.',
+              multi_select: { type: 'boolean', description: '是否多选' },
             },
           },
         },
       },
     },
     output: {
+      // 规范化 enforced subset：required 仅允许出现在 type:'object' 节点上且为字符串数组
+      // （DSH assertSupportedJsonSchema 校验，register 时对 output.schema 强制执行）。
       schema: {
         type: 'object',
         additionalProperties: false,
+        required: ['answers'],
         properties: {
           answers: {
             type: 'array',
-            required: true,
             items: {
               type: 'object',
               additionalProperties: false,
+              required: ['id', 'selected'],
               properties: {
-                id: { type: 'string', required: true },
-                selected: { type: 'array', required: true, items: { type: 'string' } },
+                id: { type: 'string' },
+                selected: { type: 'array', items: { type: 'string' } },
                 custom: { type: 'string' },
               },
             },

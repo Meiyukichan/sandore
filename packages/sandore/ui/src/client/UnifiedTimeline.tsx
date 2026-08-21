@@ -270,17 +270,17 @@ function AgentMsg({ item, t, nowIso, openSession }: {
 
           {terminalChat && (
             <>
-              {/* failed 态：只展示 output 文本 + 收尾错误详情纯文本（无 ⚠ 图标，
-                  不展示消息流——避免误导性中间消息）。 */}
+              {/* failed 态：先展示收尾错误详情纯文本（无 ⚠ 图标），再展示 output 文本；
+                  不展示消息流——避免误导性中间消息。 */}
               {item.status === 'failed' && (
                 <>
-                  {item.outputText !== undefined && (
-                    <div className={css.md}><MessageText text={item.outputText} /></div>
-                  )}
                   {(item.finalizeErrorDetail ?? item.error) && (
                     <div className={css.errorBlock}>
                       <span className={css.errorText}>{item.finalizeErrorDetail ?? item.error}</span>
                     </div>
+                  )}
+                  {item.outputText !== undefined && (
+                    <div className={css.md}><MessageText text={item.outputText} /></div>
                   )}
                 </>
               )}
