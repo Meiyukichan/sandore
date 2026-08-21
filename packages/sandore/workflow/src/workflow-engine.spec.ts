@@ -1370,18 +1370,22 @@ describe('SandoreEngineRuntime host agent workspace attach', () => {
     expect(persistence.state.get(run.instanceId)?.status).toBe('completed');
   });
 
-  it('throws INVALID_OPERATION when cwd does not resolve to a registered workspace', async () => {
+  it('auto-creates a workspace when cwd does not resolve to a registered one (对齐 DSH ensureWorkspace)', async () => {
     const { ctx, engine, persistence } = await harness();
     await putDefinition(persistence, 'wfl-shell-only', shellOnlyYaml);
     const registry = new FakeWorkspaceRegistry([new FakeWorkspace('/ws/project')]);
     ctx.provide('workspaceRegistry', registry);
 
-    // cwd 未命中任何已登记 workspace：attach 前抛 INVALID_OPERATION（提示选 web workspace 目录）。
-    await expect(
-      engine.startInstance({ workflowId: 'wfl-shell-only', originalInput: 'do it', cwd: '/other/dir' }),
-    ).rejects.toMatchObject({ code: 'INVALID_OPERATION' });
-    // 未创建实例：state 表保持为空（attach 在 persistState 之前）。
-    expect(persistence.state.size).toBe(0);
+    // cwd 未命中任何已登记 workspace：attach 前自动 create（不再抛 INVALID_OPERATION），
+    // 实例正常启动，hostAgent 会话挂到按 cwd 新建的 workspace 成员账。
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-shell-only', originalInput: 'do it', cwd: '/other/dir' });
+    await ended;
+
+    const created = await registry.resolveByPath('/other/dir');
+    expect(created).toBeDefined();
+    expect(created?.attached).toEqual([run.instanceId]);
+    expect(persistence.state.get(run.instanceId)?.status).toBe('completed');
   });
 
   it('silently skips attach when no workspaceRegistry is provided (test/headless degradation)', async () => {

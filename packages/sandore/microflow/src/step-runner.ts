@@ -567,12 +567,15 @@ export class StepRunner {
     const output = await settle();
     // §3.8A：子代理消息持久化（settle 后采集，随结果带出 → finishCommandNode 写
     // executed.sessionMessages → onPersist 定格；前端内嵌消息框/失败·暂停最近 N 条）。
+    // 只保留最新 10 条（slice(-10)）：真实子代理走 StepChatPanel 实时订阅不读
+    // sessionMessages；合成会话兜底（chatLinesOf）也只展示最近 N 条——截断减小
+    // 持久化体积，不影响兜底正确性。
     // 取最新活 child（cold-resume 后的新 handle），回退 start child（mock FakeAgent 复用）。
     const liveChild = this.ctx.agents.get(childId) ?? child;
     return {
       output,
       sessionMeta: { childId, synthetic: false, command: commandType },
-      sessionMessages: collectSessionMessages(liveChild.session.events),
+      sessionMessages: collectSessionMessages(liveChild.session.events).slice(-10),
     };
   }
 

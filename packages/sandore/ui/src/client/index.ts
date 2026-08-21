@@ -121,19 +121,21 @@ export async function apply(ctx: ClientContext): Promise<void> {
           return session.projections.faceOf('permissions') as unknown as ObservableFace<PermissionSelectValue | undefined>
         },
         // 命令执行：走 DSH remote.commands（/permission 等与主 session 同一路径）。
+        // DSH commands.execute(agent, line, images, signal) 需 3 参：client 侧传
+        // SessionId（Gateway 自动解析为 Agent），纯命令无图片传空数组 []。
         runCommand: async (sessionId: string, line: string): Promise<boolean> => {
           const commands = (remoteCtx.remote as unknown as {
-            commands: { execute(id: SessionId, line: string): Promise<{ ok: boolean }> }
+            commands: { execute(id: SessionId, line: string, images: readonly never[], signal?: AbortSignal): Promise<{ ok: boolean }> }
           }).commands
-          const result = await commands.execute(sessionId as SessionId, line)
+          const result = await commands.execute(sessionId as SessionId, line, [])
           return result.ok
         },
         // 权限投影缺失回退：`/permission`（无参）查询当前预设与可用列表。
         queryPermission: async (sessionId: string): Promise<PermissionSelectValue | undefined> => {
           const commands = (remoteCtx.remote as unknown as {
-            commands: { execute(id: SessionId, line: string): Promise<{ ok: boolean; value?: unknown }> }
+            commands: { execute(id: SessionId, line: string, images: readonly never[], signal?: AbortSignal): Promise<{ ok: boolean; value?: unknown }> }
           }).commands
-          const result = await commands.execute(sessionId as SessionId, '/permission')
+          const result = await commands.execute(sessionId as SessionId, '/permission', [])
           if (!result.ok) return undefined
           const text = (result.value as { text?: string } | undefined)?.text
           if (text === undefined) return undefined

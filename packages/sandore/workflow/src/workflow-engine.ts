@@ -35,12 +35,14 @@ type SessionAppendWithIgnorable = (
 
 /**
  * `ctx.workspaceRegistry` 服务的最小面（由引擎 get 后窄断言使用，签名对齐 DSH
- * `WorkspaceRegistry.resolveByPath`，不 import DSH workspace 包类型——保持
- * browser-safe 接缝哲学，与 AgentPresetsSeam 同区）。
+ * `WorkspaceRegistry.resolveByPath` / `WorkspaceRegistry.create`，不 import DSH
+ * workspace 包类型——保持 browser-safe 接缝哲学，与 AgentPresetsSeam 同区）。
  */
 interface WorkspaceRegistrySeam {
   /** 按规范目录路径解析已登记的 workspace（无此路径的 workspace 时返回 undefined）。 */
   resolveByPath(path: string): Promise<WorkspaceSeam | undefined>;
+  /** 登记一个目录为 workspace（DSH 侧先 realpathNormalize + stat 验证目录存在）。 */
+  create(path: string): Promise<WorkspaceSeam>;
 }
 
 /** DSH `Workspace` 实体的最小面（签名对齐 `Workspace.attachSession`）。 */
@@ -589,10 +591,12 @@ export default class SandoreEngineRuntime extends SandoreEngine {
    * 宿主主代理 attach 到 web workspace（web sidebar 分组可见）。
    *
    * `ctx.workspaceRegistry` 缺失（测试/headless 部署无 workspace 包）时静默跳过；
-   * `cwd` 未命中任何已登记 workspace 时抛 `INVALID_OPERATION`（提示选择 web
-   * workspace 目录）；命中后 `workspace.attachSession` 把 hostAgent 会话挂到该
-   * workspace 的成员账——子代理获得正确 durable parent（hostAgent），web sidebar
-   * 可见、暂停走 `subagents.interrupt`（不撞 agent-busy fence）、ask 可答。
+   * `cwd` 未命中任何已登记 workspace 时自动注册（对齐 DSH `ensureWorkspace`：
+   * resolveByPath 未命中 → create；create 内部会验证目录存在，cwd 为已存在目录
+   * 时成功）——不再抛 INVALID_OPERATION；命中后 `workspace.attachSession` 把
+   * hostAgent 会话挂到该 workspace 的成员账——子代理获得正确 durable parent
+   * （hostAgent），web sidebar 可见、暂停走 `subagents.interrupt`（不撞
+   * agent-busy fence）、ask 可答。
    */
   private async attachHostAgentToWorkspace(hostAgent: Agent, cwd: string): Promise<void> {
     const workspaceRegistry = this.ctx.get('workspaceRegistry') as WorkspaceRegistrySeam | undefined;
@@ -600,12 +604,10 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       // 测试/headless 部署无 workspace 包：静默跳过，不阻断实例启动。
       return;
     }
-    const workspace = await workspaceRegistry.resolveByPath(cwd);
+    let workspace = await workspaceRegistry.resolveByPath(cwd);
     if (workspace === undefined) {
-      throw new SandoreError(
-        `cwd '${cwd}' does not resolve to a registered web workspace; choose a web workspace directory`,
-        'INVALID_OPERATION',
-      );
+      // 未命中已登记 workspace：自动注册（对齐 DSH ensureWorkspace 的未命中 create 语义）。
+      workspace = await workspaceRegistry.create(cwd);
     }
     await workspace.attachSession(SessionId(hostAgent.id));
   }

@@ -188,7 +188,8 @@
   text-underline-offset: 3px;
 }
 
-/* failed 态错误块（.errorBlock/.errorIcon/.errorText，计划命名；替代旧 .agentErrDetail）。 */
+/* failed 态错误块（.errorBlock/.errorText，计划命名；替代旧 .agentErrDetail）。
+   failed 态只展示纯文本错误详情（无 ⚠ 图标），故不再渲染 .errorIcon。 */
 .errorBlock {
   display: flex;
   align-items: flex-start;
@@ -200,18 +201,6 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--sd-destructive) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--sd-destructive) 24%, transparent);
-}
-
-.errorIcon {
-  flex: none;
-  display: inline-flex;
-  margin-top: 2px;
-  color: var(--sd-destructive);
-}
-
-.errorIcon svg {
-  width: 14px;
-  height: 14px;
 }
 
 .errorText {

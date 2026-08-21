@@ -269,23 +269,29 @@ function AgentMsg({ item, t, nowIso, openSession }: {
           )}
 
           {terminalChat && (
-            // failed 态：先展示错误详情（段 error / 收尾 finalizeMeta.errorDetail），
-            // 再展示子代理会话（真实会话 → DSH 对话流；合成会话 → 最近 N 条兜底）。
             <>
-              {item.status === 'failed' && (item.error !== undefined || item.finalizeErrorDetail !== undefined) && (
-                <div className={css.errorBlock} role="alert">
-                  <span className={css.errorIcon} aria-hidden>
-                    <svg viewBox="0 0 14 14" fill="none">
-                      <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.4" />
-                      <path d="M4.6 4.6l4.8 4.8M9.4 4.6l-4.8 4.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                    </svg>
-                  </span>
-                  <span className={css.errorText}>{item.finalizeErrorDetail ?? item.error}</span>
-                </div>
+              {/* failed 态：只展示 output 文本 + 收尾错误详情纯文本（无 ⚠ 图标，
+                  不展示消息流——避免误导性中间消息）。 */}
+              {item.status === 'failed' && (
+                <>
+                  {item.outputText !== undefined && (
+                    <div className={css.md}><MessageText text={item.outputText} /></div>
+                  )}
+                  {(item.finalizeErrorDetail ?? item.error) && (
+                    <div className={css.errorBlock}>
+                      <span className={css.errorText}>{item.finalizeErrorDetail ?? item.error}</span>
+                    </div>
+                  )}
+                </>
               )}
-              {realSession
-                ? <StepChatPanel sessionId={item.childId} t={t} />
-                : <LastMessages item={item} t={t} />}
+              {/* paused 态：最新 10 条消息（真实会话 → DSH 对话流；合成会话 → 最近 N 条兜底）。 */}
+              {item.status === 'paused' && (
+                <>
+                  {realSession
+                    ? <StepChatPanel sessionId={item.childId} t={t} />
+                    : <LastMessages item={item} t={t} />}
+                </>
+              )}
             </>
           )}
         </>

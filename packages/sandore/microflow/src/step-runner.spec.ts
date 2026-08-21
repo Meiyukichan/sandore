@@ -389,6 +389,29 @@ describe('StepRunner prompt', () => {
     expect(result.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'prompt' });
   });
 
+  it('keeps only the latest 10 session message lines in sessionMessages (截断持久化体积)', async () => {
+    const { agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    // 15 条 assistant/message 事件 → 15 条消息行；采集后应只保留最新 10 条
+    // （StepChatPanel 实时订阅不读 sessionMessages，合成会话兜底也只展示最近 N 条）。
+    for (let index = 0; index < 15; index += 1) {
+      child.session.append(assistantMessageEvent([{ type: 'text', text: `msg-${index}` }], index));
+    }
+    agents.register(child);
+
+    const result = await runner.run(request(promptStep()));
+
+    expect(result.sessionMessages).toHaveLength(10);
+    expect(result.sessionMessages?.map(message => message.text)).toEqual([
+      'msg-5', 'msg-6', 'msg-7', 'msg-8', 'msg-9',
+      'msg-10', 'msg-11', 'msg-12', 'msg-13', 'msg-14',
+    ]);
+  });
+
   it('throws STEP_EXECUTION when the subagent settle errors (model failure → failed)', async () => {
     const child = new FakeAgent('child-1');
     const ctrl = settleController();
