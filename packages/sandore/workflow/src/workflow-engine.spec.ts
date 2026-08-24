@@ -4107,7 +4107,7 @@ describe('complex workflow e2e', () => {
    * 输出来自可续接子代理会话（决策 D3）。mock shell.runHandler 回显命令对应 stdout。
    */
   it('runs the review-fix flow across two stages with branches, parallel, loop, and gates to completed', async () => {
-    const { ctx, engine, persistence, llm, shell, agents } = await harness();
+    const { ctx, engine, persistence, llm, shell, agents, subagents } = await harness();
     await putDefinition(persistence, 'wfl-complex', complexReviewFixYaml);
     provideLlmDirectory(llm);
     // shell.runHandler：按命令回显对应 stdout（便于产物/事件断言）。
@@ -4124,17 +4124,20 @@ describe('complex workflow e2e', () => {
     const promptChild = new FakeAgent('child-1');
     promptChild.session.append(assistantMessageEvent([{ type: 'text', text: 'final-analysis' }]));
     agents.register(promptChild);
-    // Phase C secondary 门禁单独建宿主子代理（无 seed，followup 驱动一轮）：mock 其
-    // followup 回复为通过（gateStatus done）——收尾真 fork 改造后 secondary 不再消费
-    // llm.stream（模型调用走子代理驱动轮）。
-    agents.createFollowupHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
+    // Phase C secondary 门禁经 startContinuable 建宿主可续接子代理（child-2，与 step
+    // 执行子代理同机制）：预注册 FakeAgent 并回填门禁审查输出（gateStatus done）——
+    // 门禁 AI 走子代理 agent loop，不消费 llm.stream。
+    const gateChild = new FakeAgent('child-2');
+    gateChild.session.append(assistantMessageEvent([{ type: 'text', text: '{"gateStatus":"done"}' }]));
+    agents.register(gateChild);
 
     // 条件分支/循环跳出/收尾各走专用模板（其「## 返回格式」节含对应字段名），
     // mock 据首条消息文本含哪个字段名分发对应 JSON。循环跳出首次 false、二次 true
     // （演示 continue 与 break 两条 loopMeta 路由条目均回写）。prompt Step 自身输出
     // 来自子代理会话（不再消费 llm.stream）。primary 门禁为纯代码产物校验（零 AI），
-    // 无对应 AI 提示词——secondary 门禁经宿主子代理驱动轮审查（gateStatus done），
-    // 亦不消费 llm.stream；Phase B 收尾走降级 llm.stream（compressedOutput 合并 JSON）。
+    // 无对应 AI 提示词——secondary 门禁经 startContinuable 子代理 settle 审查
+    // （gateStatus done），亦不消费 llm.stream；Phase B 收尾走降级 llm.stream
+    // （compressedOutput 合并 JSON）。
     let breakCall = 0;
     llm.streamHandler = (options) => {
       const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
@@ -4218,18 +4221,25 @@ describe('complex workflow e2e', () => {
     expect(finalizeStep?.finalizeMeta?.gateResult?.primaryPassed).toBe(true);
     expect(finalizeStep?.finalizeMeta?.gateResult?.secondaryPassed).toBe(true);
 
-    // Phase C secondary 单独建宿主子代理（无 seed，meta parentSession=宿主主代理 +
-    // origin='subagent'）；primary 纯代码校验不建子代理。宿主主代理也经 agents.create
-    // 创建（startInstance）→ create 记录序 = [宿主主代理, secondary 门禁子代理]。
-    const gateMeta = agents.createMetas[agents.createMetas.length - 1];
-    expect(agents.createSeeds[agents.createSeeds.length - 1]).toBeUndefined();
-    expect(gateMeta).toMatchObject({ parentSession: run.instanceId, origin: 'subagent' });
-    // 子代理驱动轮（followup → whenIdle → finalAssistantOutput）被消费。
-    const gateAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
-    expect(gateAgent.followups).toHaveLength(1);
-    expect(gateAgent.whenIdleCount).toBe(1);
-    // 评估完 dispose：live 移除（持久化记录保留，UI 可打开 gateSessionId）。
-    expect(agents.get(finalizeStep?.finalizeMeta?.gateSessionId ?? '')).toBeUndefined();
+    // Phase C secondary 经 startContinuable 建宿主可续接子代理（与 step 执行子代理同
+    // 机制：agent loop + 工具 + preset 系统提示词；prompt 携带门禁审查要求）；
+    // primary 纯代码校验不建子代理。宿主主代理也经 agents.create 创建（startInstance）
+    // → agents.create 记录仅含宿主主代理（门禁不再走 agents.create）。
+    const gateStart = subagents.continuableStarts[subagents.continuableStarts.length - 1];
+    expect(gateStart).toBeDefined();
+    expect(gateStart?.provider).toBe('fork');
+    expect(gateStart?.request.parent.id).toBe(run.instanceId);
+    const gatePrompt = (gateStart?.request.prompt[0] as { type: string; text: string } | undefined)?.text ?? '';
+    expect(gatePrompt).toContain('gateStatus');
+    // gateSessionId = startContinuable 返回的真实 childId（UI 可打开；settle 侧由 DSH
+    // dispose，mock 中仍留在 registry）。
+    const gateSessionId = finalizeStep?.finalizeMeta?.gateResult?.gateSessionId ?? '';
+    expect(gateSessionId).toBe('child-2');
+    expect(agents.get(gateSessionId)).toBeDefined();
+    expect(agents.get(gateSessionId)?.session.events.some(event =>
+      event.type === 'assistant/message'
+      && event.data.message.content.some(block => block.type === 'text' && block.text.includes('gateStatus')),
+    )).toBe(true);
 
     // ── 产物收集：step-finalize prompt 自身输出为 'final-analysis'（子代理会话输出）。
     expect(finalizeStep?.output).toEqual([{ type: 'text', text: 'final-analysis' }]);

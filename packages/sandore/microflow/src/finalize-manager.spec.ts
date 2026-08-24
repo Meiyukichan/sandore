@@ -9,16 +9,17 @@
  * @module @deepseek-ai/dsh-sandore-microflow/src/finalize-manager.spec
  */
 import { Context } from '@deepseek-ai/cordis';
-import type { LlmRuntime } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm';
 import type { SessionStore } from '@deepseek-ai/dsh-session';
 import { describe, expect, it } from 'vitest';
 
-import { FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
+import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../../workflow/tests/mocks/llm.ts';
 import { FinalizeAssessor, FinalizeManager, GateEvaluator, parseAssessResult, parseSecondaryGate } from './finalize-manager.ts';
 import type { FinalizeManagerConfig } from './finalize-manager.ts';
 import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome } from './file-utils.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
+import type { ContinuableStart, ContinuableStartSpec } from './subagents.ts';
 import type { ExecutedStepDefault } from '@deepseek-ai/dsh-sandore-workflow/src/types';
 import type { FinalizeAssessResult, GateEvalResult, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
@@ -99,6 +100,40 @@ class FakeFs implements FileSystem {
   }
 }
 
+/** 记录 startContinuable 调用并返回可注入 childId 的最小 subagents mock。 */
+class FakeGateSubagents {
+  /** 每次 `startContinuable` 记录的委派请求（prompt/parent/agentOptions 断言用）。 */
+  readonly starts: ContinuableStartSpec[] = [];
+  /**
+   * `startContinuable` 创建子代理时的回复钩子：返回非空 ContentBlock[] 时预填
+   * child.session.events 的 assistant 消息（供 `finalAssistantOutput` 读取——mock 不
+   * 后台驱动 agent loop，子代理输出由测试预填）。缺省 undefined → 子代理无输出。
+   */
+  outputHandler?: () => ContentBlock[] | undefined;
+  /** 若设置，`startContinuable` 抛出该错误（模拟 secondary 门禁子代理启动失败）。 */
+  startError?: Error;
+
+  constructor(private readonly agents: FakeAgentRegistry) {}
+
+  async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
+    if (this.startError !== undefined) {
+      throw this.startError;
+    }
+    this.starts.push(spec);
+    // 与 FakeSubagents 同形：childId = `child-{index}`（真实 childId 语义，供
+    // gateSessionId 断言）。
+    const childId = `child-${this.starts.length}`;
+    const agent = new FakeAgent(childId);
+    const reply = this.outputHandler?.();
+    if (reply !== undefined && reply.length > 0) {
+      agent.session.append(assistantMessageEvent(reply, 0, Date.now()));
+    }
+    // 注册进 agents registry：awaitGateOutput 经 ctx.agents.get(childId) 取 child。
+    this.agents.register(agent);
+    return { childId, messageId: `msg-${this.starts.length}` };
+  }
+}
+
 /** 组装一条 Step 定义（补齐必填字段 `id`）。 */
 function step(fields: {
   id?: string;
@@ -133,13 +168,14 @@ function executedStep(fields: {
   };
 }
 
-/** 组装 finalize-manager 测试环境（注入 mock llm/sessions/fs/agents 与固定引擎默认 provider/model）。 */
+/** 组装 finalize-manager 测试环境（注入 mock llm/sessions/fs/agents/subagents 与固定引擎默认 provider/model）。 */
 function harness(config: FinalizeManagerConfig = {}): {
   ctx: Context;
   llm: FakeLlm;
   sessions: FakeSessionStore;
   fs: FakeFs;
   agents: FakeAgentRegistry;
+  subagents: FakeGateSubagents;
   assessor: FinalizeAssessor;
   gateEvaluator: GateEvaluator;
   manager: FinalizeManager;
@@ -149,17 +185,28 @@ function harness(config: FinalizeManagerConfig = {}): {
   const sessions = new FakeSessionStore();
   const fs = new FakeFs();
   const agents = new FakeAgentRegistry();
+  const subagents = new FakeGateSubagents(agents);
   ctx.provide('llm', llm as unknown as LlmRuntime);
   ctx.provide('sessions', sessions as unknown as SessionStore);
   ctx.provide('fs', fs as unknown as FileSystem);
   ctx.provide('agents', agents);
-  const fullConfig: FinalizeManagerConfig = { defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm', ...config };
+  ctx.provide('subagents', subagents);
+  const fullConfig: FinalizeManagerConfig = {
+    defaultTimeoutMs: 60000,
+    defaultProvider: 'p',
+    defaultModel: 'm',
+    // secondary 门禁 startContinuable 的 request.parent（最小 Agent 桩；Phase B
+    // assessForked 仍走 hostAgentId/createAgent 旧机制，不受本字段影响）。
+    hostAgent: new FakeAgent('host-1'),
+    ...config,
+  };
   return {
     ctx,
     llm,
     sessions,
     fs,
     agents,
+    subagents,
     assessor: new FinalizeAssessor(ctx, fullConfig),
     gateEvaluator: new GateEvaluator(ctx, fullConfig),
     manager: new FinalizeManager(ctx, fullConfig),
@@ -750,12 +797,9 @@ describe('GateEvaluator', () => {
 
   // ── secondary 门禁 = AI 门禁审查（显式 enabled:true 才跑；唯一门禁 AI 通道） ──
 
-  it('creates a host subagent (no seed) for the secondary gate and drives one round (followup → whenIdle → parseSecondaryGate)', async () => {
-    const { llm, fs, agents, gateEvaluator } = harness({
-      hostAgentId: 'host-1',
-      createAgent: options => agents.create(options),
-    });
-    agents.createFollowupHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
+  it('creates a host continuable subagent for the secondary gate via startContinuable（prompt 携带门禁提示词 + parent=宿主主代理；whenIdle 后取输出）', async () => {
+    const { llm, fs, agents, subagents, gateEvaluator } = harness();
+    subagents.outputHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -766,31 +810,32 @@ describe('GateEvaluator', () => {
       stepSessionId: 'step-session-1',
     });
 
-    // secondary 单独建宿主子代理：无 seed、meta parentSession=宿主主代理 + origin='subagent'。
-    expect(agents.createSeeds).toEqual([undefined]);
-    expect(agents.createMetas[0]).toMatchObject({ parentSession: 'host-1', origin: 'subagent' });
-    // gateSessionId = 子代理 id（纯 UUID）。
-    expect(result.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    // 驱动一轮：followup 收到 secondary 门禁提示词（原样注入用户 prompt），whenIdle 被 await。
-    const gateAgent = agents.createdAgents[0]!;
-    expect(gateAgent.followups).toHaveLength(1);
-    const promptText = (gateAgent.followups[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    // secondary 经 startContinuable 建宿主可续接子代理：provider 缺省 'fork'、label 带
+    // step id、parent=宿主主代理（Agent 对象）、agentOptions 承载模型路由。
+    expect(subagents.starts).toHaveLength(1);
+    const spec = subagents.starts[0]!;
+    expect(spec.provider).toBe('fork');
+    expect(spec.label).toBe('gate step-a');
+    expect(spec.request.parent.id).toBe('host-1');
+    expect(spec.request.agentOptions).toEqual({ provider: 'p', model: 'm' });
+    // prompt 携带 secondary 门禁提示词（原样注入用户 prompt）。
+    const promptText = (spec.request.prompt[0] as { type: string; text: string } | undefined)?.text ?? '';
     expect(promptText).toContain('review');
+    // gateSessionId = startContinuable 返回的真实 childId（UI 可打开）。
+    expect(result.gateSessionId).toBe('child-1');
+    // 输出收集：child.session.events 的 assistant 消息 → whenIdle → finalAssistantOutput →
+    // textSummary → parseSecondaryGate。
+    const gateAgent = agents.get('child-1')!;
     expect(gateAgent.whenIdleCount).toBe(1);
-    // finalAssistantOutput → parseSecondaryGate。
     expect(result.secondaryPassed).toBe(true);
     expect(result.gatesPassed).toBe(true);
-    // 子代理路径不消费 llm.stream；评估完 dispose（live 移除）。
+    // 子代理路径不消费 llm.stream（agent loop 内模型调用由子代理自行处理）。
     expect(llm.calls).toHaveLength(0);
-    expect(agents.get(result.gateSessionId)).toBeUndefined();
   });
 
-  it('degrades to a temp session when the secondary gate agents.create throws (不失败，记 errorDetail)', async () => {
-    const { llm, fs, agents, gateEvaluator } = harness({
-      hostAgentId: 'host-1',
-      createAgent: options => agents.create(options),
-    });
-    agents.createError = new Error('gate create boom');
+  it('degrades to a temp session when the secondary gate startContinuable throws (不失败，记 errorDetail)', async () => {
+    const { llm, fs, subagents, gateEvaluator } = harness();
+    subagents.startError = new Error('gate start boom');
     llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
     fs.seedFile('/work/out/report.md');
 
@@ -802,15 +847,16 @@ describe('GateEvaluator', () => {
       stepSessionId: 'missing-session',
     });
 
-    // 降级一次性临时会话（runStream）：gateSessionId 为 eval- 句柄、errorDetail 记原因。
+    // 降级一次性临时会话（runStream）：gateSessionId 为 UUID 句柄、errorDetail 记原因。
+    expect(subagents.starts).toHaveLength(0);
     expect(result.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    expect(result.errorDetail).toContain('gate create boom');
+    expect(result.errorDetail).toContain('gate start boom');
     expect(llm.calls[0]?.sessionId).toBeUndefined();
     expect(result.gatesPassed).toBe(true);
   });
 
-  it('records a secondary gate result when secondary is enabled (single AI call)', async () => {
-    const { llm, fs, gateEvaluator } = harness();
+  it('degrades to a temp session when hostAgent is not configured (配置缺省 → runStream + errorDetail)', async () => {
+    const { llm, fs, subagents, gateEvaluator } = harness({ hostAgent: undefined });
     llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
     fs.seedFile('/work/out/report.md');
 
@@ -821,17 +867,39 @@ describe('GateEvaluator', () => {
       workdir: '/work',
     });
 
-    // primary 纯代码校验（零 AI）+ secondary AI 门禁审查 → 恰好 1 次 LLM 调用。
+    // 未注入 hostAgent → 不建子代理、直接降级临时会话（runStream）+ errorDetail。
+    expect(subagents.starts).toHaveLength(0);
+    expect(result.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.errorDetail).toContain('hostAgent not configured');
     expect(llm.calls).toHaveLength(1);
+    expect(result.gatesPassed).toBe(true);
+  });
+
+  it('records a secondary gate result when secondary is enabled (AI 走门禁子代理、不消费 llm.stream)', async () => {
+    const { llm, fs, subagents, gateEvaluator } = harness();
+    subagents.outputHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true }, secondary: { enabled: true, prompt: 'review' } },
+      workdir: '/work',
+    });
+
+    // primary 纯代码校验（零 AI）+ secondary 门禁子代理（agent loop 内模型调用）
+    // → llm.stream 零调用；startContinuable 恰好 1 次。
+    expect(subagents.starts).toHaveLength(1);
+    expect(llm.calls).toHaveLength(0);
     expect(result.primaryPassed).toBe(true);
     expect(result.secondaryPassed).toBe(true);
     expect(result.gatesPassed).toBe(true);
   });
 
   it('secondary 提示词框架：原样注入用户 prompt + 返回格式，不内置完成度/质量检查要求', async () => {
-    const { llm, fs, gateEvaluator } = harness();
+    const { llm, fs, subagents, gateEvaluator } = harness();
     const userPrompt = '核对产物是否满足门控要求';
-    llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
+    subagents.outputHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -842,7 +910,7 @@ describe('GateEvaluator', () => {
     });
 
     expect(result.gatesPassed).toBe(true);
-    const prompt = (llm.calls[0]?.messages[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    const prompt = (subagents.starts[0]?.request.prompt[0] as { type: string; text: string } | undefined)?.text ?? '';
     // 框架只注入身份 + stepContext + 用户 prompt 原样 + 返回 JSON 格式框架。
     expect(prompt).toContain(userPrompt);
     expect(prompt).toContain('"gateStatus"');
@@ -851,11 +919,57 @@ describe('GateEvaluator', () => {
     expect(prompt).not.toContain('质量');
     expect(prompt).not.toContain('基本完成');
     expect(prompt).not.toContain('完整门控审查');
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('collects the gate output via injected awaitSubagentSettlement (settle output 优先；stopReason=completed)', async () => {
+    const { llm, fs, subagents, gateEvaluator } = harness({
+      awaitSubagentSettlement: async childId => ({
+        childId,
+        stopReason: 'completed',
+        output: [{ type: 'text', text: '{"gateStatus":"done"}' }],
+      }),
+    });
+    fs.seedFile('/work/out/report.md');
+    // child 不预填输出——settle 载荷 output 携带门禁结果（覆盖 finalAssistantOutput 回退）。
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true }, secondary: { enabled: true, prompt: 'review' } },
+      workdir: '/work',
+    });
+
+    expect(result.gateSessionId).toBe('child-1');
+    expect(result.secondaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(true);
+    expect(subagents.starts).toHaveLength(1);
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('degrades to a temp session when the gate settlement is not completed (error → 进降级，记 errorDetail)', async () => {
+    const { llm, fs, gateEvaluator } = harness({
+      awaitSubagentSettlement: async childId => ({ childId, stopReason: 'error' }),
+    });
+    llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true }, secondary: { enabled: true, prompt: 'review' } },
+      workdir: '/work',
+    });
+
+    // settle stopReason !== 'completed' → awaitGateOutput 抛错 → 降级临时会话。
+    expect(result.errorDetail).toContain('settle error');
+    expect(llm.calls).toHaveLength(1);
+    expect(result.gatesPassed).toBe(true);
   });
 
   it('omits primary passed flags when primary is explicitly disabled (only secondary runs)', async () => {
-    const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
+    const { llm, fs, subagents, gateEvaluator } = harness();
+    subagents.outputHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -873,7 +987,8 @@ describe('GateEvaluator', () => {
       secondary: { enabled: true, passed: true, prompt: 'review' },
     });
     expect(result.gateDetails?.primary).not.toHaveProperty('passed');
-    expect(llm.calls).toHaveLength(1);
+    expect(subagents.starts).toHaveLength(1);
+    expect(llm.calls).toHaveLength(0);
   });
 
   // ── 缺陷 5 次要差异：primary 默认 enabled=true（对齐基准 primary?.enabled ?? true） ──
@@ -882,14 +997,10 @@ describe('GateEvaluator', () => {
   // primary 未配置即视为启用（!== false），与基准对齐。
 
   it('defaults primary to enabled when only secondary is configured (code check + secondary AI)', async () => {
-    const { llm, fs, gateEvaluator } = harness();
+    const { llm, fs, subagents, gateEvaluator } = harness();
     // 未配置 primary，仅配置 secondary → primary 默认启用（纯代码校验，零 AI），
-    // 仅 secondary 跑 1 次 AI 门禁审查（call 0 = gateStatus:done）。
-    let call = 0;
-    llm.streamHandler = () => {
-      call += 1;
-      return textChunks('{"gateStatus":"done"}');
-    };
+    // secondary 经 startContinuable 门禁子代理审查（输出 gateStatus:done）。
+    subagents.outputHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -907,7 +1018,8 @@ describe('GateEvaluator', () => {
       primary: { enabled: true, passed: true },
       secondary: { enabled: true, passed: true, prompt: 'review' },
     });
-    expect(call).toBe(1);
+    expect(subagents.starts).toHaveLength(1);
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('defaults primary to enabled when neither primary nor secondary is configured but gates object exists (code-only, zero AI)', async () => {

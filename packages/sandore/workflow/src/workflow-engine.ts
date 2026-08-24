@@ -1146,9 +1146,15 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     );
     const finalizeManager = new FinalizeManager(this.ctx, {
       ...runnerConfig,
-      // 收尾真 fork（Phase B assessForked / Phase C secondary gate）：宿主主代理的
-      // 子代理经 `agents.create` 从 step 子代理完整事件（live → 持久化 inspect）重建。
+      // 收尾真 fork（Phase B assessForked）：宿主主代理的子代理经 `agents.create` 从
+      // step 子代理完整事件（live → 持久化 inspect）重建。
       ...(runnerConfig.hostAgent === undefined ? {} : { hostAgentId: runnerConfig.hostAgent.id }),
+      // secondary 门禁 startContinuable 的 request.parent（宿主主代理 Agent 对象）。
+      ...(runnerConfig.hostAgent === undefined ? {} : { hostAgent: runnerConfig.hostAgent }),
+      // secondary 门禁 settle 终态等待（经 sandore/subagent-settled 事件路由）。
+      ...(runnerConfig.awaitSubagentSettlement === undefined ? {} : { awaitSubagentSettlement: runnerConfig.awaitSubagentSettlement }),
+      // secondary 门禁 startContinuable 的 DSH subagent provider 注册名（缺省 'fork'）。
+      ...(runnerConfig.subagentProvider === undefined ? {} : { subagentProvider: runnerConfig.subagentProvider }),
       createAgent: options => this.ctx.agents.create(options),
       getStepSessionEvents: async childId => {
         // live → 持久化回退：子代理 settle 后 live store 已移除，从 sessionPersistence

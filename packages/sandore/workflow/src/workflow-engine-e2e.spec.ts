@@ -130,6 +130,11 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: '项目名称：sandore' }]));
     agents.register(child);
+    // Phase C secondary 门禁经 startContinuable 建宿主可续接子代理（child-2）：预注册
+    // FakeAgent 并回填门禁审查输出（gateStatus done）——门禁 AI 走子代理 agent loop。
+    const gateChild = new FakeAgent('child-2');
+    gateChild.session.append(assistantMessageEvent([{ type: 'text', text: '{"gateStatus":"done","gateDetail":"项目名称已正确输出"}' }]));
+    agents.register(gateChild);
 
     // FakeLlm 响应序列：按消息内容分发
     llm.streamHandler = (options) => {
@@ -146,19 +151,6 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
       return textChunks('');
     };
 
-    // 注册 createFollowupHandler（Phase B/C 走 driveAgentRound → agents.create + followup → FakeAgent → llm.stream）
-    // Phase B assessForked：透传变量提取 + 压缩摘要
-    // Phase C secondary gate：gateStatus done
-    agents.createFollowupHandler = (content) => {
-      const text = content.map(b => (b as TextBlock).text ?? '').join('');
-      // Phase C secondary gate：返回 gateStatus done
-      if (text.includes('gateStatus') || text.includes('门禁')) {
-        return [{ type: 'text', text: '{"gateStatus":"done","gateDetail":"项目名称已正确输出"}' }];
-      }
-      // Phase B assessForked：返回透传变量 + 压缩摘要
-      return [{ type: 'text', text: '{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"【任务要求】输出项目名称\\n【执行过程】直接输出\\n【最终成果】项目名称：sandore"}' }];
-    };
-
     // 收集 step-phase 事件
     const phaseEvents: Array<{ stepId: string; phase: string }> = [];
     ctx.on('sandore/step-phase', (...args: unknown[]) => {
@@ -172,9 +164,9 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
     await ended;
 
     // 断言 1：完整事件序列（基础身份字段，从 state 的 Result 读一切详情）
-    // 注：prompt step 走子代理路径，Phase A assess 走 llm.stream，
-    // Phase B assessForked 走 driveAgentRound（agents.create + followup），
-    // Phase C secondary gate 走 driveAgentRound（agents.create + followup）。
+    // 注：prompt step 走可续接子代理路径，Phase A assess 走 llm.stream，
+    // Phase B assessForked 降级 llm.stream（child 无事件源），
+    // Phase C secondary gate 经 startContinuable 子代理 settle 取输出。
     // 门禁通过后执行 Phase D routing，然后 completed。
     // 序列：[finalizing → gating → gating → routing → completed]
     expect(phaseEvents.map(e => e.phase)).toEqual([
@@ -191,7 +183,7 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
     expect(stepEntry.finalizeMeta?.assessResult?.status).toBe('done');
     expect(stepEntry.finalizeMeta?.assessResult?.forkSessionId).toBeTruthy(); // 真实 UUID
     expect(stepEntry.finalizeMeta?.gateResult?.status).toBe('done');
-    expect(stepEntry.finalizeMeta?.gateResult?.gateSessionId).toBeTruthy(); // 真实 UUID
+    expect(stepEntry.finalizeMeta?.gateResult?.gateSessionId).toBe('child-2'); // 真实子代理 id（startContinuable）
 
     // 断言 3：透传变量提取
     expect(persistence.state.get(run.instanceId)!.passThroughVars['projectName']).toEqual({
@@ -214,6 +206,11 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: '项目名称：sandore' }]));
     agents.register(child);
+    // Phase C secondary 门禁经 startContinuable 建宿主可续接子代理（child-2）：预注册
+    // FakeAgent 并回填门禁审查输出（gateStatus error——门禁失败分支）。
+    const gateChild = new FakeAgent('child-2');
+    gateChild.session.append(assistantMessageEvent([{ type: 'text', text: '{"gateStatus":"error","gateDetail":"项目名称不匹配"}' }]));
+    agents.register(gateChild);
 
     // FakeLlm 响应序列：按消息内容分发（门禁失败）
     llm.streamHandler = (options) => {
@@ -228,19 +225,6 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
       }
       // 兜底
       return textChunks('');
-    };
-
-    // 注册 createFollowupHandler（Phase B/C 走 driveAgentRound → agents.create + followup → FakeAgent → llm.stream）
-    // Phase B assessForked：透传变量提取 + 压缩摘要
-    // Phase C secondary gate：gateStatus error（失败）
-    agents.createFollowupHandler = (content) => {
-      const text = content.map(b => (b as TextBlock).text ?? '').join('');
-      // Phase C secondary gate：返回 gateStatus error（失败）
-      if (text.includes('gateStatus') || text.includes('门禁')) {
-        return [{ type: 'text', text: '{"gateStatus":"error","gateDetail":"项目名称不匹配"}' }];
-      }
-      // Phase B assessForked：返回透传变量 + 压缩摘要
-      return [{ type: 'text', text: '{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"【任务要求】输出项目名称\\n【执行过程】直接输出\\n【最终成果】项目名称：sandore"}' }];
     };
 
     // 收集 step-phase 事件
