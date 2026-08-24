@@ -91,6 +91,7 @@ function makeAgent(id: string): Agent {
     inbox: { hasPending: false },
     status: 'idle',
     ctx: undefined,
+    followup: () => {},
     whenIdle: async () => {},
   };
 }
@@ -375,7 +376,7 @@ describe('RecoveryManager.retryStep revert mode', () => {
     expect(harness.creates[0]?.meta?.seedLength).toBe(2);
 
     const newChildId = harness.creates[0]?.sessionId;
-    expect(newChildId).toMatch(/^step-step-1-[0-9a-f]{8}$/);
+    expect(newChildId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     const step = newSegmentOf(harness.getState());
     expect(step?.sessionMeta?.childId).toBe(newChildId);
     expect(step?.sessionMeta?.synthetic).toBe(false);
@@ -600,6 +601,6 @@ describe('RecoveryManager.recover', () => {
 
 describe('synthesizeChildId', () => {
   it('produces the step-prefixed 8-hex childId shape', () => {
-    expect(synthesizeChildId('step-1')).toMatch(/^step-step-1-[0-9a-f]{8}$/);
+    expect(synthesizeChildId('step-1')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 });

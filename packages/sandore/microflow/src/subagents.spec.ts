@@ -183,7 +183,6 @@ describe('FinalizeMetaSchema', () => {
       currentPhase: 'completed',
       assessSessionId: 'fork-1',
       assessResult: {
-        hasAsk: false,
         passThroughVars: { projectName: 'sandore' },
         forkSessionId: 'fork-1',
         assessmentRaw: 'raw',
@@ -197,9 +196,10 @@ describe('FinalizeMetaSchema', () => {
       gateSessionId: 'gate-1',
     });
     expect(parsed.currentPhase).toBe('completed');
-    expect(parsed.assessSessionId).toBe('fork-1');
-    expect(parsed.gateSessionId).toBe('gate-1');
-    expect(parsed.assessResult).toMatchObject({ forkSessionId: 'fork-1', hasAsk: false });
+    // Round 17：顶层 assessSessionId/gateSessionId 已删除，sessionId 从 Result 内读
+    expect(parsed.assessSessionId).toBeUndefined();
+    expect(parsed.gateSessionId).toBeUndefined();
+    expect(parsed.assessResult).toMatchObject({ forkSessionId: 'fork-1' });
     expect(parsed.gateResult).toMatchObject({ gatesPassed: true });
   });
 

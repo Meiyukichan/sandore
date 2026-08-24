@@ -10,6 +10,7 @@ import { SandoreError, isFatalSandoreError } from './errors.ts'
 import { sandoreDomainSpec } from './domain.ts'
 import {
   CommandConfigSchema,
+  FinalizeMetaSchema,
   StepSessionMetaSchema,
   WorkflowDefinitionRecordSchema,
   WorkflowDefinitionSchema,
@@ -101,7 +102,7 @@ describe('WorkflowTaskStateSchema', () => {
     status: 'completed' as const,
     visitCount: 1,
     command: { type: 'shell' as const, value: { command: 'echo hi' } },
-    sessionMeta: { childId: `step-${id}-abc12345`, synthetic: true, command: 'shell' as const },
+    sessionMeta: { childId: '0618d2fc-7503-48fa-a1c4-42ddb5c5a8cc', synthetic: true, command: 'shell' as const },
     output: [{ type: 'text', text: 'hi' }],
   })
 
@@ -208,8 +209,8 @@ describe('WorkflowTaskStateSchema', () => {
 
 describe('StepSessionMetaSchema', () => {
   it('validates the synthetic placeholder shape', () => {
-    const meta = StepSessionMetaSchema.parse({ childId: 'step-step-1-abc12345', synthetic: true, command: 'shell' })
-    expect(meta).toEqual({ childId: 'step-step-1-abc12345', synthetic: true, command: 'shell' })
+    const meta = StepSessionMetaSchema.parse({ childId: '0618d2fc-7503-48fa-a1c4-42ddb5c5a8cc', synthetic: true, command: 'shell' })
+    expect(meta).toEqual({ childId: '0618d2fc-7503-48fa-a1c4-42ddb5c5a8cc', synthetic: true, command: 'shell' })
   })
 
   it('accepts an optional hostSessionId', () => {
@@ -237,5 +238,66 @@ describe('storage layer', () => {
       updatedAt: 't',
     }
     expect(() => WorkflowDefinitionRecordSchema.parse(record)).toThrow(z.ZodError)
+  })
+})
+
+describe('FinalizeMetaSchema（收尾四阶段 currentPhase + previousPhase + assessResult.compressedOutput）', () => {
+  it('accepts Phase D routing as currentPhase (FinalizePhase 含 routing)', () => {
+    const parsed = FinalizeMetaSchema.parse({ currentPhase: 'routing' })
+    expect(parsed.currentPhase).toBe('routing')
+  })
+
+  it('accepts all five finalize phases (ask-detect/finalizing/gating/routing/completed)', () => {
+    for (const phase of ['ask-detect', 'finalizing', 'gating', 'routing', 'completed']) {
+      expect(FinalizeMetaSchema.parse({ currentPhase: phase }).currentPhase).toBe(phase)
+    }
+  })
+
+  it('rejects an unknown currentPhase', () => {
+    expect(() => FinalizeMetaSchema.parse({ currentPhase: 'unknown-phase' })).toThrow(z.ZodError)
+  })
+
+  // Bug 1: previousPhase 字段测试。
+  it('accepts previousPhase as optional (Bug 1 阶段流转痕迹)', () => {
+    const parsed = FinalizeMetaSchema.parse({ currentPhase: 'completed', previousPhase: 'routing' })
+    expect(parsed.currentPhase).toBe('completed')
+    expect(parsed.previousPhase).toBe('routing')
+  })
+
+  it('accepts all five previousPhase values', () => {
+    for (const phase of ['ask-detect', 'finalizing', 'gating', 'routing', 'completed']) {
+      expect(FinalizeMetaSchema.parse({ currentPhase: 'completed', previousPhase: phase }).previousPhase).toBe(phase)
+    }
+  })
+
+  it('rejects an unknown previousPhase', () => {
+    expect(() => FinalizeMetaSchema.parse({ currentPhase: 'completed', previousPhase: 'bad' })).toThrow(z.ZodError)
+  })
+
+  it('omits previousPhase when not present (旧记录兼容)', () => {
+    const parsed = FinalizeMetaSchema.parse({ currentPhase: 'completed' })
+    expect(parsed.previousPhase).toBeUndefined()
+  })
+
+  it('accepts assessResult with compressedOutput (Phase B 合并 JSON 持久化)', () => {
+    const parsed = FinalizeMetaSchema.parse({
+      currentPhase: 'completed',
+      assessSessionId: '0618d2fc-7503-48fa-a1c4-42ddb5c5a8cc',
+      assessResult: {
+        passThroughVars: { projectName: 'sandore' },
+        compressedOutput: '压缩摘要',
+        forkSessionId: '0618d2fc-7503-48fa-a1c4-42ddb5c5a8cc',
+        assessmentRaw: '{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"压缩摘要"}',
+      },
+    })
+    expect(parsed.assessResult?.compressedOutput).toBe('压缩摘要')
+  })
+
+  it('treats compressedOutput as optional (旧持久化记录兼容)', () => {
+    const parsed = FinalizeMetaSchema.parse({
+      currentPhase: 'ask-detect',
+      askResult: { hasAsk: true, passThroughVars: {}, forkSessionId: '0618d2fc-7503-48fa-a1c4-42ddb5c5a8cc', assessmentRaw: 'raw' },
+    })
+    expect(parsed.askResult?.compressedOutput).toBeUndefined()
   })
 })

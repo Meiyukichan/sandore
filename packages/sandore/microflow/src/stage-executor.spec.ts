@@ -123,7 +123,8 @@ function harness(): {
   subagents: FakeSubagents;
   subprocess: FakeSubprocess;
   fs: FakeFs;
-  makeExecutor: (options?: Partial<StageExecutorOptions>) => StageExecutor;
+  agents: FakeAgentRegistry;
+  makeExecutor: (options?: Partial<StageExecutorOptions>, finalizeConfig?: FinalizeManagerConfig) => StageExecutor;
 } {
   const ctx = new Context();
   const llm = new FakeLlm();
@@ -131,14 +132,16 @@ function harness(): {
   const subagents = new FakeSubagents();
   const subprocess = new FakeSubprocess();
   const fs = new FakeFs();
+  const agents = new FakeAgentRegistry();
   ctx.provide('llm', llm as unknown as LlmRuntime);
   ctx.provide('shell', shell);
   ctx.provide('subagents', subagents);
   ctx.provide('subprocess', subprocess);
   ctx.provide('sessions', {} as unknown as SessionStore);
+  ctx.provide('agents', agents);
   ctx.provide('fs', fs as unknown as FileSystem);
 
-  const makeExecutor = (options?: Partial<StageExecutorOptions>): StageExecutor => {
+  const makeExecutor = (options?: Partial<StageExecutorOptions>, finalizeConfig?: FinalizeManagerConfig): StageExecutor => {
     const { definition, stage } = singleShellDefinition();
     const stageDef = options?.stageDef ?? stage;
     const workflowDef = options?.workflowDef ?? definition;
@@ -147,7 +150,12 @@ function harness(): {
     // 不再经 options 注入 resolveNextNodes。
     const stepNavigator = new StepNavigator(ctx, { defaultTimeoutMs: 60000 }, loopState, stageDef, workflowDef);
     const loopManager = stepNavigator.loopManagerInstance;
-    const config: FinalizeManagerConfig = { defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' };
+    const config: FinalizeManagerConfig = {
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      ...(finalizeConfig ?? {}),
+    };
     const finalizeManager = new FinalizeManager(ctx, config);
     const runnerConfig: StepRunnerConfig = { defaultTimeoutMs: 60000 };
     return new StageExecutor({
@@ -160,6 +168,7 @@ function harness(): {
       loopManager,
       stepNavigator,
       finalizeManager,
+      ...(options?.hooks === undefined ? {} : { hooks: options.hooks }),
       ...(options?.concurrencyLimiter === undefined ? {} : { concurrencyLimiter: options.concurrencyLimiter }),
       visitCounts: {},
       ...(options?.resumeFrom === undefined ? {} : { resumeFrom: options.resumeFrom }),
@@ -167,7 +176,7 @@ function harness(): {
     });
   };
 
-  return { ctx, llm, shell, subagents, subprocess, fs, makeExecutor };
+  return { ctx, llm, shell, subagents, subprocess, fs, agents, makeExecutor };
 }
 
 describe('StageExecutor 段模型不变量', () => {
@@ -229,7 +238,7 @@ describe('StageExecutor 段模型不变量', () => {
     const segment = result.executedSteps[0]!;
     // shell 为合成会话：childId 是 step-{stepId}-{hex} 占位，与段 id（UUID）不同。
     expect(segment.sessionMeta?.synthetic).toBe(true);
-    expect(segment.sessionMeta?.childId).toMatch(/^step-step-sh-[0-9a-f]{8}$/);
+    expect(segment.sessionMeta?.childId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(segment.sessionMeta?.childId).not.toBe(segment.id);
   });
 
@@ -273,13 +282,11 @@ describe('StageExecutor 段模型不变量', () => {
         childId: 'child-1',
       }],
     };
-    const { ctx, makeExecutor } = harness();
+    const { agents, makeExecutor } = harness();
     // 注册续跑的子代理（whenIdle 后取 final output）。
-    const agents = new FakeAgentRegistry();
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'resumed output' }]));
     agents.register(child);
-    ctx.provide('agents', agents);
 
     const executor = makeExecutor({
       stageDef: stage,
@@ -375,16 +382,14 @@ describe('StageExecutor 缺陷 7：解析并注入任务规则', () => {
 
   it('processCommandNode 解析 3 级合并 rules 并经 StepRunRequest 注入提示词 ## 任务规则', async () => {
     const { definition, stage } = rulesDefinition();
-    const { ctx, llm, subagents, makeExecutor } = harness();
+    const { llm, subagents, agents, makeExecutor } = harness();
     // prompt Step 走可续接子代理（决策 D3）：provider/model 走 llm 目录（L3）兜底，
     // 注册真实 childId 并回填最终输出。
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    const agents = new FakeAgentRegistry();
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'report content' }]));
     agents.register(child);
-    ctx.provide('agents', agents);
 
     const executor = makeExecutor({ stageDef: stage, workflowDef: definition });
     const result = await executor.execute();
@@ -413,15 +418,13 @@ describe('StageExecutor 缺陷 7：解析并注入任务规则', () => {
       ...definition,
       steps: [promptStep],
     };
-    const { ctx, llm, subagents, makeExecutor } = harness();
+    const { llm, subagents, agents, makeExecutor } = harness();
     // prompt Step 走可续接子代理：provider/model 走 llm 目录（L3）兜底，注册真实 childId。
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    const agents = new FakeAgentRegistry();
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
     agents.register(child);
-    ctx.provide('agents', agents);
 
     const executor = makeExecutor({ stageDef: stage, workflowDef: promptDef });
     const result = await executor.execute();
@@ -495,8 +498,8 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     expect(result.stageContract.contractArtifacts).toEqual({});
   });
 
-  // 功能点 ②：finalize 提示词 <artifacts> 块含当前 Step 产物（context.artifacts 填充）
-  it('finalize 门禁提示词 <artifacts> 块含当前 Step 产物（context.artifacts 填充，缺陷 16）', async () => {
+  // 功能点 ②：finalize 评估提示词 <artifacts> 块含当前 Step 产物（context.artifacts 填充）
+  it('finalize 评估提示词 <artifacts> 块含当前 Step 产物（缺陷 16；primary 门禁零 AI）', async () => {
     const { definition, stage } = singleShellDefinition();
     const stepWithGates: WorkflowStep = {
       id: 'step-sh',
@@ -508,29 +511,21 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     };
     const def: WorkflowDefinition = { ...definition, steps: [stepWithGates] };
     const { llm, fs, shell, makeExecutor } = harness();
-    let call = 0;
-    llm.streamHandler = () => {
-      call += 1;
-      // calls: [1] Phase A assess（needsAssess=true 因 ${v}）, [2] Phase B 重新评估
-      // （偏离 2：不复用 Phase A 结果，重新 fork + assess）, [3] primary gate
-      if (call === 1 || call === 2) return textChunks('{"completionType":"completed","passThroughVars":{}}');
-      return textChunks('{"taskStatus":"done"}');
-    };
+    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
     shell.runHandler = async () => ({ exitCode: 0, stdout: 'hi', stderr: '' });
     fs.seedFile('/tmp/out/report.md');
 
     const executor = makeExecutor({ stageDef: stage, workflowDef: def });
-    await executor.execute();
+    const result = await executor.execute();
 
-    // shell 无 prompt stream → calls = [Phase A assess, Phase B 重新 assess, gate]
-    expect(llm.calls).toHaveLength(3);
+    // shell 无 prompt stream → calls = [Phase A assess, Phase B 重新 assess]；
+    // primary 门禁为纯代码产物校验（零 AI）——不再有第 3 次门禁 AI 调用，产物存在即通过。
+    expect(result.status).toBe('completed');
+    expect(llm.calls).toHaveLength(2);
     // Phase B 重新评估提示词同样含 <artifacts> 块（缺陷 16：收尾评估上下文带产物）。
     const phaseBAssessPrompt = textOf(llm.calls[1]?.messages[0]?.content[0]);
     expect(phaseBAssessPrompt).toContain('<artifacts>');
     expect(phaseBAssessPrompt).toContain('/tmp/out/report.md');
-    const gatePrompt = textOf(llm.calls[2]?.messages[0]?.content[0]);
-    expect(gatePrompt).toContain('<artifacts>');
-    expect(gatePrompt).toContain('/tmp/out/report.md');
   });
 
   // 功能点 ③：toPreviousOutput files 非空（前置产物 <artifacts> 块）
@@ -547,16 +542,14 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     };
     const twoStepStage: WorkflowStage = { ...stage, steps: [{ id: 'step-a' }, { id: 'step-b' }] };
     const twoStepDef: WorkflowDefinition = { ...definition, stages: [twoStepStage], steps: [stepA, stepB] };
-    const { ctx, llm, subagents, shell, fs, makeExecutor } = harness();
+    const { llm, subagents, shell, fs, agents, makeExecutor } = harness();
     // prompt Step（step-b）走可续接子代理：provider/model 走 llm 目录（L3）兜底，
     // 注册真实 childId 并回填最终输出。
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    const agents = new FakeAgentRegistry();
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
     agents.register(child);
-    ctx.provide('agents', agents);
     shell.runHandler = async () => ({ exitCode: 0, stdout: 'done', stderr: '' });
     fs.seedFile('/tmp/out/report.md');
 
@@ -597,13 +590,11 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
         childId: 'child-1',
       }],
     };
-    const { ctx, llm, fs, makeExecutor } = harness();
+    const { llm, fs, agents, makeExecutor } = harness();
     // 注册续跑的子代理（whenIdle 后取 final output）。
-    const agents = new FakeAgentRegistry();
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'resumed output' }]));
     agents.register(child);
-    ctx.provide('agents', agents);
     fs.seedFile('/tmp/out/report.md');
 
     const executor = makeExecutor({ stageDef: stage, workflowDef: definition, resumeFrom });
@@ -823,20 +814,18 @@ function parallelAgentDefinition(): { definition: WorkflowDefinition; stage: Wor
 describe('StageExecutor 补充 37：SessionIdleWaiter 多 child 并发', () => {
   it('multiple agent subagents run concurrently (Promise.all(whenIdle) aggregated at runLoop)', async () => {
     const { definition, stage } = parallelAgentDefinition();
-    const { ctx, llm, subagents, shell, makeExecutor } = harness();
+    const { llm, subagents, shell, agents, makeExecutor } = harness();
     // agent step 的 runAgentStep 需 resolveProviderModel → 配置 llm providers/models。
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
 
     // 注册两个子代理，各自携带 assistant 输出（startContinuable 按 index 返回 child-1/child-2）。
-    const agents = new FakeAgentRegistry();
     const child1 = new FakeAgent('child-1');
     child1.session.append(assistantMessageEvent([{ type: 'text', text: 'output A' }]));
     const child2 = new FakeAgent('child-2');
     child2.session.append(assistantMessageEvent([{ type: 'text', text: 'output B' }]));
     agents.register(child1);
     agents.register(child2);
-    ctx.provide('agents', agents);
 
     // step-end 的 shell handler（默认 FakeShell 无 handler → 抛错；需设置）。
     shell.runHandler = async () => ({ exitCode: 0, stdout: 'end', stderr: '' });
@@ -884,18 +873,176 @@ describe('StageExecutor 5 阶段收尾（4.6/4.7：Phase A ask 保底 → Phase 
     expect(first.status).toBe('interacting');
     expect(first.executedSteps[0]?.status).toBe('running');
     // Phase A 中断快照：currentPhase='ask-detect'，顶层 assessSessionId 不记录
-    // （fork 用完即删不持久化；Phase B 收尾才落 assessSessionId）。
+    // （临时会话用完即删不持久化；Phase B 收尾才落 assessSessionId）。
     expect(first.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('ask-detect');
     expect(first.executedSteps[0]?.finalizeMeta?.assessSessionId).toBeUndefined();
-    expect(first.executedSteps[0]?.finalizeMeta?.assessResult?.hasAsk).toBe(true);
+    expect(first.executedSteps[0]?.finalizeMeta?.askResult?.hasAsk).toBe(true);
 
-    // 回答后再次 execute：resumePendingAsk（shell 无新 output）→ Phase B 重新 fork +
-    // 重新 assess（finalizeMeta currentPhase='finalizing'）→ Phase C（无门禁 ok）→ 完成。
+    // 回答后再次 execute：resumePendingAsk（shell 无新 output）→ Phase B 真 fork
+    // 子代理重新评估（finalizeMeta currentPhase='finalizing'）→ Phase C（无门禁 ok）→ 完成。
     const second = await executor.execute();
     expect(second.status).toBe('completed');
     expect(second.executedSteps[0]?.status).toBe('completed');
     expect(second.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('completed');
-    // Phase B 起持久化 assessSessionId（评估 fork id）。
-    expect(second.executedSteps[0]?.finalizeMeta?.assessSessionId).toMatch(/^eval-/);
+    // Phase B 起持久化 assessSessionId（评估 fork id；shell 合成会话无事件源 → 降级 eval- 句柄）。
+    // Round 17：顶层 assessSessionId 已删除，sessionId 从 assessResult.forkSessionId 内读
+    expect(second.executedSteps[0]?.finalizeMeta?.assessResult?.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+});
+
+// ── 收尾真 fork（Phase A 临时会话 / Phase B agents.create 重建宿主子代理） ─────────
+
+describe('StageExecutor 收尾真 fork（5 阶段收尾重构）', () => {
+  /** 组装单 agent Step（未解析透传变量 → Phase A + Phase B 均跑评估）。 */
+  function agentFinalizeDefinition(): { definition: WorkflowDefinition; stage: WorkflowStage; step: WorkflowStep } {
+    const step: WorkflowStep = {
+      id: 'step-a',
+      name: 'agent',
+      command: { type: 'agent', value: { promptText: 'do work' } },
+      passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+    };
+    const stage: WorkflowStage = { id: 'stg-1', name: 'Stage 1', steps: [{ id: 'step-a' }] };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-agent-finalize', name: 'wfl-agent-finalize', version: '1', stages: [stage], steps: [step], settings: {},
+    };
+    return { definition, stage, step };
+  }
+
+  /** 源子代理完整事件（turn 0 闭合：start/user/assistant/end）。 */
+  function childEvents(): Array<{ type: string; seq: number; time: number; data: unknown }> {
+    return [
+      { type: 'turn/start', seq: 0, time: 0, data: { turn: 0 } },
+      { type: 'user/message', seq: 1, time: 0, data: { id: 'u1', content: [{ type: 'text', text: 'do work' }] } },
+      { type: 'assistant/message', seq: 2, time: 0, data: { turn: 0, step: 0, message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'agent work output' }], source: { kind: 'model', provider: 'p', model: 'm' } } } },
+      { type: 'turn/end', seq: 3, time: 0, data: { turn: 0, reason: { kind: 'completed' } } },
+    ];
+  }
+
+  it('Phase B 真 fork：agents.create 收到 seed=完整事件 + meta.parentSession=宿主主代理 + origin=subagent；透传变量在 Phase B 回写；compressedOutput 落 previousOutputs；Phase D routing 落盘', async () => {
+    // 两步工作流：step-a（agent + 未解析透传变量，Phase B 真 fork）→ step-b（prompt，
+    // 引用前置输出——验证 compressedOutput 经 previousOutputs 进入 step-b 提示词）。
+    const stepA: WorkflowStep = {
+      id: 'step-a',
+      name: 'agent',
+      command: { type: 'agent', value: { promptText: 'do work' } },
+      passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+    };
+    const stepB: WorkflowStep = {
+      id: 'step-b',
+      name: 'consume',
+      command: { type: 'prompt', value: { promptText: 'review previous' } },
+    };
+    const stage: WorkflowStage = { id: 'stg-1', name: 'Stage 1', steps: [{ id: 'step-a' }, { id: 'step-b' }] };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-fork-b2', name: 'wfl-fork-b2', version: '1', stages: [stage], steps: [stepA, stepB], settings: {},
+    };
+    const { llm, subagents, agents, makeExecutor } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Phase A 评估临时会话（llm.stream：completed JSON；Phase A 不写回透传变量）。
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+    // agent Step（step-a）的执行子代理（child-1，输出 'agent work output'）。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'agent work output' }]));
+    agents.register(child);
+    // step-b 的执行子代理（child-2）。
+    const childB = new FakeAgent('child-2');
+    childB.session.append(assistantMessageEvent([{ type: 'text', text: 'review done' }]));
+    agents.register(childB);
+    // Phase B 真 fork 的评估回复（一个 LLM 调用返回合并 JSON：passThroughVars + compressedOutput）。
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"agent 压缩摘要"}' }];
+    // 记录收尾阶段流转（Phase B finalizing → Phase D routing → completed）。
+    const phases: Array<{ stepId: string; phase: string }> = [];
+
+    const executor = makeExecutor(
+      {
+        stageDef: stage,
+        workflowDef: definition,
+        hooks: {
+          onStepStart: () => {},
+          onStepCompleted: () => {},
+          onStepFailed: () => {},
+          onPhaseChange: (step, _childId, phase) => phases.push({ stepId: step.id, phase }),
+        },
+      },
+      {
+        defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm',
+        hostAgentId: 'host-1',
+        createAgent: options => agents.create(options),
+        getStepSessionEvents: async childId => (childId === 'child-1' ? childEvents() : undefined),
+      },
+    );
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    // Phase B 真 fork：agents.create 收到 seed = 完整事件 + meta（parentSession=宿主主代理、
+    // origin='subagent'、seedLength=4、cwd=/tmp）。
+    expect(agents.createSeeds).toHaveLength(1);
+    expect(agents.createSeeds[0]).toEqual(childEvents());
+    expect(agents.createMetas[0]).toEqual({ cwd: '/tmp', parentSession: 'host-1', seedLength: 4, origin: 'subagent' });
+    // 合成 fork 会话 id：纯 UUID（globalThis.crypto.randomUUID()）。
+    const segment = result.executedSteps.find(s => s.stepId === 'step-a')!;
+    // Round 17：顶层 assessSessionId 已删除，sessionId 从 assessResult.forkSessionId 内读
+    expect(segment.finalizeMeta?.assessResult?.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // 驱动一轮：followup 收到收尾处理提示词（含 compressedOutput 格式）、whenIdle 被 await。
+    const forkedAgent = agents.createdAgents[0]!;
+    expect(forkedAgent.followups).toHaveLength(1);
+    expect(forkedAgent.whenIdleCount).toBe(1);
+    // Phase B 真 fork 子代理不消费 llm.stream → 仅 Phase A 临时会话 1 次调用。
+    expect(llm.calls).toHaveLength(1);
+    // 评估完 dispose：live 移除。
+    expect(agents.get(segment.finalizeMeta!.assessResult!.forkSessionId)).toBeUndefined();
+    // 透传变量回写（保留 description）——阶段契约与累加器均落账。
+    expect(result.passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
+    expect(result.stageContract.passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
+    // Phase B JSON 的 compressedOutput 经 previousOutputs 落入 step-b 的提示词
+    // （「## 前置Steps输出与产物」的 returnPrompt，替代原 compressStepOutput）。
+    // step-a（agent）为第 1 个 startContinuable（child-1），step-b（prompt）为第 2 个。
+    const stepBPrompt = textOf(subagents.continuableStarts[1]?.request.prompt[0]);
+    expect(stepBPrompt).toContain('## 前置Steps输出与产物');
+    expect(stepBPrompt).toContain('agent 压缩摘要');
+    // 收尾阶段流转：step-a finalizing（进入 Phase B 先 commit 快照）→ finalizing（Phase B 完成后 commit）
+    // → routing（Phase D）→ completed；step-b 无变量无门禁跳过收尾。
+    expect(phases).toEqual([
+      { stepId: 'step-a', phase: 'finalizing' },
+      { stepId: 'step-a', phase: 'finalizing' },
+      { stepId: 'step-a', phase: 'routing' },
+      { stepId: 'step-a', phase: 'completed' },
+    ]);
+  });
+
+  it('Phase B 事件源缺失（shell 合成会话）→ 降级临时会话并记 errorDetail（不失败）', async () => {
+    const { definition, stage } = agentFinalizeDefinition();
+    const { llm, agents, makeExecutor } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Phase A + Phase B 降级均走 llm.stream（两段 completed JSON）。
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'agent work output' }]));
+    agents.register(child);
+
+    const executor = makeExecutor(
+      { stageDef: stage, workflowDef: definition },
+      {
+        defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm',
+        hostAgentId: 'host-1',
+        createAgent: options => agents.create(options),
+        // 无事件源（child-1 未登记/合成会话）→ assessForked 降级临时会话。
+        getStepSessionEvents: async () => undefined,
+      },
+    );
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    // 无 agents.create（forkStepSubagent 在取事件处即降级）。
+    expect(agents.createSeeds).toHaveLength(0);
+    const segment = result.executedSteps[0]!;
+    // 降级后 forkSessionId 为纯 UUID 句柄，assessResult.errorDetail 记降级原因。
+    // Round 17：顶层 assessSessionId 已删除，sessionId 从 assessResult.forkSessionId 内读
+    expect(segment.finalizeMeta?.assessResult?.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(segment.finalizeMeta?.assessResult?.errorDetail).toContain('no event source');
+    // Phase A + Phase B 降级 = 2 次 llm.stream。
+    expect(llm.calls).toHaveLength(2);
   });
 });

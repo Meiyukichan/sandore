@@ -1,13 +1,11 @@
 /**
- * InstanceList：默认态工作流实例列表（按工作区分组 + 3s 轮询 + 三态）。
+ * InstanceList：默认态工作流实例列表（按工作区分组 + 事件驱动刷新 + 30s 低频兜底）。
  *
  * 经 `listInstances()` 拉取实例摘要，`useWorkspaces` 的 `WorkspaceView[].sessionIds`
- * 成员表把实例按归属分组（instanceId 命中即归组，未命中归「未分组」）；打开期间
- * 每 3s 递归 setTimeout 刷新（组件卸载即清理停止）。列表呈现三态：loading（加载中）、
- * empty（空态引导）、error（RPC 失败提示 + 重试）。点击实例行经 `onOpen` 下钻 RunView；
- * 每行删除按钮弹确认框，确认后 `deleteInstance(instanceId)`（state 表行级删除），
- * 成功本地移除、失败内联呈现错误。
- * 分组派生与关键词过滤抽至 `panel-model.ts`（纯函数，可单测）。
+ * 成员表把实例按归属分组（instanceId 命中即归组，未命中归「未分组」）。
+ * Round 12：去除 1.5s 递归 setTimeout 轮询，改为：
+ * ① 挂载立即拉取 ② visibilitychange + focus 恢复刷新 ③ 用户操作后立即刷新
+ * ④ 30s setInterval 超低频兜底（组件卸载清理）。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/InstanceList
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -22,10 +20,12 @@ import { describeError } from './describe-error.ts'
 import { runDotState } from './run-view-model.ts'
 import type { DagRunStatus } from './run-view-model.ts'
 import type { SandoreKey } from './locales.ts'
+import { subscribeSandoreSse } from './sandore-sse.ts'
+import { useFocusRefresh } from './use-focus-refresh.ts'
 import css from './WorkflowPanel.module.css'
 
-/** 实例列表轮询间隔（毫秒）：1.5s 平衡及时性与 RPC 频率。 */
-const POLL_INTERVAL_MS = 1500
+/** Round 12：30s 超低频兜底轮询间隔（焦点/可见性事件为主要刷新源）。 */
+const STALE_POLL_MS = 30000
 
 /** 7 态实例生命周期状态词汇（用于把 wire 侧 string 安全收窄为 DagRunStatus）。 */
 const DAG_RUN_STATUSES: readonly string[] = ['pending', 'running', 'interacting', 'completed', 'failed', 'aborted', 'paused']
@@ -116,8 +116,7 @@ export function InstanceList({ t, workspaces, query, activeId, listInstances, de
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | undefined>(undefined)
 
-  // 轮询定时器与卸载标记：打开期间每 3s 刷新一次，卸载/收起面板即清理停止。
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // Round 12：卸载标记（焦点/可见性回调中检查）。
   const disposedRef = useRef(false)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -129,28 +128,28 @@ export function InstanceList({ t, workspaces, query, activeId, listInstances, de
     }
   }, [listInstances])
 
-  const refreshAndSchedule = useCallback(async (): Promise<void> => {
-    await refresh()
-    if (disposedRef.current) return
-    if (timerRef.current === undefined) {
-      timerRef.current = setTimeout(() => {
-        timerRef.current = undefined
-        void refreshAndSchedule()
-      }, POLL_INTERVAL_MS)
-    }
-  }, [refresh])
+  // Round 12：焦点/可见性恢复刷新（替代递归 setTimeout）
+  useFocusRefresh(refresh)
 
   useEffect(() => {
     disposedRef.current = false
-    void refreshAndSchedule()
+    // 首次挂载立即拉取
+    void refresh()
+    // 30s 超低频兜底（异常恢复）
+    const timer = setInterval(() => { void refresh() }, STALE_POLL_MS)
     return () => {
       disposedRef.current = true
-      if (timerRef.current !== undefined) {
-        clearTimeout(timerRef.current)
-        timerRef.current = undefined
-      }
+      clearInterval(timer)
     }
-  }, [refreshAndSchedule])
+  }, [refresh])
+
+  // SSE 事件通道订阅：引擎 `/sandore/events` 推送即时刷新实例列表。
+  useEffect(() => {
+    return subscribeSandoreSse((_type, _data) => {
+      if (disposedRef.current) return
+      void refresh()
+    })
+  }, [refresh])
 
   /** 删除实例：调 `deleteInstance`（state 表行级删除），成功本地移除、失败内联呈现。 */
   const runDelete = async (instanceId: string): Promise<void> => {

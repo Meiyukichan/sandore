@@ -4,13 +4,13 @@
  * multica Issue 评论流 × DSH 多 agent 对话流：用户输入 = 右侧气泡；每个
  * executedStep = 一条 agent 消息（左对齐，头像 + 可点击标题 → openSession 打开
  * DSH 现成子代理会话页 + 相对时间 + 状态图标）。正文按状态呈现：
- * completed → md 渲染块（MessageText，原型 .md 样式）；running/interacting 与
+ * completed → md 渲染块（MarkdownText，原型 .md 样式）；running/interacting 与
  * failed/paused（真实子代理会话）→ 内嵌 DSH 对话流（StepChatPanel，最新 10 条，
  * 无边框平铺，风格与运行中完全一致）；failed/paused 无真实会话（shell 等合成
  * 会话）→ 最近 5 条消息列表兜底（末条按失败/暂停色）。旧实例无时间戳时头部省略时间。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/UnifiedTimeline
  */
-import { IconSparkle16, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSparkle16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { useState } from 'react'
 
@@ -32,15 +32,20 @@ const STEP_STATUS_KEYS: Record<StepStatus, SandoreKey> = {
   paused: 'run.step.status.paused',
 }
 
-/** 收尾阶段（finalizeMeta.currentPhase）→ 本地化标签键（仅非终态阶段；completed 复用状态键）。 */
+/** 收尾阶段（finalizeMeta.currentPhase）→ 本地化标签键。
+ * Phase A 显示「检测中」；completed 终态显示「已完成」（区别于「已收尾」= Phase B 完成态）。 */
 function finalizePhaseKey(phase: string | undefined): SandoreKey | undefined {
   switch (phase) {
     case 'ask-detect':
-      return 'run.step.finalize.phase.askDetect'
+      return 'run.step.finalize.phase.detecting'
     case 'finalizing':
       return 'run.step.finalize.phase.finalizing'
     case 'gating':
       return 'run.step.finalize.phase.gating'
+    case 'routing':
+      return 'run.step.finalize.phase.routing'
+    case 'completed':
+      return 'run.step.finalize.phase.completed'
     default:
       return undefined
   }
@@ -152,36 +157,146 @@ function LastMessages({ item, t }: {
   )
 }
 
-/** 收尾阶段徽标（finalizeMeta.currentPhase）：Phase B「收尾中」/Phase C「门禁中」为
- * 可点击按钮（openSession 打开对应 fork 会话）；Phase A「问题检测中」纯文本不可点。 */
+/** 收尾阶段 SVG 图标（语义化：finalizing=归档盒子 archive/ gating=盾牌/ routing=分支/ completed=对勾/ ask-detect=问号）。 */
+function PhaseIcon({ phase }: { readonly phase: string }) {
+  switch (phase) {
+    case 'finalizing':
+      return (
+        <svg viewBox="0 0 14 14" fill="none" aria-hidden>
+          {/* 归档盒子：盒体 + 向下箭头（收尾归档语义） */}
+          <path d="M2.5 3.5h9l.5 2.5H2z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+          <path d="M3 6v4.5h8V6" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+          <path d="M7 4v3M5.5 5.5L7 7l1.5-1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )
+    case 'gating':
+      return (
+        <svg viewBox="0 0 14 14" fill="none" aria-hidden>
+          <path d="M7 1.5L2.5 3.5v3c0 3.5 4.5 6 4.5 6s4.5-2.5 4.5-6v-3L7 1.5z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )
+    case 'routing':
+      return (
+        <svg viewBox="0 0 14 14" fill="none" aria-hidden>
+          <path d="M2 3h4m0 0L4 1m2 2L4 5M2 11h4m0 0l-2-2m2 2l-2 2M8 7h4m0 0l-2-2m2 2l-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )
+    case 'completed':
+      return (
+        <svg viewBox="0 0 14 14" fill="none" aria-hidden>
+          <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.4" fill="currentColor" />
+          <path d="M4.6 7.2l1.6 1.6 3.2-3.4" stroke="#fff" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+        </svg>
+      )
+    case 'ask-detect':
+      return (
+        <svg viewBox="0 0 14 14" fill="none" aria-hidden>
+          <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M5.5 5.5a1.5 1.5 0 0 1 3 0c0 1-1.5 1-1.5 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <circle cx="7" cy="10" r="0.5" fill="currentColor" />
+        </svg>
+      )
+    default:
+      return null
+  }
+}
+
+/**
+ * 收尾阶段徽标序列（最多五个过程状态位置同时展示）：
+ * Round 17：纯 status 判断（删除 isPhaseDone/phaseHistory 依赖）。
+ * ① 运行状态（已完成）② Phase A【已检测/检测中】③ Phase B【已收尾/收尾中】
+ * ④ Phase C【已门禁/门禁失败/门禁中】⑤ Phase D【已判断/判断中】
+ * Phase B/C/D 可点击（进入对应子代理会话）；Phase A 不可点击（临时会话，用完即删）。
+ */
 function PhaseBadge({ item, t, openSession }: {
   readonly item: TimelineStepItem
   readonly t: TranslateNS<'sandore'>
   readonly openSession: (id: string) => void
 }) {
-  const phaseKey = finalizePhaseKey(item.finalizePhase)
-  if (phaseKey === undefined) return null
-  // 偏离 4：仅携带可打开会话 id 的收尾阶段可点击（finalizing → assessSessionId；
-  // gating → gateSessionId）；ask-detect（Phase A）纯文本不可点。
-  const assessTarget = item.finalizePhase === 'finalizing' && item.finalizeAssessSessionId !== undefined
-    ? item.finalizeAssessSessionId
-    : undefined
-  const gateTarget = item.finalizePhase === 'gating' && item.finalizeGateSessionId !== undefined
-    ? item.finalizeGateSessionId
-    : undefined
-  const target = assessTarget ?? gateTarget
-  if (target === undefined) {
-    return <span className={css.phaseLabel}>{t(phaseKey)}</span>
+  const badges: Array<{ key: string; labelKey: SandoreKey; phase: string; target: string | undefined; isActive: boolean; isFailed: boolean }> = []
+
+  // Phase A 状态（ask-detect：临时评估会话，用完即删，不可点击）
+  if (item.askStatus !== undefined) {
+    const done = item.askStatus === 'done'
+    badges.push({
+      key: 'phase-a',
+      labelKey: done ? 'run.step.finalize.phase.detected' : 'run.step.finalize.phase.detecting',
+      phase: 'ask-detect',
+      target: undefined,  // Phase A 无持久化会话，不可点击
+      isActive: !done,
+      isFailed: false,
+    })
   }
+
+  // Phase B 状态
+  if (item.assessStatus !== undefined) {
+    const done = item.assessStatus === 'done'
+    badges.push({
+      key: 'phase-b',
+      labelKey: done ? 'run.step.finalize.phase.done' : 'run.step.finalize.phase.finalizing',
+      phase: 'finalizing',
+      target: item.finalizeAssessSessionId,
+      isActive: !done,
+      isFailed: false,
+    })
+  }
+
+  // Phase C 状态
+  if (item.gateStatus !== undefined) {
+    const done = item.gateStatus === 'done'
+    const failed = item.gateStatus === 'failed'
+    badges.push({
+      key: 'phase-c',
+      labelKey: failed ? 'run.step.finalize.phase.gate-failed'
+            : done  ? 'run.step.finalize.phase.gated'
+                    : 'run.step.finalize.phase.gating',
+      phase: 'gating',
+      target: item.finalizeGateSessionId,
+      isActive: !done && !failed,
+      isFailed: failed,
+    })
+  }
+
+  // Phase D 状态
+  if (item.routingStatus !== undefined) {
+    const done = item.routingStatus === 'done'
+    badges.push({
+      key: 'phase-d',
+      labelKey: done ? 'run.step.finalize.phase.routed' : 'run.step.finalize.phase.routing',
+      phase: 'routing',
+      target: item.finalizeRoutingSessionId,
+      isActive: !done,
+      isFailed: false,
+    })
+  }
+
+  // 注意：不渲染 phase-completed badge——运行状态 badge（step.status === 'completed'
+  // → 「已完成」）已表达「全部完成」语义，避免重复。
+
+  if (badges.length === 0) return null
+
   return (
-    <button
-      type="button"
-      className={css.phaseBtn}
-      title={t('step.open', { name: t(phaseKey) })}
-      onClick={() => { openSession(target) }}
-    >
-      {t(phaseKey)}
-    </button>
+    <>
+      {badges.map(badge => (
+        badge.target !== undefined && badge.target !== '' ? (
+          <button
+            key={badge.key}
+            type="button"
+            className={`${css.phaseBtn} ${badge.isFailed ? css.phaseFailed : badge.isActive ? css.phaseActive : css.phaseDone}`}
+            title={t('step.open', { name: t(badge.labelKey) })}
+            onClick={(e) => { e.stopPropagation(); openSession(badge.target!) }}
+          >
+            <PhaseIcon phase={badge.phase} />
+            <span>{t(badge.labelKey)}</span>
+          </button>
+        ) : (
+          <span key={badge.key} className={`${css.phaseLabel} ${badge.isFailed ? css.phaseFailed : badge.isActive ? css.phaseActive : css.phaseDone}`}>
+            <PhaseIcon phase={badge.phase} />
+            <span>{t(badge.labelKey)}</span>
+          </span>
+        )
+      ))}
+    </>
   )
 }
 
@@ -240,11 +355,21 @@ function AgentMsg({ item, t, nowIso, openSession }: {
       {!collapsed && (
         <>
           {item.status === 'completed' && (
-            // 偏离 5：completed 优先展示收尾评估的 AI 总结（assessResult.assessmentRaw），
-            // 无评估结果（零 AI 跳过路径/旧记录）回退原始输出文本。
-            item.finalizeAssessResult?.assessmentRaw !== undefined
-              ? <div className={css.md}><MessageText text={item.finalizeAssessResult.assessmentRaw} /></div>
-              : item.outputText !== undefined && <div className={css.md}><MessageText text={item.outputText} /></div>
+            // Round 14：收尾完成/收尾中内容用运行中消息渲染样式（.md 平铺，无边框无背景）。
+            <>
+              {/* 收尾完成前（assessStatus 非 done）：显示原始 output */}
+              {item.assessStatus !== 'done' && item.outputText !== undefined && (
+                <div className={css.md}><MarkdownText text={item.outputText} /></div>
+              )}
+              {/* 收尾完成后：显示 compressedOutput */}
+              {item.assessStatus === 'done' && item.finalizeAssessResult?.compressedOutput !== undefined && (
+                <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} /></div>
+              )}
+              {/* 兜底：收尾已完成但无 compressedOutput 时仍显示 output */}
+              {item.assessStatus === 'done' && item.finalizeAssessResult?.compressedOutput === undefined && item.outputText !== undefined && (
+                <div className={css.md}><MarkdownText text={item.outputText} /></div>
+              )}
+            </>
           )}
 
           {running && (
@@ -270,17 +395,18 @@ function AgentMsg({ item, t, nowIso, openSession }: {
 
           {terminalChat && (
             <>
-              {/* failed 态：先展示收尾错误详情纯文本（无 ⚠ 图标），再展示 output 文本；
-                  不展示消息流——避免误导性中间消息。 */}
+              {/* Round 14：failed 态——errorDetail 恢复 errorBlock 样式，compressedOutput 用 .md 平铺。 */}
               {item.status === 'failed' && (
                 <>
+                  {/* errorDetail：恢复原 errorBlock 样式（浅红背景+红色边框+红色文字） */}
                   {(item.finalizeErrorDetail ?? item.error) && (
                     <div className={css.errorBlock}>
                       <span className={css.errorText}>{item.finalizeErrorDetail ?? item.error}</span>
                     </div>
                   )}
-                  {item.outputText !== undefined && (
-                    <div className={css.md}><MessageText text={item.outputText} /></div>
+                  {/* compressedOutput：平铺 .md（与运行中消息同风格） */}
+                  {item.finalizeAssessResult?.compressedOutput !== undefined && (
+                    <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} /></div>
                   )}
                 </>
               )}

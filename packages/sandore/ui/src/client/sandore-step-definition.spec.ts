@@ -88,6 +88,8 @@ describe('sandoreStepDefinition.match', () => {
     ['sandore/step-paused', { stepId: 'step-a', childId: 'child-1', name: 'Research' }],
     ['sandore/step-resumed', { stepId: 'step-a', childId: 'child-1', name: 'Research' }],
     ['sandore/step-retried', { stepId: 'step-a', mode: 'continue', name: 'Research' }],
+    // Round 9：step-phase 事件也匹配为 update（命中同一个 step 节点）
+    ['sandore/step-phase', { stepId: 'step-a', childId: 'child-1', phase: 'finalizing', name: 'Research' }],
   ] as const)('treats %s as an update', (type, data) => {
     expect(sandoreStepDefinition.match(at(1, type, data).event)).toEqual({ id: 'step-a', role: 'update' })
   })
@@ -229,6 +231,62 @@ describe('sandoreStepDefinition.update', () => {
     const next = sandoreStepDefinition.update(context, matched(at(2, 'sandore/stage-start', { taskId: 't', stageId: 's' }), 'update'))
     expect(next).toBe(context.state)
   })
+
+  // ── Round 9：step-phase 事件累计阶段数据 ────────────────────────────────────
+
+  it('folds sandore/step-phase into finalize fields (phase + sessionIds)', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'finalizing', name: 'Research',
+      }),
+    ])
+    expect(context.state.finalizePhase).toBe('finalizing')
+  })
+
+  it('accumulates phase fields across multiple step-phase events', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'finalizing', name: 'Research',
+      }),
+      at(3, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'gating', name: 'Research',
+      }),
+    ])
+    expect(context.state.finalizePhase).toBe('gating')
+  })
+
+  it('handles step-phase event without detail fields (historical events)', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'ask-detect', name: 'Research',
+      }),
+    ])
+    expect(context.state.finalizePhase).toBe('ask-detect')
+  })
+
+  it('step-phase does not change step status', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'completed', name: 'Research',
+      }),
+    ])
+    expect(context.state.status).toBe('running')
+    expect(context.state.finalizePhase).toBe('completed')
+  })
+
+  it('step-phase event without compressedOutput leaves field undefined', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'finalizing', name: 'Research',
+      }),
+    ])
+    expect(context.state.finalizePhase).toBe('finalizing')
+  })
 })
 
 describe('sandoreStepDefinition.buildViewNode', () => {
@@ -262,5 +320,45 @@ describe('sandoreStepDefinition.buildViewNode', () => {
       current: new Map(),
     }
     expect(sandoreStepDefinition.buildViewNode?.(context)).toBeNull()
+  })
+
+  // ── Round 9：buildViewNode 投影 finalize 字段 ────────────────────────────────
+
+  it('projects finalizePhase to SandoreStepChatData', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'gating', name: 'Research',
+      }),
+    ])
+    const node = sandoreStepDefinition.buildViewNode?.(context)
+    expect(node).not.toBeNull()
+    const data = node?.data as SandoreStepChatData
+    expect(data.finalizePhase).toBe('gating')
+  })
+
+  it('omits finalize fields when no step-phase events received', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-completed', {
+        stepId: 'step-a', childId: 'child-1', name: 'Research',
+        output: [{ type: 'text', text: 'done' }],
+      }),
+    ])
+    const node = sandoreStepDefinition.buildViewNode?.(context)
+    const data = node?.data as SandoreStepChatData
+    expect(data.finalizePhase).toBeUndefined()
+  })
+
+  it('projects finalizePhase to SandoreStepChatData when step-phase carries it', () => {
+    const context = fold([
+      at(1, 'sandore/step-start', { stepId: 'step-a', childId: 'child-1', name: 'Research' }),
+      at(2, 'sandore/step-phase', {
+        stepId: 'step-a', childId: 'child-1', phase: 'completed', name: 'Research',
+      }),
+    ])
+    const node = sandoreStepDefinition.buildViewNode?.(context)
+    const data = node?.data as SandoreStepChatData
+    expect(data.finalizePhase).toBe('completed')
   })
 })

@@ -10,8 +10,7 @@
  * @module @deepseek-ai/dsh-sandore-microflow/src/stage-executor
  */
 import type { Context } from '@deepseek-ai/cordis';
-import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
-import type { ContentBlock, Message } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 
 import type {
   ExecutedStepDefault,
@@ -19,7 +18,7 @@ import type {
   StageContract,
   StepStatus,
 } from '@deepseek-ai/dsh-sandore-workflow/src/types';
-import type { FinalizeAssessResult, DagBranch, GateEvalResult, Gates, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { FinalizeAssessResult, DagBranch, FinalizePhase, FinalizeAskResult, GateEvalResult, Gates, RoutingResult, WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import type { ResolveNextNodesContext, ResolveNextNodesResult, StepNavigator } from './step-navigator.ts';
 
 import type { ConcurrencyLimiter } from './concurrency-limiter.ts';
@@ -28,8 +27,7 @@ import type { FileSystem } from './file-utils.ts';
 import { SandoreError } from './errors.ts';
 import { FinalizeManager, hasEnabledGates, hasUnresolvedPassThroughVars } from './finalize-manager.ts';
 import type { FinalizeStepContext, FinalizeStepRequest } from './finalize-manager.ts';
-import { forkStepSessionMessages } from './fork-session.ts';
-import { describeError, resolveProviderModel, textSummary } from './internal.ts';
+import { describeError, textSummary } from './internal.ts';
 import { LoopManager } from './loop-manager.ts';
 import { resolveStepRules } from './rules-resolver.ts';
 import { StepRunner } from './step-runner.ts';
@@ -75,6 +73,12 @@ export interface StageStepHooks {
   readonly onStepStart: (step: WorkflowStep, childId: string) => void;
   readonly onStepCompleted: (step: WorkflowStep, childId: string, output: ContentBlock[]) => void;
   readonly onStepFailed: (step: WorkflowStep, childId: string, error: string) => void;
+  /**
+   * 收尾阶段流转钩子（`commitFinalize(currentPhase)` 写入 finalizeMeta 后触发，
+   * 由引擎注入并双发 `sandore/step-phase` 事件）。`childId` 取执行段
+   * `sessionMeta.childId`（shell 等无真实会话时为合成占位/undefined，引擎侧回退）。
+   */
+  readonly onPhaseChange?: (step: WorkflowStep, childId: string | undefined, phase: FinalizePhase) => void;
 }
 
 /** StageExecutor 构造参数。 */
@@ -115,6 +119,9 @@ export interface StageExecutorOptions {
   readonly concurrencyLimiter?: ConcurrencyLimiter;
   /** 崩溃恢复/重试续跑播种：跳过已完成 Step 并从指定子代理 Step 续跑 + pendingQueue re-queue。 */
   readonly resumeFrom?: StageExecutorResume;
+  /** 响应式持久化桥接：把 stage-executor 内部 status/errorDetail 变更桥接回引擎 active.state，
+   * 触发 ReactiveState 持久化调度。由引擎注入。status 使用引擎级实例状态窄类型。 */
+  readonly commitState?: (patch: { status?: 'running' | 'interacting' | 'completed' | 'failed' | 'paused' | 'aborted'; errorDetail?: string }) => void;
 }
 
 /** Stage 断点续跑播种（从快照重建执行位置，跳过已完成 Step 并续跑指定子代理 Step +
@@ -152,10 +159,9 @@ export interface StageExecutionResult {
   readonly errorDetail?: string;
 }
 
-/** 为单个 Step 合成占位 childId（`step-{stepId}-{execId 前 8 位}`）。 */
-function synthesizeChildId(stepId: string): string {
-  const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
-  return `step-${stepId}-${execId}`;
+/** 为单个 Step 合成占位 childId（纯 UUID 格式）。 */
+function synthesizeChildId(_stepId: string): string {
+  return globalThis.crypto.randomUUID();
 }
 
 /** 生成执行段唯一 id（纯 UUID；每次执行段一个新 id，与 childId 解耦）。 */
@@ -171,7 +177,6 @@ const MAX_FINALIZE_ASK_ROUNDS = 3;
  * ⇒ 评估必已运行——runPhaseA 跳过条件为「无未解析透传变量且无门禁」）。
  */
 const EMPTY_ASSESS_RESULT: FinalizeAssessResult = {
-  hasAsk: false,
   passThroughVars: {},
   forkSessionId: '',
   assessmentRaw: '',
@@ -180,21 +185,12 @@ const EMPTY_ASSESS_RESULT: FinalizeAssessResult = {
 /** runPhaseA 的返回（'ask' = ask 保底中断；ok = 携带评估结果与合并后的门禁配置）。 */
 type PhaseAResult =
   | { readonly kind: 'ask' }
-  | { readonly kind: 'ok'; readonly assessResult: FinalizeAssessResult | undefined; readonly gates: Gates | undefined };
+  | { readonly kind: 'ok'; readonly assessResult: FinalizeAskResult | undefined; readonly gates: Gates | undefined };
 
 /** runPhaseC 的返回（'failed' = 门禁未通过；ok = 携带门禁结果）。 */
 type PhaseCResult =
   | { readonly kind: 'failed'; readonly message: string }
   | { readonly kind: 'ok'; readonly gateResult: GateEvalResult | undefined };
-
-/**
- * fork 类压缩提示词（补充 36）。
- *
- * fork 当前 step 会话注入全量历史后，要求 LLM 总结关键产出供下一 step 参考——轻量类压缩，
- * 保留关键信息（结果/产物/决策/状态），省略冗余细节，替代原始 textSummary 全量传递。
- */
-const COMPRESS_PROMPT =
-  '你是严谨的Step输出总结Agent。请基于上方会话历史，总结当前 Step 的关键产出（执行结果、产物、关键决策与状态），供后续 Step 参考使用。只返回总结文本，保留关键信息，省略冗余细节，不要包含无关内容。';
 
 /** 当前时间 ISO 串（供 executedStep 的 startedAt/updatedAt 写入）。 */
 function now(): string {
@@ -574,58 +570,6 @@ export class StageExecutor {
   }
 
   /**
-   * fork 类压缩下一 step 上下文摘要（补充 36）。
-   *
-   * fork 当前 step 会话 → `deriveMessages` 全量历史 → 用压缩 prompt 跑 `llm.stream` →
-   * 产出摘要作为该 step 的「输出」（`returnPrompt`）传给下一 step（**替代全量 textSummary**）。
-   * fork 失败（合成 session/非 live）或压缩失败降级为全量 `textSummary`（保留兼容）。
-   * 仅 agent/skill/mcp 真实子代理走压缩；prompt/shell 合成 session 直接降级全量。
-   */
-  private async compressStepOutput(
-    executed: ExecutedStepDefault,
-    vars: Readonly<Record<string, string>>,
-  ): Promise<PreviousStepOutput> {
-    // 缺陷 16：收集产物文件填 base.files（前置产物 <artifacts> 块）。压缩逻辑
-    // （fork/llm.stream/降级，补充 36）保持不动——仅在 base 构造处接入产物收集。
-    // 缺陷 34：用引擎累加器值替换 outputTo 中的 ${xxx}（自引用变量此时未提取→deferred）。
-    const stepArtifacts = await collectStepArtifacts(this.options.ctx.fs, executed, this.options.sharedState.cwd, vars);
-    const base = toPreviousOutput(executed, stepArtifacts.flatMap(a => a.value));
-    const meta = executed.sessionMeta;
-    const childId = meta !== undefined && meta.synthetic === false ? meta.childId : undefined;
-    const fork = forkStepSessionMessages(this.options.ctx, childId);
-    if (fork === undefined) {
-      return base;
-    }
-    const route = await resolveProviderModel({}, this.options.runnerConfig, this.options.ctx.llm);
-    const messages: Message[] = [...fork.messages, createUserMessage({
-      source: { kind: 'user' },
-      content: [{ type: 'text', text: COMPRESS_PROMPT }],
-    })];
-    try {
-      const assembler = new BlockAssembler();
-      const stream = this.options.ctx.llm.stream({
-        provider: route.provider,
-        model: route.model,
-        messages,
-        ...(this.options.signal === undefined ? {} : { signal: this.options.signal }),
-      });
-      for await (const chunk of stream) {
-        assembler.push(chunk);
-      }
-      const finish = assembler.finish;
-      if (finish.kind === 'error' || finish.kind === 'aborted') {
-        this.options.ctx.logger.warn('sandore: step output compression degraded to full text');
-        return base;
-      }
-      const summary = textSummary(assembler.blocks());
-      return summary === '' ? base : { ...base, returnPrompt: summary };
-    } catch (error) {
-      this.options.ctx.logger.warn(`sandore: step output compression failed: ${describeError(error)}`);
-      return base;
-    }
-  }
-
-  /**
    * 主调度循环：批量工作队列真并发驱动（缺陷 10 队列驱动真并发改造）。
    *
    * **并发模型**（对齐基准 Promise.race + pendingQueue）：
@@ -847,6 +791,7 @@ export class StageExecutor {
       await this.persist(executed, state);
       state.status = 'failed';
       state.errorDetail = message;
+      this.options.commitState?.({ status: 'failed', errorDetail: message });
       return 'failed';
     }
 
@@ -886,6 +831,7 @@ export class StageExecutor {
         state.executedSteps.push(executed);
         state.status = 'paused';
         state.pendingPaused = { nodeId, step, executed, childId: this.realChildIds.get(step.id) ?? childId };
+        this.options.commitState?.({ status: 'paused' });
         return 'paused';
       }
       const message = describeError(error);
@@ -902,6 +848,7 @@ export class StageExecutor {
       await this.persist(executed, state);
       state.status = 'failed';
       state.errorDetail = message;
+      this.options.commitState?.({ status: 'failed', errorDetail: message });
       return 'failed';
     }
   }
@@ -909,7 +856,8 @@ export class StageExecutor {
   /**
    * 命令节点执行成功后的公共收尾（5 阶段重构）：回填输出/会话元数据 →
    * **Phase A**（评估，ask 保底判断）→ **Phase B**（收尾：透传变量回写 + finalizeMeta）
-   * → **Phase C**（门禁：真实 fork 会话）→ 压缩输出 → 事件 → 推进下一批。
+   * → **Phase C**（门禁：primary 纯代码产物校验 + secondary AI 审查）→ 压缩输出 →
+   * 事件 → 推进下一批。
    * 首次执行、暂停续跑与崩溃恢复/重试续跑共用：`executed` 仅在尚未进入
    * executedSteps 时纳入（按唯一执行 id 去重），暂停续跑已在列表中则原地复用。
    *
@@ -958,7 +906,8 @@ export class StageExecutor {
       return 'ask';
     }
 
-    // Phase B：收尾（重新 fork + 重新 assess）→ Phase C：门禁（真实 fork 会话）→ 尾段。
+    // Phase B：收尾（真 fork 子代理重新评估）→ Phase C：门禁（primary 纯代码产物校验
+    // + secondary AI 审查）→ 尾段。
     return await this.runPhasesBC(nodeId, step, childId, executed, context, gates, state);
   }
 
@@ -980,7 +929,7 @@ export class StageExecutor {
     };
   }
 
-  /** Phase B → Phase C → 尾段（finishCommandNode 与 resumePendingAsk 共用）。 */
+  /** Phase B → Phase C → Phase D（routing）→ 尾段（finishCommandNode 与 resumePendingAsk 共用）。 */
   private async runPhasesBC(
     nodeId: string,
     step: WorkflowStep,
@@ -990,42 +939,39 @@ export class StageExecutor {
     gates: Gates | undefined,
     state: StageRunState,
   ): Promise<'ok' | 'failed'> {
-    // Phase B：**重新 fork + 重新 assess**（偏离 2：不复用 Phase A 结果——ask 轮次后
-    // 子代理会话已有新消息，必须从最新消息重新 fork 评估；透传变量回写 + finalizeMeta
+    // Phase B：**真 fork 子代理收尾处理**（偏离 2：不复用 Phase A 结果——ask 轮次后
+    // 子代理会话已有新消息，必须从最新事件重建评估；一个 LLM 调用返回合并 JSON
+    // passThroughVars + compressedOutput；透传变量回写 + finalizeMeta
     // currentPhase='finalizing'）。
-    const phaseBAssessResult = await this.runPhaseB(step, executed, context, gates, state);
-    // Phase C：门禁（真实 fork 会话）。
-    const phaseC = await this.runPhaseC(step, childId, executed, context, gates, phaseBAssessResult, state);
+    const phaseBResult = await this.runPhaseB(step, executed, context, gates, state);
+    // Phase C：门禁（primary 纯代码产物校验 + secondary AI 审查；secondaryEnabled 时
+    // 才单独建宿主子代理跑审查）。
+    const phaseC = await this.runPhaseC(step, childId, executed, context, gates, phaseBResult, state);
     if (phaseC.kind === 'failed') {
       return 'failed';
     }
-    // Phase C 后、completed 前：压缩输出 + finalizeMeta 终态 + 推进下一批。
-    await this.completeAfterFinalize(nodeId, step, childId, executed, context, gates, phaseBAssessResult, phaseC.gateResult, state);
+    // Phase C 通过后：Phase D（routing 落盘 + 路由判断）→ previousOutputs（Phase B 压缩
+    // 摘要）→ finalizeMeta 终态 → 推进下一批。门禁失败不执行 Phase D（上方已短路）。
+    await this.completeAfterFinalize(nodeId, step, childId, executed, context, gates, phaseBResult, phaseC.gateResult, state);
     return 'ok';
   }
 
   /**
-   * Phase A：评估（完成判定 + 透传变量提取 + ask 保底判断）。
+   * Phase A：评估（ask 判定 + 透传变量提取 + ask 保底判断，**不判完成度**）。
    *
    * 跳过检查（无未解析透传变量且无门禁 → 零 AI 调用直接 ok）；否则 `assessOnly` 只跑
-   * 评估器。`hasAsk` + askQuestion 载荷 → Step 置 interacting（finalizeMeta
+   * 评估器——**临时会话**（`llm.stream` 直调，不 fork、不维持），输入 = `<stepContext>`
+   * （`buildFinalizeContext` 已含当前 step 子代理返回结果 output 文本），结果
+   * （hasAsk/askQuestion）落 finalizeMeta 持久化，**不写回透传变量**（透传变量只在
+   * Phase B 写回）。`hasAsk` + askQuestion 载荷 → Step 置 interacting（finalizeMeta
    * currentPhase='ask-detect'，**不记录顶层 assessSessionId**）+ persist + 挂回
    * pendingAsk + 返回 'ask'（引擎级 ask 闭环）。`rounds` 为已发生的 ask 轮次（首次 0）；
    * 达到 {@link MAX_FINALIZE_ASK_ROUNDS} 后不再续问，把最后 output 视为完成（hasAsk
    * 保留在结果中，按普通输出推进 Phase B/C）。
    *
-   * **fork 会话持久化规则（对齐计划）**：Phase A 评估 fork 会话**用完即删**——live
-   * 引用在评估返回后即释放（不常驻、不持久化到 state）；`assessSessionId` 自 Phase B
-   * （收尾）起才经 finalizeMeta 持久化到 state（assessResult.forkSessionId 因 schema
-   * 强约束随结果落 state）。
-   *
-   * **fork 会话回收（偏离 3，DSH API 查证）**：`ctx.sessions`（SessionStore）**无公共
-   * `delete` 方法**（公共 API：create/prepare/enter/fork/get/list），fork 返回的
-   * `Session` handle 亦无 `dispose()`——DSH 的会话清理是 **fiber 作用域生命周期**：
-   * `create`/`fork` 内部经 `ctx.effect` 把会话 detach 绑定到调用 fiber，fiber 卸载时
-   * 自动从 store 移除（emit `session/disposed`，持久化 coordinator 随之 retire）。
-   * 故 Phase A 临时评估 fork 会话的等价清理 = **不持久化、不保留引用 + 随执行 fiber
-   * 卸载自动回收**（本方法不做任何 `delete` 调用；见偏离 3 报告）。
+   * **Phase A 评估不 fork 会话（收尾真 fork 改造）**：DSH 子代理 settle 后 live store
+   * 已移除，`sessions.fork(childId)` 必然 SESSION_NOT_FOUND（评估曾降级为无上下文的
+   * 临时会话）——现直接临时会话直调（评估输入已含 output 文本），无 fork 会话可回收。
    */
   private async runPhaseA(
     nodeId: string,
@@ -1051,17 +997,27 @@ export class StageExecutor {
       // 只设 state.status，executed.status 在 ask 中断 persist 时仍为 running），
       // finalizeMeta currentPhase='ask-detect'（引擎 findAskStep 依 ask-detect 标记
       // 而非 interacting status 定位 ask Step）。
+      const askResult: FinalizeAskResult = {
+        status: 'done',
+        hasAsk: assessResult.hasAsk,
+        passThroughVars: assessResult.passThroughVars,
+        forkSessionId: assessResult.forkSessionId,
+        assessmentRaw: assessResult.assessmentRaw,
+        ...(assessResult.askQuestion !== undefined ? { askQuestion: assessResult.askQuestion } : {}),
+        ...(assessResult.compressedOutput !== undefined ? { compressedOutput: assessResult.compressedOutput } : {}),
+      };
       await finalizeManager.commitFinalize(
         this.buildFinalizeRequest(step, executed, context, gates, state),
-        assessResult,
+        undefined,
         undefined,
         'ask-detect',
-        { recordAssessSession: false },
+        { askResult },
       );
       // ask 中断点持久化（崩溃恢复需要 running Step 快照含 finalizeMeta currentPhase='ask-detect'）。
       await this.persist(executed, state);
       state.pendingAsk = { nodeId, step, executed, rounds: rounds + 1 };
       state.status = 'interacting';
+      this.options.commitState?.({ status: 'interacting' });
       return { kind: 'ask' };
     }
     if (assessResult.hasAsk) {
@@ -1074,17 +1030,27 @@ export class StageExecutor {
   }
 
   /**
-   * Phase B：收尾——**重新 fork + 重新 assess**（偏离 2 修复）。
+   * Phase B：收尾——**真 fork 子代理收尾处理**（偏离 2 修复 + 收尾真 fork 改造）。
    *
    * 不复用 Phase A 的评估结果：ask 轮次后真实子代理会话已基于回答产生新消息，
-   * Phase B 必须从最新会话状态重新 fork 并跑 `assessOnly`（提取透传变量 + 总结），
-   * 以该结果为权威（Phase C 门禁与 completed finalizeMeta 均以它为准）。返回
-   * Phase B 的评估结果；跳过检查与 Phase A 同谓词（无未解析透传变量且无门禁 →
-   * Phase A 未评估，Phase B 亦不重评估，保持零 AI 调用），此时返回 undefined。
+   * Phase B 必须从最新会话状态重新评估（透传变量提取 + 输出压缩合并），以该结果为
+   * 权威（Phase C 门禁与 completed finalizeMeta 均以它为准）。**不再 `sessions.fork`**——
+   * DSH 子代理 settle 后 live store 已移除，`sessions.fork(childId)` 必然
+   * SESSION_NOT_FOUND；改经 `FinalizeManager.assessForked`（`forkStepSubagent`）从
+   * step 子代理完整事件（live → 持久化 inspect）截到闭合 turn 作 seed，
+   * `ctx.agents.create` 重建宿主主代理的子代理（meta `parentSession: hostAgent.id` +
+   * `origin:'subagent'`），**一个 LLM 调用返回合并 JSON `{"passThroughVars": {...},
+   * "compressedOutput": "..."}`**（透传变量提取 + compress 输出压缩合并，替代原
+   * compressStepOutput 的 returnPrompt 产物，落入 previousOutputs）；JSON 解析不满足 →
+   * 给同一个 fork 子代理 followup 错误提示重新返回，上限 3 次，超限报错（Step 落
+   * failed）；fork/驱动失败降级临时会话并记 errorDetail（不失败）。评估完 `dispose()`。
+   * 返回 Phase B 的结果（含 compressedOutput）；跳过检查与 Phase A 同谓词
+   * （无未解析透传变量且无门禁 → Phase A 未评估，Phase B 亦不重评估，保持零 AI
+   * 调用），此时返回 undefined。
    *
    * `commitFinalize('finalizing')` 把 Phase B 的 `forkSessionId` 持久化为顶层
-   * `assessSessionId`（偏离 3：Phase A 评估 fork 用完即删、不持久化；自 Phase B 起
-   * 才落 state）。
+   * `assessSessionId`（偏离 3：Phase A 评估用完即删、不持久化；自 Phase B 起才落
+   * state）。**透传变量写回仅在本阶段执行**（commitFinalize 按 currentPhase 门控）。
    */
   private async runPhaseB(
     step: WorkflowStep,
@@ -1099,16 +1065,32 @@ export class StageExecutor {
     // 预置 currentPhase='finalizing'（评估耗时期间 UI 展示「收尾中」；commitFinalize 落终态）。
     executed.finalizeMeta = { ...executed.finalizeMeta, currentPhase: 'finalizing' };
     const request = this.buildFinalizeRequest(step, executed, context, gates, state);
-    const phaseBAssessResult = await this.options.finalizeManager.assessOnly(request);
-    await this.options.finalizeManager.commitFinalize(request, phaseBAssessResult, undefined, 'finalizing');
-    return phaseBAssessResult;
+    // Round 17：onForkCreated 回调——fork 子代理创建后立即 commit running 快照（含真实 forkSessionId）。
+    // 替代原空快照 commit（原 assessResult=undefined 注入空 forkSessionId），使 UI「收尾中」badge 可点击。
+    const phaseBResult = await this.options.finalizeManager.assessForked({
+      ...request,
+      onForkCreated: (forkSessionId: string) => {
+        const runningResult: FinalizeAssessResult = {
+          status: 'running',
+          passThroughVars: {},
+          forkSessionId,
+          assessmentRaw: '',
+        };
+        void this.options.finalizeManager.commitFinalize(request, runningResult, undefined, 'finalizing');
+      },
+    });
+    await this.options.finalizeManager.commitFinalize(request, phaseBResult, undefined, 'finalizing');
+    return phaseBResult;
   }
 
   /**
-   * Phase C：门禁审查（GateEvaluator，真实 fork 会话，gateSessionId 持久化到 state）。
+   * Phase C：门禁（primary 纯代码产物校验 + secondary AI 门禁审查）。
    *
-   * 门禁启用才运行；未通过 → Step failed（finalizeMeta currentPhase='gating' +
-   * gateResult + errorDetail）+ P2 持久化 + onStepFailed。门禁禁用 → ok 无结果。
+   * 门禁启用才运行（hasEnabledGates）；primary 为纯代码产物校验（零 AI、不建子代理），
+   * secondary 显式启用才单独 `agents.create` 建宿主主代理的子代理（无 seed，prompt
+   * 携带 stepContext）跑 AI 门禁审查（gateSessionId = 子代理 id，持久化到 state）。
+   * 未通过 → Step failed（finalizeMeta currentPhase='gating' + gateResult + errorDetail）
+   * + P2 持久化 + onStepFailed。门禁禁用 → ok 无结果。
    */
   private async runPhaseC(
     step: WorkflowStep,
@@ -1124,6 +1106,8 @@ export class StageExecutor {
     }
     const finalizeManager = this.options.finalizeManager;
     const request = this.buildFinalizeRequest(step, executed, context, gates, state);
+    // Round 11：门禁评估前先 commit running 快照（evaluateGates 耗时期间 UI 显示「门禁中」）。
+    await finalizeManager.commitFinalize(request, assessResult, undefined, 'gating');
     // 门禁启用 ⇒ 评估必已运行（runPhaseA 跳过条件为无变量且无门禁）；兜底空评估仅供类型。
     const gateResult = await finalizeManager.evaluateGates(request, assessResult ?? EMPTY_ASSESS_RESULT);
     if (!gateResult.gatesPassed) {
@@ -1136,16 +1120,24 @@ export class StageExecutor {
       await this.persist(executed, state);
       state.status = 'failed';
       state.errorDetail = message;
+      this.options.commitState?.({ status: 'failed', errorDetail: message });
       return { kind: 'failed', message };
     }
+    // 门禁通过：也落 gating（记录门禁通过事实，UI 显示「已门禁」badge）。
+    // commitFinalize 幂等（buildFinalizeMeta 的 phaseHistory 去重相邻相同值），
+    // gating 不写回透传变量（透传变量只在 Phase B 'finalizing' 写回，commitFinalize
+    // 已按 currentPhase 门控）。
+    await finalizeManager.commitFinalize(request, assessResult, gateResult, 'gating');
     return { kind: 'ok', gateResult };
   }
 
   /**
-   * 收尾公共尾段（Phase C 通过后、completed 前，4.11/4.12）：
-   * **compressStepOutput**（fork 压缩，位置从收尾前移至门禁后）→ previousOutputs →
-   * finalizeMeta 终态（currentPhase='completed'）→ resolveNextNodes → P3 持久化 →
-   * 推进下一批。finishCommandNode 与 resumePendingAsk 共用。
+   * 收尾公共尾段（Phase C 通过后、completed 前，定稿四阶段）：
+   * **Phase D（routing）**：门禁通过后落 `currentPhase='routing'`，再做循环/条件路由
+   * 判断（resolveNextNodes，内部 AI 判断走 fork 子代理机制）→ previousOutputs（Phase B
+   * JSON 的 compressedOutput 压缩摘要，替代原 compressStepOutput）→ finalizeMeta 终态
+   * （currentPhase='completed'）→ P3 持久化 → 推进下一批。**门禁失败不执行 Phase D**
+   * （runPhasesBC 已短路，路由结果不应用）。finishCommandNode 与 resumePendingAsk 共用。
    */
   private async completeAfterFinalize(
     nodeId: string,
@@ -1154,39 +1146,65 @@ export class StageExecutor {
     executed: ExecutedStepDefault,
     context: FinalizeStepContext,
     gates: Gates | undefined,
-    assessResult: FinalizeAssessResult | undefined,
+    phaseBResult: FinalizeAssessResult | undefined,
     gateResult: GateEvalResult | undefined,
     state: StageRunState,
   ): Promise<'ok'> {
-    // Phase C 后、completed 前：compressStepOutput（缺陷 16 内收集产物文件填 base.files）。
-    const previousOutput = await this.compressStepOutput(executed, toVarMap(state.passThroughVars));
-    state.previousOutputs.push(previousOutput);
-    // finalizeMeta 终态（currentPhase='completed'；含 gateResult；vars 已由 Phase B 回写，
-    // 此处幂等重写）。
-    if (assessResult !== undefined || gateResult !== undefined) {
-      await this.options.finalizeManager.commitFinalize(
-        this.buildFinalizeRequest(step, executed, context, gates, state),
-        assessResult,
-        gateResult,
-        'completed',
-      );
+    const buildRequest = () => this.buildFinalizeRequest(step, executed, context, gates, state);
+    const hasFinalize = phaseBResult !== undefined || gateResult !== undefined;
+    // Phase D（routing）：门禁通过后、completed 前，落 currentPhase='routing' 再做循环/
+    // 条件路由判断（UI 展示「路由中」；commitFinalize('completed') 落终态）。
+    if (hasFinalize) {
+      await this.options.finalizeManager.commitFinalize(buildRequest(), phaseBResult, gateResult, 'routing');
     }
     const routed = await this.options.stepNavigator.resolveNextNodes(nodeId, this.buildContext(state));
-    if (routed.branchMeta !== undefined) {
-      executed.branchMeta = routed.branchMeta;
-    }
-    if (routed.loopMeta !== undefined) {
-      executed.loopMeta = routed.loopMeta;
+    // Phase D 路由结果写入 finalizeMeta.routingResult（不再写入 executed 顶层 branchMeta/loopMeta）。
+    const routingResult: RoutingResult | undefined = routed.branchMeta !== undefined || routed.loopMeta !== undefined
+      ? {
+          status: 'done',
+          ...(routed.branchMeta !== undefined ? { branchMeta: routed.branchMeta } : {}),
+          ...(routed.loopMeta !== undefined ? { loopMeta: routed.loopMeta } : {}),
+          routingSessionId: routed.branchMeta?.sessionId ?? routed.loopMeta?.sessionId,
+        }
+      : undefined;
+    // previousOutputs：Phase B JSON 的 compressedOutput（压缩摘要，替代原
+    // compressStepOutput 的 returnPrompt 产物）；无 Phase B 结果/空摘要时兜底
+    // textSummary(output)（缺陷 16 内收集产物文件填 base.files）。
+    const previousOutput = await this.buildPhaseBPreviousOutput(executed, phaseBResult?.compressedOutput, state);    state.previousOutputs.push(previousOutput);
+    // finalizeMeta 终态（currentPhase='completed'；含 gateResult；vars 已由 Phase B 回写，
+    // 此处幂等重写）。
+    if (hasFinalize) {
+      await this.options.finalizeManager.commitFinalize(buildRequest(), phaseBResult, gateResult, 'completed', routingResult !== undefined ? { routingResult } : undefined);
     }
     // 偏离 1：收尾全流程保持 running，**最后才置 completed**（P3 completed 持久化携带
     // 终态 status；无中间 completed 脏状态）。
     executed.status = 'completed';
     executed.updatedAt = now();
-    // P3 completed 持久化（含 branchMeta/loopMeta 与终态 finalizeMeta）。
+    // P3 completed 持久化（含终态 finalizeMeta）。
     await this.persist(executed, state);
     state.nextBatch.push(...routed.nextNodeIds);
     state.status = 'completed';
+    this.options.commitState?.({ status: 'completed' });
     return 'ok';
+  }
+
+  /**
+   * 组装 previousOutputs 条目（Phase B 压缩摘要 → returnPrompt）。
+   *
+   * 定稿：Phase B JSON 的 `compressedOutput` 即压缩摘要（替代原 compressStepOutput 的
+   * fork 压缩），无 Phase B 结果/空摘要时兜底 `textSummary(output)`（对齐原
+   * compressStepOutput 降级路径）。产物文件收集（缺陷 16）保持：`toPreviousOutput`
+   * 的 `files` 填实际命中文件（`<artifacts>` 块）。
+   */
+  private async buildPhaseBPreviousOutput(
+    executed: ExecutedStepDefault,
+    compressedOutput: string | undefined,
+    state: StageRunState,
+  ): Promise<PreviousStepOutput> {
+    // 缺陷 16/34：用引擎累加器值替换 outputTo 中的 ${xxx}（自引用变量此时未提取→deferred）。
+    const artifacts = (await collectStepArtifacts(this.options.ctx.fs, executed, this.options.sharedState.cwd, toVarMap(state.passThroughVars))).flatMap(a => a.value);
+    const base = toPreviousOutput(executed, artifacts);
+    return compressedOutput === undefined || compressedOutput === '' ? base : { ...base, returnPrompt: compressedOutput };
   }
 
   /** 组装收尾请求（stepSessionId = 真实子代理会话 id，供 Phase A/C fork）。 */
@@ -1206,6 +1224,17 @@ export class StageExecutor {
       workdir: this.options.sharedState.cwd,
       passThroughVars: state.passThroughVars,
       ...(this.options.signal === undefined ? {} : { signal: this.options.signal }),
+      // 收尾阶段流转钩子透传（commitFinalize 写入 currentPhase 后触发；引擎侧双发事件）。
+      ...(this.options.hooks?.onPhaseChange === undefined
+        ? {}
+        : { onPhaseChange: this.options.hooks.onPhaseChange }),
+      // Round 7 修复：注入 onPersist，使 commitFinalize 内可触发逐阶段持久化。
+      // 引擎侧 onPersist（workflow-engine.ts）将 executedStep upsert 进
+      // active.state.executedSteps 并 persistState，保证事件发出前 active.state 已含
+      // 最新 finalizeMeta（中间态立即可见）。
+      ...(this.options.onPersist === undefined
+        ? {}
+        : { onPersist: (executedStep: ExecutedStepDefault) => this.options.onPersist!(executedStep) }),
     };
   }
 
@@ -1287,6 +1316,7 @@ export class StageExecutor {
       await this.persist(executed, state);
       state.status = 'failed';
       state.errorDetail = message;
+      this.options.commitState?.({ status: 'failed', errorDetail: message });
       return 'failed';
     }
     try {
@@ -1303,6 +1333,7 @@ export class StageExecutor {
         state.executedSteps.push(executed);
         state.status = 'paused';
         state.pendingPaused = { nodeId, step, executed, childId: this.realChildIds.get(step.id) ?? childId };
+        this.options.commitState?.({ status: 'paused' });
         return 'paused';
       }
       const message = describeError(error);
@@ -1323,8 +1354,8 @@ export class StageExecutor {
 
   /**
    * ask 回复后从断点续跑（4.7 简化）：真实子代理先重收集新 output，随后统一走
-   * 3 阶段收尾（Phase A 重评估 → Phase B 重新 fork + 重新 assess → Phase C 门禁）
-   * → 压缩 → 推进。
+   * 3 阶段收尾（Phase A 重评估 → Phase B 重新 fork + 重新 assess → Phase C 门禁
+   * [primary 纯代码校验 + secondary AI]）→ 压缩 → 推进。
    *
    * 简化点（对比旧双路径实现）：
    * - 真实子代理（synthetic === false）重收集新 output 后与首次执行**共用**

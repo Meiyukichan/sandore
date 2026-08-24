@@ -269,9 +269,14 @@ export class SandoreRemote extends TypertRemoteService {
     return await this.ctx.sandorePersistence.state.delete(instanceId)
   }
 
-  /** 读取实例的完整状态快照；不存在抛 `NODE_NOT_FOUND`。 */
+  /**
+   * 读取实例的完整状态快照：内存 active.state 第一优先级（收尾中间态立即可见），
+   * 未在内存（终态清表/未启动）回退持久化；两者皆无抛 NODE_NOT_FOUND。
+   */
   @Remote('getInstanceState')
   getInstanceState(instanceId: string): WorkflowTaskState {
+    const live = this.ctx.sandoreEngine.getInstanceState(instanceId)
+    if (live !== undefined) return live
     return this.requireInstanceState(instanceId)
   }
 

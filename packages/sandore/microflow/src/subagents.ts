@@ -50,6 +50,13 @@ export interface Agent {
   readonly inbox: { readonly hasPending: boolean };
   readonly status: AgentStatus;
   readonly ctx: unknown;
+  /**
+   * 排队一个普通续接轮次并唤醒驱动（对齐 DSH `Agent.followup(message: UserMessage)`，
+   * runtime-types L124）。消息为模型面入参的最小结构面：`content` 块 + 来源
+   * （`source` 缺省时由宿主运行时按注入来源补齐）。收尾评估（Phase B assessForked /
+   * Phase C secondary gate）用它驱动宿主主代理的子代理跑一轮评估。
+   */
+  followup(message: { readonly content: ContentBlock[]; readonly source?: MessageSource }): void;
   /** 当前整代理活动达到静止后 resolve。 */
   whenIdle(): Promise<void>;
 }

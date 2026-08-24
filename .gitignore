@@ -34,3 +34,7 @@ packages/**/lib/*
 !packages/sandore/workflow/lib/typert.host.js
 !packages/sandore/workflow/lib/typert.remote-client.d.ts
 !packages/sandore/workflow/lib/typert.remote-client.js
+
+# Sandbox scratch files — local-only workflow task dumps / test output, never commit.
+a.json
+test-output.txt

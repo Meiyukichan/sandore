@@ -19,6 +19,7 @@ import { createSandoreSave, type SandoreSaveRemote } from './sandore-save.ts'
 import { closeWorkflowOverlay, toggleWorkflowOverlay } from './workflow-store.ts'
 import { DagStepNodeView, type SandoreStepInjected } from './DagStepNodeView.tsx'
 import { sandoreStepDefinition } from './sandore-step-definition.ts'
+import { stepPhaseDefinition } from './step-phase.ts'
 import { SandoreModelDirectory, parsePermissionReport, type ModelDirectoryFace, type ObservableFace, type PermissionSelectValue, type SessionModelsApi } from './model-faces.ts'
 import { SandoreQuestionComposer, type SandoreQuestionComposerFace } from './SandoreQuestionComposer.tsx'
 import { installStepChatSessions, installStepChatWorkspaces } from './StepChatPanel.tsx'
@@ -42,6 +43,9 @@ export async function apply(ctx: ClientContext): Promise<void> {
   // 注册 sandore-step 讨论节点 Definition（kind `sandore-step`、target `chat`），
   // 把 sandore/step-* 事件折叠为宿主会话的 Chat 节点（不依赖 `remote.sandore`）。
   ctx.conversationEvents.register(sandoreStepDefinition)
+  // 注册 sandore/step-phase 状态-only Definition（无 view target，不渲染 Chat 节点）：
+  // 命中即通知 RunView 订阅者立即刷新实例状态（不经 5s 轮询，收尾阶段立即可见）。
+  ctx.conversationEvents.register(stepPhaseDefinition)
 
   // 安装 StepChatPanel 的模块级 sessions 持有（运行中 step 内嵌子代理消息面板
   // 需要 `sessions.binding(childId)` 订阅会话快照；时间线组件树不携带 ctx，故经

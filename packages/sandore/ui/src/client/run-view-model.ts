@@ -223,16 +223,29 @@ export interface TimelineStepItem {
   readonly error?: string | undefined
   /** 收尾阶段（finalizeMeta.currentPhase：assess/ask/finalize/gate/completed；供状态按钮徽标）。 */
   readonly finalizePhase?: string | undefined
+  /** 收尾前一阶段（finalizeMeta.previousPhase；供 UI 展示阶段流转痕迹）。 */
+  readonly finalizePreviousPhase?: string | undefined
   /** 收尾错误详情（finalizeMeta.errorDetail，如门禁失败原因；failed 态附加展示）。 */
   readonly finalizeErrorDetail?: string | undefined
-  /** Phase B 收尾评估 fork 会话 id（finalizeMeta.assessSessionId，供「收尾中」徽标点击打开）。 */
+  /** Phase B 收尾评估 fork 会话 id（finalizeMeta.assessResult.forkSessionId，供「收尾中」徽标点击打开）。 */
   readonly finalizeAssessSessionId?: string | undefined
-  /** Phase C 门禁 fork 会话 id（finalizeMeta.gateSessionId，供「门禁中」徽标点击打开）。 */
+  /** Phase C 门禁 fork 会话 id（finalizeMeta.gateResult.gateSessionId，供「门禁中」徽标点击打开）。 */
   readonly finalizeGateSessionId?: string | undefined
-  /** Phase B 收尾评估结果（finalizeMeta.assessResult；completed 态展示 AI 总结 assessmentRaw）。 */
-  readonly finalizeAssessResult?: { readonly assessmentRaw: string } | undefined
+  /** Phase B 收尾评估结果（finalizeMeta.assessResult；completed 态展示 compressedOutput）。 */
+  readonly finalizeAssessResult?: { readonly assessmentRaw: string; readonly compressedOutput?: string; readonly status?: 'running' | 'done' } | undefined
   /** Phase C 门禁结果（finalizeMeta.gateResult）。 */
-  readonly finalizeGateResult?: { readonly gatesPassed: boolean } | undefined
+  readonly finalizeGateResult?: { readonly gatesPassed: boolean; readonly status?: 'running' | 'done' | 'failed' } | undefined
+  /** Phase A ask 判定结果（finalizeMeta.askResult）。 */
+  readonly finalizeAskResult?: { readonly hasAsk: boolean; readonly askQuestion?: unknown; readonly status?: 'running' | 'done' } | undefined
+  /** Phase D 路由判断结果（finalizeMeta.routingResult）。 */
+  readonly finalizeRoutingResult?: { readonly branchMeta?: unknown; readonly loopMeta?: unknown; readonly status?: 'running' | 'done' } | undefined
+  /** Phase D 路由判断 fork 会话 id（finalizeMeta.routingResult.routingSessionId）。 */
+  readonly finalizeRoutingSessionId?: string | undefined
+  // Round 11：各阶段独立 status 字段
+  readonly askStatus?: 'running' | 'done'
+  readonly assessStatus?: 'running' | 'done'
+  readonly gateStatus?: 'running' | 'done' | 'failed'
+  readonly routingStatus?: 'running' | 'done'
   /** 子代理会话 id（跳「查看详情」）。 */
   readonly childId?: string | undefined
   /** 是否合成会话（shell 无真实子代理，标题不可点击跳子代理页）。 */
@@ -490,15 +503,53 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
       outputText: outputTextOf(step.output),
       error: step.error,
       finalizePhase: step.finalizeMeta?.currentPhase,
+      finalizePreviousPhase: step.finalizeMeta?.previousPhase,
       finalizeErrorDetail: step.finalizeMeta?.errorDetail ?? step.error,
-      finalizeAssessSessionId: step.finalizeMeta?.assessSessionId,
-      finalizeGateSessionId: step.finalizeMeta?.gateSessionId,
+      finalizeAssessSessionId: step.finalizeMeta?.assessResult?.forkSessionId,
+      finalizeGateSessionId: step.finalizeMeta?.gateResult?.gateSessionId,
       finalizeAssessResult: step.finalizeMeta?.assessResult !== undefined
-        ? { assessmentRaw: step.finalizeMeta.assessResult.assessmentRaw }
+        ? {
+            assessmentRaw: step.finalizeMeta.assessResult.assessmentRaw,
+            ...(step.finalizeMeta.assessResult.compressedOutput !== undefined
+              ? { compressedOutput: step.finalizeMeta.assessResult.compressedOutput }
+              : {}),
+            ...(step.finalizeMeta.assessResult.status !== undefined
+              ? { status: step.finalizeMeta.assessResult.status }
+              : {}),
+          }
         : undefined,
       finalizeGateResult: step.finalizeMeta?.gateResult !== undefined
-        ? { gatesPassed: step.finalizeMeta.gateResult.gatesPassed }
+        ? {
+            gatesPassed: step.finalizeMeta.gateResult.gatesPassed,
+            ...(step.finalizeMeta.gateResult.status !== undefined
+              ? { status: step.finalizeMeta.gateResult.status }
+              : {}),
+          }
         : undefined,
+      finalizeAskResult: step.finalizeMeta?.askResult !== undefined
+        ? {
+            hasAsk: step.finalizeMeta.askResult.hasAsk,
+            ...(step.finalizeMeta.askResult.askQuestion !== undefined ? { askQuestion: step.finalizeMeta.askResult.askQuestion } : {}),
+            ...(step.finalizeMeta.askResult.status !== undefined
+              ? { status: step.finalizeMeta.askResult.status }
+              : {}),
+          }
+        : undefined,
+      finalizeRoutingResult: step.finalizeMeta?.routingResult !== undefined
+        ? {
+            ...(step.finalizeMeta.routingResult.branchMeta !== undefined ? { branchMeta: step.finalizeMeta.routingResult.branchMeta } : {}),
+            ...(step.finalizeMeta.routingResult.loopMeta !== undefined ? { loopMeta: step.finalizeMeta.routingResult.loopMeta } : {}),
+            ...(step.finalizeMeta.routingResult.status !== undefined
+              ? { status: step.finalizeMeta.routingResult.status }
+              : {}),
+          }
+        : undefined,
+      finalizeRoutingSessionId: step.finalizeMeta?.routingResult?.routingSessionId,
+      // Round 11：各阶段独立 status 字段（顶层，供 PhaseBadge 直接读取）
+      ...(step.finalizeMeta?.askResult?.status !== undefined ? { askStatus: step.finalizeMeta.askResult.status } : {}),
+      ...(step.finalizeMeta?.assessResult?.status !== undefined ? { assessStatus: step.finalizeMeta.assessResult.status } : {}),
+      ...(step.finalizeMeta?.gateResult?.status !== undefined ? { gateStatus: step.finalizeMeta.gateResult.status } : {}),
+      ...(step.finalizeMeta?.routingResult?.status !== undefined ? { routingStatus: step.finalizeMeta.routingResult.status } : {}),
       childId: step.sessionMeta?.childId,
       synthetic: step.sessionMeta?.synthetic,
       messages: chatLinesOf(step),

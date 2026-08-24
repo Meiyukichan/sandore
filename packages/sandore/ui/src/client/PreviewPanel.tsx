@@ -1,11 +1,11 @@
 /**
  * PreviewPanel：执行态右栏文件/结果预览（默认隐藏，树形导航叶子点击后出现）。
  *
- * result 叶子显示 Step 输出文本（MessageText 渲染）；artifact 叶子显示文件路径
+ * result 叶子显示 Step 输出全文（MarkdownText 渲染，与时间线/DAG 视图一致）；artifact 叶子显示文件路径
  * 元信息（产物无内容读取 RPC，正文即路径集合）。关闭按钮隐藏右栏并清选中态。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/PreviewPanel
  */
-import { MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 
 import type { PreviewTarget } from './workflow-store.ts'
@@ -46,7 +46,7 @@ export function PreviewPanel({ t, target, onClose }: PreviewPanelProps) {
         </div>
         {target.text !== undefined && (
           target.kind === 'result'
-            ? <div className={css.text}><MessageText text={target.text} /></div>
+            ? <div className={css.text}><MarkdownText text={target.text} /></div>
             : <pre className={css.file}>{target.text}</pre>
         )}
       </div>

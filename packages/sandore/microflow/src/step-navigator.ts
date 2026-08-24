@@ -171,6 +171,7 @@ export class StepNavigator {
         visitCount,
         {
           ...(context.recentStepSessionId === undefined ? {} : { stepSessionId: context.recentStepSessionId }),
+          stepId: node.id,
           passThroughVars: context.passThroughVars,
         },
       );
@@ -257,7 +258,7 @@ export class StepNavigator {
     return index < 0 ? undefined : steps[index + 1]?.id;
   }
 
-  /** 组装分支评估选项（候选分支 + 透传变量 + 循环上下文 + fork 源会话 + 取消信号）。 */
+  /** 组装分支评估选项（候选分支 + 透传变量 + 循环上下文 + fork 源会话 + stepId + 取消信号）。 */
   private branchEvalOptions(node: StepNodeRef, context: ResolveNextNodesContext): BranchEvalOptions {
     const loopContext = this.loopManager.getLoopIterationContext();
     return {
@@ -266,6 +267,7 @@ export class StepNavigator {
       loopTurn: loopContext.loopTurn,
       loopMaxIterations: loopContext.loopMaxIterations,
       ...(context.recentStepSessionId === undefined ? {} : { stepSessionId: context.recentStepSessionId }),
+      stepId: node.id,
       ...(context.signal === undefined ? {} : { signal: context.signal }),
     };
   }

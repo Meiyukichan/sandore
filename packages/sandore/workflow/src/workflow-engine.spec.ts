@@ -26,6 +26,9 @@ import { SandorePersistence } from './persistence.ts';
 import type { ShellExecutor } from './shell.ts';
 import { parseWorkflowYaml } from './yaml-parser.ts';
 
+/** UUID 正则（合成 sessionId 统一纯 UUID 格式）。 */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** 两 Stage（shell → prompt）线性定义。 */
 const linearYaml = `id: wfl-linear
 name: linear
@@ -680,7 +683,8 @@ steps:
  * 走 step-fix + 并行分支走 step-report，二者汇合 step-merge → step-loop(循环门) 循环体
  * step-iter，breakCondition(shouldBreak) 跳出到 step-exit。
  * Stage 2「门禁收尾」：step-finalize(prompt) 带透传变量(projectName) + 双门禁(primary +
- * secondary)，assess 提取 projectName、primary/secondary 门禁判定产物合格。
+ * secondary)，assess 提取 projectName、primary 纯代码产物校验 + secondary AI 门禁审查
+ * 判定产物合格。
  */
 const complexReviewFixYaml = `id: wfl-complex
 name: complex-review-fix
@@ -1054,6 +1058,7 @@ function recordSandoreEvents(ctx: Context): Array<{ name: string; args: unknown[
   ctx.on('sandore/step-start', (info, stepId, childId, name, loopIteration) => records.push({ name: 'sandore/step-start', args: [info, stepId, childId, name, loopIteration] }));
   ctx.on('sandore/step-completed', (info, stepId, childId, output, name, loopIteration) => records.push({ name: 'sandore/step-completed', args: [info, stepId, childId, output, name, loopIteration] }));
   ctx.on('sandore/step-failed', (info, stepId, childId, error, name, loopIteration) => records.push({ name: 'sandore/step-failed', args: [info, stepId, childId, error, name, loopIteration] }));
+  ctx.on('sandore/step-phase', (info, stepId, childId, phase, name, loopIteration) => records.push({ name: 'sandore/step-phase', args: [info, stepId, childId, phase, name, loopIteration] }));
   ctx.on('sandore/end', (info, result) => records.push({ name: 'sandore/end', args: [info, result] }));
   ctx.on('sandore/aborted', info => records.push({ name: 'sandore/aborted', args: [info] }));
   return records;
@@ -1334,6 +1339,30 @@ describe('SandoreEngineRuntime startInstance', () => {
     expect(caught).toMatchObject({ code: 'NODE_NOT_FOUND' });
   });
 
+  it('getInstanceState returns active.state for a running instance (含阶段中间态)', async () => {
+    const { engine, persistence } = await harness();
+    await putDefinition(persistence, 'wfl-linear', linearYaml);
+
+    const run = await engine.startInstance({ workflowId: 'wfl-linear', originalInput: 'hello', cwd: '/tmp' });
+    // 实例刚启动（fire-and-forget），内存有 active instance
+    const live = engine.getInstanceState(run.instanceId);
+    expect(live).toBeDefined();
+    expect(live?.taskId).toBe(run.instanceId);
+    expect(live?.originalInput).toBe('hello');
+    // 状态应为 running/pending（fire-and-forget 后内存 state 已更新）
+    expect(['pending', 'running']).toContain(live?.status);
+  });
+
+  it('getInstanceState returns undefined when instance is not in memory (终态清表/未启动)', async () => {
+    const { engine, persistence } = await harness();
+    // 直接写入持久化（不经过引擎内存）
+    await persistence.state.put('inst-persisted', completedSnapshot('inst-persisted'));
+
+    // 内存无此实例 → getInstanceState 返回 undefined
+    const live = engine.getInstanceState('inst-persisted');
+    expect(live).toBeUndefined();
+  });
+
   it('seeds global default pass-through vars at start so a forward reference resolves (defect 15)', async () => {
     const { ctx, engine, persistence, shell } = await harness();
     await putDefinition(persistence, 'wfl-forward-ref', forwardRefYaml);
@@ -1558,7 +1587,7 @@ describe('SandoreEngineRuntime linear execution', () => {
 
     const state = persistence.state.get(run.instanceId);
     // shell 合成会话：childId 为合成占位、synthetic:true。
-    expect(state?.executedSteps[0]?.sessionMeta?.childId).toMatch(/^step-step-abc-[0-9a-f]{8}$/);
+    expect(state?.executedSteps[0]?.sessionMeta?.childId).toMatch(UUID_RE);
     expect(state?.executedSteps[0]?.sessionMeta?.synthetic).toBe(true);
     expect(state?.executedSteps[0]?.sessionMeta?.command).toBe('shell');
     // prompt 走真实子代理（决策 D3）：childId 为真实会话 id、synthetic:false、command 保留 'prompt'。
@@ -1939,17 +1968,20 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
 
     // 条件分支评估（shouldExecute JSON true）→ agent 执行 → prompt 执行（子代理）→
-    // 收尾 Phase A assess → Phase B 重新 fork + 重新 assess → 门禁（按序供给 chunk
-    // 流；prompt Step 自身输出来自子代理会话）。偏离 2：Phase B 不再复用 Phase A
-    // 结果、重新 assess，故 assess JSON 需供给两次。
-    const responses = [
-      '{"shouldExecute": true}',
-      '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
-      '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
-      '{"taskStatus":"done"}',
-    ];
-    let callIndex = 0;
-    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+    // 收尾 Phase A assess（hasAsk 格式）→ Phase B 真 fork/降级（compressedOutput 合并
+    // JSON，偏离 2：不复用 Phase A 结果）。primary 门禁为纯代码产物校验（零 AI）。
+    // 按首条消息文本分发：shouldExecute → 分支 JSON；compressedOutput → Phase B 收尾 JSON；
+    // 其余（hasAsk）→ Phase A 评估 JSON。
+    llm.streamHandler = (options) => {
+      const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
+      if (text.includes('shouldExecute')) {
+        return textChunks('{"shouldExecute": true}');
+      }
+      if (text.includes('compressedOutput')) {
+        return textChunks('{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"finalize 摘要"}');
+      }
+      return textChunks('{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}');
+    };
 
     // agent Step 走可续接子代理：注册真实 childId 并回填最终 assistant 输出。
     const child = new FakeAgent('child-1');
@@ -1998,20 +2030,26 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(subagents.continuableStarts[0]?.request.parent.id).toBe(run.instanceId);
 
     // 循环：2 次扁平迭代（路由门 body 跑 maxIter-1 次），loopIteration 嵌套路径；
-    // 段 id 为纯 UUID（§3.3），4 位 hex 后缀在 sessionMeta.childId（loopManager 合成占位）。
+    // 段 id 为纯 UUID（§3.3），sessionMeta.childId 也为纯 UUID（合成占位）。
     const iterations = state?.executedSteps.filter(step => step.stepId === 'step-iter') ?? [];
     expect(iterations.map(step => step.loopIteration)).toEqual([[1], [2]]);
-    expect(iterations[0]?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(iterations[0]?.id).toMatch(UUID_RE);
     expect(iterations[0]?.sessionMeta?.childId).toMatch(/^step-iter-[0-9a-f]{4}$/);
     expect(iterations[1]?.visitCount).toBe(2);
 
     // 透传变量回写：finalize 提取 projectName 并保留 description。
     expect(state?.passThroughVars['projectName']).toEqual({ value: 'sandore', description: '项目名' });
 
-    // 门禁通过：finalizeMeta 记录 gateResult + currentPhase='completed'。
+    // 门禁通过（primary 纯代码产物校验，无 outputTo → 通过；无 secondary → 零门禁 AI）：
+    // finalizeMeta 记录 gateResult + currentPhase='completed'。
     const finalizeStep = state?.executedSteps.find(step => step.stepId === 'step-finalize');
     expect(finalizeStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
+    expect(finalizeStep?.finalizeMeta?.gateResult?.primaryPassed).toBe(true);
     expect(finalizeStep?.finalizeMeta?.currentPhase).toBe('completed');
+
+    // llm 调用覆盖：条件分支 1 + Phase A assess 1 + Phase B 重新 assess 1 = 3 次
+    // （primary 纯代码校验零 AI；prompt Step 输出来自子代理会话，不消费 llm.stream）。
+    expect(llm.calls).toHaveLength(3);
 
     // agent Step 的 step-completed 事件载荷：真实 childId + 最终 output + name；
     // 非循环 Step 无 loopIteration。
@@ -2322,13 +2360,17 @@ describe('SandoreEngineRuntime DAG execution', () => {
     promptChild.session.append(assistantMessageEvent([{ type: 'text', text: 'extracted text' }]));
     agents.register(promptChild);
 
-    // step-extract（prompt）执行 → finalize assess 提取 projectName=sandore；
-    // Stage 2 step-use 声明同名默认值 "unknown"（非 \${} 引用 → 不触发 assess）。
-    const responses = [
-      '{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}',
-    ];
-    let callIndex = 0;
-    llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
+    // step-extract（prompt）执行 → finalize Phase A assess（hasAsk 格式）+ Phase B 收尾
+    // （compressedOutput 合并 JSON）提取 projectName=sandore；Stage 2 step-use 声明同名
+    // 默认值 "unknown"（非 \${} 引用 → 不触发 assess）。按首条消息文本分发：
+    // compressedOutput → Phase B 收尾 JSON；其余（hasAsk）→ Phase A 评估 JSON。
+    llm.streamHandler = (options) => {
+      const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
+      if (text.includes('compressedOutput')) {
+        return textChunks('{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"摘要"}');
+      }
+      return textChunks('{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}');
+    };
 
     const ended = waitForEnd(ctx);
     await engine.startInstance({ workflowId: 'wfl-cross-stage-ptv', originalInput: 'do it', cwd: '/tmp' });
@@ -2391,6 +2433,44 @@ steps:
       type: shell
       value:
         command: "echo done"
+`;
+
+/**
+ * 收尾阶段流转（sandore/step-phase 事件全四相）：
+ * step-ask（prompt + 透传变量）触发 ask 保底中断（ask-detect）→ 回答后续跑
+ * （finalizing → completed）；step-gate（shell + 门禁 + outputTo 缺失文件）
+ * primary 纯代码产物校验不通过（finalizing → gating → Step failed）。
+ */
+const phaseFlowYaml = `id: wfl-phase-flow
+name: phase-flow
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 收尾阶段
+    steps:
+      - id: step-ask
+      - id: step-gate
+steps:
+  - id: step-ask
+    command:
+      type: prompt
+      value:
+        promptText: "do it"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: "项目名"
+  - id: step-gate
+    command:
+      type: shell
+      value:
+        command: "echo gate"
+    outputTo:
+      - id: opt-a
+        path: "missing-report.txt"
+    gates:
+      primary:
+        enabled: true
 `;
 
 /** 单 Stage agent Step（子代理 final result 含 [[SANDORE_ASK]] 标记块——双通道 ask 重构后按普通输出透传）。 */
@@ -2608,13 +2688,13 @@ describe('SandoreEngineRuntime interaction', () => {
     agents.register(child);
 
     // assess ①（ask JSON）→ 回答注回 → 重新评估 ②（completed JSON）→ Phase B 重新
-    // fork + 重新 assess ③（completed JSON）→ 门禁（taskStatus done）。偏离 2：
-    // Phase B 重新 assess，故 completed JSON 需供给两次。
+    // fork + 重新 assess ③（completed JSON）→ 门禁（primary 纯代码产物校验，零 AI）。
+    // 偏离 2：Phase B 重新 assess，故 completed JSON 需供给两次；step-ask 无 outputTo
+    // → primary 校验直接通过，无门禁 AI 调用。
     const responses = [
       '{"completionType":"ask","passThroughVars":{"projectName":"sandore"},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}',
       '{"completionType":"completed","passThroughVars":{}}',
       '{"completionType":"completed","passThroughVars":{}}',
-      '{"taskStatus":"done"}',
     ];
     let callIndex = 0;
     llm.streamHandler = () => textChunks(responses[callIndex++ % responses.length] ?? '');
@@ -2633,6 +2713,149 @@ describe('SandoreEngineRuntime interaction', () => {
     const askStep = state?.executedSteps.find(step => step.stepId === 'step-ask');
     expect(askStep?.status).toBe('completed');
     expect(askStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
+  });
+
+  it('emits sandore/step-phase on finalize phase transitions (ask-detect → finalizing → routing → gating/completed)', async () => {
+    const { ctx, engine, persistence, llm, shell, agents, userQuestions, sessions } = await harness();
+    await putDefinition(persistence, 'wfl-phase-flow', phaseFlowYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    shell.runHandler = async spec => successResult(spec, 'gate done');
+    // prompt Step（step-ask）走可续接子代理：注册真实 childId 并回填最终输出。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
+    agents.register(child);
+
+    // LLM 调用序：① step-ask Phase A assess（ask JSON）→ 回答注回 → 重新评估 ②
+    // （completed JSON）→ Phase B 收尾 ③（compressedOutput 合并 JSON，走降级——child-1
+    // 无事件源）→ routing → completed；④ step-gate Phase A assess（completed JSON）→
+    // ⑤ Phase B 收尾（compressedOutput 合并 JSON）→ Phase C primary 纯代码门禁
+    // （outputTo 缺失文件，fs 空 → 不通过）→ gating → Step failed → 实例 failed。
+    // 按首条消息文本分发：分支/循环专用模板（shouldExecute/shouldBreak）按其字段名；
+    // 其余为收尾调用（统一 buildAssessPrompt 后 Phase A 与 Phase B 的 prompt 均含
+    // compressedOutput）——按调用序：第 1 次收尾调用（step-ask Phase A 首次）返回 ask
+    // JSON，后续返回统一收尾 JSON（hasAsk + passThroughVars + compressedOutput，对
+    // Phase A 的 parseAssessResult 与 Phase B 的 parseFinalizeResult 均有效）。
+    let finalizeCall = 0;
+    llm.streamHandler = (options) => {
+      const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
+      if (text.includes('shouldBreak')) {
+        return textChunks('{"shouldBreak": false}');
+      }
+      if (text.includes('compressedOutput')) {
+        finalizeCall += 1;
+        return finalizeCall === 1
+          ? textChunks('{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]},"compressedOutput":"摘要"}')
+          : textChunks('{"hasAsk":false,"passThroughVars":{},"compressedOutput":"摘要"}');
+      }
+      // 理论不可达（收尾/分支均含特征字段）；兜底返回完成 JSON。
+      return textChunks('{"hasAsk":false,"passThroughVars":{}}');
+    };
+
+    userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
+
+    const records = recordSandoreEvents(ctx);
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-phase-flow', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+
+    // 收尾阶段流转事件：step-ask ask-detect → finalizing → routing → completed（ask 回复
+    // 后续跑；Phase D routing 在门禁通过后、completed 前落盘）；step-gate finalizing →
+    // gating（primary 门禁不通过，**不执行 Phase D**）。载荷 phase/name 正确，
+    // childId 为真实子代理（prompt）或合成占位（shell）。
+    const phaseRecords = records.filter(record => record.name === 'sandore/step-phase');
+    expect(phaseRecords.map(record => ({
+      stepId: record.args[1] as string,
+      childId: record.args[2] as string,
+      phase: record.args[3] as string,
+      name: record.args[4] as string,
+    }))).toEqual([
+      { stepId: 'step-ask', childId: 'child-1', phase: 'ask-detect', name: 'step-ask' },
+      // Round 17：onForkCreated 替代空快照——shell 降级无 fork 子代理，仅 1 个 finalizing（done）
+      { stepId: 'step-ask', childId: 'child-1', phase: 'finalizing', name: 'step-ask' },
+      { stepId: 'step-ask', childId: 'child-1', phase: 'routing', name: 'step-ask' },
+      { stepId: 'step-ask', childId: 'child-1', phase: 'completed', name: 'step-ask' },
+      { stepId: 'step-gate', childId: expect.stringMatching(UUID_RE), phase: 'finalizing', name: 'step-gate' },
+      // Round 11：runPhaseC 进入时先 commit gating running 快照，再 commit gating 终态
+      { stepId: 'step-gate', childId: expect.stringMatching(UUID_RE), phase: 'gating', name: 'step-gate' },
+      { stepId: 'step-gate', childId: expect.stringMatching(UUID_RE), phase: 'gating', name: 'step-gate' },
+    ]);
+
+    // 双发 sandore/step-phase：Cordis emit（监听器触发）+ 宿主 Session append 同发。
+    expect(sessions.get(run.instanceId)?.events.some(event => event.type === 'sandore/step-phase')).toBe(true);
+
+    // 阶段状态落盘对齐事件：step-ask completed（finalizeMeta completed）、
+    // step-gate failed（finalizeMeta gating + gateResult 未过）。
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('failed');
+    const askStep = state?.executedSteps.find(step => step.stepId === 'step-ask');
+    expect(askStep?.status).toBe('completed');
+    expect(askStep?.finalizeMeta?.currentPhase).toBe('completed');
+    const gateStep = state?.executedSteps.find(step => step.stepId === 'step-gate');
+    expect(gateStep?.status).toBe('failed');
+    expect(gateStep?.finalizeMeta?.currentPhase).toBe('gating');
+    expect(gateStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(false);
+  });
+
+  // ── Round 7：收尾阶段中间态同步集成测试 ──────────────────────────────────
+
+  it('emitStepPhase 发出时 active.state 已含最新 finalizeMeta（Round 7 中间态同步）', async () => {
+    const { ctx, engine, persistence, llm, shell, agents, userQuestions } = await harness();
+    await putDefinition(persistence, 'wfl-phase-flow', phaseFlowYaml);
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    shell.runHandler = async spec => successResult(spec, 'gate done');
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
+    agents.register(child);
+
+    // LLM 调用序：与 wfl-phase-flow 测试一致。
+    let finalizeCall = 0;
+    llm.streamHandler = (options) => {
+      const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
+      if (text.includes('shouldBreak')) {
+        return textChunks('{"shouldBreak": false}');
+      }
+      if (text.includes('compressedOutput')) {
+        finalizeCall += 1;
+        return finalizeCall === 1
+          ? textChunks('{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]},"compressedOutput":"摘要"}')
+          : textChunks('{"hasAsk":false,"passThroughVars":{},"compressedOutput":"摘要"}');
+      }
+      return textChunks('{"hasAsk":false,"passThroughVars":{}}');
+    };
+    userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
+
+    // 关键断言：在 sandore/step-phase 事件监听器中，检查 engine.getInstanceState 返回的
+    // active.state 里对应 step 的 finalizeMeta.currentPhase 已等于事件 phase。
+    const midstateSnapshots: Array<{ stepId: string; phase: string; finalizeMetaPhase: string | undefined; hasStep: boolean; stepsCount: number }> = [];
+    ctx.on('sandore/step-phase', (info, stepId, childId, phase) => {
+      const state = engine.getInstanceState((info as { taskId: string }).taskId);
+      const step = state?.executedSteps.find(s => s.stepId === stepId);
+      midstateSnapshots.push({
+        stepId,
+        phase,
+        finalizeMetaPhase: step?.finalizeMeta?.currentPhase,
+        hasStep: step !== undefined,
+        stepsCount: state?.executedSteps.length ?? 0,
+      });
+    });
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-phase-flow', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+
+    // 验证每个 step-phase 事件发出时，active.state 里的 finalizeMeta.currentPhase 已是最新。
+    // ask-detect 事件是 Phase A 发出的（在 commitFinalize 之前），不含 finalizeMeta，跳过。
+    for (const snap of midstateSnapshots) {
+      if (snap.phase === 'ask-detect') continue;
+      expect({ stepId: snap.stepId, phase: snap.phase, hasStep: snap.hasStep, stepsCount: snap.stepsCount, finalizeMetaPhase: snap.finalizeMetaPhase })
+        .toEqual(expect.objectContaining({ finalizeMetaPhase: snap.phase }));
+    }
+
+    // 完整事件流存在。
+    const phases = midstateSnapshots.map(s => s.phase);
+    expect(phases).toEqual(expect.arrayContaining(['finalizing', 'gating', 'completed']));
   });
 
   it('rejectQuestion marks the ask Step failed + instance failed (no reject bubbling to runAndCatch, 缺陷 26)', async () => {
@@ -3129,7 +3352,7 @@ describe('SandoreEngineRuntime recovery', () => {
     const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
     expect(step?.output).toEqual([{ type: 'text', text: 'fork output' }]);
     // 新 childId（合成 session id）续跑，parentSessionId 记旧值。
-    expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
+    expect(step?.sessionMeta?.childId).toMatch(UUID_RE);
     expect(step?.sessionMeta?.childId).not.toBe('child-1');
     expect(step?.parentSessionId).toBe('child-1');
     expect(step?.retryHistory?.[0]?.mode).toBe('fork');
@@ -3163,7 +3386,7 @@ describe('SandoreEngineRuntime recovery', () => {
     expect(state?.status).toBe('completed');
     const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
     expect(step?.output).toEqual([{ type: 'text', text: 'revert output' }]);
-    expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
+    expect(step?.sessionMeta?.childId).toMatch(UUID_RE);
     expect(step?.parentSessionId).toBe('child-1');
     expect(step?.retryHistory?.[0]?.mode).toBe('revert');
     expect(step?.retryHistory?.[0]?.result).toBe('completed');
@@ -3303,7 +3526,7 @@ describe('SandoreEngineRuntime recovery', () => {
     expect(state?.status).toBe('completed');
     const step = lastSegmentOf(state?.executedSteps ?? [], 'step-agent');
     expect(step?.output).toEqual([{ type: 'text', text: 'fork output' }]);
-    expect(step?.sessionMeta?.childId).toMatch(/^step-step-agent-[0-9a-f]{8}$/);
+    expect(step?.sessionMeta?.childId).toMatch(UUID_RE);
     expect(step?.parentSessionId).toBe('child-1');
     expect(step?.retryHistory?.[0]?.mode).toBe('fork');
     expect(step?.retryHistory?.[0]?.result).toBe('completed');
@@ -3876,8 +4099,8 @@ describe('complex workflow e2e', () => {
    *
    * mock llm.streamHandler 按首条消息文本分发：含 'shouldExecute' → 条件分支 JSON；
    * 含 'shouldBreak' → 循环跳出 JSON（首次 false 继续、二次 true 跳出）；含
-   * 'hasAsk' → 收尾 assess JSON（提取 projectName=sandore）；含 'taskStatus'
-   * → primary 门禁 JSON；其余 → secondary 门禁 JSON。prompt Step（step-finalize）自身
+   * 'hasAsk' → 收尾 assess JSON（提取 projectName=sandore）；其余 → secondary 门禁
+   * JSON（primary 为纯代码产物校验、无 AI 提示词）。prompt Step（step-finalize）自身
    * 输出来自可续接子代理会话（决策 D3）。mock shell.runHandler 回显命令对应 stdout。
    */
   it('runs the review-fix flow across two stages with branches, parallel, loop, and gates to completed', async () => {
@@ -3898,11 +4121,17 @@ describe('complex workflow e2e', () => {
     const promptChild = new FakeAgent('child-1');
     promptChild.session.append(assistantMessageEvent([{ type: 'text', text: 'final-analysis' }]));
     agents.register(promptChild);
+    // Phase C secondary 门禁单独建宿主子代理（无 seed，followup 驱动一轮）：mock 其
+    // followup 回复为通过（gateStatus done）——收尾真 fork 改造后 secondary 不再消费
+    // llm.stream（模型调用走子代理驱动轮）。
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
 
-    // 条件分支/循环跳出/收尾门禁各走专用模板（其「## 返回格式」节含对应字段名），
+    // 条件分支/循环跳出/收尾各走专用模板（其「## 返回格式」节含对应字段名），
     // mock 据首条消息文本含哪个字段名分发对应 JSON。循环跳出首次 false、二次 true
     // （演示 continue 与 break 两条 loopMeta 路由条目均回写）。prompt Step 自身输出
-    // 来自子代理会话（不再消费 llm.stream）。
+    // 来自子代理会话（不再消费 llm.stream）。primary 门禁为纯代码产物校验（零 AI），
+    // 无对应 AI 提示词——secondary 门禁经宿主子代理驱动轮审查（gateStatus done），
+    // 亦不消费 llm.stream；Phase B 收尾走降级 llm.stream（compressedOutput 合并 JSON）。
     let breakCall = 0;
     llm.streamHandler = (options) => {
       const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
@@ -3913,13 +4142,14 @@ describe('complex workflow e2e', () => {
         breakCall += 1;
         return textChunks(breakCall === 1 ? '{"shouldBreak": false}' : '{"shouldBreak": true}');
       }
+      if (text.includes('compressedOutput')) {
+        // Phase B 收尾（降级 llm.stream）：透传变量提取 + 压缩摘要合并 JSON。
+        return textChunks('{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"finalize 摘要"}');
+      }
       if (text.includes('hasAsk')) {
         return textChunks('{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}');
       }
-      if (text.includes('taskStatus')) {
-        return textChunks('{"taskStatus":"done"}');
-      }
-      // secondary 门禁（无其他字段命中时）。
+      // 理论不可达（收尾真 fork 后无其他 llm.stream 消费方）；兜底返回门禁通过。
       return textChunks('{"gateStatus":"done"}');
     };
 
@@ -3975,13 +4205,27 @@ describe('complex workflow e2e', () => {
     expect(Object.keys(state?.stageContracts ?? {})).toHaveLength(2);
 
     // ── 收尾门禁（gates primary/secondary）：step-finalize 的 finalizeMeta 记录
-    //    gateResult（primaryPassed + secondaryPassed 均为 true → gatesPassed=true）。
+    //    gateResult。primary 为纯代码产物校验（无 outputTo → 通过，零 AI），
+    //    secondary 为 AI 门禁审查（显式 enabled:true）→ 两者均通过 → gatesPassed=true。
     const finalizeStep = state?.executedSteps.find(step => step.stepId === 'step-finalize');
     expect(finalizeStep?.status).toBe('completed');
     expect(finalizeStep?.finalizeMeta?.currentPhase).toBe('completed');
     expect(finalizeStep?.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
     expect(finalizeStep?.finalizeMeta?.gateResult?.primaryPassed).toBe(true);
     expect(finalizeStep?.finalizeMeta?.gateResult?.secondaryPassed).toBe(true);
+
+    // Phase C secondary 单独建宿主子代理（无 seed，meta parentSession=宿主主代理 +
+    // origin='subagent'）；primary 纯代码校验不建子代理。宿主主代理也经 agents.create
+    // 创建（startInstance）→ create 记录序 = [宿主主代理, secondary 门禁子代理]。
+    const gateMeta = agents.createMetas[agents.createMetas.length - 1];
+    expect(agents.createSeeds[agents.createSeeds.length - 1]).toBeUndefined();
+    expect(gateMeta).toMatchObject({ parentSession: run.instanceId, origin: 'subagent' });
+    // 子代理驱动轮（followup → whenIdle → finalAssistantOutput）被消费。
+    const gateAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
+    expect(gateAgent.followups).toHaveLength(1);
+    expect(gateAgent.whenIdleCount).toBe(1);
+    // 评估完 dispose：live 移除（持久化记录保留，UI 可打开 gateSessionId）。
+    expect(agents.get(finalizeStep?.finalizeMeta?.gateSessionId ?? '')).toBeUndefined();
 
     // ── 产物收集：step-finalize prompt 自身输出为 'final-analysis'（子代理会话输出）。
     expect(finalizeStep?.output).toEqual([{ type: 'text', text: 'final-analysis' }]);
@@ -4007,9 +4251,10 @@ describe('complex workflow e2e', () => {
     ]);
 
     // ── llm 调用覆盖：条件分支 1 + 循环跳出 2 + Phase A assess 1 + Phase B 重新
-    //    assess 1（偏离 2：不复用 Phase A 结果）+ primary 1 + secondary 1
-    //    = 7 次（按字段名分发；prompt Step 输出来自子代理会话，不消费 llm.stream）。
-    expect(llm.calls).toHaveLength(7);
+    //    assess 1（偏离 2：不复用 Phase A 结果）= 5 次（收尾真 fork 后 Phase B 降级
+    //    走 llm.stream——child-1 无事件源；primary 纯代码校验零 AI；secondary 走宿主
+    //    子代理驱动轮不消费 llm.stream；prompt Step 输出来自子代理会话）。
+    expect(llm.calls).toHaveLength(5);
 
     // ── 事件序：start → 两 Stage 各 stage-start/step-*/stage-completed → end。
     expect(records[0]?.name).toBe('sandore/start');
@@ -4020,5 +4265,85 @@ describe('complex workflow e2e', () => {
     expect(stageCompleted).toEqual(['stg-review', 'stg-gate']);
     // 终态 end 为 completed。
     expect((records[records.length - 1]?.args[1] as { status: string }).status).toBe('completed');
+  });
+});
+
+/** 单 prompt Step（未解析透传变量）——Phase B 真 fork 的引擎级集成。 */
+const forkBPhaseYaml = `id: wfl-fork-b
+name: fork-b
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 收尾真fork
+    steps:
+      - id: step-p
+steps:
+  - id: step-p
+    command:
+      type: prompt
+      value:
+        promptText: "do it"
+    passThroughVars:
+      - name: projectName
+        value: "\${projectName}"
+        description: "项目名"
+`;
+
+describe('SandoreEngineRuntime 收尾真 fork（Phase B agents.create 重建宿主子代理）', () => {
+  it('Phase B 真 fork：agents.create 收到 seed=完整事件 + meta.parentSession=宿主主代理 + origin=subagent；透传变量在 Phase B 回写', async () => {
+    const { ctx, engine, persistence, llm, shell, sessions, agents } = await harness();
+    await putDefinition(persistence, 'wfl-fork-b', forkBPhaseYaml);
+    provideLlmDirectory(llm);
+    shell.runHandler = async spec => successResult(spec, 'done');
+    // prompt Step（step-p）走可续接子代理：注册真实 childId 并回填最终输出。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work output' }]));
+    agents.register(child);
+    // 源子代理完整事件（live store 仍可读）→ Phase B 真 fork 的 seed（闭合 turn：4 条事件）。
+    const childSession = sessions.create('child-1');
+    childSession.append('turn/start', { turn: 0 });
+    childSession.append('user/message', { id: 'u1', content: [{ type: 'text', text: 'do it' }] });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'work output' }]).data);
+    childSession.append('turn/end', { turn: 0, reason: { kind: 'completed' } });
+    // Phase B 真 fork 的评估回复（一个 LLM 调用返回合并 JSON：passThroughVars + compressedOutput）。
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"step 压缩摘要"}' }];
+
+    // Phase A 评估临时会话 1 次（completed JSON）；Phase B 真 fork 走子代理不消费 llm.stream；
+    // compressStepOutput 已移除（压缩摘要由 Phase B JSON 的 compressedOutput 承担）→ 无额外调用。
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-fork-b', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+
+    // Phase B 真 fork：agents.create 收到 seed = 完整事件 + meta（parentSession=宿主主代理、
+    // origin='subagent'、seedLength=4、cwd=/tmp）。create 记录序 = [宿主主代理, fork 子代理]。
+    const forkMeta = agents.createMetas[agents.createMetas.length - 1];
+    expect(agents.createSeeds[agents.createSeeds.length - 1]).toEqual(childSession.events);
+    expect(forkMeta).toMatchObject({ cwd: '/tmp', parentSession: run.instanceId, seedLength: 4, origin: 'subagent' });
+    // 驱动一轮：followup 收到收尾处理提示词（含 compressedOutput 格式）、whenIdle 被 await。
+    const forkedAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
+    expect(forkedAgent.followups).toHaveLength(1);
+    const promptText = (forkedAgent.followups[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    expect(promptText).toContain('<stepContext>');
+    expect(promptText).toContain('compressedOutput');
+    expect(forkedAgent.whenIdleCount).toBe(1);
+
+    // 透传变量在 Phase B 回写（保留 description）。
+    expect(state?.passThroughVars['projectName']).toEqual({ value: 'sandore', description: '项目名' });
+    // finalizeMeta.assessResult.forkSessionId = fork 子代理 id（finalize-{stepId}-{random}），评估完 dispose。
+    // Round 17：顶层 assessSessionId 已删除，sessionId 从 assessResult.forkSessionId 内读
+    const step = state?.executedSteps.find(s => s.stepId === 'step-p');
+    expect(step?.finalizeMeta?.assessResult?.forkSessionId).toMatch(UUID_RE);
+    expect(agents.get(step?.finalizeMeta?.assessResult?.forkSessionId ?? '')).toBeUndefined();
+    // 收尾阶段流转落盘：completed 终态（Phase B finalizing → Phase D routing → completed）。
+    expect(step?.finalizeMeta?.currentPhase).toBe('completed');
+    // llm.stream 覆盖：仅 Phase A 临时会话 assess 1 次。**Phase B 真 fork 子代理不消费
+    // llm.stream**（模型调用走 followup 驱动轮）；compressStepOutput 已删除（Phase B JSON
+    // 的 compressedOutput 即压缩摘要）→ 无 compress 调用。
+    expect(llm.calls).toHaveLength(1);
   });
 });

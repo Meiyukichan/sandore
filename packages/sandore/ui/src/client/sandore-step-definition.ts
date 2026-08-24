@@ -38,6 +38,9 @@ export interface SandoreStepChatData {
   readonly output?: readonly SandoreTextBlock[]
   /** failed 态的错误详情。 */
   readonly error?: string
+  // Round 9：收尾阶段信息（供 DagStepNodeView 渲染可点击 badge）
+  /** 当前收尾阶段（ask-detect/finalizing/gating/routing/completed）。 */
+  readonly finalizePhase?: string
 }
 
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
@@ -58,6 +61,8 @@ interface SandoreStepState {
   readonly loopIteration?: readonly number[]
   readonly output?: readonly SandoreTextBlock[]
   readonly error?: string
+  // Round 9：收尾阶段字段（由 sandore/step-phase 事件累计）
+  readonly finalizePhase?: string
 }
 
 /** 由 stepId + 循环迭代路径派生稳定节点 id（`step-xxx` 或 `step-xxx#1.2`）。 */
@@ -107,6 +112,12 @@ export const sandoreStepDefinition: ConversationNodeDefinition<SandoreStepState>
       || event.type === 'sandore/step-retried') {
       return { id: nodeIdOf(event.data.stepId, event.data.loopIteration), role: 'update' }
     }
+    // Round 9：匹配 step-phase 事件，更新阶段数据到同一个 step 节点。
+    // stepPhaseDefinition（kind sandore-step-phase）独立 match 同一事件不冲突
+    // （conversation assembler 允许多个 definition 独立 match，不同 kind 产生独立 context）。
+    if (event.type === 'sandore/step-phase') {
+      return { id: nodeIdOf(event.data.stepId, event.data.loopIteration), role: 'update' }
+    }
     return null
   },
   start: (_context, match) => {
@@ -153,7 +164,15 @@ export const sandoreStepDefinition: ConversationNodeDefinition<SandoreStepState>
       case 'sandore/step-retried':
         // step-retried 载荷不含 childId（seam.ts），仅回到 running，保留原 childId/synthetic。
         return { ...context.state, status: 'running' }
-      /* v8 ignore next -- update 仅对 match 命中的 5 个 step-* 事件派发。 */
+      // Round 9：step-phase 事件——累计阶段数据到节点状态。
+      case 'sandore/step-phase': {
+        const data = match.event.data
+        return {
+          ...context.state,
+          finalizePhase: data.phase,
+        }
+      }
+      /* v8 ignore next -- update 仅对 match 命中的事件派发。 */
       default:
         return context.state
     }
@@ -178,6 +197,8 @@ export const sandoreStepDefinition: ConversationNodeDefinition<SandoreStepState>
         ...(state.synthetic === undefined ? {} : { synthetic: state.synthetic }),
         ...(state.output === undefined ? {} : { output: state.output }),
         ...(state.error === undefined ? {} : { error: state.error }),
+        // Round 9：finalize 字段投影
+        ...(state.finalizePhase === undefined ? {} : { finalizePhase: state.finalizePhase }),
       },
     }
   },

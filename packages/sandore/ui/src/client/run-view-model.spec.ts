@@ -287,7 +287,7 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
         currentPhase: 'gating',
         assessSessionId: 'assess-1',
         gateSessionId: 'gate-1',
-        assessResult: { hasAsk: false, passThroughVars: {}, forkSessionId: 'assess-1', assessmentRaw: '' },
+        assessResult: { passThroughVars: {}, forkSessionId: 'assess-1', assessmentRaw: '' },
         gateResult: {
           gatesPassed: false,
           primaryPassed: false,
@@ -325,6 +325,75 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
     expect(stepItem.finalizeGateSessionId).toBe('gate-1')
     expect(stepItem.finalizeAssessResult).toEqual({ assessmentRaw: '' })
     expect(stepItem.finalizeGateResult).toEqual({ gatesPassed: false })
+    // Bug 1: previousPhase 映射
+    expect(stepItem.finalizePreviousPhase).toBeUndefined()
+  })
+
+  it('propagates finalizeMeta.currentPhase=completed（已收尾徽标数据源）', () => {
+    const executed = step({
+      status: 'completed',
+      finalizeMeta: {
+        currentPhase: 'completed',
+        previousPhase: 'routing',
+        assessSessionId: 'assess-1',
+        gateSessionId: 'gate-1',
+        assessResult: { passThroughVars: {}, forkSessionId: 'assess-1', assessmentRaw: 'ok' },
+        gateResult: { gatesPassed: true, primaryPassed: true, gateSessionId: 'gate-1', assessmentRaw: '' },
+      },
+    })
+    const state = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      status: 'completed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [executed],
+      stageInfos: [],
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildTimeline>[0]
+
+    const items = buildTimeline(state)
+    const stepItem = items[0]
+    expect(stepItem.kind).toBe('step')
+    if (stepItem.kind !== 'step') return
+    // completed 终态 currentPhase='completed' → UnifiedTimeline 渲染「已收尾」徽标。
+    expect(stepItem.finalizePhase).toBe('completed')
+    // Bug 1: previousPhase 映射
+    expect(stepItem.finalizePreviousPhase).toBe('routing')
+    expect(stepItem.finalizeAssessSessionId).toBe('assess-1')
+    expect(stepItem.finalizeGateSessionId).toBe('gate-1')
+  })
+
+  it('propagates compressedOutput from assessResult into finalizeAssessResult', () => {
+    const executed = step({
+      status: 'completed',
+      finalizeMeta: {
+        currentPhase: 'completed',
+        assessSessionId: 'assess-1',
+        assessResult: { passThroughVars: {}, forkSessionId: 'assess-1', assessmentRaw: 'raw output', compressedOutput: '三段式压缩摘要' },
+      },
+    })
+    const state = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      status: 'completed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [executed],
+      stageInfos: [],
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildTimeline>[0]
+
+    const items = buildTimeline(state)
+    const stepItem = items[0]
+    expect(stepItem.kind).toBe('step')
+    if (stepItem.kind !== 'step') return
+    // Bug 2: compressedOutput 被映射到 finalizeAssessResult。
+    expect(stepItem.finalizeAssessResult).toEqual({ assessmentRaw: 'raw output', compressedOutput: '三段式压缩摘要' })
   })
 
   it('omits the finalize fields when finalizeMeta is absent', () => {
@@ -346,6 +415,7 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
     expect(stepItem.kind).toBe('step')
     if (stepItem.kind !== 'step') return
     expect(stepItem.finalizePhase).toBeUndefined()
+    expect(stepItem.finalizePreviousPhase).toBeUndefined()
     expect(stepItem.finalizeErrorDetail).toBeUndefined()
     expect(stepItem.finalizeAssessSessionId).toBeUndefined()
     expect(stepItem.finalizeGateSessionId).toBeUndefined()

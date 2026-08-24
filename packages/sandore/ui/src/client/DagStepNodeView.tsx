@@ -6,6 +6,9 @@
  * paused 琥珀框 + 快照提示。显示 `name` 与循环迭代标签（`#1.2`）；点击名称
  * 经注入的 `openSession(childId)` 跳子会话；failed/completed 提供节点级重试
  * 控件（continue/revert/fork + 可选 message，提交经注入的 `retryStep`）。
+ *
+ * Round 9：标题右侧渲染收尾阶段 badge 序列（Phase A 已检测 / Phase B 已收尾 /
+ * Phase C 已门禁 / Phase D 已判断 + 各中间态），badge 可点击进入对应阶段子代理会话。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/DagStepNodeView
  */
 import { useEffect, useState } from 'react'
@@ -14,6 +17,7 @@ import {
   type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { RevertBoundaryOption } from '@deepseek-ai/dsh-sandore-workflow/types'
 
@@ -21,7 +25,9 @@ import { describeError } from './describe-error.ts'
 import type { SandoreKey } from './locales.ts'
 import { RETRY_MODES, type RetryMode } from './run-view-model.ts'
 import type { SandoreStepStatus, SandoreTextBlock } from './sandore-step-definition.ts'
+import type { SandoreStepChatData } from './sandore-step-definition.ts'
 import css from './DagStepNodeView.module.css'
+import timelineCss from './timeline.module.css'
 
 /** 由插件自身服务访问注入的导航与重试动作。 */
 export interface SandoreStepInjected {
@@ -144,11 +150,12 @@ export function DagStepNodeView({ node, sessionId, openSession, retryStep, listR
         <span className={css.status}>{t(STATUS_KEYS[data.status])}</span>
       </header>
 
+      {/* 内容区域——统一卡片样式 */}
       {data.status === 'completed' && data.output !== undefined && data.output.length > 0 && (
-        <div className={css.output}><MarkdownText text={outputText(data.output)} /></div>
+        <div className={timelineCss.md}><MarkdownText text={outputText(data.output)} /></div>
       )}
       {data.status === 'failed' && data.error !== undefined && (
-        <div className={css.error} role="alert">{data.error}</div>
+        <div className={css.contentCardError} role="alert">{data.error}</div>
       )}
       {data.status === 'paused' && (
         <div className={css.paused}>{t('step.paused.hint')}</div>

@@ -1,10 +1,11 @@
 /**
  * finalize-manager.ts（FinalizeAssessor + GateEvaluator + FinalizeManager）的单元测试。
  *
- * 覆盖解析纯函数（parseAssessResult 三级回退 / parsePrimaryGate / parseSecondaryGate）、
+ * 覆盖解析纯函数（parseAssessResult 三级回退 / parseSecondaryGate）、
  * FinalizeAssessor（session 类型 fork 会话 / fork 抛错降级 / shell 临时会话 / ask 载荷）、
- * GateEvaluator（primary 门禁 + 产物存在性覆盖）与 finalizeStep 编排（跳过 / ask 中断门禁 /
- * 完整 finalize 的 finalizeMeta 回写 / 透传变量回写保留 refresh）。
+ * GateEvaluator（primary 纯代码产物校验 [零 AI] + secondary AI 门禁审查）与
+ * finalizeStep 编排（跳过 / ask 中断门禁 / 完整 finalize 的 finalizeMeta 回写 /
+ * 透传变量回写保留 refresh）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/finalize-manager.spec
  */
 import { Context } from '@deepseek-ai/cordis';
@@ -12,13 +13,14 @@ import type { LlmRuntime } from '@deepseek-ai/dsh-llm';
 import type { SessionStore } from '@deepseek-ai/dsh-session';
 import { describe, expect, it } from 'vitest';
 
+import { FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../../workflow/tests/mocks/llm.ts';
-import { FinalizeAssessor, FinalizeManager, GateEvaluator, parseAssessResult, parsePrimaryGate, parseSecondaryGate } from './finalize-manager.ts';
+import { FinalizeAssessor, FinalizeManager, GateEvaluator, parseAssessResult, parseSecondaryGate } from './finalize-manager.ts';
 import type { FinalizeManagerConfig } from './finalize-manager.ts';
 import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome } from './file-utils.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
 import type { ExecutedStepDefault } from '@deepseek-ai/dsh-sandore-workflow/src/types';
-import type { FinalizeAssessResult, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { FinalizeAssessResult, GateEvalResult, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
 /** 记录 fork 调用并返回可注入 fork 结果的极简会话存储。 */
 class FakeForkedSession {
@@ -131,12 +133,13 @@ function executedStep(fields: {
   };
 }
 
-/** 组装 finalize-manager 测试环境（注入 mock llm/sessions/fs 与固定引擎默认 provider/model）。 */
-function harness(): {
+/** 组装 finalize-manager 测试环境（注入 mock llm/sessions/fs/agents 与固定引擎默认 provider/model）。 */
+function harness(config: FinalizeManagerConfig = {}): {
   ctx: Context;
   llm: FakeLlm;
   sessions: FakeSessionStore;
   fs: FakeFs;
+  agents: FakeAgentRegistry;
   assessor: FinalizeAssessor;
   gateEvaluator: GateEvaluator;
   manager: FinalizeManager;
@@ -145,18 +148,39 @@ function harness(): {
   const llm = new FakeLlm();
   const sessions = new FakeSessionStore();
   const fs = new FakeFs();
+  const agents = new FakeAgentRegistry();
   ctx.provide('llm', llm as unknown as LlmRuntime);
   ctx.provide('sessions', sessions as unknown as SessionStore);
   ctx.provide('fs', fs as unknown as FileSystem);
-  const config: FinalizeManagerConfig = { defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' };
+  ctx.provide('agents', agents);
+  const fullConfig: FinalizeManagerConfig = { defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm', ...config };
   return {
     ctx,
     llm,
     sessions,
     fs,
-    assessor: new FinalizeAssessor(ctx, config),
-    gateEvaluator: new GateEvaluator(ctx, config),
-    manager: new FinalizeManager(ctx, config),
+    agents,
+    assessor: new FinalizeAssessor(ctx, fullConfig),
+    gateEvaluator: new GateEvaluator(ctx, fullConfig),
+    manager: new FinalizeManager(ctx, fullConfig),
+  };
+}
+
+/** DSH 形状的会话事件（seed 截断测试用：仅需 type/seq/time/data 包络）。 */
+type SeedEvent = { readonly type: string; readonly seq: number; readonly time: number; readonly data: unknown };
+
+/** 构造一条 `turn/start` / `turn/end` 边界事件。 */
+function boundaryEvent(type: 'turn/start' | 'turn/end', seq: number, data: unknown = {}): SeedEvent {
+  return { type, seq, time: 0, data };
+}
+
+/** 构造一条 `assistant/message` 事件（text 输出）。 */
+function messageEvent(seq: number, text: string): SeedEvent {
+  return {
+    type: 'assistant/message',
+    seq,
+    time: 0,
+    data: { turn: 0, step: 0, message: { id: `m-${seq}`, role: 'assistant', content: [{ type: 'text', text }], source: { kind: 'model', provider: 'mock', model: 'mock' } } },
   };
 }
 
@@ -244,6 +268,20 @@ describe('parseAssessResult', () => {
     expect(result.passThroughVars).toEqual({ a: 'b' });
   });
 
+  it('parses compressedOutput from the merged Phase B JSON (Phase A 结果也透传压缩摘要)', () => {
+    const result = parseAssessResult(
+      '{"hasAsk":false,"passThroughVars":{"projectName":"sandore"},"compressedOutput":"压缩摘要"}',
+    );
+    expect(result.hasAsk).toBe(false);
+    expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
+    expect(result.compressedOutput).toBe('压缩摘要');
+  });
+
+  it('omits compressedOutput when the JSON lacks it (缺省 undefined)', () => {
+    expect(parseAssessResult('{"hasAsk":false,"passThroughVars":{}}').compressedOutput).toBeUndefined();
+    expect(parseAssessResult('非 JSON 输出').compressedOutput).toBeUndefined();
+  });
+
   it('tolerates an uppercase fence language tag', () => {
     const result = parseAssessResult(
       '```JSON\n{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Q"}]}}\n```',
@@ -266,17 +304,7 @@ describe('parseAssessResult', () => {
   });
 });
 
-describe('parsePrimaryGate / parseSecondaryGate', () => {
-  it('parses taskStatus done as passed for the primary gate', () => {
-    expect(parsePrimaryGate('{"taskStatus":"done"}').passed).toBe(true);
-  });
-
-  it('parses taskStatus error with errorDetail for the primary gate', () => {
-    const result = parsePrimaryGate('{"taskStatus":"error","errorDetail":"missing artifacts"}');
-    expect(result.passed).toBe(false);
-    expect(result.errorDetail).toBe('missing artifacts');
-  });
-
+describe('parseSecondaryGate', () => {
   it('parses gateStatus done as passed for the secondary gate', () => {
     expect(parseSecondaryGate('{"gateStatus":"done"}').passed).toBe(true);
     expect(parseSecondaryGate('{"gateStatus":"error","gateDetail":"needs review"}')).toEqual({
@@ -285,17 +313,15 @@ describe('parsePrimaryGate / parseSecondaryGate', () => {
     });
   });
 
-  it('parses fenced outputs for both gates (fence stripping is shared)', () => {
-    expect(parsePrimaryGate('```json\n{"taskStatus":"error","errorDetail":"missing"}\n```')).toEqual({
-      passed: false,
-      errorDetail: 'missing',
-    });
+  it('parses fenced outputs for the secondary gate (fence stripping is shared)', () => {
     expect(parseSecondaryGate('```json\n{"gateStatus":"done"}\n```').passed).toBe(true);
   });
+
+  // primary 门禁已改为纯代码产物校验（无 AI 输出可解析）——parsePrimaryGate 已删除。
 });
 
-describe('FinalizeAssessor', () => {
-  it('forks the step session for a session-type step and records forkSessionId', async () => {
+describe('FinalizeAssessor.assess（Phase A 临时会话，不 fork）', () => {
+  it('does not fork the step session for a session-type step (temp session, eval handle)', async () => {
     const { llm, sessions, assessor } = harness();
     llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
@@ -305,12 +331,13 @@ describe('FinalizeAssessor', () => {
       context: { input: 'req', output: 'out', artifacts: ['a.md'] },
     });
 
-    expect(sessions.forkedSources).toEqual(['step-session-1']);
-    expect(result.forkSessionId).toBe('session-1');
+    // Phase A 评估不再 fork：sessions.fork 零调用，临时会话句柄（eval-）。
+    expect(sessions.forkedSources).toEqual([]);
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(result.hasAsk).toBe(false);
   });
 
-  it('forks the step session for a prompt-type step (决策 D3: prompt 为真实子代理会话)', async () => {
+  it('does not fork for a prompt-type step either (决策 D3: prompt 为真实子代理会话，但 Phase A 临时会话)', async () => {
     const { llm, sessions, assessor } = harness();
     llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
@@ -320,18 +347,14 @@ describe('FinalizeAssessor', () => {
       context: { input: 'req', output: 'out' },
     });
 
-    // prompt 与 agent/skill/mcp 同为 session 类型：走 sessions.fork 评估续接（不再降级）。
-    expect(sessions.forkedSources).toEqual(['step-session-1']);
-    expect(result.forkSessionId).toBe('session-1');
+    expect(sessions.forkedSources).toEqual([]);
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(result.hasAsk).toBe(false);
   });
 
-  it('degrades to a temp session when fork throws and does not fail the assess', async () => {
+  it('never calls sessions.fork and leaves the LLM request without a sessionId (temp session)', async () => {
     const { llm, sessions, assessor } = harness();
     llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
-    sessions.forkHandler = () => {
-      throw new Error('SESSION_NOT_FOUND');
-    };
 
     const result = await assessor.assess({
       step: step({ command: { type: 'agent', value: { promptText: 'do work' } } }),
@@ -339,9 +362,9 @@ describe('FinalizeAssessor', () => {
       context: { input: 'req', output: 'out' },
     });
 
-    expect(result.forkSessionId).toMatch(/^eval-/);
-    expect(result.errorDetail).toContain('SESSION_NOT_FOUND');
-    expect(result.hasAsk).toBe(false);
+    expect(sessions.forkedSources).toEqual([]);
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.errorDetail).toBeUndefined();
     expect(llm.calls[0]?.sessionId).toBeUndefined();
   });
 
@@ -355,22 +378,24 @@ describe('FinalizeAssessor', () => {
     });
 
     expect(sessions.forkedSources).toHaveLength(0);
-    expect(result.forkSessionId).toMatch(/^eval-/);
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(llm.calls[0]?.sessionId).toBeUndefined();
   });
 
-  it('stamps the fork session id onto the assess LLM request', async () => {
+  it('includes the subagent return output text in the temp-session prompt (Phase A 输入 = 子代理返回结果)', async () => {
     const { llm, assessor } = harness();
     llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
-    const result = await assessor.assess({
+    await assessor.assess({
       step: step({ command: { type: 'agent', value: { promptText: 'do work' } } }),
       stepSessionId: 'step-session-1',
-      context: { input: 'req', output: 'out' },
+      context: { input: 'req', output: 'agent final output', artifacts: ['a.md'] },
     });
 
-    expect(result.forkSessionId).toBe('session-1');
-    expect(llm.calls[0]?.sessionId).toBe('session-1');
+    const prompt = (llm.calls[0]?.messages[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    // buildFinalizeContext 已含当前 step 子代理返回结果 output 文本 → 评估可见全部 I/O。
+    expect(prompt).toContain('agent final output');
+    expect(prompt).toContain('<stepContext>');
   });
 
   it('throws FINALIZE_FAILED when the assess stream finishes with error', async () => {
@@ -396,12 +421,282 @@ describe('FinalizeAssessor', () => {
       }),
     ).rejects.toMatchObject({ code: 'FINALIZE_FAILED', message: expect.stringContaining('cancelled') });
   });
+
+  it('assess 提示词只判断 ask 需求 + 输出压缩，不含完成度/质量检查要求', async () => {
+    const { llm, assessor } = harness();
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+
+    await assessor.assess({
+      step: step({ command: { type: 'shell', value: { command: 'echo hi' } } }),
+      context: { input: 'req', output: 'out' },
+    });
+
+    const prompt = (llm.calls[0]?.messages[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    // ask 判断：只问「是否需要向用户提问」，保留 hasAsk 返回格式。
+    expect(prompt).toContain('是否需要向用户提问确认后继续');
+    expect(prompt).toContain('"hasAsk"');
+    // Phase B 合并 compress：输出压缩任务与 compressedOutput 返回格式统一注入。
+    expect(prompt).toContain('输出压缩');
+    expect(prompt).toContain('compressedOutput');
+    // 三段式 compressedOutput 结构要求。
+    expect(prompt).toContain('【任务要求】');
+    expect(prompt).toContain('【执行过程】');
+    expect(prompt).toContain('【最终成果】');
+    // 不判完成度：不要求判断任务是否真正完成、不要求完成度/质量检查。
+    expect(prompt).not.toContain('是否真正完成');
+    expect(prompt).not.toContain('已完成');
+    expect(prompt).not.toContain('完成度');
+    expect(prompt).not.toContain('质量');
+  });
+});
+
+describe('FinalizeAssessor.assessForked（Phase B 真 fork 子代理）', () => {
+  /** 组装完整闭合事件流（turn 0 闭合：start/user/assistant/end）。 */
+  function closedEvents(): SeedEvent[] {
+    return [
+      boundaryEvent('turn/start', 0, { turn: 0 }),
+      { type: 'user/message', seq: 1, time: 0, data: { id: 'u1', content: [{ type: 'text', text: 'do it' }] } },
+      messageEvent(2, 'step output'),
+      boundaryEvent('turn/end', 3, { turn: 0, reason: { kind: 'completed' } }),
+    ];
+  }
+
+  /** Phase B 收尾合并 JSON（透传变量 + 压缩摘要）。 */
+  function phaseBJson(passThroughVars: string, compressedOutput: string): string {
+    return `{"passThroughVars":${passThroughVars},"compressedOutput":"${compressedOutput}"}`;
+  }
+
+  it('replays the full closed-turn events as seed and drives a host subagent round (followup → whenIdle → finalAssistantOutput)', async () => {
+    const { llm, agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => closedEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: phaseBJson('{"projectName":"sandore"}', '压缩摘要') }];
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'do work' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/tmp',
+    });
+
+    // agents.create 收到 seed = 完整事件 + meta.parentSession=宿主主代理 + origin='subagent'。
+    expect(agents.createSeeds).toHaveLength(1);
+    expect(agents.createSeeds[0]).toEqual(closedEvents());
+    expect(agents.createMetas[0]).toEqual({ cwd: '/tmp', parentSession: 'host-1', seedLength: 4, origin: 'subagent' });
+    // 合成 fork 会话 id：纯 UUID（globalThis.crypto.randomUUID()）。
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // 驱动一轮：followup 收到收尾处理提示词（含 <stepContext> 与 compressedOutput 格式），whenIdle 被 await。
+    const forkedAgent = agents.createdAgents[0]!;
+    expect(forkedAgent.followups).toHaveLength(1);
+    const promptText = (forkedAgent.followups[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    expect(promptText).toContain('<stepContext>');
+    expect(promptText).toContain('compressedOutput');
+    // Phase B 专用提示词不含 hasAsk 判断（Phase A 已处理）。
+    expect(promptText).not.toContain('hasAsk');
+    expect(promptText).not.toContain('是否需要向用户提问');
+    // Phase B 提示词含三段式 compressedOutput 结构要求。
+    expect(promptText).toContain('【任务要求】');
+    expect(promptText).toContain('【执行过程】');
+    expect(promptText).toContain('【最终成果】');
+    expect(forkedAgent.whenIdleCount).toBe(1);
+    // 一个 LLM 调用返回合并 JSON：passThroughVars + compressedOutput。
+    expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
+    expect(result.compressedOutput).toBe('压缩摘要');
+    // 评估完 dispose：live 移除（持久化记录保留）。
+    expect(agents.get(result.forkSessionId)).toBeUndefined();
+    // 真 fork 子代理路径不消费 llm.stream（模型调用走子代理 followup）。
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('truncates the seed to the last closed turn/end when the source has an unclosed tail', async () => {
+    const { agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => [
+        ...closedEvents(),
+        boundaryEvent('turn/start', 4, { turn: 1 }),
+        messageEvent(5, 'in-flight output'),
+      ],
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: phaseBJson('{}', '摘要') }];
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    // seed 截到最后一个闭合 turn/end（seq 0-3），未闭合尾部（turn/start 4 + assistant 5）不进 seed。
+    expect(agents.createSeeds[0]).toEqual(closedEvents());
+    expect(agents.createMetas[0]?.seedLength).toBe(4);
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.compressedOutput).toBe('摘要');
+  });
+
+  it('degrades to a temp session with errorDetail when the source has no closed turn at all', async () => {
+    const { llm, agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => [
+        boundaryEvent('turn/start', 0, { turn: 0 }),
+        messageEvent(1, 'in-flight output'),
+      ],
+    });
+    llm.streamHandler = () => textChunks(phaseBJson('{}', '降级摘要'));
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    // 无闭合 turn → 无法构造安全 seed → 降级临时会话（llm.stream 1 次）+ errorDetail（不失败）。
+    expect(agents.createSeeds).toHaveLength(0);
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.errorDetail).toContain('no closed turn');
+    expect(result.compressedOutput).toBe('降级摘要');
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  it('degrades to a temp session with errorDetail when agents.create throws', async () => {
+    const { llm, agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => closedEvents(),
+    });
+    agents.createError = new Error('create boom');
+    llm.streamHandler = () => textChunks(phaseBJson('{}', '降级摘要'));
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.errorDetail).toContain('create boom');
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  it('degrades to a temp session with errorDetail when hostAgentId/createAgent are not configured', async () => {
+    const { llm, assessor } = harness();
+    llm.streamHandler = () => textChunks(phaseBJson('{}', '降级摘要'));
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.errorDetail).toContain('not configured');
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  it('degrades to a temp session with errorDetail when no event source exists (shell synthetic session)', async () => {
+    const { llm, agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => undefined,
+    });
+    llm.streamHandler = () => textChunks(phaseBJson('{}', '降级摘要'));
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'shell', value: { command: 'echo hi' } } }),
+      stepSessionId: 'step-sh-abcdef01',
+      context: { input: '', output: 'stdout' },
+    });
+
+    expect(agents.createSeeds).toHaveLength(0);
+    expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.errorDetail).toContain('no event source');
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  it('follows up the same fork subagent with the JSON retry hint when the output is not parseable, then succeeds', async () => {
+    const { llm, agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => closedEvents(),
+    });
+    // 首次返回非 JSON → followup 错误提示重试 → 第二次返回合法合并 JSON。
+    let call = 0;
+    agents.createFollowupHandler = () => {
+      call += 1;
+      return call === 1
+        ? [{ type: 'text', text: 'not json at all' }]
+        : [{ type: 'text', text: phaseBJson('{"projectName":"sandore"}', '重试后摘要') }];
+    };
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    // 同一个 fork 子代理 followup 两次（首次判断 + 1 次纠正重试）。
+    const forkedAgent = agents.createdAgents[0]!;
+    expect(forkedAgent.followups).toHaveLength(2);
+    expect(forkedAgent.followups[1]?.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('compressedOutput') });
+    expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
+    expect(result.compressedOutput).toBe('重试后摘要');
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('throws FINALIZE_FAILED when the Phase B JSON stays unparseable after 3 retries (超限报错，不降级)', async () => {
+    const { llm, agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => closedEvents(),
+    });
+    // 始终返回非法 JSON → 首次 + 3 次 followup 重试均解析失败 → 超限报错（Step 落 failed）。
+    agents.createFollowupHandler = () => [{ type: 'text', text: 'still not json' }];
+
+    await expect(assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    })).rejects.toMatchObject({
+      code: 'FINALIZE_FAILED',
+      message: expect.stringContaining('JSON parse failed after 3 retry'),
+    });
+
+    // 首次 + 3 次重试共 4 次 followup；评估完 dispose（live 移除）。
+    const forkedAgent = agents.createdAgents[0]!;
+    expect(forkedAgent.followups).toHaveLength(4);
+    expect(agents.get(forkedAgent.id)).toBeUndefined();
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('throws FINALIZE_FAILED when the fork subagent produces no output (JSON 超限报错，不降级)', async () => {
+    const { llm, agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      // seed 仅含 turn 边界（无 assistant/message）→ followup 无回复时无输出可收集。
+      getStepSessionEvents: async () => [
+        boundaryEvent('turn/start', 0, { turn: 0 }),
+        boundaryEvent('turn/end', 1, { turn: 0, reason: { kind: 'completed' } }),
+      ],
+    });
+    // followup 不追加 assistant 回复 → finalAssistantOutput 无输出 → 重试仍无输出 → 超限报错。
+    agents.createFollowupHandler = () => undefined;
+
+    await expect(assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    })).rejects.toMatchObject({ code: 'FINALIZE_FAILED', message: expect.stringContaining('JSON parse failed') });
+    expect(llm.calls).toHaveLength(0);
+  });
 });
 
 describe('GateEvaluator', () => {
-  it('passes the primary gate when the AI reports done and artifacts exist', async () => {
+  // ── primary 门禁 = 纯代码产物校验（零 AI：不跑 llm.stream、不 fork 会话） ──────
+
+  it('passes the primary gate with pure artifact verification (zero AI calls)', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -413,54 +708,12 @@ describe('GateEvaluator', () => {
 
     expect(result.primaryPassed).toBe(true);
     expect(result.gatesPassed).toBe(true);
-    expect(result.gateSessionId).toMatch(/^eval-/);
+    expect(result.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(llm.calls).toHaveLength(0);
   });
 
-  it('forks a real session for the gate when stepSessionId is provided (真实 fork 会话, 4.8)', async () => {
-    const { llm, fs, sessions, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
-    fs.seedFile('/work/out/report.md');
-
-    const result = await gateEvaluator.evaluate({
-      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
-      context: { input: 'req', output: 'out', artifacts: ['/work/out/report.md'] },
-      gates: { primary: { enabled: true } },
-      workdir: '/work',
-      stepSessionId: 'step-session-1',
-    });
-
-    // Phase C 门禁 fork 真实会话：gateSessionId = 真实 fork id，LLM 请求带该 id 戳记。
-    expect(sessions.forkedSources).toEqual(['step-session-1']);
-    expect(result.gateSessionId).toBe('session-1');
-    expect(llm.calls[0]?.sessionId).toBe('session-1');
-    expect(result.primaryPassed).toBe(true);
-    expect(result.gatesPassed).toBe(true);
-  });
-
-  it('degrades to a temp session when the gate fork throws (合成/非 live 会话不失败)', async () => {
-    const { llm, fs, sessions, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
-    fs.seedFile('/work/out/report.md');
-    sessions.forkHandler = () => {
-      throw new Error('SESSION_NOT_FOUND');
-    };
-
-    const result = await gateEvaluator.evaluate({
-      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
-      context: { input: 'req', output: 'out', artifacts: ['/work/out/report.md'] },
-      gates: { primary: { enabled: true } },
-      workdir: '/work',
-      stepSessionId: 'missing-session',
-    });
-
-    expect(result.gateSessionId).toMatch(/^eval-/);
-    expect(llm.calls[0]?.sessionId).toBeUndefined();
-    expect(result.gatesPassed).toBe(true);
-  });
-
-  it('overrides gatesPassed to false when the AI passes but an outputTo file is missing', async () => {
+  it('fails the primary gate when an outputTo file is missing (pure code check, zero AI calls)', async () => {
     const { llm, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
 
     const result = await gateEvaluator.evaluate({
       step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
@@ -469,19 +722,96 @@ describe('GateEvaluator', () => {
       workdir: '/work',
     });
 
-    expect(result.primaryPassed).toBe(true);
+    expect(result.primaryPassed).toBe(false);
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('missing');
+    expect(llm.calls).toHaveLength(0);
   });
 
-  it('records a secondary gate result when secondary is enabled', async () => {
+  it('does not create a subagent when only the primary (code) gate runs', async () => {
+    const { llm, fs, sessions, agents, gateEvaluator } = harness();
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true } },
+      workdir: '/work',
+      stepSessionId: 'step-session-1',
+    });
+
+    // primary 纯代码校验不跑 AI → 不 fork、不建子代理（gateSessionId 为临时句柄占位）。
+    expect(sessions.forkedSources).toHaveLength(0);
+    expect(agents.createSeeds).toHaveLength(0);
+    expect(result.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  // ── secondary 门禁 = AI 门禁审查（显式 enabled:true 才跑；唯一门禁 AI 通道） ──
+
+  it('creates a host subagent (no seed) for the secondary gate and drives one round (followup → whenIdle → parseSecondaryGate)', async () => {
+    const { llm, fs, agents, gateEvaluator } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"gateStatus":"done"}' }];
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out', artifacts: ['/work/out/report.md'] },
+      gates: { primary: { enabled: true }, secondary: { enabled: true, prompt: 'review' } },
+      workdir: '/work',
+      stepSessionId: 'step-session-1',
+    });
+
+    // secondary 单独建宿主子代理：无 seed、meta parentSession=宿主主代理 + origin='subagent'。
+    expect(agents.createSeeds).toEqual([undefined]);
+    expect(agents.createMetas[0]).toMatchObject({ parentSession: 'host-1', origin: 'subagent' });
+    // gateSessionId = 子代理 id（纯 UUID）。
+    expect(result.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // 驱动一轮：followup 收到 secondary 门禁提示词（原样注入用户 prompt），whenIdle 被 await。
+    const gateAgent = agents.createdAgents[0]!;
+    expect(gateAgent.followups).toHaveLength(1);
+    const promptText = (gateAgent.followups[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    expect(promptText).toContain('review');
+    expect(gateAgent.whenIdleCount).toBe(1);
+    // finalAssistantOutput → parseSecondaryGate。
+    expect(result.secondaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(true);
+    // 子代理路径不消费 llm.stream；评估完 dispose（live 移除）。
+    expect(llm.calls).toHaveLength(0);
+    expect(agents.get(result.gateSessionId)).toBeUndefined();
+  });
+
+  it('degrades to a temp session when the secondary gate agents.create throws (不失败，记 errorDetail)', async () => {
+    const { llm, fs, agents, gateEvaluator } = harness({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+    });
+    agents.createError = new Error('gate create boom');
+    llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out', artifacts: ['/work/out/report.md'] },
+      gates: { primary: { enabled: true }, secondary: { enabled: true, prompt: 'review' } },
+      workdir: '/work',
+      stepSessionId: 'missing-session',
+    });
+
+    // 降级一次性临时会话（runStream）：gateSessionId 为 eval- 句柄、errorDetail 记原因。
+    expect(result.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.errorDetail).toContain('gate create boom');
+    expect(llm.calls[0]?.sessionId).toBeUndefined();
+    expect(result.gatesPassed).toBe(true);
+  });
+
+  it('records a secondary gate result when secondary is enabled (single AI call)', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    let call = 0;
-    llm.streamHandler = () => {
-      const text = call === 0 ? '{"taskStatus":"done"}' : '{"gateStatus":"done"}';
-      call += 1;
-      return textChunks(text);
-    };
+    llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -491,9 +821,36 @@ describe('GateEvaluator', () => {
       workdir: '/work',
     });
 
+    // primary 纯代码校验（零 AI）+ secondary AI 门禁审查 → 恰好 1 次 LLM 调用。
+    expect(llm.calls).toHaveLength(1);
     expect(result.primaryPassed).toBe(true);
     expect(result.secondaryPassed).toBe(true);
     expect(result.gatesPassed).toBe(true);
+  });
+
+  it('secondary 提示词框架：原样注入用户 prompt + 返回格式，不内置完成度/质量检查要求', async () => {
+    const { llm, fs, gateEvaluator } = harness();
+    const userPrompt = '核对产物是否满足门控要求';
+    llm.streamHandler = () => textChunks('{"gateStatus":"done"}');
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out' },
+      gates: { primary: { enabled: true }, secondary: { enabled: true, prompt: userPrompt } },
+      workdir: '/work',
+    });
+
+    expect(result.gatesPassed).toBe(true);
+    const prompt = (llm.calls[0]?.messages[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    // 框架只注入身份 + stepContext + 用户 prompt 原样 + 返回 JSON 格式框架。
+    expect(prompt).toContain(userPrompt);
+    expect(prompt).toContain('"gateStatus"');
+    // 不内置「检查完成度/质量」要求——完成度判断完全由用户 prompt 决定。
+    expect(prompt).not.toContain('完成度');
+    expect(prompt).not.toContain('质量');
+    expect(prompt).not.toContain('基本完成');
+    expect(prompt).not.toContain('完整门控审查');
   });
 
   it('omits primary passed flags when primary is explicitly disabled (only secondary runs)', async () => {
@@ -516,6 +873,7 @@ describe('GateEvaluator', () => {
       secondary: { enabled: true, passed: true, prompt: 'review' },
     });
     expect(result.gateDetails?.primary).not.toHaveProperty('passed');
+    expect(llm.calls).toHaveLength(1);
   });
 
   // ── 缺陷 5 次要差异：primary 默认 enabled=true（对齐基准 primary?.enabled ?? true） ──
@@ -523,15 +881,14 @@ describe('GateEvaluator', () => {
   // 未配置 primary 时基准 primary 默认执行，sandore 默认不执行 → 行为分歧。修后
   // primary 未配置即视为启用（!== false），与基准对齐。
 
-  it('defaults primary to enabled when only secondary is configured (aligns with baseline primary?.enabled ?? true)', async () => {
+  it('defaults primary to enabled when only secondary is configured (code check + secondary AI)', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    // 未配置 primary，仅配置 secondary → primary 默认启用，双门禁均执行。
-    // call 0 = primary（返回 taskStatus:done），call 1 = secondary（返回 gateStatus:done）。
+    // 未配置 primary，仅配置 secondary → primary 默认启用（纯代码校验，零 AI），
+    // 仅 secondary 跑 1 次 AI 门禁审查（call 0 = gateStatus:done）。
     let call = 0;
     llm.streamHandler = () => {
-      const text = call === 0 ? '{"taskStatus":"done"}' : '{"gateStatus":"done"}';
       call += 1;
-      return textChunks(text);
+      return textChunks('{"gateStatus":"done"}');
     };
     fs.seedFile('/work/out/report.md');
 
@@ -550,15 +907,13 @@ describe('GateEvaluator', () => {
       primary: { enabled: true, passed: true },
       secondary: { enabled: true, passed: true, prompt: 'review' },
     });
-    expect(call).toBe(2);
+    expect(call).toBe(1);
   });
 
-  it('defaults primary to enabled when neither primary nor secondary is configured but gates object exists', async () => {
+  it('defaults primary to enabled when neither primary nor secondary is configured but gates object exists (code-only, zero AI)', async () => {
     const { llm, fs, gateEvaluator } = harness();
     // gates: {}（三级合并后存在 gates 对象但 primary/secondary 均未配置）→
-    // primary 默认启用执行、secondary 默认禁用不执行。对齐基准：任一级配了 gates
-    // 对象即 primary 默认 enabled=true、secondary 默认 false。
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
+    // primary 默认启用执行纯代码校验、secondary 默认禁用不执行 → 零 AI 调用。
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -575,12 +930,11 @@ describe('GateEvaluator', () => {
       primary: { enabled: true, passed: true },
       secondary: { enabled: false },
     });
-    expect(llm.calls).toHaveLength(1);
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('verifies outputTo via regex when a regex is configured', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -591,11 +945,11 @@ describe('GateEvaluator', () => {
     });
 
     expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('verifies outputTo via a literal (non-glob) path', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -606,11 +960,11 @@ describe('GateEvaluator', () => {
     });
 
     expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('reports the regex in errorDetail when a regex outputTo is missing', async () => {
     const { llm, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
 
     const result = await gateEvaluator.evaluate({
       step: step({ outputTo: [{ id: 'opt-re', regex: 'missing\\.md' }] }),
@@ -621,13 +975,13 @@ describe('GateEvaluator', () => {
 
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('missing\\.md');
+    expect(llm.calls).toHaveLength(0);
   });
 
   // ── 缺陷 6：非 glob path 精确存在性检查（替代 findFilesByRegex 误用） ──────────
 
   it('reports missing for a non-glob literal path when the file is absent and no similar files exist', async () => {
     const { llm, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
 
     const result = await gateEvaluator.evaluate({
       step: step({ outputTo: [{ id: 'opt-p', path: 'out/report.md' }] }),
@@ -636,14 +990,14 @@ describe('GateEvaluator', () => {
       workdir: '/work',
     });
 
-    expect(result.primaryPassed).toBe(true);
+    expect(result.primaryPassed).toBe(false);
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('out/report.md');
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('passes a non-glob literal path with a ./ prefix when the file exists (no false missing)', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/out/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -657,11 +1011,11 @@ describe('GateEvaluator', () => {
     // 'out/report.md' 无前导字符 → 确定性误报缺失（门禁恒失败）。精确存在性检查只
     // 查 join 后的 /work/out/report.md 本身 → 存在即通过。
     expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('still reports missing for a non-glob literal path when a nested similar file would falsely match under regex', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     // 期望产物 output/result.txt 本身不存在；仅树内存在嵌套同名/相似文件。
     // 旧实现用非锚定 RegExp(output/result.txt) 全树子串匹配会命中
     // dist/output/result.txt（含子串 'output/result.txt'）→ 该报缺失却放行（漏报）。
@@ -679,11 +1033,11 @@ describe('GateEvaluator', () => {
 
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('output/result.txt');
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('still resolves glob and regex outputTo branches after the non-glob fix (regression)', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/out/report.md');
     fs.seedFile('/work/report.md');
 
@@ -702,6 +1056,7 @@ describe('GateEvaluator', () => {
     // glob 分支仍走 findFilesByGlob（锚定 ^out/[^/]*\.md$）、regex 字段仍走
     // findFilesByRegex（非锚定全树匹配，语义保留）；两者命中即通过。
     expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
   });
 
   // ── 缺陷 19：isGlobPattern 全特征检测后，regex 写法入 path 字段不再误判 glob ──
@@ -710,7 +1065,6 @@ describe('GateEvaluator', () => {
 
   it('reports missing for path=.* (no literal file named .*) instead of 恒放行 via findFilesByRegex', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     // 播种一个普通产物文件（无点文件）：若缺陷 6 未修复，`.*` 非glob 会落入
     // findFilesByRegex → `new RegExp('.*')` 匹配 report.md → 门禁恒放行（危险）。
     // 缺陷 6 已修复：非glob → fileExists 精确查字面 `.*` → 不存在 → 报 missing。
@@ -723,14 +1077,14 @@ describe('GateEvaluator', () => {
       workdir: '/work',
     });
 
-    expect(result.primaryPassed).toBe(true);
+    expect(result.primaryPassed).toBe(false);
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('.*');
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('reports missing for path=[^a]* and does not falsely pass via globToRegex silent match', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     // 播种一个修前 globToRegex 会静默误命中的文件：globToRegex('[^a]*')=^\[\^a\][^/]*$
     // 匹配字面 `[^a]` 前缀 → 误命中 `[^a]note.md` → 门禁假放行（静默错误匹配）。
     // 修后：`[^a]*` 命中 `[^` 特征 → 非glob → fileExists 精确查字面 `[^a]*` → 不存在 → 报 missing。
@@ -743,16 +1097,16 @@ describe('GateEvaluator', () => {
       workdir: '/work',
     });
 
-    expect(result.primaryPassed).toBe(true);
+    expect(result.primaryPassed).toBe(false);
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('[^a]*');
+    expect(llm.calls).toHaveLength(0);
   });
 
   // ── 缺陷 34：outputTo path/regex 含 ${xxx} 透传变量占位符的解析与延迟 ──────────
 
   it('passes the gate when a ${xxx} path resolves via vars and the file exists', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/artifacts/my-project/report.md');
 
     const result = await gateEvaluator.evaluate({
@@ -764,11 +1118,11 @@ describe('GateEvaluator', () => {
     });
 
     expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('reports missing when a ${xxx} path resolves via vars but the file is absent', async () => {
     const { llm, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
 
     const result = await gateEvaluator.evaluate({
       step: step({ outputTo: [{ id: 'opt-var', path: 'artifacts/${projectName}/report.md' }] }),
@@ -781,11 +1135,11 @@ describe('GateEvaluator', () => {
     expect(result.gatesPassed).toBe(false);
     // 报缺失的 pattern 是解析后的字面路径（含真实变量值），便于定位。
     expect(result.errorDetail).toContain('artifacts/my-project/report.md');
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('reports missing when vars lack the variable (deferred literal ${xxx} never matches)', async () => {
     const { llm, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     // 修前原实现：${projectName} 原样入 findFilesByRegex → new RegExp('${projectName}')
     // 的 `$` 行尾锚 + 花括号字面量永不匹配 → 确定性报 missing。resolveOutputToVars
     // 缺省 vars={} 时 deferred=true，字面占位路径走 fileExists 不命中 → 同样报 missing。
@@ -799,11 +1153,11 @@ describe('GateEvaluator', () => {
 
     expect(result.gatesPassed).toBe(false);
     expect(result.errorDetail).toContain('artifacts/${projectName}/report.md');
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('passes the gate when a ${xxx} regex resolves via vars and a file matches', async () => {
     const { llm, fs, gateEvaluator } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/out/my-project.md');
 
     const result = await gateEvaluator.evaluate({
@@ -815,6 +1169,7 @@ describe('GateEvaluator', () => {
     });
 
     expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
   });
 });
 
@@ -916,7 +1271,7 @@ describe('FinalizeManager.finalizeStep', () => {
     expect(outcome.type).toBe('done');
     expect(executed.status).toBe('completed');
     expect(executed.finalizeMeta?.currentPhase).toBe('completed');
-    expect(executed.finalizeMeta?.assessResult?.hasAsk).toBe(false);
+    expect(executed.finalizeMeta?.assessResult?.passThroughVars).toEqual({});
   });
 
   it('treats a fenced ask-without-question output as completed too (fence + fake-ask combined)', async () => {
@@ -943,7 +1298,7 @@ describe('FinalizeManager.finalizeStep', () => {
 
   it('writes back extracted passThroughVars preserving the refresh flag', async () => {
     const { llm, manager } = harness();
-    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{"projectName":"sandore"}}');
+    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{"projectName":"sandore"},"compressedOutput":"摘要"}');
     const passThroughVars: Record<string, PassThroughVarValue> = {};
 
     await manager.finalizeStep({
@@ -963,15 +1318,8 @@ describe('FinalizeManager.finalizeStep', () => {
 
   it('records a complete finalizeMeta with currentPhase/assessSessionId/assessResult/gateResult', async () => {
     const { llm, fs, manager } = harness();
-    let call = 0;
-    llm.streamHandler = () => {
-      const text =
-        call === 0
-          ? '{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}'
-          : '{"taskStatus":"done"}';
-      call += 1;
-      return textChunks(text);
-    };
+    // primary 纯代码校验（零 AI）：只有 assess 一次 LLM 调用（无门禁 AI）。
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{"projectName":"sandore"}}');
     fs.seedFile('/work/out/report.md');
     const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
 
@@ -991,21 +1339,20 @@ describe('FinalizeManager.finalizeStep', () => {
     expect(outcome.type).toBe('done');
     expect(executed.finalizeMeta?.currentPhase).toBe('completed');
     expect(executed.finalizeMeta?.assessResult).toBeDefined();
-    // Phase A 评估 fork 会话 id（用完即删：live 引用已释放，id 持久化到 state）。
-    expect(executed.finalizeMeta?.assessSessionId).toBe('session-1');
+    // Round 17：顶层 assessSessionId 已删除，sessionId 从 assessResult.forkSessionId 内读
+    expect(executed.finalizeMeta?.assessResult?.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(executed.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
-    // Phase C 门禁真实 fork 会话 id（持久化到 state）。
-    expect(executed.finalizeMeta?.gateSessionId).toBe('session-2');
+    // Phase C 仅 primary 纯代码校验（无 secondary AI）→ 不建子代理，
+    // gateSessionId 为临时句柄占位（schema 强约束）。
+    expect(executed.finalizeMeta?.gateResult?.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // Phase A（临时会话）+ Phase B（降级临时会话）= 2 次 LLM 调用。
+    expect(llm.calls).toHaveLength(2);
   });
 
   it('returns error with missing-file detail when the gate fails on outputTo', async () => {
     const { llm, manager } = harness();
-    let call = 0;
-    llm.streamHandler = () => {
-      const text = call === 0 ? '{"completionType":"completed","passThroughVars":{}}' : '{"taskStatus":"done"}';
-      call += 1;
-      return textChunks(text);
-    };
+    // primary 纯代码校验（零 AI）：只有 assess 一次 LLM 调用；门禁报 missing 走代码校验。
+    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{},"compressedOutput":"摘要"}');
     const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
 
     const outcome = await manager.finalizeStep({
@@ -1030,7 +1377,7 @@ describe('FinalizeManager.finalizeStep', () => {
   it('does not write back extracted vars that are not declared on the step', async () => {
     const { llm, manager } = harness();
     llm.streamHandler = () =>
-      textChunks('{"completionType":"completed","passThroughVars":{"undeclared":"x","projectName":"sandore"}}');
+      textChunks('{"completionType":"completed","passThroughVars":{"undeclared":"x","projectName":"sandore"},"compressedOutput":"摘要"}');
     const passThroughVars: Record<string, PassThroughVarValue> = {};
 
     await manager.finalizeStep({
@@ -1055,16 +1402,9 @@ describe('FinalizeManager.finalizeStep', () => {
     // 场景：Step 声明 projectName（值 ${projectName} 占位）并在自身 outputTo 引用它。
     // assess 提取 projectName=my-project → 合并进 vars → 门禁 verifyArtifacts 解析
     // artifacts/${projectName}/report.md → artifacts/my-project/report.md 命中文件 → 通过。
+    // primary 纯代码校验（零 AI）：只有 assess 一次 LLM 调用。
     const { llm, fs, manager } = harness();
-    let call = 0;
-    llm.streamHandler = () => {
-      const text =
-        call === 0
-          ? '{"completionType":"completed","passThroughVars":{"projectName":"my-project"}}'
-          : '{"taskStatus":"done"}';
-      call += 1;
-      return textChunks(text);
-    };
+    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{"projectName":"my-project"},"compressedOutput":"摘要"}');
     fs.seedFile('/work/artifacts/my-project/report.md');
     const passThroughVars: Record<string, PassThroughVarValue> = {
       projectName: { value: '${projectName}', description: 'project' },
@@ -1088,21 +1428,15 @@ describe('FinalizeManager.finalizeStep', () => {
     expect(outcome.gateResult?.gatesPassed).toBe(true);
     // 回写后累加器值已更新（persistFinalize 写回 extracted 值）。
     expect(passThroughVars['projectName']).toEqual({ value: 'my-project', description: 'project' });
+    // Phase A（临时会话）+ Phase B（降级临时会话）= 2 次 LLM 调用。
+    expect(llm.calls).toHaveLength(2);
   });
 
   it('reports missing at gate time when a self-referential ${xxx} outputTo resolves but the file is absent', async () => {
     // 同上，但文件缺失 → verifyArtifacts 解析后命中字面 artifacts/my-project/report.md
     // 不存在 → 报 missing → gatesPassed=false → outcome.type=error。
     const { llm, manager } = harness();
-    let call = 0;
-    llm.streamHandler = () => {
-      const text =
-        call === 0
-          ? '{"completionType":"completed","passThroughVars":{"projectName":"my-project"}}'
-          : '{"taskStatus":"done"}';
-      call += 1;
-      return textChunks(text);
-    };
+    llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{"projectName":"my-project"},"compressedOutput":"摘要"}');
     const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
 
     const outcome = await manager.finalizeStep({
@@ -1164,9 +1498,8 @@ describe('FinalizeManager 3 阶段拆分（assessOnly / evaluateGates / commitFi
     expect(assessResult.hasAsk).toBe(false);
   });
 
-  it('evaluateGates 只跑门禁（真实 fork 会话）并返回 gateResult（不回写状态）', async () => {
+  it('evaluateGates 只跑门禁（primary 纯代码校验，零 AI）并返回 gateResult（不回写状态）', async () => {
     const { llm, fs, manager } = harness();
-    llm.streamHandler = () => textChunks('{"taskStatus":"done"}');
     fs.seedFile('/work/out/report.md');
     const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
 
@@ -1188,8 +1521,11 @@ describe('FinalizeManager 3 阶段拆分（assessOnly / evaluateGates / commitFi
       gates: { primary: { enabled: true } },
     }, assessResult);
 
+    // primary 纯代码校验：产物存在 → 通过；无 secondary → 零 AI、不 fork 门禁会话。
     expect(gateResult.gatesPassed).toBe(true);
-    expect(gateResult.gateSessionId).toBe('session-1');
+    expect(gateResult.primaryPassed).toBe(true);
+    expect(gateResult.gateSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(llm.calls).toHaveLength(0);
     expect(executed.finalizeMeta).toBeUndefined();
   });
 
@@ -1224,14 +1560,36 @@ describe('FinalizeManager 3 阶段拆分（assessOnly / evaluateGates / commitFi
 
     // Phase B 收尾：透传变量已回写（保留 refresh）。
     expect(passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
-    // finalizeMeta：currentPhase='finalizing' + assessSessionId（Phase B 起持久化）。
+    // finalizeMeta：currentPhase='finalizing'；Round 17 顶层 assessSessionId 已删除，
+    // sessionId 从 assessResult.forkSessionId 内读。
     expect(executed.finalizeMeta?.currentPhase).toBe('finalizing');
-    expect(executed.finalizeMeta?.assessSessionId).toBe('session-1');
-    expect(executed.finalizeMeta?.assessResult?.hasAsk).toBe(false);
+    expect(executed.finalizeMeta?.assessResult?.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(executed.finalizeMeta?.assessResult?.passThroughVars).toEqual({ projectName: 'sandore' });
     expect(executed.finalizeMeta?.gateResult).toBeUndefined();
   });
 
-  it('Phase A ask 保底中断的 finalizeMeta 不记录顶层 assessSessionId（fork 用完即删不持久化，4.6/4.1）', async () => {
+  it('commitFinalize 触发 onPhaseChange 回调（step + childId + phase 透传，供引擎双发 sandore/step-phase）', async () => {
+    const { manager } = harness();
+    const phases: Array<{ stepId: string; childId: string | undefined; phase: string }> = [];
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    // 收尾阶段事件 childId 取执行段 sessionMeta.childId（真实子代理或合成占位）。
+    executed.sessionMeta = { childId: 'child-1', synthetic: false, command: 'prompt' };
+
+    await manager.commitFinalize({
+      step: step({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      onPhaseChange: (step, childId, phase) => phases.push({ stepId: step.id, childId, phase }),
+    }, undefined, undefined, 'completed');
+
+    expect(phases).toEqual([{ stepId: 'step-a', childId: 'child-1', phase: 'completed' }]);
+    // 回调在 finalizeMeta 写入后触发（阶段已落盘）。
+    expect(executed.finalizeMeta?.currentPhase).toBe('completed');
+  });
+
+  it('Phase A ask 保底中断的 finalizeMeta 不记录顶层 assessSessionId（Phase A 临时会话不持久化，4.6/4.1）', async () => {
     const { llm, manager } = harness();
     llm.streamHandler = () =>
       textChunks('{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"确认继续？"}]}}');
@@ -1251,11 +1609,174 @@ describe('FinalizeManager 3 阶段拆分（assessOnly / evaluateGates / commitFi
     expect(outcome.type).toBe('ask');
     expect(executed.status).toBe('interacting');
     // Phase A 中断快照：currentPhase='ask-detect'；顶层 assessSessionId 不持久化
-    // （计划：Phase A fork 用完即删、Phase B 收尾才落 assessSessionId）。
+    // （计划：Phase A 临时会话用完即删、Phase B 收尾才落 assessSessionId）。
     expect(executed.finalizeMeta?.currentPhase).toBe('ask-detect');
     expect(executed.finalizeMeta?.assessSessionId).toBeUndefined();
-    // assessResult 仍随快照落 state（findAskStep 依赖 askQuestion；forkSessionId 为 schema 强约束）。
-    expect(executed.finalizeMeta?.assessResult?.hasAsk).toBe(true);
-    expect(executed.finalizeMeta?.assessResult?.forkSessionId).toBe('session-1');
+    // askResult 随快照落 state（findAskStep 依赖 askQuestion；forkSessionId 为 schema 强约束）。
+    expect(executed.finalizeMeta?.askResult?.hasAsk).toBe(true);
+    expect(executed.finalizeMeta?.askResult?.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(executed.finalizeMeta?.assessResult).toBeUndefined();
+  });
+
+  // ── commitFinalize 透传变量写回门控：仅在 Phase B（'finalizing'）执行 ──────────
+
+  it('commitFinalize 透传变量写回仅发生在 Phase B（finalizing）——Phase A（ask-detect）不写回', async () => {
+    const { manager } = harness();
+    const passThroughVars: Record<string, PassThroughVarValue> = {};
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    const request = {
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      passThroughVars,
+    };
+    const assessResult: FinalizeAssessResult = {
+      hasAsk: true,
+      passThroughVars: { projectName: 'sandore' },
+      forkSessionId: 'eval-1234abcd',
+      assessmentRaw: '{"hasAsk":true,"passThroughVars":{"projectName":"sandore"}}',
+    };
+
+    // Phase A（ask-detect）调用：finalizeMeta 落盘但不回写透传变量。
+    await manager.commitFinalize(request, assessResult, undefined, 'ask-detect', { recordAssessSession: false });
+    expect(passThroughVars['projectName']).toBeUndefined();
+    expect(executed.finalizeMeta?.currentPhase).toBe('ask-detect');
+
+    // Phase B（finalizing）调用：透传变量回写。
+    await manager.commitFinalize(request, assessResult, undefined, 'finalizing');
+    expect(passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
+    expect(executed.finalizeMeta?.currentPhase).toBe('finalizing');
+  });
+
+  it('commitFinalize gating/completed 终态不再重复回写透传变量（Phase B 已写，幂等重写不覆盖累加器）', async () => {
+    const { manager } = harness();
+    const passThroughVars: Record<string, PassThroughVarValue> = {
+      projectName: { value: 'sandore', description: 'project' },
+    };
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    const request = {
+      step: step({
+        command: { type: 'prompt', value: { promptText: 'x' } },
+        passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+      }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      passThroughVars,
+    };
+    const assessResult: FinalizeAssessResult = {
+      hasAsk: false,
+      passThroughVars: {},
+      forkSessionId: 'eval-1234abcd',
+      assessmentRaw: '{"hasAsk":false,"passThroughVars":{}}',
+    };
+
+    // gating/completed 终态提交不触发写回（写回仅 finalizing；避免终态覆盖已落账值）。
+    await manager.commitFinalize(request, assessResult, undefined, 'gating');
+    await manager.commitFinalize(request, assessResult, undefined, 'completed');
+    expect(passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
+  });
+
+  // ── Bug 1：commitFinalize previousPhase 记录阶段流转痕迹 ──────────
+
+  it('commitFinalize records previousPhase when currentPhase changes (routing 时 previousPhase=finalizing)', async () => {
+    const { manager } = harness();
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    const request = {
+      step: step({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+    };
+    const assessResult: FinalizeAssessResult = {
+      hasAsk: false,
+      passThroughVars: {},
+      forkSessionId: 'eval-1234abcd',
+      assessmentRaw: '',
+    };
+
+    // Phase B（finalizing）：首次写入，无 previousPhase。
+    await manager.commitFinalize(request, assessResult, undefined, 'finalizing');
+    expect(executed.finalizeMeta?.currentPhase).toBe('finalizing');
+    expect(executed.finalizeMeta?.previousPhase).toBeUndefined();
+
+    // Phase D（routing）：previousPhase = 'finalizing'。
+    await manager.commitFinalize(request, assessResult, undefined, 'routing');
+    expect(executed.finalizeMeta?.currentPhase).toBe('routing');
+    expect(executed.finalizeMeta?.previousPhase).toBe('finalizing');
+
+    // completed：previousPhase = 'routing'。
+    await manager.commitFinalize(request, assessResult, undefined, 'completed');
+    expect(executed.finalizeMeta?.currentPhase).toBe('completed');
+    expect(executed.finalizeMeta?.previousPhase).toBe('routing');
+  });
+
+  // ── Round 7：commitFinalize onPersist/onPhaseChange 执行顺序 + 中间态同步 ──
+
+  it('commitFinalize executes onPersist before onPhaseChange (Round 7 顺序保证)', async () => {
+    const { manager } = harness();
+    const callOrder: string[] = [];
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    executed.sessionMeta = { childId: 'child-1', synthetic: false, command: 'prompt' };
+
+    await manager.commitFinalize({
+      step: step({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      onPersist: async () => { callOrder.push('onPersist'); },
+      onPhaseChange: () => { callOrder.push('onPhaseChange'); },
+    }, undefined, undefined, 'finalizing');
+
+    expect(callOrder).toEqual(['onPersist', 'onPhaseChange']);
+  });
+
+  it('commitFinalize onPersist receives executedStep with updated finalizeMeta (Round 7 中间态同步)', async () => {
+    const { manager } = harness();
+    let persistedStep: ExecutedStepDefault | undefined;
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    executed.sessionMeta = { childId: 'child-1', synthetic: false, command: 'prompt' };
+
+    await manager.commitFinalize({
+      step: step({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      onPersist: async (step) => { persistedStep = step; },
+    }, undefined, undefined, 'finalizing');
+
+    expect(persistedStep).toBeDefined();
+    expect(persistedStep?.finalizeMeta?.currentPhase).toBe('finalizing');
+  });
+
+  it('commitFinalize onPhaseChange sees finalizeMeta already synced via onPersist (Round 7 事件前中间态就绪)', async () => {
+    const { manager } = harness();
+    let phaseAtEventTime: string | undefined;
+    const executed = executedStep({ command: { type: 'prompt', value: { promptText: 'x' } } });
+    executed.sessionMeta = { childId: 'child-1', synthetic: false, command: 'prompt' };
+
+    // 模拟引擎侧 onPersist：将 executedStep upsert 进 active.state（此处用同步回调模拟）。
+    let activeStateSynced = false;
+    await manager.commitFinalize({
+      step: step({ command: { type: 'prompt', value: { promptText: 'x' } } }),
+      executedStep: executed,
+      stepSessionId: 's1',
+      context: { input: 'req', output: 'out' },
+      workdir: '/work',
+      onPersist: async () => { activeStateSynced = true; },
+      onPhaseChange: () => { phaseAtEventTime = activeStateSynced ? 'synced' : 'not-synced'; },
+    }, undefined, undefined, 'gating');
+
+    expect(phaseAtEventTime).toBe('synced');
+    expect(executed.finalizeMeta?.currentPhase).toBe('gating');
   });
 });

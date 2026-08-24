@@ -6,10 +6,8 @@
  * DSH 多 agent 对话流（用户右气泡 + agent 左流式）× DSH composer 接管面板
  * （权限申请 ApprovalPanel / 问题选择 QuestionComposer）。
  *
- * 数据源 = `getInstanceState` 轮询（运行中 5s，终态停）+ `getArtifacts` 初始化；
- * 对话流与 agent 消息由纯函数从状态派生。agent 标题点击 → `openSession(childId)`
- * 打开 DSH 现成的子代理会话页（复用，不重复实现）；暂停/恢复/重试/中止集中在
- * 底部 composer（接管面板期间隐藏）；权限/问答待办以 composer 接管面板呈现。
+ * Round 12：去除 5s 递归 setTimeout 轮询，改为 subscribeStepPhase 事件驱动
+ * + 30s 超低频兜底 + 焦点/可见性恢复刷新（终态自动停止）。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/RunView
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -28,16 +26,19 @@ import {
 import { TreeNav, type TreeLeafSelection } from './TreeNav.tsx'
 import { UnifiedTimeline } from './UnifiedTimeline.tsx'
 import { DiscussionInput } from './DiscussionInput.tsx'
+import { subscribeStepPhase } from './step-phase.ts'
+import { subscribeSandoreSse } from './sandore-sse.ts'
 import type { ModelDirectoryFace, ObservableFace, PermissionSelectValue } from './model-faces.ts'
 import { PreviewPanel } from './PreviewPanel.tsx'
 import { DragHandle } from './DragHandle.tsx'
 import {
   getWorkflowState, resizePreviewWidth, setWorkflowState, subscribeWorkflowState,
 } from './workflow-store.ts'
+import { useFocusRefresh } from './use-focus-refresh.ts'
 import css from './RunView.module.css'
 
-/** 轮询间隔（毫秒）。 */
-const POLL_INTERVAL_MS = 5000
+/** Round 12：30s 超低频兜底轮询间隔（事件驱动+焦点恢复为主要刷新源）。 */
+const STALE_POLL_MS = 30000
 
 /** RunView 所需的最小 `ctx.remote.sandore` 访问面。 */
 export interface RunViewRemote {
@@ -96,6 +97,9 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
   const previewWidth = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().previewWidth)
   const preview = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().preview)
 
+  // Round 12：卸载标记（焦点/可见性回调中检查）。
+  const disposedRef = useRef(false)
+
   const refresh = useCallback(async (): Promise<DagRunStatus | undefined> => {
     try {
       const [stateResult, artifactsResult] = await Promise.all([
@@ -113,33 +117,55 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
     }
   }, [instanceId, remote])
 
-  // 轮询定时器与卸载标记（提升为 ref，使动作后也能复用调度链）。
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const disposedRef = useRef(false)
-
-  const refreshAndSchedule = useCallback(async (): Promise<void> => {
-    const status = await refresh()
-    if (disposedRef.current || status === undefined || !isRunningStatus(status)) return
-    if (timerRef.current === undefined) {
-      timerRef.current = setTimeout(() => {
-        timerRef.current = undefined
-        void refreshAndSchedule()
-      }, POLL_INTERVAL_MS)
-    }
+  // 事件驱动即时刷新：step-phase 事件到达立即 RPC（宿主 session 打开时生效）。
+  const forceRefresh = useCallback(async (): Promise<void> => {
+    if (disposedRef.current) return
+    await refresh()
   }, [refresh])
 
+  // Round 12：焦点/可见性恢复刷新
+  useFocusRefresh(forceRefresh)
+
+  // 主刷新循环：首次加载 + 30s 超低频兜底（终态自动停止）。
   useEffect(() => {
     disposedRef.current = false
     setLoadState({ kind: 'loading' })
-    void refreshAndSchedule()
+    // 首次加载
+    void refresh()
+
+    // 30s 超低频兜底（终态自动停）
+    const timer = setInterval(async () => {
+      if (disposedRef.current) { clearInterval(timer); return }
+      const status = await refresh()
+      if (status !== undefined && !isRunningStatus(status)) {
+        clearInterval(timer) // 终态停
+      }
+    }, STALE_POLL_MS)
+
     return () => {
       disposedRef.current = true
-      if (timerRef.current !== undefined) {
-        clearTimeout(timerRef.current)
-        timerRef.current = undefined
-      }
+      clearInterval(timer)
     }
-  }, [refreshAndSchedule])
+  }, [refresh])
+
+  // 收尾阶段流转订阅：引擎 `sandore/step-phase` 事件（Session append 通道经
+  // conversationEvents 折叠）到达即立即刷新实例状态。
+  useEffect(() => {
+    return subscribeStepPhase(() => {
+      if (disposedRef.current) return
+      void forceRefresh()
+    })
+  }, [forceRefresh])
+
+  // SSE 事件通道订阅：引擎 `/sandore/events` 推送即时刷新。
+  // 保留 subscribeStepPhase 作双保险（SSE 断线时 conversationEvents 仍可达）。
+  useEffect(() => {
+    return subscribeSandoreSse((_type, _data) => {
+      if (disposedRef.current) return
+      // 收到任何 sandore/* 事件都触发刷新（终态/阶段流转/Step 状态变更等）。
+      void forceRefresh()
+    })
+  }, [forceRefresh])
 
   const runAction = async (action: () => Promise<void>): Promise<void> => {
     setActionState({ kind: 'pending' })
@@ -150,7 +176,7 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
       return
     }
     setActionState({ kind: 'idle' })
-    await refreshAndSchedule()
+    await refresh()
   }
 
   const pauseAll = (): void => { void runAction(async () => { unwrap(await remote.pauseAll({ instanceId })) }) }

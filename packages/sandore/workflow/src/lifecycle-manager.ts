@@ -36,10 +36,9 @@ const TERMINAL_STEP_STATUSES: ReadonlySet<StepStatus> = new Set(['completed', 'f
 /** 恢复提示词的缺省值（`resumeStep`/`resumeAllSteps` 未显式提供时使用）。 */
 const DEFAULT_RESUME_PROMPT = '请继续完成当前任务。';
 
-/** 合成新子代理 SessionId（与 shell 的 `synthesizeChildId` 同规则）。 */
-export function synthesizeChildId(stepId: string): string {
-  const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
-  return `step-${stepId}-${execId}`;
+/** 合成新子代理 SessionId（纯 UUID 格式）。 */
+export function synthesizeChildId(_stepId: string): string {
+  return globalThis.crypto.randomUUID();
 }
 
 /** 当前 ISO 时间戳。 */

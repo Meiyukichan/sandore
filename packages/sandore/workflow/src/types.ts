@@ -11,6 +11,7 @@ import type {
   AskUserQuestionPayload,
   BranchMeta,
   CommandConfig,
+  FinalizeAskResult,
   FinalizeAssessResult,
   FinalizeMeta,
   GateEvalResult,
@@ -29,6 +30,7 @@ export type {
   AskUserQuestionPayload,
   BranchMeta,
   CommandConfig,
+  FinalizeAskResult,
   FinalizeAssessResult,
   FinalizeMeta,
   GateEvalResult,
@@ -243,7 +245,7 @@ export type PendingInteractionStatus = 'pending' | 'replied' | 'rejected'
 /** 收尾最终结果（done/ask/error 三态联合）。 */
 export type FinalizeOutcome =
   | { type: 'done'; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
-  | { type: 'ask'; assessResult: FinalizeAssessResult }
+  | { type: 'ask'; assessResult: FinalizeAskResult }
   | { type: 'error'; errorDetail: string; assessResult?: FinalizeAssessResult; gateResult?: GateEvalResult }
 
 /** 工作流实例结束时的最终结果信息。 */

@@ -254,6 +254,11 @@ export const PendingPermissionEntrySchema = z.object({
   createdAt: z.string(),
 })
 
+/** 收尾阶段独立 status 枚举（ask/assess/routing 三值）。 */
+export const PhaseStatusSchema = z.enum(['running', 'done'])
+/** 门禁阶段 status 枚举（含失败态）。 */
+export const GatePhaseStatusSchema = z.enum(['running', 'done', 'failed'])
+
 /**
  * 收尾第 1 部分（Assessor）结果。
  *
@@ -261,20 +266,42 @@ export const PendingPermissionEntrySchema = z.object({
  * 评估判定 Step 未真正完成、需要向用户提问确认后继续（**ask 保底通道**：子代理未在
  * 执行期经 child-scope `ask_user_question` 工具直接提问时的兜底）；`false` 表示 Step
  * 已完成。`askQuestion` 为 `hasAsk=true` 时的提问载荷（缺失视为假 ask，回落 completed）。
+ * `compressedOutput`（Phase B 收尾处理）为当前 Step 关键产出的压缩摘要（透传变量提取 +
+ * 输出压缩合并 JSON 的产物；缺省 undefined——Phase A 临时会话/降级路径可能无压缩）。
  */
 export const FinalizeAssessResultSchema = z.object({
-  // 向后兼容：旧持久化记录的 assessResult 无 hasAsk（旧 schema 用 completionType），
-  // 默认 false（视为无 ask）避免启动时 storage-domain 校验旧记录失败。
-  hasAsk: z.boolean().default(false),
+  /** Round 11：收尾阶段独立 status（running/done）。 */
+  status: PhaseStatusSchema.optional(),
   passThroughVars: z.record(z.string(), z.string()),
   askQuestion: AskUserQuestionPayloadSchema.optional(),
+  /** Phase B 收尾压缩摘要（合并 JSON 的 compressedOutput；可选）。 */
+  compressedOutput: z.string().optional(),
   errorDetail: z.string().optional(),
+  forkSessionId: z.string(),
+  assessmentRaw: z.string(),
+})
+
+/**
+ * Phase A ask 判定结果（ask-detect 阶段专用）。
+ *
+ * `hasAsk=true` 表示评估判定需向用户提问确认后继续；`askQuestion` 为提问载荷；
+ * `forkSessionId` 为 Phase A 临时会话 id（用完即删，id 仅供日志/debug）。
+ */
+export const FinalizeAskResultSchema = z.object({
+  /** Round 11：ask 阶段独立 status（running/done）。 */
+  status: PhaseStatusSchema.optional(),
+  hasAsk: z.boolean(),
+  askQuestion: AskUserQuestionPayloadSchema.optional(),
+  compressedOutput: z.string().optional(),
+  passThroughVars: z.record(z.string(), z.string()),
   forkSessionId: z.string(),
   assessmentRaw: z.string(),
 })
 
 /** 收尾第 2 部分（GateEvaluator）结果。 */
 export const GateEvalResultSchema = z.object({
+  /** Round 11：门禁阶段独立 status（running/done/failed）。 */
+  status: GatePhaseStatusSchema.optional(),
   gatesPassed: z.boolean(),
   primaryPassed: z.boolean().optional(),
   secondaryPassed: z.boolean().optional(),
@@ -287,6 +314,29 @@ export const GateEvalResultSchema = z.object({
   assessmentRaw: z.string(),
 })
 
+/** 分支/循环评估元数据。 */
+export const BranchMetaSchema = z.object({
+  result: z.string().optional(),
+  sessionId: z.string().optional(),
+  directory: z.string().optional(),
+  status: z.enum(['evaluating', 'completed']),
+  expectation: z.string().optional(),
+})
+
+/**
+ * Phase D 路由判断结果。
+ *
+ * `branchMeta`/`loopMeta` 为条件分支/循环跳出的评估元数据；
+ * `routingSessionId` 为 Phase D fork 子代理会话 id（供 UI 打开查看路由判断过程）。
+ */
+export const RoutingResultSchema = z.object({
+  /** Round 11：路由阶段独立 status（running/done）。 */
+  status: PhaseStatusSchema.optional(),
+  branchMeta: BranchMetaSchema.optional(),
+  loopMeta: BranchMetaSchema.optional(),
+  routingSessionId: z.string().optional(),
+})
+
 /**
  * Step 收尾状态元数据。
  *
@@ -297,6 +347,7 @@ export const GateEvalResultSchema = z.object({
  * `ask-detect`（Phase A 问题检测/评估中，含 ask 保底中断等待）/
  * `finalizing`（Phase B 收尾中）/
  * `gating`（Phase C 门禁中）/
+ * `routing`（Phase D 路由中：门禁通过后、completed 前做循环/条件路由判断）/
  * `completed`（全部完成）。
  *
  * 注：Phase A 评估 fork 会话**用完即删**（live 引用评估后释放、不常驻）——计划
@@ -304,25 +355,19 @@ export const GateEvalResultSchema = z.object({
  * `assessResult.forkSessionId` / `assessSessionId` 落 state（schema 强约束）。
  */
 export const FinalizeMetaSchema = z.object({
-  currentPhase: z.enum(['ask-detect', 'finalizing', 'gating', 'completed']).optional(),
-  /** 收尾评估 fork 会话 id（Phase B 收尾时持久化到 state，供 UI 打开）。 */
-  assessSessionId: z.string().optional(),
-  /** Phase C 门禁 fork 会话 id（真实 fork 会话，持久化到 state 供 UI 打开）。 */
-  gateSessionId: z.string().optional(),
+  currentPhase: z.enum(['ask-detect', 'finalizing', 'gating', 'routing', 'completed']).optional(),
+  /** 前一收尾阶段（commitFinalize 覆盖 currentPhase 前保存旧值；UI 展示阶段流转痕迹）。 */
+  previousPhase: z.enum(['ask-detect', 'finalizing', 'gating', 'routing', 'completed']).optional(),
+  /** Phase A ask 判定结果（ask-detect 阶段写入）。 */
+  askResult: FinalizeAskResultSchema.optional(),
+  /** Phase B 收尾评估结果（finalizing 阶段写入，不含 hasAsk）。 */
+  assessResult: FinalizeAssessResultSchema.optional(),
+  /** Phase C 门禁结果（gating 阶段写入）。 */
+  gateResult: GateEvalResultSchema.optional(),
+  /** Phase D 路由判断结果（routing/completed 阶段写入）。 */
+  routingResult: RoutingResultSchema.optional(),
   directory: z.string().optional(),
   errorDetail: z.string().optional(),
-  // Task 3 新增：完成判定与两会话结果（精确形状见上方 FinalizeAssessResultSchema/GateEvalResultSchema）。
-  assessResult: FinalizeAssessResultSchema.optional(),
-  gateResult: GateEvalResultSchema.optional(),
-})
-
-/** 分支/循环评估元数据。 */
-export const BranchMetaSchema = z.object({
-  result: z.string().optional(),
-  sessionId: z.string().optional(),
-  directory: z.string().optional(),
-  status: z.enum(['evaluating', 'completed']),
-  expectation: z.string().optional(),
 })
 
 /** 会话消息记录。 */
@@ -488,7 +533,17 @@ export type WorkflowStage = z.infer<typeof WorkflowStageSchema>
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>
 export type StepSessionMeta = z.infer<typeof StepSessionMetaSchema>
 export type FinalizeMeta = z.infer<typeof FinalizeMetaSchema>
+/**
+ * Step 收尾阶段（`FinalizeMeta.currentPhase` 的非空取值）。
+ *
+ * 供 `sandore/step-phase` 事件载荷与收尾阶段流转钩子（`onPhaseChange`）使用：
+ * `ask-detect`（Phase A 问题检测/评估）/`finalizing`（Phase B 收尾）/
+ * `gating`（Phase C 门禁）/`routing`（Phase D 路由）/`completed`（全部完成）。
+ */
+export type FinalizePhase = NonNullable<FinalizeMeta['currentPhase']>
 export type FinalizeAssessResult = z.infer<typeof FinalizeAssessResultSchema>
+export type FinalizeAskResult = z.infer<typeof FinalizeAskResultSchema>
+export type RoutingResult = z.infer<typeof RoutingResultSchema>
 export type GateEvalResult = z.infer<typeof GateEvalResultSchema>
 export type AskUserQuestionPayload = z.infer<typeof AskUserQuestionPayloadSchema>
 export type PendingQuestionEntry = z.infer<typeof PendingQuestionEntrySchema>

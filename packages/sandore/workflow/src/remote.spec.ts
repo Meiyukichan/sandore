@@ -94,6 +94,7 @@ async function catchCodeAsync(fn: () => Promise<unknown>): Promise<string | unde
 
 /** mock 引擎的生命周期方法桩（`vi.fn` 记录调用，便于断言转调链路）。 */
 interface MockLifecycleEngine {
+  getInstanceState: ReturnType<typeof vi.fn>
   replyQuestion: ReturnType<typeof vi.fn>
   rejectQuestion: ReturnType<typeof vi.fn>
   replyPermission: ReturnType<typeof vi.fn>
@@ -173,6 +174,7 @@ async function harness(): Promise<{
       if (current === undefined) return
       await persistence.saveWorkflowState({ ...current, status: 'aborted', updatedAt: new Date().toISOString() })
     },
+    getInstanceState: vi.fn((_instanceId: string): WorkflowTaskState | undefined => undefined),
     replyQuestion: vi.fn(async (_instanceId: string, _requestId: string, _answers: AskUserQuestionAnswer) => {}),
     rejectQuestion: vi.fn(async (_instanceId: string, _requestId: string) => {}),
     replyPermission: vi.fn(async (_instanceId: string, _requestId: string, _reply: 'once' | 'always' | 'reject') => {}),
@@ -552,8 +554,50 @@ describe('SandoreRemote instance lifecycle', () => {
     await expect(remote.abortInstance('inst-done')).rejects.toMatchObject({ code: 'INVALID_OPERATION' })
   })
 
+  it('getInstanceState returns memory state when engine has active instance (收尾中间态优先)', async () => {
+    const { remote, engine } = await harness()
+    // 模拟引擎内存有 active instance（含 finalizing 中间态）
+    const liveState = makeState({
+      taskId: 'inst-live',
+      status: 'running',
+      executedSteps: [{
+        type: 'default',
+        id: 'step-1',
+        stepId: 'step-1',
+        stageId: 'stg-1',
+        name: 'lint',
+        status: 'completed',
+        visitCount: 1,
+        finalizeMeta: {
+          currentPhase: 'finalizing',
+          forked: false,
+          gatesPassed: true,
+        },
+      }],
+    })
+    engine.getInstanceState.mockReturnValueOnce(liveState)
+
+    const state = remote.getInstanceState('inst-live')
+    expect(state.taskId).toBe('inst-live')
+    expect(state.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('finalizing')
+  })
+
+  it('getInstanceState falls back to persistence when engine returns undefined (终态清表)', async () => {
+    const { remote, persistence, engine } = await harness()
+    // 引擎内存无此实例（终态清表后）
+    engine.getInstanceState.mockReturnValueOnce(undefined)
+    // 持久化有快照
+    await persistence.saveWorkflowState(makeState({ taskId: 'inst-done', status: 'completed' }))
+
+    const state = remote.getInstanceState('inst-done')
+    expect(state.taskId).toBe('inst-done')
+    expect(state.status).toBe('completed')
+  })
+
   it('getInstanceState throws NODE_NOT_FOUND for a nonexistent instance', async () => {
-    const { remote } = await harness()
+    const { remote, engine } = await harness()
+    // 引擎内存无此实例
+    engine.getInstanceState.mockReturnValueOnce(undefined)
 
     expect(catchCode(() => remote.getInstanceState('inst-nonexistent'))).toBe('NODE_NOT_FOUND')
   })

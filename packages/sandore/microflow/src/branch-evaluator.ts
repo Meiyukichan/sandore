@@ -24,9 +24,10 @@
 import type { Context } from '@deepseek-ai/cordis';
 import { BlockAssembler, createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm';
+import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
 
 import { SandoreError } from './errors.ts';
-import { forkStepSessionMessages } from './fork-session.ts';
+import { driveAgentRound, forkStepSubagent } from './fork-session.ts';
 import { replacePassThroughVars } from './file-utils.ts';
 import {
   buildShellEnv,
@@ -34,6 +35,7 @@ import {
   resolveProviderModel as resolveModelRoute,
   textSummary,
 } from './internal.ts';
+import type { AgentHandle, AgentOptions, CreateAgentOptions } from './subagents.ts';
 import type { CommandConfig, DagBranch } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import type { ShellExecRequest, ShellRunResult } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
 
@@ -55,11 +57,29 @@ type AiValue = PromptCommand['value'] | AgentCommand['value'] | SkillCommand['va
 /** AI 分支评估会话标识（fork 成功时为 fork 会话 id，降级时为临时 eval-xxxx）。 */
 export type TempSessionHandle = string;
 
-/** BranchEvaluator 的引擎级配置（provider/model 三层回退的 L2 来源 + shell 超时）。 */
+/** BranchEvaluator 的引擎级配置（provider/model 三层回退的 L2 来源 + shell 超时 + Phase D 路由 fork 能力注入）。 */
 export interface BranchEvaluatorConfig {
   readonly defaultTimeoutMs: number;
   readonly defaultProvider?: string;
   readonly defaultModel?: string;
+  /**
+   * 宿主主代理 session id（Phase D 路由判断 fork 子代理的 `meta.parentSession`；
+   * 引擎注入 `runnerConfig.hostAgent.id`）。
+   */
+  readonly hostAgentId?: string;
+  /**
+   * `ctx.agents.create` 的注入包装（引擎注入 `(o) => ctx.agents.create(o)`）。
+   *
+   * Phase D 路由判断（条件/循环跳出）经 `forkStepSubagent` 用它从 seed 重建宿主子代理，
+   * `followup` 驱动一轮（不再 `forkStepSessionMessages` 同步历史注入 + `llm.stream`
+   * 拼数组）；未注入时降级临时会话（`llm.stream` 单条判断提示词，不传历史）。
+   */
+  readonly createAgent?: (options: CreateAgentOptions) => Promise<AgentHandle>;
+  /**
+   * 取 step 子代理完整事件（live → persistence 回退，引擎注入：`ctx.sessions.get` →
+   * `ctx.get('sessionPersistence').inspect`）。`undefined` = 无事件源 → 路由判断降级。
+   */
+  readonly getStepSessionEvents?: (childId: string) => Promise<readonly DshSessionEvent[] | undefined>;
 }
 
 /** 分支评估附加选项（分支列表 + shell 三注入所需上下文 + fork 源会话）。 */
@@ -79,10 +99,13 @@ export interface BranchEvalOptions {
   /** 取消信号。 */
   readonly signal?: AbortSignal;
   /**
-   * 当前 step 的子代理会话 ID（fork-based 判断：fork 此会话注入全量历史，AI 可见全部 I/O，
-   * 无需手动传 I/O 文本）。仅 agent/skill/mcp 类型有效（prompt/shell 合成 session 降级）。
+   * 当前 step 的子代理会话 ID（Phase D 路由判断的 fork 子代理 seed 源：live →
+   * persistence 回退取完整事件，`agents.create` 重建宿主子代理，AI 可见全部 I/O）。
+   * 仅 agent/skill/mcp 类型有效（prompt/shell 合成 session 降级）。
    */
   readonly stepSessionId?: string;
+  /** 当前 step id（路由 fork 子代理合成 id 前缀；缺省 'route'）。 */
+  readonly stepId?: string;
 }
 
 /** 一次分支评估的最终结果。 */
@@ -288,10 +311,31 @@ export function matchesExpectation(result: string, expectation: string | undefin
   return normalizedOutput === normalizedExpectation || normalizedOutput.includes(normalizedExpectation);
 }
 
-/** fork-based dispatch 的可选注入参数（stepSessionId + signal）。 */
+/** fork-based dispatch 的可选注入参数（stepSessionId + stepId + workdir + signal）。 */
 interface DispatchOptions {
   readonly stepSessionId?: string;
+  readonly stepId?: string;
+  readonly workdir?: string;
   readonly signal?: AbortSignal;
+}
+
+/** Phase D 路由 AI 判断的解析/重试规格（条件分支与循环跳出各自提供）。 */
+interface RoutingAiSpec {
+  /** 输出是否满足（不再重试）。 */
+  readonly isSatisfied: (output: string) => boolean;
+  /** 不满足时 followup/追加的纠正提示。 */
+  readonly correctionHint: string;
+  /** 重试上限（首次之外最多 N 次）。 */
+  readonly maxRetries: number;
+  /** 重试耗尽回调（记日志等；不抛错——不满足由调用方按 false 处理）。 */
+  readonly onExhausted?: (output: string) => void;
+}
+
+/** 路由 fork 子代理的 provider/model（L2 引擎默认；缺省时由宿主运行时按 parent options 解析）。 */
+function routingAgentOptions(config: BranchEvaluatorConfig): AgentOptions | undefined {
+  return config.defaultProvider !== undefined && config.defaultModel !== undefined
+    ? { provider: config.defaultProvider, model: config.defaultModel }
+    : undefined;
 }
 
 /**
@@ -376,16 +420,17 @@ export class BranchEvaluator {
   }
 
   /**
-   * 条件分支评估（带解析失败重试，fork-based）。
+   * 条件分支评估（带解析失败重试，Phase D 路由 fork 子代理机制）。
    *
    * shell 条件直接委托 {@link evaluate}（走 matchesExpectation，无重试）；AI 条件
-   * （agent/prompt/skill/mcp）fork step 会话注入全量历史，首轮发送分支评估提示词，若
-   * {@link extractShouldExecute} 解析失败（undefined），则把上一轮 AI 输出 +
-   * {@link SHOULD_EXECUTE_CORRECTION_HINT} 构造为 follow-up 多轮消息（追加在 fork 历史 +
-   * 原始判断提示词之后）重新评估，最多重试 {@link MAX_BRANCH_EVAL_RETRIES} 次；
-   * 重试耗尽记日志（条件不通过由调用方 decideCondition 的 `extractShouldExecute === true`
-   * 判定兜底为 false）。仅条件分支使用——循环跳出仍走 {@link evaluateBreak} +
-   * extractBreakResult（shouldBreak 字段，缺陷 4 范畴）。
+   * （agent/prompt/skill/mcp）经 {@link runRoutingAi} 用 fork 子代理机制（`agents.create`
+   * + seed 完整事件 + followup + whenIdle + finalAssistantOutput + dispose）重建宿主子
+   * 代理跑判断，首轮发送分支评估提示词，若 {@link extractShouldExecute} 解析失败
+   * （undefined），则给**同一个 fork 子代理** `followup` 纠正提示重新返回，最多重试
+   * {@link MAX_BRANCH_EVAL_RETRIES} 次；重试耗尽记日志（条件不通过由调用方
+   * decideCondition 的 `extractShouldExecute === true` 判定兜底为 false）。fork 失败
+   * 降级 `llm.stream` 临时会话（单条判断提示词 + messages 追加重试）。仅条件分支使用——
+   * 循环跳出仍走 {@link evaluateBreak} + extractBreakResult（shouldBreak 字段，缺陷 4 范畴）。
    */
   async evaluateCondition(
     condition: CommandConfig,
@@ -399,20 +444,83 @@ export class BranchEvaluator {
       condition.value.promptText,
       resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations),
     );
-    const basePrompt = buildBranchPrompt(taskText, options.branches ?? []);
-    const fork = forkStepSessionMessages(this.ctx, options.stepSessionId);
-    const sessionHandle = fork?.forkSessionId ?? this.newSessionHandle();
-    const judgeMessage = createUserMessage({
-      source: { kind: 'user' },
-      content: [{ type: 'text', text: basePrompt }],
+    const promptText = buildBranchPrompt(taskText, options.branches ?? []);
+    return this.runRoutingAi(route, promptText, options, {
+      isSatisfied: output => extractShouldExecute(output) !== undefined,
+      correctionHint: SHOULD_EXECUTE_CORRECTION_HINT,
+      maxRetries: MAX_BRANCH_EVAL_RETRIES,
+      onExhausted: output => {
+        this.ctx.logger.warn(
+          `sandore: branch condition shouldExecute unparseable after ${MAX_BRANCH_EVAL_RETRIES} retry attempt(s); last output: ${output.slice(0, 200)}`,
+        );
+      },
     });
-    // fork 全量历史作为 messages 前缀 + 判断提示词；fork 失败降级为仅判断提示词。
-    const messages: Message[] = [...(fork?.messages ?? []), judgeMessage];
+  }
 
+  /**
+   * Phase D 路由判断（条件分支 / 循环跳出共用的 AI 判断驱动）。
+   *
+   * **fork 子代理机制**：经 {@link forkStepSubagent} 从 step 子代理完整事件（live →
+   * persistence 回退）截到闭合 turn 作 seed，`agents.create` 重建宿主主代理的子代理 →
+   * `followup(promptText)` → `whenIdle()` → `finalAssistantOutput` → 输出文本；`isSatisfied`
+   * 不满足时给**同一个 fork 子代理** `followup(correctionHint)` 重试（上限 maxRetries）；
+   * 评估完 `dispose()`（live 移除、持久化保留，UI 可经 branchMeta/loopMeta.sessionId 打开）。
+   * `sessionHandle` = 路由子代理 id。
+   *
+   * **降级（不失败）**：配置缺省 / 事件源缺失 / 无闭合 turn / `agents.create` 抛错 →
+   * `llm.stream` 临时会话（单条判断提示词，不传历史）+ messages 追加同样重试；
+   * `sessionHandle` = eval- 句柄。
+   */
+  private async runRoutingAi(
+    route: { provider: string; model: string },
+    promptText: string,
+    options: BranchEvalOptions,
+    spec: RoutingAiSpec,
+  ): Promise<BranchEvalResult> {
+    const hostAgentId = this.config.hostAgentId;
+    const createAgent = this.config.createAgent;
+    const agentOptions = routingAgentOptions(this.config);
+    if (hostAgentId !== undefined && createAgent !== undefined) {
+      try {
+        const forked = await forkStepSubagent(this.ctx, options.stepSessionId, {
+          hostAgentId,
+          stepId: options.stepId ?? 'route',
+          ...(options.workdir === undefined ? {} : { cwd: options.workdir }),
+          ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
+          createAgent,
+          ...(agentOptions === undefined ? {} : { agentOptions }),
+        });
+        if (forked !== undefined) {
+          const { handle } = forked;
+          try {
+            let output = await driveAgentRound(handle, promptText);
+            let attempts = 0;
+            while (!spec.isSatisfied(output) && attempts < spec.maxRetries) {
+              attempts += 1;
+              output = await driveAgentRound(handle, spec.correctionHint);
+            }
+            if (!spec.isSatisfied(output)) {
+              spec.onExhausted?.(output);
+            }
+            return { output, sessionHandle: handle.agent.id };
+          } finally {
+            // 评估完 dispose：live 移除、持久化记录保留（UI 可经 branchMeta/loopMeta.sessionId 打开）。
+            await handle.dispose();
+          }
+        }
+      } catch {
+        // fork 失败 → 降级 llm.stream 临时会话（下方）。
+      }
+    }
+    // 降级：一次性临时会话（无历史）+ messages 追加同样重试。
+    const messages: Message[] = [createUserMessage({
+      source: { kind: 'user' },
+      content: [{ type: 'text', text: promptText }],
+    })];
     let output = await this.streamAi(route, messages, options.signal);
     let attempts = 0;
-    while (extractShouldExecute(output) === undefined && attempts < MAX_BRANCH_EVAL_RETRIES) {
-      attempts++;
+    while (!spec.isSatisfied(output) && attempts < spec.maxRetries) {
+      attempts += 1;
       messages.push(
         createAssistantMessage({
           content: [{ type: 'text', text: output }],
@@ -422,17 +530,15 @@ export class BranchEvaluator {
       messages.push(
         createUserMessage({
           source: { kind: 'user' },
-          content: [{ type: 'text', text: SHOULD_EXECUTE_CORRECTION_HINT }],
+          content: [{ type: 'text', text: spec.correctionHint }],
         }),
       );
       output = await this.streamAi(route, messages, options.signal);
     }
-    if (extractShouldExecute(output) === undefined) {
-      this.ctx.logger.warn(
-        `sandore: branch condition shouldExecute unparseable after ${attempts} retry attempt(s); last output: ${output.slice(0, 200)}`,
-      );
+    if (!spec.isSatisfied(output)) {
+      spec.onExhausted?.(output);
     }
-    return { output, sessionHandle };
+    return { output, sessionHandle: this.newSessionHandle() };
   }
 
   private async startAi(condition: AiCommand, options: BranchEvalOptions): Promise<BranchEvalPartial> {
@@ -444,6 +550,8 @@ export class BranchEvaluator {
     const promptText = buildBranchPrompt(taskText, options.branches ?? []);
     return this.dispatchAi(route, promptText, {
       ...(options.stepSessionId === undefined ? {} : { stepSessionId: options.stepSessionId }),
+      ...(options.stepId === undefined ? {} : { stepId: options.stepId }),
+      ...(options.workdir === undefined ? {} : { workdir: options.workdir }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
@@ -453,7 +561,7 @@ export class BranchEvaluator {
    *
    * 与条件分支 {@link startAi} 共用 route 解析、透传变量替换与流式聚合，仅提示词模板
    * 不同——循环跳出要求 `{"shouldBreak": true/false}`，不复用 shouldExecute 模板；
-   * 会话机制同为 fork step 会话注入全量历史（不手动传 I/O）。
+   * 会话机制同为 Phase D 路由 fork 子代理（不手动传 I/O）。
    */
   private async startBreakAi(condition: AiCommand, options: BranchEvalOptions): Promise<BranchEvalPartial> {
     const route = await this.resolveProviderModel(condition.value);
@@ -464,32 +572,65 @@ export class BranchEvaluator {
     const promptText = buildBreakPrompt(taskText);
     return this.dispatchAi(route, promptText, {
       ...(options.stepSessionId === undefined ? {} : { stepSessionId: options.stepSessionId }),
+      ...(options.stepId === undefined ? {} : { stepId: options.stepId }),
+      ...(options.workdir === undefined ? {} : { workdir: options.workdir }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   }
 
   /**
-   * 组装单轮 AI 会话并启动流式聚合（条件分支与循环跳出共用，fork-based）。
+   * 组装单轮 AI 判断并启动输出聚合（条件分支与循环跳出共用，Phase D 路由 fork 子代理）。
    *
-   * fork step 会话注入全量历史（`forkStepSessionMessages`）作为 `messages` 前缀 + 判断提示词；
-   * fork 失败（合成 session/非 live/sessions 未注册）降级为仅判断提示词（一次性临时会话）。
-   * `sessionHandle` 为 fork 会话 id（fork 成功）或临时 eval-xxxx（降级）。
+   * fork step 会话注入全量历史（`forkStepSubagent`：live → persistence 回退取事件、
+   * `agents.create` 重建宿主子代理）→ `followup(promptText)` 驱动一轮（`whenIdle` →
+   * `finalAssistantOutput`）；fork 失败（配置缺省/合成 session/非 live/无事件源）降级为
+   * 一次性临时会话（`llm.stream` 单条判断提示词）。`sessionHandle` = 路由子代理 id
+   * （fork 成功）或临时 eval-xxxx（降级）。
    */
   private async dispatchAi(
     route: { provider: string; model: string },
     promptText: string,
     options: DispatchOptions,
   ): Promise<BranchEvalPartial> {
-    const fork = forkStepSessionMessages(this.ctx, options.stepSessionId);
-    const sessionHandle = fork?.forkSessionId ?? this.newSessionHandle();
+    const hostAgentId = this.config.hostAgentId;
+    const createAgent = this.config.createAgent;
+    const agentOptions = routingAgentOptions(this.config);
+    if (hostAgentId !== undefined && createAgent !== undefined) {
+      try {
+        const forked = await forkStepSubagent(this.ctx, options.stepSessionId, {
+          hostAgentId,
+          stepId: options.stepId ?? 'route',
+          ...(options.workdir === undefined ? {} : { cwd: options.workdir }),
+          ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
+          createAgent,
+          ...(agentOptions === undefined ? {} : { agentOptions }),
+        });
+        if (forked !== undefined) {
+          const { handle } = forked;
+          // 两阶段接口：sessionHandle 同步为路由子代理 id，输出聚合异步驱动 + dispose。
+          return {
+            sessionHandle: handle.agent.id,
+            outputPromise: (async () => {
+              try {
+                return await driveAgentRound(handle, promptText);
+              } finally {
+                await handle.dispose();
+              }
+            })(),
+          };
+        }
+      } catch {
+        // fork 失败 → 降级 llm.stream 临时会话（下方）。
+      }
+    }
+    // 降级：一次性临时会话（无历史）。
     const message = createUserMessage({
       source: { kind: 'user' },
       content: [{ type: 'text', text: promptText }],
     });
-    const messages: Message[] = [...(fork?.messages ?? []), message];
     return {
-      sessionHandle,
-      outputPromise: this.streamAi(route, messages, options.signal),
+      sessionHandle: this.newSessionHandle(),
+      outputPromise: this.streamAi(route, [message], options.signal),
     };
   }
 
@@ -572,10 +713,9 @@ export class BranchEvaluator {
     throw new SandoreError(`shell command ${reason}: ${stderrSummary}`, 'STEP_EXECUTION');
   }
 
-  /** 生成临时会话标识（随机 8 位 hex；fork 降级时用）。 */
+  /** 生成临时会话标识（纯 UUID 格式；fork 降级时用）。 */
   private newSessionHandle(): TempSessionHandle {
-    const random = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
-    return `eval-${random}`;
+    return globalThis.crypto.randomUUID();
   }
 
   /** provider/model 三层回退：条件定义 → 引擎配置 → ctx.llm 目录兜底。 */

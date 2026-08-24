@@ -33,16 +33,19 @@ export interface LoopNode {
 }
 
 /**
- * checkLoopBreak 的 fork-based 评估选项（缺陷 4 改造：不再传原始 I/O 文本）。
+ * checkLoopBreak 的 Phase D 路由评估选项（fork 子代理机制）。
  *
- * 循环跳出判断走 fork step 会话注入全量历史（`BranchEvaluator.evaluateBreak` 内 fork
- * `stepSessionId` → deriveMessages → 拼进 llm.stream messages），AI 在 fork 会话上即可见
- * 循环体全部 I/O，无需调用方手动拼装 input/output/artifacts 块（推翻原
- * `buildBreakContextMessage`/`buildLoopBreakContext` 的 I/O 传参方案）。
+ * 循环跳出判断走 fork 子代理机制（`BranchEvaluator.evaluateBreak` 内
+ * `forkStepSubagent`：live → persistence 回退取 step 会话完整事件、`agents.create`
+ * 重建宿主子代理），AI 在重建的 fork 会话上即可见循环体全部 I/O，无需调用方手动拼装
+ * input/output/artifacts 块（推翻原 `buildBreakContextMessage`/`buildLoopBreakContext`
+ * 的 I/O 传参方案）。
  */
 export interface LoopBreakOptions {
-  /** 当前 step 的子代理会话 ID（fork 注入全量历史）。 */
+  /** 当前 step 的子代理会话 ID（fork 子代理 seed 源）。 */
   readonly stepSessionId?: string;
+  /** 当前循环节点 id（路由 fork 子代理合成 id 前缀）。 */
+  readonly stepId?: string;
   /** 透传变量（shell breakCondition env 注入 + 提示词 `${xxx}` 替换）。 */
   readonly passThroughVars?: Readonly<Record<string, string>>;
 }
@@ -212,6 +215,7 @@ export class LoopManager {
     // decideBreak 的 AI 分支用 extractBreakResult 解析 shouldBreak，与提示词格式对齐。
     const result = await this.evaluator.evaluateBreak(breakCondition, {
       ...(options.stepSessionId === undefined ? {} : { stepSessionId: options.stepSessionId }),
+      ...(options.stepId === undefined ? {} : { stepId: options.stepId }),
       loopTurn: this.currentLoopTurn(),
       loopMaxIterations: this.currentLoopMaxIterations(),
       ...(options.passThroughVars === undefined ? {} : { passThroughVars: options.passThroughVars }),

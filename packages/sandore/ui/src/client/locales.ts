@@ -212,10 +212,17 @@ export const zh = {
   'run.user.kind.answer': '回答',
   'run.user.kind.message': '讨论',
   'run.step.attempt': '第 {n} 次执行',
-  // 收尾阶段徽标（finalizeMeta.currentPhase；completed 复用 run.step.status 键）
-  'run.step.finalize.phase.askDetect': '问题检测中',
+  // 收尾阶段徽标（finalizeMeta.currentPhase）
+  'run.step.finalize.phase.detecting': '检测中',
+  'run.step.finalize.phase.detected': '已检测',
   'run.step.finalize.phase.finalizing': '收尾中',
+  'run.step.finalize.phase.done': '已收尾',
   'run.step.finalize.phase.gating': '门禁中',
+  'run.step.finalize.phase.gated': '已门禁',
+  'run.step.finalize.phase.gate-failed': '门禁失败',
+  'run.step.finalize.phase.routing': '判断中',
+  'run.step.finalize.phase.routed': '已判断',
+  'run.step.finalize.phase.completed': '已完成',
   // 内嵌子代理会话面板（抄自 DSH ChatView 渲染栈）
   'run.step.chat.loading': '正在加载子代理会话…',
   'run.step.chat.error': '子代理会话加载失败',
@@ -602,10 +609,17 @@ export const en = {
   'run.user.kind.answer': 'Answer',
   'run.user.kind.message': 'Message',
   'run.step.attempt': 'Attempt #{n}',
-  // Finalize-phase badge (finalizeMeta.currentPhase; completed reuses the run.step.status keys)
-  'run.step.finalize.phase.askDetect': 'Checking questions',
+  // Finalize-phase badge (finalizeMeta.currentPhase)
+  'run.step.finalize.phase.detecting': 'Detecting',
+  'run.step.finalize.phase.detected': 'Detected',
   'run.step.finalize.phase.finalizing': 'Finalizing',
+  'run.step.finalize.phase.done': 'Finalized',
   'run.step.finalize.phase.gating': 'Gate review',
+  'run.step.finalize.phase.gated': 'Gated',
+  'run.step.finalize.phase.gate-failed': 'Gate failed',
+  'run.step.finalize.phase.routing': 'Judging',
+  'run.step.finalize.phase.routed': 'Judged',
+  'run.step.finalize.phase.completed': 'Completed',
   // Inline subagent session panel (copied from the DSH ChatView render stack)
   'run.step.chat.loading': 'Loading subagent session…',
   'run.step.chat.error': 'Failed to load subagent session',

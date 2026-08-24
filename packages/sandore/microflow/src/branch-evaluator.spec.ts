@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';
 import { describe, expect, it } from 'vitest';
 
+import { FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../../workflow/tests/mocks/llm.ts';
 import { FakeShell, successResult } from '../../workflow/tests/mocks/shell.ts';
 import { FakeSubprocess } from '../../workflow/tests/mocks/subprocess.ts';
@@ -426,4 +427,118 @@ describe('BranchEvaluator evaluateBreak (shouldBreak template)', () => {
     expect(result.sessionHandle).toBeNull();
     expect(result.output).toBe('lint-clean');
   });
+});
+
+// ── Phase D 路由判断（fork 子代理机制：agents.create + seed + followup + dispose） ────
+
+describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
+  /** 源子代理完整事件（turn 0 闭合）。 */
+  function childEvents(): Array<{ type: string; seq: number; time: number; data: unknown }> {
+    return [
+      { type: 'turn/start', seq: 0, time: 0, data: { turn: 0 } },
+      { type: 'user/message', seq: 1, time: 0, data: { id: 'u1', content: [{ type: 'text', text: 'do it' }] } },
+      { type: 'assistant/message', seq: 2, time: 0, data: { turn: 0, step: 0, message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'work output' }], source: { kind: 'model', provider: 'mock', model: 'mock' } } } },
+      { type: 'turn/end', seq: 3, time: 0, data: { turn: 0, reason: { kind: 'completed' } } },
+    ];
+  }
+
+  it('drives condition routing through a fork subagent (agents.create + seed + followup + whenIdle + dispose)', async () => {
+    const { ctx, llm, agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async childId => (childId === 'child-1' ? childEvents() : undefined),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": true}' }];
+
+    const result = await evaluator.evaluateCondition(
+      { type: 'prompt', value: { promptText: '判断分支' } },
+      { stepSessionId: 'child-1', stepId: 'step-branch' },
+    );
+
+    // Phase D：agents.create 收到 seed = 完整事件 + meta（parentSession=宿主主代理、origin='subagent'）。
+    expect(agents.createSeeds).toHaveLength(1);
+    expect(agents.createSeeds[0]).toEqual(childEvents());
+    expect(agents.createMetas[0]).toMatchObject({ parentSession: 'host-1', origin: 'subagent', seedLength: 4 });
+    // sessionHandle = 路由子代理 id（纯 UUID）。
+    expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.output).toBe('{"shouldExecute": true}');
+    // followup 驱动一轮 + whenIdle + 评估完 dispose（live 移除、持久化保留）。
+    const routingAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
+    expect(routingAgent.followups).toHaveLength(1);
+    expect(routingAgent.whenIdleCount).toBe(1);
+    expect(agents.get(result.sessionHandle)).toBeUndefined();
+    // 路由子代理路径不消费 llm.stream（模型调用走 followup 驱动轮）。
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('follows up the same routing subagent with the correction hint on unparseable output', async () => {
+    const { llm, agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    let call = 0;
+    agents.createFollowupHandler = () => {
+      call += 1;
+      return call === 1 ? [{ type: 'text', text: 'not json' }] : [{ type: 'text', text: '{"shouldExecute": true}' }];
+    };
+
+    const result = await evaluator.evaluateCondition(
+      { type: 'prompt', value: { promptText: '判断分支' } },
+      { stepSessionId: 'child-1', stepId: 'step-branch' },
+    );
+
+    const routingAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
+    expect(routingAgent.followups).toHaveLength(2);
+    expect(result.output).toBe('{"shouldExecute": true}');
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('degrades to a temp llm.stream session when no fork config is provided (UUID handle, 不传历史)', async () => {
+    const { llm, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
+    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+
+    const result = await evaluator.evaluateCondition(
+      { type: 'prompt', value: { promptText: '判断分支' } },
+      { stepSessionId: 'child-1', stepId: 'step-branch' },
+    );
+
+    // 配置缺省 → fork 子代理不可用 → 降级一次性临时会话（纯 UUID 句柄，无历史注入）。
+    expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(result.output).toBe('{"shouldExecute": true}');
+    expect(llm.calls).toHaveLength(1);
+    expect(llm.calls[0]?.messages).toHaveLength(1);
+  });
+
+  it('degrades to a temp llm.stream session when the source has no events (synthetic session)', async () => {
+    const { ctx, llm, agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => undefined,
+    });
+    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+
+    const result = await evaluator.evaluateCondition(
+      { type: 'prompt', value: { promptText: '判断分支' } },
+      { stepSessionId: 'step-sh-abcdef01', stepId: 'step-branch' },
+    );
+
+    expect(agents.createSeeds).toHaveLength(0);
+    expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  /** 带 FakeAgentRegistry 的 harness（Phase D 路由 fork 配置：hostAgentId/createAgent/getStepSessionEvents）。 */
+  function harnessWithAgents(config: BranchEvaluatorConfig): {
+    ctx: Context;
+    llm: FakeLlm;
+    agents: FakeAgentRegistry;
+    evaluator: BranchEvaluator;
+  } {
+    const fullConfig: BranchEvaluatorConfig = { defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm', ...config };
+    const { ctx, llm } = harness(fullConfig);
+    const agents = new FakeAgentRegistry();
+    ctx.provide('agents', agents);
+    return { ctx, llm, agents, evaluator: new BranchEvaluator(ctx, fullConfig) };
+  }
 });

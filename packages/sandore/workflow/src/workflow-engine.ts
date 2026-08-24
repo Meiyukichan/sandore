@@ -53,6 +53,7 @@ interface WorkspaceSeam {
 
 import { WorkflowDagNavigator } from './dag-navigator.ts';
 import { SandoreError } from './errors.ts';
+import { ReactiveState } from './reactive-state.ts';
 import { createHostAgentSetup } from './host-agent.ts';
 import type { AgentPresetsSeam } from './host-agent.ts';
 import { installSandoreAskTool } from './ask-tool.ts';
@@ -63,8 +64,10 @@ import { RecoveryManager } from './recovery-manager.ts';
 import { listClosedTurnBoundaries } from './recovery-manager.ts';
 import type { RecoverResult, RetryMode } from './recovery-manager.ts';
 import type { WorkflowDefinition, WorkflowStep, WorkflowTaskState, WorkflowStage } from './schema.ts';
+import type { FinalizePhase } from './schema.ts';
 import { SandoreEngine } from './seam.ts';
 import type { SandoreConfig } from './seam.ts';
+import { registerSandoreSse } from './sse.ts';
 import type { RevertBoundaryOption } from './wire.ts';
 import type {
   AskUserQuestionAnswer,
@@ -90,7 +93,7 @@ import { StageExecutor } from '@deepseek-ai/dsh-sandore-microflow/src/stage-exec
 import type { StageExecutorResume, StageStepHooks } from '@deepseek-ai/dsh-sandore-microflow/src/stage-executor';
 import { StepNavigator } from '@deepseek-ai/dsh-sandore-microflow/src/step-navigator';
 import type { StepRunnerConfig } from '@deepseek-ai/dsh-sandore-microflow/src/step-runner';
-import type { Agent, ContinuableSetupContribution, SubagentSettlement, SubagentStopReason } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
+import type { Agent, ContinuableSetupContribution, CreateAgentOptions, SubagentSettlement, SubagentStopReason } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
 
 /**
  * `agent/pre-step` 事件的最小结构面（sandore 不 import `@deepseek-ai/dsh-agent` 类型，
@@ -122,6 +125,7 @@ interface ActiveInstance {
   readonly interactions: InteractionManager;
   readonly lifecycle: LifecycleManager;
   readonly recovery: RecoveryManager;
+  readonly reactiveState: ReactiveState<WorkflowTaskState>;
   state: WorkflowTaskState;
   /**
    * resume 请求标志（补充 37 SessionIdleWaiter 扩展）：按 stepId 维度维护。
@@ -172,7 +176,7 @@ function findAskStep(
   steps: WorkflowTaskState['executedSteps'],
 ): { step: WorkflowTaskState['executedSteps'][number]; payload: AskUserQuestionPayload } | undefined {
   for (const step of steps) {
-    const payload = step.finalizeMeta?.assessResult?.askQuestion;
+    const payload = step.finalizeMeta?.askResult?.askQuestion;
     if (step.finalizeMeta?.currentPhase === 'ask-detect' && payload !== undefined) {
       return { step, payload };
     }
@@ -337,6 +341,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     this.registerHostAgentFreezeListener();
     // 双通道 ask 通道 1：child-scope ask_user_question 工具注入（gate：仅 sandore 子代理）。
     this.registerSandoreAskToolSetup();
+    // SSE 事件通道：注册 /sandore/events 端点，广播 sandore/* 事件给 client。
+    this.ctx.effect(() => registerSandoreSse(this.ctx), 'sandore: SSE event channel');
     await this.recoverOrphanedInstances();
   }
 
@@ -610,6 +616,18 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       workspace = await workspaceRegistry.create(cwd);
     }
     await workspace.attachSession(SessionId(hostAgent.id));
+  }
+
+  /**
+   * 读运行中实例的内存 state（收尾阶段中间态立即可见；终态清表或未在内存返回 undefined）。
+   *
+   * 用于 `getInstanceState` RPC 的内存优先路径：commitFinalize 写入 currentPhase
+   * 同步更新 `active.state` 引用，故收尾中间态（finalizing/gating/routing）在事件
+   * 发出时已可从内存读到；持久化因 `buildFinalizeRequest` 未注入 `onPersist` 只在
+   * 收尾全部结束后做一次，读持久化必然落后。
+   */
+  getInstanceState(instanceId: string): WorkflowTaskState | undefined {
+    return this.instances.get(instanceId)?.state;
   }
 
   /** 查询实例的当前状态快照（内存活跃实例优先，state 表兜底读）。 */
@@ -1126,7 +1144,53 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       active.state.cwd,
       { currentStageId: this.resumeStageId(active), stageContracts: active.state.stageContracts },
     );
-    const finalizeManager = new FinalizeManager(this.ctx, runnerConfig);
+    const finalizeManager = new FinalizeManager(this.ctx, {
+      ...runnerConfig,
+      // 收尾真 fork（Phase B assessForked / Phase C secondary gate）：宿主主代理的
+      // 子代理经 `agents.create` 从 step 子代理完整事件（live → 持久化 inspect）重建。
+      ...(runnerConfig.hostAgent === undefined ? {} : { hostAgentId: runnerConfig.hostAgent.id }),
+      createAgent: options => this.ctx.agents.create(options),
+      getStepSessionEvents: async childId => {
+        // live → 持久化回退：子代理 settle 后 live store 已移除，从 sessionPersistence
+        // inspect 读完整事件（对齐 DSH `inspectApiRemoteSession` 的持久化读路径）。
+        const live = this.ctx.sessions.get(SessionId(childId));
+        if (live !== undefined) {
+          return [...live.events];
+        }
+        const persistence = this.ctx.get('sessionPersistence');
+        if (persistence === undefined) {
+          return undefined;
+        }
+        try {
+          const inspected = await persistence.inspect?.(childId);
+          return inspected === undefined ? undefined : [...inspected.events];
+        } catch {
+          return undefined;
+        }
+      },
+    });
+    // Phase D 路由判断（分支/循环）共用的 fork 子代理配置（agents.create + 事件回退），
+    // 与 FinalizeManager 同一来源（runnerConfig.hostAgent.id + ctx.agents.create）。
+    const routingForkConfig = {
+      ...(runnerConfig.hostAgent === undefined ? {} : { hostAgentId: runnerConfig.hostAgent.id }),
+      createAgent: (options: CreateAgentOptions) => this.ctx.agents.create(options),
+      getStepSessionEvents: async (childId: string) => {
+        const live = this.ctx.sessions.get(SessionId(childId));
+        if (live !== undefined) {
+          return [...live.events];
+        }
+        const persistence = this.ctx.get('sessionPersistence');
+        if (persistence === undefined) {
+          return undefined;
+        }
+        try {
+          const inspected = await persistence.inspect?.(childId);
+          return inspected === undefined ? undefined : [...inspected.events];
+        } catch {
+          return undefined;
+        }
+      },
+    };
     let stageId = navigator.currentNodeId;
 
     while (stageId !== '') {
@@ -1141,10 +1205,11 @@ export default class SandoreEngineRuntime extends SandoreEngine {
 
       // Step 级导航器（microflow 自有）：每 Stage 新建，持当前 Stage 的 Step 节点图 +
       // 循环管理器。LoopManager 经共享 `active.state` 的循环栈数组实现续跑状态连续
-      // （崩溃恢复快照播种一致；循环计数语义不变——缺陷 3 不动）。
+      // （崩溃恢复快照播种一致；循环计数语义不变——缺陷 3 不动）。注入 Phase D 路由
+      // fork 子代理配置（hostAgentId/createAgent/getStepSessionEvents）。
       const stepNavigator = new StepNavigator(
         this.ctx,
-        runnerConfig,
+        { ...runnerConfig, ...routingForkConfig },
         { activeLoopStack: active.state.activeLoopStack, activeLoopIterationStack: active.state.activeLoopIterationStack },
         stage,
         definition,
@@ -1160,6 +1225,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         onStepStart: (step, childId) => this.emitStepStart(session, info, step.id, childId, step.name ?? step.id, currentLoopIteration()),
         onStepCompleted: (step, childId, output) => this.emitStepCompleted(session, info, step.id, childId, output, step.name ?? step.id, currentLoopIteration()),
         onStepFailed: (step, childId, error) => this.emitStepFailed(session, info, step.id, childId, error, step.name ?? step.id, currentLoopIteration()),
+        // 收尾阶段流转：commitFinalize 写入 currentPhase 后双发 sandore/step-phase，
+        // 供 UI 不经 5s 轮询即时刷新（childId 缺省时回退 stepId 占位）。
+        onPhaseChange: (step, childId, phase) => this.emitStepPhase(session, info, step.id, childId ?? step.id, phase, step.name ?? step.id, currentLoopIteration()),
       };
 
       const resumeFrom = this.resumeInfo(active, stage);
@@ -1186,6 +1254,14 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         concurrencyLimiter,
         visitCounts: active.state.visitCounts,
         ...(resumeFrom === undefined ? {} : { resumeFrom }),
+        commitState: (patch) => {
+          active.state = {
+            ...active.state,
+            ...(patch.status !== undefined ? { status: patch.status } : {}),
+            ...(patch.errorDetail !== undefined ? { errorDetail: patch.errorDetail } : {}),
+            updatedAt: now(),
+          };
+        },
         onPersist: async (executed, pendingQueue) => {
           // 逐 Step 持久化：每个 Step 完成后立即追加/更新到 executedSteps 并落盘。
           // 按唯一执行 id upsert，避免 ask 回复续跑时同一 Step（running → completed）
@@ -1529,6 +1605,18 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     definition: WorkflowDefinition,
     state: WorkflowTaskState,
   ): ActiveInstance {
+    const logger = this.ctx.logger;
+    const reactiveState = new ReactiveState<WorkflowTaskState>(
+      state,
+      async (snapshot) => {
+        const persistence = this.persistence();
+        if (persistence === undefined) return;
+        await persistence.saveWorkflowState(snapshot);
+      },
+      (error) => {
+        logger.warn(`sandore: persist state failed: ${renderError(error)}`);
+      },
+    );
     let active!: ActiveInstance;
     const interactions = new InteractionManager({
       hostAgent,
@@ -1610,12 +1698,22 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       interactions,
       lifecycle,
       recovery,
-      state,
+      reactiveState,
+      state: undefined as unknown as WorkflowTaskState,
       resumeRequested: new Set<string>(),
       resumeWaiters: new Map<string, Array<() => void>>(),
       settlementBuffer: new Map<string, SubagentSettlement>(),
       settlementResolvers: new Map<string, (settlement: SubagentSettlement) => void>(),
     };
+    // 用 Object.defineProperty 给 state 加 getter/setter 委托 ReactiveState。
+    // 这样所有 `active.state = {...}` 赋值自动触发 setter → 持久化调度，
+    // `active.state` 读取返回最新值。零改动现有赋值/读取代码。
+    Object.defineProperty(active, 'state', {
+      get: () => reactiveState.current,
+      set: (next: WorkflowTaskState) => { reactiveState.current = next; },
+      enumerable: true,
+      configurable: true,
+    });
     // 单一 `sandore/subagent-settled` 监听器：缓冲 settlement + 唤醒挂起 awaiter。
     // DSH 适配层（registerSubagentSettlementAdapter 把 DSH subagent/end 转译为本事件）
     // 与 mock FakeSubagents.settleChild 都经此通道；监听器存活于 active 生命周期。
@@ -1817,15 +1915,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   }
 
   private async persistState(active: ActiveInstance): Promise<void> {
-    const persistence = this.persistence();
-    if (persistence === undefined) {
-      return;
-    }
-    try {
-      await persistence.saveWorkflowState(active.state);
-    } catch (error) {
-      this.ctx.logger.warn(`sandore: persist state failed: ${renderError(error)}`);
-    }
+    // 关键路径立即落盘：直接写当前最新值（不排队），与改造前 persistState 语义一致。
+    await active.reactiveState.flush();
   }
 
   // ── 事件双发 ─────────────────────────────────────────────────────────────
@@ -1912,6 +2003,30 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   private emitStepMessage(session: Session, info: DagRunInfo, stepId: string, childId: string, message: string, name: string): void {
     this.emitContained('sandore/step-message', [info, stepId, childId, message, name]);
     this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-message', { stepId, childId, message, name }, { ignorable: true }));
+  }
+
+  /**
+   * 双发 `sandore/step-phase`（Cordis `emit` + Session `append`）。
+   *
+   * 收尾阶段流转（ask-detect/finalizing/gating/completed）由 microflow
+   * `commitFinalize` 写入 `currentPhase` 时经 `onPhaseChange` 钩子透传到本方法；
+   * Session append 载荷对齐 SessionEventMap（taskId 隐含于会话，不带入 data）。
+   */
+  private emitStepPhase(
+    session: Session,
+    info: DagRunInfo,
+    stepId: string,
+    childId: string,
+    phase: FinalizePhase,
+    name: string,
+    loopIteration?: number[],
+  ): void {
+    this.emitContained('sandore/step-phase', [info, stepId, childId, phase, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
+    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)(
+      'sandore/step-phase',
+      { stepId, childId, phase, name, ...(loopIteration === undefined ? {} : { loopIteration }) },
+      { ignorable: true },
+    ));
   }
 
   private emitEnd(session: Session, info: DagRunInfo, result: DagResultInfo): void {

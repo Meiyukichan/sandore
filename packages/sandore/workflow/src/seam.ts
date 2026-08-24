@@ -11,6 +11,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import z from '@deepseek-ai/schemastery';
 
 import type { Agent } from '@deepseek-ai/dsh-sandore-microflow/src/subagents';
+import type { FinalizePhase, WorkflowTaskState } from './schema.ts';
 import type {
   AskUserQuestionAnswer,
   AskUserQuestionItem,
@@ -43,6 +44,20 @@ declare module '@deepseek-ai/cordis' {
     'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt: string | undefined, name: string, loopIteration?: number[]): void;
     'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string, name: string, loopIteration?: number[]): void;
     'sandore/step-message'(info: DagRunInfo, stepId: string, childId: string, message: string, name: string): void;
+    /**
+     * 收尾阶段流转（`commitFinalize` 写入 `currentPhase` 时发射）：`ask-detect` →
+     * `finalizing` → `gating`（未过）/`routing`（门禁通过后路由判断）→ `completed`。
+     * 供 UI 即时刷新（不经 5s 轮询）。
+     * @mode emit
+     */
+    /**
+     * 收尾阶段流转（`commitFinalize` 写入 `currentPhase` 时发射）：`ask-detect` →
+     * `finalizing` → `gating`（未过）/`routing`（门禁通过后路由判断）→ `completed`。
+     * 供 UI 即时刷新（不经 5s 轮询）。Round 9 扩展：载荷携带 finalizeMeta 详情，
+     * 供对话流 step 节点渲染可点击阶段 badge。
+     * @mode emit
+     */
+    'sandore/step-phase'(info: DagRunInfo, stepId: string, childId: string, phase: FinalizePhase, name: string, loopIteration?: number[]): void;
     'sandore/question'(info: DagRunInfo, question: PendingQuestionEntry): void;
     'sandore/permission'(info: DagRunInfo, permission: PendingPermissionEntry): void;
     'sandore/question_rejected'(info: DagRunInfo, question: PendingQuestionEntry): void;
@@ -63,6 +78,13 @@ declare module '@deepseek-ai/dsh-session/types' {
     'sandore/step-resumed': { stepId: string; childId: string; resumePrompt?: string; name: string; loopIteration?: number[] };
     'sandore/step-retried': { stepId: string; mode: string; name: string; loopIteration?: number[] };
     'sandore/step-message': { stepId: string; childId: string; message: string; name: string };
+    'sandore/step-phase': {
+      stepId: string;
+      childId: string;
+      phase: FinalizePhase;
+      name: string;
+      loopIteration?: number[];
+    };
     'sandore/question': { question: PendingQuestionEntry };
     'sandore/permission': { permission: PendingPermissionEntry };
     'sandore/question_rejected': { question: PendingQuestionEntry };
@@ -142,6 +164,12 @@ export abstract class SandoreEngine extends Service implements SandoreEngineSurf
    */
   abstract setPermissionMode(instanceId: string, mode: 'read-only' | 'workspace-write' | 'danger-full-access'): Promise<void>;
 
+  /**
+   * 读运行中实例的内存 state（收尾阶段中间态立即可见；终态清表或未在内存返回 undefined）。
+   *
+   * 用于 `getInstanceState` RPC 的内存优先路径。
+   */
+  abstract getInstanceState(instanceId: string): WorkflowTaskState | undefined;
   /** 查询实例的当前状态快照。 */
   abstract getState(instanceId: string): DagInstanceState;
 }
@@ -253,6 +281,10 @@ export class SandoreEngineStub extends SandoreEngine {
 
   setPermissionMode(_instanceId: string, _mode: 'read-only' | 'workspace-write' | 'danger-full-access'): Promise<void> {
     throw new Error('SandoreEngineStub.setPermissionMode is not implemented');
+  }
+
+  getInstanceState(_instanceId: string): WorkflowTaskState | undefined {
+    throw new Error('SandoreEngineStub.getInstanceState is not implemented');
   }
 
   getState(instanceId: string): DagInstanceState {

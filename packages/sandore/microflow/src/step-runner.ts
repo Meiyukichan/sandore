@@ -170,6 +170,7 @@ function createHostAgentStub(): Agent {
     inbox: { hasPending: false },
     status: 'idle',
     ctx: undefined,
+    followup: () => {},
     whenIdle: async () => {},
   };
 }

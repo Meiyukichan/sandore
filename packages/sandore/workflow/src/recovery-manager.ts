@@ -97,10 +97,9 @@ function textBlock(text: string): ContentBlock[] {
   return [{ type: 'text', text }];
 }
 
-/** 合成新子代理 SessionId（与 shell 的 `synthesizeChildId` 同规则）。 */
-export function synthesizeChildId(stepId: string): string {
-  const execId = globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 8);
-  return `step-${stepId}-${execId}`;
+/** 合成新子代理 SessionId（纯 UUID 格式）。 */
+export function synthesizeChildId(_stepId: string): string {
+  return globalThis.crypto.randomUUID();
 }
 
 /**

@@ -7,6 +7,7 @@
  * @module @deepseek-ai/dsh-sandore-workflow/src/engine-surface
  */
 import type { AskUserQuestionAnswer, DagInstanceState, DagRun, DagStartRequest } from './types.ts';
+import type { WorkflowTaskState } from './schema.ts';
 import type { RecoverOrphanedInstancesResult, RevertBoundaryOption } from './wire.ts';
 
 /** 工作流引擎实例级操作结构面（seam `SandoreEngine` 与 tool 包共享）。 */
@@ -58,6 +59,13 @@ export interface SandoreEngineSurface {
    * 的权限快照（架构差异，非缺陷——见子代理快照契约测试）。
    */
   setPermissionMode(instanceId: string, mode: 'read-only' | 'workspace-write' | 'danger-full-access'): Promise<void>;
+  /**
+   * 读运行中实例的内存 state（收尾阶段中间态立即可见；终态清表或未在内存返回 undefined）。
+   *
+   * 用于 `getInstanceState` RPC 的内存优先路径：引擎 `active.state` 引用在 commitFinalize
+   * 写入 currentPhase 时同步更新，事件发出时已可从内存读到中间态。
+   */
+  getInstanceState(instanceId: string): WorkflowTaskState | undefined;
   /** 查询实例的当前状态快照。 */
   getState(instanceId: string): DagInstanceState;
 }

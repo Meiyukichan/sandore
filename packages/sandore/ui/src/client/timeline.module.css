@@ -130,62 +130,114 @@
   white-space: nowrap;
 }
 
-/* 状态图标 + 状态色 */
+/* 状态图标 + 状态色；margin-left 控制状态行与前导元素（时间/loopLabel）的间距 */
 .st {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 8px;
+  margin-left: 4px;
   white-space: nowrap;
 }
 
 /* 状态按钮（4.10）：状态 + 收尾阶段徽标，点击折叠/展开消息区。 */
 .stBtn {
   padding: 2px 6px;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 6px;
   background: none;
   font-family: inherit;
   cursor: pointer;
 }
 
-.stBtn:hover {
-  border-color: var(--sd-border);
-  background: var(--sd-surface-hover);
-}
+/* 状态按钮 hover 不改变任何样式（状态色由 .stSuccess/.stDestructive 等类保持，
+   不被 hover 覆盖）——故无 .stBtn:hover 规则 */
 
-/* 收尾阶段徽标（finalizeMeta.currentPhase：ask-detect/finalizing/gating）。 */
+/* 收尾阶段徽标（finalizeMeta.currentPhase：ask-detect/finalizing/gating/completed）。
+   与状态徽标（.st/.stLbl/.stBtn）视觉统一：无背景胶囊、12px 字号、圆角与内边距对齐
+   .stBtn；非可点击（ask-detect/done）用 muted 色，可点击（finalizing/gating）用 brand 色。 */
 .phaseLabel {
   flex: none;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  /* 内部 gap 5px 与 .st 的 gap 对齐，保证徽标图标↔文本间距（5px）
+     与状态图标↔状态文本间距一致 */
+  gap: 5px;
+  font-size: 12px;
   line-height: 16px;
   font-weight: 500;
   color: var(--sd-muted-foreground);
-  background: var(--sd-surface-hover);
   border-radius: 6px;
-  padding: 1px 6px;
+  /* 左右 4px padding 与 .stLbl/.phaseBtn 对齐，使文本徽标间视觉间距约 13px */
+  padding: 2px 4px;
 }
 
-/* 收尾阶段徽标（可点击版）：Phase B「收尾中」/Phase C「门禁中」点击打开对应 fork 会话。 */
+.phaseLabel svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+/* 收尾阶段徽标（可点击版）：Phase B「收尾中」/Phase C「门禁中」点击打开对应 fork 会话。
+   静息态与状态徽标一致（无背景无边框，视觉融入状态行）；hover 下划线提示可点。 */
 .phaseBtn {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  /* 内部 gap 5px 与 .st 的 gap 对齐，保证徽标图标↔文本间距（5px）
+     与状态图标↔状态文本间距一致 */
+  gap: 5px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
   font-weight: 500;
   color: var(--sd-brand);
-  background: color-mix(in srgb, var(--sd-brand) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--sd-brand) 22%, transparent);
+  border: none;
   border-radius: 6px;
-  padding: 1px 6px;
+  background: none;
+  /* 左右 4px padding 与 .stLbl/.phaseLabel 对齐，使文本徽标间视觉间距约 13px */
+  padding: 2px 4px;
   cursor: pointer;
+}
+
+.phaseBtn svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
 }
 
 .phaseBtn:hover {
   color: var(--sd-brand);
-  background: color-mix(in srgb, var(--sd-brand) 18%, transparent);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* 阶段完成态：语义色区分（不用灰色） */
+.phaseDone {
+  color: var(--sd-success);
+}
+
+.phaseDone:hover {
+  color: var(--sd-success);
+}
+
+/* 阶段进行中态 */
+.phaseActive {
+  color: var(--sd-brand);
+}
+
+.phaseActive:hover {
+  color: var(--sd-brand);
+}
+
+/* 阶段失败态（门禁失败等，与 .errorBlock 同色系） */
+.phaseFailed {
+  color: var(--sd-destructive);
+}
+
+/* 失败态 hover 保持红色（组合选择器确保赢过 .phaseBtn:hover 的 brand 蓝） */
+.phaseFailed:hover,
+.phaseBtn.phaseFailed:hover {
+  color: var(--sd-destructive);
 }
 
 /* failed 态错误块（.errorBlock/.errorText，计划命名；替代旧 .agentErrDetail）。
@@ -235,6 +287,10 @@
 
 .stLbl {
   font-size: 12px;
+  /* 右侧 4px + .st gap 5px 与徽标左侧 4px 组成 13px 文本间距；
+     左侧不加 padding——状态图标↔文本间距由 .st 的 gap:5px 控制，
+     与徽标内部图标↔文本间距（5px）一致 */
+  padding: 2px 4px 2px 0;
 }
 
 .stInfo { color: var(--sd-info); }
@@ -251,14 +307,11 @@
   color: var(--sd-muted-foreground);
 }
 
-/* 完成态：md 渲染内容块（DSH MarkdownText 风格） */
+/* 完成态：md 渲染内容块（DSH MarkdownText 风格；无背景框，直接平铺在 step 卡下） */
 .md {
   margin-left: 32px;
   margin-right: 32px;
   margin-top: 6px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--sd-surface-hover);
   font-size: 14px;
   line-height: 1.625;
   color: var(--sd-foreground);
@@ -300,16 +353,11 @@
   color: var(--sd-muted-foreground);
 }
 
-/* 运行中：内嵌子代理消息框（可滚动） */
+/* 运行中：内嵌子代理消息列表（可滚动；无背景框，直接平铺） */
 .agentChat {
   margin-left: 32px;
   margin-right: 32px;
   margin-top: 8px;
-  border: 1px solid var(--sd-border);
-  border-radius: 10px;
-  background: var(--sd-surface);
-  overflow: hidden;
-  box-shadow: var(--sd-shadow);
 }
 
 .agentChatScroll {
@@ -321,16 +369,11 @@
   gap: 10px;
 }
 
-/* 失败/暂停：子代理最近 N 条消息（可滚动列表） */
+/* 失败/暂停：子代理最近 N 条消息（可滚动列表；无背景框，直接平铺） */
 .agentLastList {
   margin-left: 32px;
   margin-right: 32px;
   margin-top: 8px;
-  border: 1px solid var(--sd-border);
-  border-radius: 10px;
-  background: var(--sd-surface);
-  overflow: hidden;
-  box-shadow: var(--sd-shadow);
 }
 
 .agentLastScroll {
@@ -403,3 +446,43 @@
 .stepChatError {
   color: var(--sd-destructive);
 }
+
+/* ── Round 13：统一内容卡片（与 badge 颜色体系对齐，复制自 DagStepNodeView.module.css） ── */
+
+.contentCard {
+  margin-left: 32px;
+  margin-right: 32px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--sd-border);
+  border-radius: 8px;
+  background: var(--sd-surface);
+  font-size: 14px;
+  line-height: 1.625;
+  overflow-wrap: anywhere;
+}
+
+/* 已完成态内容卡片（与 phaseDone 同色系） */
+.contentCardDone {
+  composes: contentCard;
+  border-color: color-mix(in srgb, var(--sd-success) 40%, transparent);
+  color: var(--sd-foreground);
+}
+
+/* 失败态内容卡片（与 phaseDone error 色系对齐） */
+.contentCardError {
+  composes: contentCard;
+  border-color: color-mix(in srgb, var(--sd-destructive) 40%, transparent);
+  color: var(--sd-destructive);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* 已完成态内容卡片内的 Markdown 渲染（继承 .md 的排版规则） */
+/* Round 14：不再使用（completed/failed 内容改为直接 .md 平铺），保留但不引用。 */
+/* .contentCardDone .md {
+  margin-left: 0;
+  margin-right: 0;
+  margin-top: 0;
+} */
