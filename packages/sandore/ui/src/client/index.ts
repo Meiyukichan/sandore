@@ -98,7 +98,16 @@ export async function apply(ctx: ClientContext): Promise<void> {
         getYaml: async (id: string) => unwrap(await sandore.getYaml(id)),
         save: createSandoreSave(sandore as unknown as SandoreSaveRemote),
         remote: sandore as unknown as RunViewRemote,
-        openSession: (id: string) => { closeWorkflowOverlay(); remoteCtx.sessions.open(id as SessionId) },
+        openSession: (id: string) => {
+          closeWorkflowOverlay()
+          // Round 20：completed 后 fork 会话已 dispose（live 移除），sessions.open 会抛
+          // unknown session——容错兜底，不打断 overlay 关闭。
+          try {
+            remoteCtx.sessions.open(id as SessionId)
+          } catch (error) {
+            console.error('ui-sandore: openSession failed (session may be disposed)', error)
+          }
+        },
         // 模型目录：自实现轻量目录，直接走 connection.api.sessions.models/selectModel
         // （与 DSH ModelDirectory 同一 RPC、同一行为；不依赖会话 scope）。
         modelDirectory: (sessionId: string): ModelDirectoryFace => {
@@ -154,7 +163,15 @@ export async function apply(ctx: ClientContext): Promise<void> {
       key: 'sandore-step',
       locale: NS,
       inject: (): SandoreStepInjected => ({
-        openSession: (id: SessionId) => { remoteCtx.sessions.open(id) },
+        openSession: (id: SessionId) => {
+          // Round 20：completed 后 fork 会话已 dispose（live 移除），sessions.open 会抛
+          // unknown session——容错兜底。
+          try {
+            remoteCtx.sessions.open(id)
+          } catch (error) {
+            console.error('ui-sandore: openSession failed (session may be disposed)', error)
+          }
+        },
         retryStep: async (input) => { unwrap(await sandore.retryStep(input)) },
         listRevertBoundaries: async (input) => unwrap(await sandore.listRevertBoundaries(input)),
       }),

@@ -1967,15 +1967,16 @@ describe('SandoreEngineRuntime DAG execution', () => {
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
 
-    // 条件分支评估（shouldExecute JSON true）→ agent 执行 → prompt 执行（子代理）→
+    // 条件分支评估（批量 shouldExecute 分支 id 数组）→ agent 执行 → prompt 执行（子代理）→
     // 收尾 Phase A assess（hasAsk 格式）→ Phase B 真 fork/降级（compressedOutput 合并
     // JSON，偏离 2：不复用 Phase A 结果）。primary 门禁为纯代码产物校验（零 AI）。
-    // 按首条消息文本分发：shouldExecute → 分支 JSON；compressedOutput → Phase B 收尾 JSON；
+    // 按首条消息文本分发：shouldExecute → 批量分支 JSON；compressedOutput → Phase B 收尾 JSON；
     // 其余（hasAsk）→ Phase A 评估 JSON。
     llm.streamHandler = (options) => {
       const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
       if (text.includes('shouldExecute')) {
-        return textChunks('{"shouldExecute": true}');
+        // Round 20：批量模板——返回满足条件的分支 id 数组（branchId = branch.next）。
+        return textChunks('{"shouldExecute": ["step-agent"]}');
       }
       if (text.includes('compressedOutput')) {
         return textChunks('{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"finalize 摘要"}');
@@ -2016,10 +2017,10 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(stepIds?.filter(id => id === 'step-fallback')).toHaveLength(0);
     expect(stepIds?.filter(id => id === 'step-merge')).toHaveLength(1);
 
-    // 分支决策点保留 branchMeta 评估现场（shouldExecute JSON 判定输出）。
+    // 分支决策点保留 branchMeta 评估现场（批量 shouldExecute 分支 id 数组判定输出）。
     const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
     expect(branchEntry?.branchMeta?.status).toBe('completed');
-    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": true}');
+    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": ["step-agent"]}');
 
     // agent Step：真实 childId（synthetic:false）+ 子代理最终输出。
     const agentStep = state?.executedSteps.find(step => step.stepId === 'step-agent');
@@ -2075,7 +2076,8 @@ describe('SandoreEngineRuntime DAG execution', () => {
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+    // Round 20：批量模板——空数组 = 无分支命中。
+    llm.streamHandler = () => textChunks('{"shouldExecute": []}');
 
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-branch-fallback', originalInput: 'do it', cwd: '/tmp' });
@@ -2086,10 +2088,10 @@ describe('SandoreEngineRuntime DAG execution', () => {
     const stepIds = state?.executedSteps.map(step => step.stepId);
     expect(stepIds).toEqual(['step-branch', 'step-fallback', 'step-matched']);
 
-    // branchMeta 保留原始评估结果（shouldExecute=false 证明条件分支未命中）。
+    // branchMeta 保留原始评估结果（空数组证明条件分支未命中）。
     const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
     expect(branchEntry?.branchMeta?.status).toBe('completed');
-    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": false}');
+    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": []}');
   });
 
   it('retries an AI condition branch when the first output is unparseable then passes on the retry', async () => {
@@ -2098,8 +2100,9 @@ describe('SandoreEngineRuntime DAG execution', () => {
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    // 首轮返回乱码（不可解析 shouldExecute）→ evaluateCondition 触发 follow-up 重试 → 第二轮返回合法 JSON。
-    const responses = ['I cannot decide', '{"shouldExecute": true}'];
+    // 首轮返回乱码（不可解析 shouldExecute 数组）→ evaluateConditions 触发 follow-up
+    // 重试 → 第二轮返回合法分支 id 数组（branchId = branch.next = step-matched）。
+    const responses = ['I cannot decide', '{"shouldExecute": ["step-matched"]}'];
     let callIndex = 0;
     llm.streamHandler = () => textChunks(responses[callIndex++] ?? '');
 
@@ -2118,7 +2121,7 @@ describe('SandoreEngineRuntime DAG execution', () => {
     expect(llm.calls).toHaveLength(2);
     const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-branch');
     expect(branchEntry?.branchMeta?.status).toBe('completed');
-    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": true}');
+    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": ["step-matched"]}');
   });
 
   it('falls back to array order when an AI condition branch exhausts shouldExecute retries', async () => {
@@ -2327,8 +2330,8 @@ describe('SandoreEngineRuntime DAG execution', () => {
     shell.runHandler = async spec => successResult(spec, 'iter');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    // 条件分支恒不命中（shouldExecute=false）→ 循环跑到 maxIterations 硬上限。
-    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+    // 条件分支恒不命中（批量空数组）→ 循环跑到 maxIterations 硬上限。
+    llm.streamHandler = () => textChunks('{"shouldExecute": []}');
 
     const ended = waitForEnd(ctx);
     const run = await engine.startInstance({ workflowId: 'wfl-loop-mixed-gate', originalInput: 'do it', cwd: '/tmp' });
@@ -2728,9 +2731,9 @@ describe('SandoreEngineRuntime interaction', () => {
 
     // LLM 调用序：① step-ask Phase A assess（ask JSON）→ 回答注回 → 重新评估 ②
     // （completed JSON）→ Phase B 收尾 ③（compressedOutput 合并 JSON，走降级——child-1
-    // 无事件源）→ routing → completed；④ step-gate Phase A assess（completed JSON）→
-    // ⑤ Phase B 收尾（compressedOutput 合并 JSON）→ Phase C primary 纯代码门禁
-    // （outputTo 缺失文件，fs 空 → 不通过）→ gating → Step failed → 实例 failed。
+    // 无事件源）→ routing → completed；④ step-gate 为 shell 步骤（Round 20：跳过
+    // Phase A/B 收尾评估，零 llm 调用）→ Phase C primary 纯代码门禁（outputTo 缺失
+    // 文件，fs 空 → 不通过）→ gating → Step failed → 实例 failed。
     // 按首条消息文本分发：分支/循环专用模板（shouldExecute/shouldBreak）按其字段名；
     // 其余为收尾调用（统一 buildAssessPrompt 后 Phase A 与 Phase B 的 prompt 均含
     // compressedOutput）——按调用序：第 1 次收尾调用（step-ask Phase A 首次）返回 ask
@@ -2775,8 +2778,8 @@ describe('SandoreEngineRuntime interaction', () => {
       { stepId: 'step-ask', childId: 'child-1', phase: 'finalizing', name: 'step-ask' },
       { stepId: 'step-ask', childId: 'child-1', phase: 'routing', name: 'step-ask' },
       { stepId: 'step-ask', childId: 'child-1', phase: 'completed', name: 'step-ask' },
-      { stepId: 'step-gate', childId: expect.stringMatching(UUID_RE), phase: 'finalizing', name: 'step-gate' },
-      // Round 11：runPhaseC 进入时先 commit gating running 快照，再 commit gating 终态
+      // Round 20：step-gate 为 shell 步骤，跳过 Phase A/B → 无 finalizing 事件；
+      // Phase C primary 门禁直接失败（2 个 gating：running 快照 + 终态）。
       { stepId: 'step-gate', childId: expect.stringMatching(UUID_RE), phase: 'gating', name: 'step-gate' },
       { stepId: 'step-gate', childId: expect.stringMatching(UUID_RE), phase: 'gating', name: 'step-gate' },
     ]);
@@ -4097,8 +4100,8 @@ describe('complex workflow e2e', () => {
    * （shouldExecute）+ 并行分支（无 condition 多 next）+ 循环（loop + breakCondition
    * shouldBreak + maxIterations）+ 收尾门禁（gates primary/secondary）+ 跨 Stage。
    *
-   * mock llm.streamHandler 按首条消息文本分发：含 'shouldExecute' → 条件分支 JSON；
-   * 含 'shouldBreak' → 循环跳出 JSON（首次 false 继续、二次 true 跳出）；含
+   * mock llm.streamHandler 按首条消息文本分发：含 'shouldExecute' → 批量条件分支 JSON
+   * （分支 id 数组）；含 'shouldBreak' → 循环跳出 JSON（首次 false 继续、二次 true 跳出）；含
    * 'hasAsk' → 收尾 assess JSON（提取 projectName=sandore）；其余 → secondary 门禁
    * JSON（primary 为纯代码产物校验、无 AI 提示词）。prompt Step（step-finalize）自身
    * 输出来自可续接子代理会话（决策 D3）。mock shell.runHandler 回显命令对应 stdout。
@@ -4136,7 +4139,8 @@ describe('complex workflow e2e', () => {
     llm.streamHandler = (options) => {
       const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
       if (text.includes('shouldExecute')) {
-        return textChunks('{"shouldExecute": true}');
+        // Round 20：批量模板——返回满足条件的分支 id 数组（branchId = branch.next）。
+        return textChunks('{"shouldExecute": ["step-fix"]}');
       }
       if (text.includes('shouldBreak')) {
         breakCall += 1;
@@ -4168,7 +4172,7 @@ describe('complex workflow e2e', () => {
     expect(stepIds[1]).toBe('step-route');
     const routeEntry = state?.executedSteps.find(step => step.stepId === 'step-route');
     expect(routeEntry?.branchMeta?.status).toBe('completed');
-    expect(routeEntry?.branchMeta?.result).toBe('{"shouldExecute": true}');
+    expect(routeEntry?.branchMeta?.result).toBe('{"shouldExecute": ["step-fix"]}');
 
     // ── 并行分支（无 condition）+ 条件分支（shouldExecute=true）：step-fix 与 step-report
     //    均执行（并发，Promise.all）；两者顺序不假定（mock 同步但并发调度），以 Set 断言

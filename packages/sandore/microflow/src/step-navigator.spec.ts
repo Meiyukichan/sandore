@@ -2,7 +2,7 @@
  * step-navigator.ts（StepNavigator）的单元测试：Step 级路由迁移回归。
  *
  * 验证 resolveNextNodes 从 workflow dag-navigator 迁入 microflow 后路由行为
- * 与迁移前完全一致——并行/条件（shouldExecute true·false）/shell 匹配/循环
+ * 与迁移前完全一致——并行/条件（批量 shouldExecute 分支 id 数组）/shell 匹配/循环
  * （首入·回边·maxIter 硬上限·breakCondition 跳出·嵌套作用域归零）/无命中线性
  * 兜底/跨 Stage 目标不路由（nodeIndex 拆分：microflow 只持当前 Stage Step 图）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-navigator.spec
@@ -107,22 +107,45 @@ describe('StepNavigator Step 级路由迁移回归', () => {
     };
     const def = makeDef([stage], [{ id: 'step-a' }, { id: 'step-b' }, { id: 'step-c' }]);
 
-    it('shouldExecute=true → 走条件分支目标（非数组顺序）', async () => {
+    it('shouldExecute 数组含目标 id → 走条件分支目标（非数组顺序）', async () => {
       const { ctx, llm } = makeCtx();
-      llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+      llm.streamHandler = () => textChunks('{"shouldExecute": ["step-c"]}');
       const nav = makeNavigator(ctx, stage, def);
       const result = await nav.resolveNextNodes('step-a', ctxWith({}));
       expect(result.nextNodeIds).toEqual(['step-c']);
       expect(result.branchMeta?.result).toContain('shouldExecute');
     });
 
-    it('shouldExecute=false → 跳过条件分支，线性兜底到数组下一 Step', async () => {
+    it('shouldExecute 空数组 → 跳过条件分支，线性兜底到数组下一 Step', async () => {
       const { ctx, llm } = makeCtx();
-      llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+      llm.streamHandler = () => textChunks('{"shouldExecute": []}');
       const nav = makeNavigator(ctx, stage, def);
       const result = await nav.resolveNextNodes('step-a', ctxWith({}));
       // 条件不命中 → 数组顺序兜底 step-b（而非条件目标 step-c）。
       expect(result.nextNodeIds).toEqual(['step-b']);
+    });
+
+    it('多条件分支一次批量评估：branchMeta 只写一次且全部命中分支路由', async () => {
+      const { ctx, llm } = makeCtx();
+      const multiStage: WorkflowStage = {
+        id: 'stg-1', name: 's1',
+        steps: [{
+          id: 'step-a',
+          branches: [
+            { condition: { type: 'prompt', value: { promptText: 'go-c?' } }, next: 'step-c' },
+            { condition: { type: 'prompt', value: { promptText: 'go-d?' } }, next: 'step-d' },
+          ],
+        }, { id: 'step-b' }, { id: 'step-c' }, { id: 'step-d' }],
+      };
+      const multiDef = makeDef([multiStage], [{ id: 'step-a' }, { id: 'step-b' }, { id: 'step-c' }, { id: 'step-d' }]);
+      llm.streamHandler = () => textChunks('{"shouldExecute": ["step-c", "step-d"]}');
+      const nav = makeNavigator(ctx, multiStage, multiDef);
+      const result = await nav.resolveNextNodes('step-a', ctxWith({}));
+      // 批量一次 fork：两条分支全部命中（branchMeta 只写一次，不再被最后一条覆盖）。
+      expect(result.nextNodeIds).toEqual(['step-c', 'step-d']);
+      expect(result.branchMeta?.status).toBe('completed');
+      expect(result.branchMeta?.result).toContain('shouldExecute');
+      expect(llm.calls).toHaveLength(1);
     });
   });
 

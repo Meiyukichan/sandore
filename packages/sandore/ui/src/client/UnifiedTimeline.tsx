@@ -207,12 +207,16 @@ function PhaseIcon({ phase }: { readonly phase: string }) {
  * ① 运行状态（已完成）② Phase A【已检测/检测中】③ Phase B【已收尾/收尾中】
  * ④ Phase C【已门禁/门禁失败/门禁中】⑤ Phase D【已判断/判断中】
  * Phase B/C/D 可点击（进入对应子代理会话）；Phase A 不可点击（临时会话，用完即删）。
+ * Round 20：completed 后 fork 会话已 dispose（live 移除），点击会报 unknown session——
+ * completed 态将 Phase B/C/D 的 target 置 undefined，徽标降级为纯文本（不可点击）。
  */
 function PhaseBadge({ item, t, openSession }: {
   readonly item: TimelineStepItem
   readonly t: TranslateNS<'sandore'>
   readonly openSession: (id: string) => void
 }) {
+  // Round 20：completed 后 fork 会话已 dispose，badge 降级为纯文本（不可点击）。
+  const isCompleted = item.status === 'completed'
   const badges: Array<{ key: string; labelKey: SandoreKey; phase: string; target: string | undefined; isActive: boolean; isFailed: boolean }> = []
 
   // Phase A 状态（ask-detect：临时评估会话，用完即删，不可点击）
@@ -235,7 +239,8 @@ function PhaseBadge({ item, t, openSession }: {
       key: 'phase-b',
       labelKey: done ? 'run.step.finalize.phase.done' : 'run.step.finalize.phase.finalizing',
       phase: 'finalizing',
-      target: item.finalizeAssessSessionId,
+      // completed 后 fork 会话已 dispose → 不可点击
+      target: isCompleted ? undefined : item.finalizeAssessSessionId,
       isActive: !done,
       isFailed: false,
     })
@@ -251,7 +256,8 @@ function PhaseBadge({ item, t, openSession }: {
             : done  ? 'run.step.finalize.phase.gated'
                     : 'run.step.finalize.phase.gating',
       phase: 'gating',
-      target: item.finalizeGateSessionId,
+      // completed 后 fork 会话已 dispose → 不可点击
+      target: isCompleted ? undefined : item.finalizeGateSessionId,
       isActive: !done && !failed,
       isFailed: failed,
     })
@@ -264,7 +270,8 @@ function PhaseBadge({ item, t, openSession }: {
       key: 'phase-d',
       labelKey: done ? 'run.step.finalize.phase.routed' : 'run.step.finalize.phase.routing',
       phase: 'routing',
-      target: item.finalizeRoutingSessionId,
+      // completed 后 fork 会话已 dispose → 不可点击
+      target: isCompleted ? undefined : item.finalizeRoutingSessionId,
       isActive: !done,
       isFailed: false,
     })
@@ -355,21 +362,21 @@ function AgentMsg({ item, t, nowIso, openSession }: {
       {!collapsed && (
         <>
           {item.status === 'completed' && (
-            // Round 14：收尾完成/收尾中内容用运行中消息渲染样式（.md 平铺，无边框无背景）。
-            <>
-              {/* 收尾完成前（assessStatus 非 done）：显示原始 output */}
-              {item.assessStatus !== 'done' && item.outputText !== undefined && (
-                <div className={css.md}><MarkdownText text={item.outputText} /></div>
-              )}
-              {/* 收尾完成后：显示 compressedOutput */}
-              {item.assessStatus === 'done' && item.finalizeAssessResult?.compressedOutput !== undefined && (
-                <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} /></div>
-              )}
-              {/* 兜底：收尾已完成但无 compressedOutput 时仍显示 output */}
-              {item.assessStatus === 'done' && item.finalizeAssessResult?.compressedOutput === undefined && item.outputText !== undefined && (
-                <div className={css.md}><MarkdownText text={item.outputText} /></div>
-              )}
-            </>
+            // Round 20：shell 步骤无收尾压缩（跳过 Phase A/B，compressedOutput 为空串会
+            // 渲染空白）——按 commandType 判定直接显示命令输出 outputText；
+            // 非 shell 优先 compressedOutput，降级（assessResult.errorDetail 非 undefined）
+            // 时回退原始 output。
+            item.commandType === 'shell' && item.outputText !== undefined
+              ? <div className={css.md}><MarkdownText text={item.outputText} /></div>
+              // 非 shell：优先 compressedOutput，降级（有 errorDetail）时回退 output
+              : item.commandType !== 'shell' && (
+                item.finalizeAssessErrorDetail === undefined
+                  && item.finalizeAssessResult?.compressedOutput !== undefined
+                  ? <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} /></div>
+                  : item.outputText !== undefined
+                    ? <div className={css.md}><MarkdownText text={item.outputText} /></div>
+                    : null
+              )
           )}
 
           {running && (

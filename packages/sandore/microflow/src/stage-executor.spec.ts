@@ -500,26 +500,34 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
 
   // 功能点 ②：finalize 评估提示词 <artifacts> 块含当前 Step 产物（context.artifacts 填充）
   it('finalize 评估提示词 <artifacts> 块含当前 Step 产物（缺陷 16；primary 门禁零 AI）', async () => {
+    // Round 20：shell 步骤跳过 Phase A/B 收尾评估（无 assess 提示词）——本用例改用
+    // prompt Step（非 shell）验证 Phase B 提示词仍含 <artifacts> 块。
     const { definition, stage } = singleShellDefinition();
     const stepWithGates: WorkflowStep = {
       id: 'step-sh',
-      name: 'echo',
-      command: { type: 'shell', value: { command: 'echo hi' } },
+      name: 'agent',
+      command: { type: 'prompt', value: { promptText: 'do work' } },
       outputTo: [{ id: 'report', path: 'out/report.md' }],
       passThroughVars: [{ name: 'v', value: '${v}', description: 'd' }],
       gates: { primary: { enabled: true } },
     };
     const def: WorkflowDefinition = { ...definition, steps: [stepWithGates] };
-    const { llm, fs, shell, makeExecutor } = harness();
+    const { llm, fs, agents, makeExecutor } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
     llm.streamHandler = () => textChunks('{"completionType":"completed","passThroughVars":{}}');
-    shell.runHandler = async () => ({ exitCode: 0, stdout: 'hi', stderr: '' });
+    // prompt Step 走可续接子代理：注册真实 childId 并回填最终输出。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work output' }]));
+    agents.register(child);
     fs.seedFile('/tmp/out/report.md');
 
     const executor = makeExecutor({ stageDef: stage, workflowDef: def });
     const result = await executor.execute();
 
-    // shell 无 prompt stream → calls = [Phase A assess, Phase B 重新 assess]；
-    // primary 门禁为纯代码产物校验（零 AI）——不再有第 3 次门禁 AI 调用，产物存在即通过。
+    // prompt 无 prompt stream → calls = [Phase A assess, Phase B 重新 assess（无 fork
+    // 配置降级临时会话）]；primary 门禁为纯代码产物校验（零 AI）——不再有第 3 次门禁
+    // AI 调用，产物存在即通过。
     expect(result.status).toBe('completed');
     expect(llm.calls).toHaveLength(2);
     // Phase B 重新评估提示词同样含 <artifacts> 块（缺陷 16：收尾评估上下文带产物）。
@@ -847,24 +855,31 @@ describe('StageExecutor 补充 37：SessionIdleWaiter 多 child 并发', () => {
 
 describe('StageExecutor 5 阶段收尾（4.6/4.7：Phase A ask 保底 → Phase B/C → resume 状态流转）', () => {
   it('Phase A ask 保底置 interacting（finalizeMeta currentPhase=ask-detect），resume 后 Phase B/C 完成', async () => {
-    const { llm, makeExecutor } = harness();
+    const { llm, agents, makeExecutor } = harness();
     let call = 0;
     llm.streamHandler = () => {
       // 首次评估判定需提问；回答后续跑重评估判定完成。
       const askJson = '{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"确认继续？","options":[{"label":"A"}]}]}}';
       return textChunks(call++ === 0 ? askJson : '{"hasAsk":false,"passThroughVars":{}}');
     };
-    // shell Step 声明未解析透传变量 → needsAssess（Phase A 跑评估）。
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Round 20：shell 步骤跳过 Phase A（无 ask 通道）——本用例改用 prompt Step 验证
+    // ask 保底链路（prompt Step 声明未解析透传变量 → needsAssess（Phase A 跑评估））。
     const step: WorkflowStep = {
       id: 'step-sh',
       name: 'echo',
-      command: { type: 'shell', value: { command: 'echo hi' } },
+      command: { type: 'prompt', value: { promptText: 'do work' } },
       passThroughVars: [{ name: 'v', value: '${v}', description: 'd' }],
     };
     const stage: WorkflowStage = { id: 'stg-1', name: 'Stage 1', steps: [{ id: 'step-sh' }] };
     const definition: WorkflowDefinition = {
       id: 'wfl-1', name: 'wfl-1', version: '1', stages: [stage], steps: [step], settings: {},
     };
+    // prompt Step 走可续接子代理：注册真实 childId 并回填最终输出（resume 续跑复用）。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
+    agents.register(child);
     const executor = makeExecutor({ stageDef: stage, workflowDef: definition });
 
     // 首次 execute：Phase A ask 保底 → 实例 interacting（引擎 ask 闭环）；Step 段
@@ -878,15 +893,47 @@ describe('StageExecutor 5 阶段收尾（4.6/4.7：Phase A ask 保底 → Phase 
     expect(first.executedSteps[0]?.finalizeMeta?.assessSessionId).toBeUndefined();
     expect(first.executedSteps[0]?.finalizeMeta?.askResult?.hasAsk).toBe(true);
 
-    // 回答后再次 execute：resumePendingAsk（shell 无新 output）→ Phase B 真 fork
+    // 回答后再次 execute：resumePendingAsk（prompt 真实子代理重收集输出）→ Phase B 真 fork
     // 子代理重新评估（finalizeMeta currentPhase='finalizing'）→ Phase C（无门禁 ok）→ 完成。
     const second = await executor.execute();
     expect(second.status).toBe('completed');
     expect(second.executedSteps[0]?.status).toBe('completed');
     expect(second.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('completed');
-    // Phase B 起持久化 assessSessionId（评估 fork id；shell 合成会话无事件源 → 降级 eval- 句柄）。
+    // Phase B 起持久化 assessSessionId（评估 fork id；无 fork 配置降级 eval- 句柄）。
     // Round 17：顶层 assessSessionId 已删除，sessionId 从 assessResult.forkSessionId 内读
     expect(second.executedSteps[0]?.finalizeMeta?.assessResult?.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it('shell Step 跳过 Phase A/B 收尾评估（Round 20：直接 Phase C 门禁 → completed）', async () => {
+    // shell 步骤声明未解析透传变量 + 门禁——修复前会触发 Phase A assess（ask 通道）+
+    // Phase B assess（compressedOutput）；Round 20 后 shell 跳过两者，仅 Phase C
+    // primary 纯代码门禁（零 AI）运行。
+    const { definition, stage } = singleShellDefinition();
+    const shellStep: WorkflowStep = {
+      id: 'step-sh',
+      name: 'echo',
+      command: { type: 'shell', value: { command: 'echo hi' } },
+      passThroughVars: [{ name: 'v', value: '${v}', description: 'd' }],
+      gates: { primary: { enabled: true } },
+    };
+    const def: WorkflowDefinition = { ...definition, steps: [shellStep] };
+    const { llm, shell, makeExecutor } = harness();
+    llm.streamHandler = () => textChunks('should not be called');
+    shell.runHandler = async () => ({ exitCode: 0, stdout: 'hi', stderr: '' });
+
+    const executor = makeExecutor({ stageDef: stage, workflowDef: def });
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    const segment = result.executedSteps[0]!;
+    // shell 跳过 Phase A/B：零 llm 调用、无 assessResult（Phase B 不跑、无压缩输出）。
+    expect(llm.calls).toHaveLength(0);
+    expect(segment.finalizeMeta?.assessResult).toBeUndefined();
+    // Phase C primary 门禁仍运行（纯代码产物校验；无 outputTo → 直接通过）。
+    expect(segment.finalizeMeta?.gateResult?.gatesPassed).toBe(true);
+    // 命令输出直接展示（completed 段保留原始 output 供 UI shell 分支显示）。
+    expect(segment.output).toHaveLength(1);
+    expect(segment.output[0]?.type).toBe('text');
   });
 });
 

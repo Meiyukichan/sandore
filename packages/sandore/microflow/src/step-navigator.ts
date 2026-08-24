@@ -12,8 +12,8 @@
  * `definition.steps` 完整定义，按 id 交叉引用）。**分支是唯一出边单元**（统一
  * `branches: [{ next, condition?, loop? }]`）：
  * - 并行分支（无 `condition`）始终纳入下一批；
- * - 条件分支（有 `condition`）逐条布尔评估（fork step 会话注入全量历史，AI shouldExecute JSON，
- *   shell 走 `matchesExpectation(label)`）；
+ * - 条件分支（有 `condition`）一次批量评估（fork step 会话注入全量历史，AI 返回
+ *   shouldExecute 分支 id 数组，shell 逐条走 `matchesExpectation(label)`）；
  * - 循环分支（有 `loop`，`next` 为回边）命中后经 `checkLoopBreak` 判定跳出（exitTo）或继续下一
  *   迭代。无分支或无命中时按定义数组顺序线性兜底；跨 Stage 目标不在此路由（交由引擎
  *   `tryAdvanceStage` 跨阶段推进）。`branchMeta` / `loopMeta` 保留评估现场。
@@ -21,12 +21,12 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 
-import { BranchEvaluator, extractShouldExecute, matchesExpectation } from './branch-evaluator.ts';
+import { BranchEvaluator } from './branch-evaluator.ts';
 import type { BranchEvalOptions, BranchEvaluatorConfig } from './branch-evaluator.ts';
 import { LoopManager } from './loop-manager.ts';
 import type { LoopState } from './loop-manager.ts';
 
-import type { BranchMeta, CommandConfig, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
+import type { BranchMeta, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowStep } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 
 /** 分离式合并后的完整 Step（顶层定义 + 流控 branches）。 */
 export type MergedStepRef = WorkflowStep & { readonly branches?: DagBranch[] | undefined };
@@ -53,7 +53,7 @@ export interface ResolveNextNodesContext {
    * 当前 step 的子代理会话 ID（fork-based 判断：缺陷 2/4 改造）。
    *
    * 由 `stage-executor.buildContext` 从最近命令节点的 `sessionMeta.childId`
-   * （`synthetic === false` 真实子代理会话）取。条件分支 `evaluateCondition` 与
+   * （`synthetic === false` 真实子代理会话）取。条件分支 `evaluateConditions` 与
    * 循环跳出 `checkLoopBreak` 消费：fork 此会话注入全量历史，AI 在 fork 会话上跑判断
    * 即可见全部 I/O。合成 session（prompt/shell）或无已执行命令节点时为 undefined
    * （判断降级为临时会话）。
@@ -107,8 +107,8 @@ export class StepNavigator {
    *
    * 统一分支路由（branches 是唯一出边单元）：
    * ① 并行分支（无 condition）始终纳入下一批（多条并发）；
-   * ② 条件分支（有 condition）逐条布尔评估（AI 输出 true/false；shell 走
-   *    `matchesExpectation(label)`），true 纳入；
+   * ② 条件分支（有 condition）一次批量评估（AI 返回 shouldExecute 分支 id 数组；
+   *    shell 走 `matchesExpectation(label)`），命中纳入；
    * ③ 循环分支（有 loop，next 为回边）：**首入与回边都调 `checkLoopBreak`**（只读
    *    visitCount，递增已由 `runLoop` 在处理节点前完成，等价基准 `processNode`
    *    L93-94 + L164）；跳出走 `exitTo`（先 `resetLoopVisitCounts`+`popActiveLoop`），
@@ -139,17 +139,21 @@ export class StepNavigator {
       }
     }
 
-    // 条件分支：逐条布尔评估（AI shouldExecute JSON，shell 匹配 label）。
-    for (const branch of conditional) {
-      const result = await this.evaluator.evaluateCondition(branch.condition!, this.branchEvalOptions(node, context));
+    // 条件分支：一次批量评估（Round 20 批量模板——AI 一次 fork 返回 shouldExecute 分支
+    // id 数组，shell 逐条匹配 label）。branchMeta 只写一次（修复多条件分支覆盖 bug：
+    // 旧逐条循环里 branchMeta 被最后一条覆盖，只保留最后一个分支的评估现场）。
+    if (conditional.length > 0) {
+      const { result, passedBranchIds } = await this.evaluator.evaluateConditions(
+        conditional.map(b => ({ branch: b, condition: b.condition! })),
+        this.branchEvalOptions(node, context),
+      );
       branchMeta = {
         status: 'completed',
         result: result.output,
         ...(result.sessionHandle === null ? {} : { sessionId: result.sessionHandle }),
       };
-      const passed = this.decideCondition(branch.condition!, result.output, branch.label);
-      if (passed && this.sameStageStep(node, branch.next) !== undefined) {
-        nextNodeIds.push(branch.next);
+      for (const nextId of passedBranchIds) {
+        if (this.sameStageStep(node, nextId) !== undefined) nextNodeIds.push(nextId);
       }
     }
 
@@ -236,19 +240,6 @@ export class StepNavigator {
       nextNodeIds.push(arrayNext);
     }
     return { nextNodeIds: dedupe(nextNodeIds), ...(branchMeta === undefined ? {} : { branchMeta }) };
-  }
-
-  /** 按 condition 类型判定条件分支是否通过。 */
-  private decideCondition(condition: CommandConfig, output: string, expectation: string | undefined): boolean {
-    if (condition.type === 'shell') {
-      if (expectation === undefined) {
-        return false;
-      }
-      return matchesExpectation(output.trim(), expectation);
-    }
-    // AI 条件：提取 shouldExecute 布尔（与 buildBranchPrompt 要求的 JSON 格式对齐）；
-    // 解析失败（undefined，已耗尽 evaluateCondition 重试）按 false 处理——条件分支不通过。
-    return extractShouldExecute(output) === true;
   }
 
   /** 数组顺序的下一 Step（同 Stage 内，线性兜底）。 */

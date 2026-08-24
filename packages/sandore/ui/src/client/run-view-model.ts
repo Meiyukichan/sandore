@@ -227,6 +227,8 @@ export interface TimelineStepItem {
   readonly finalizePreviousPhase?: string | undefined
   /** 收尾错误详情（finalizeMeta.errorDetail，如门禁失败原因；failed 态附加展示）。 */
   readonly finalizeErrorDetail?: string | undefined
+  /** Phase B 收尾评估降级原因（finalizeMeta.assessResult.errorDetail；非 undefined 表示压缩降级，completed 态回退显示 output）。 */
+  readonly finalizeAssessErrorDetail?: string | undefined
   /** Phase B 收尾评估 fork 会话 id（finalizeMeta.assessResult.forkSessionId，供「收尾中」徽标点击打开）。 */
   readonly finalizeAssessSessionId?: string | undefined
   /** Phase C 门禁 fork 会话 id（finalizeMeta.gateResult.gateSessionId，供「门禁中」徽标点击打开）。 */
@@ -248,6 +250,8 @@ export interface TimelineStepItem {
   readonly routingStatus?: 'running' | 'done'
   /** 子代理会话 id（跳「查看详情」）。 */
   readonly childId?: string | undefined
+  /** 命令类型（step.sessionMeta.command：'shell'/'prompt'/'agent'/'skill'/'mcp'；shell completed 直接显示命令输出）。 */
+  readonly commandType?: string | undefined
   /** 是否合成会话（shell 无真实子代理，标题不可点击跳子代理页）。 */
   readonly synthetic?: boolean | undefined
   /** sessionMessages 展示行（内嵌消息框 / 失败·暂停最近 N 条）。 */
@@ -505,6 +509,7 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
       finalizePhase: step.finalizeMeta?.currentPhase,
       finalizePreviousPhase: step.finalizeMeta?.previousPhase,
       finalizeErrorDetail: step.finalizeMeta?.errorDetail ?? step.error,
+      finalizeAssessErrorDetail: step.finalizeMeta?.assessResult?.errorDetail,
       finalizeAssessSessionId: step.finalizeMeta?.assessResult?.forkSessionId,
       finalizeGateSessionId: step.finalizeMeta?.gateResult?.gateSessionId,
       finalizeAssessResult: step.finalizeMeta?.assessResult !== undefined
@@ -551,6 +556,7 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
       ...(step.finalizeMeta?.gateResult?.status !== undefined ? { gateStatus: step.finalizeMeta.gateResult.status } : {}),
       ...(step.finalizeMeta?.routingResult?.status !== undefined ? { routingStatus: step.finalizeMeta.routingResult.status } : {}),
       childId: step.sessionMeta?.childId,
+      commandType: step.sessionMeta?.command,
       synthetic: step.sessionMeta?.synthetic,
       messages: chatLinesOf(step),
       visitCount: step.visitCount,

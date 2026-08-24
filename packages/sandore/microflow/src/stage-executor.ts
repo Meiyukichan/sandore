@@ -900,10 +900,14 @@ export class StageExecutor {
     const gates = mergeGates(this.options.workflowDef, stageDef, step);
     const context = await this.buildFinalizeContext(step, executed, state);
 
-    // Phase A：评估（ask 保底判断）。
-    const phaseA = await this.runPhaseA(nodeId, step, executed, context, gates, state);
-    if (phaseA.kind === 'ask') {
-      return 'ask';
+    // Phase A：评估（ask 保底判断）。shell 步骤跳过（Round 20：shell 无收尾压缩、
+    // 命令输出直接展示，跳过评估/ask 通道）→ 直接进 Phase B/C。
+    const isShellStep = step.command?.type === 'shell';
+    if (!isShellStep) {
+      const phaseA = await this.runPhaseA(nodeId, step, executed, context, gates, state);
+      if (phaseA.kind === 'ask') {
+        return 'ask';
+      }
     }
 
     // Phase B：收尾（真 fork 子代理重新评估）→ Phase C：门禁（primary 纯代码产物校验
@@ -1051,6 +1055,10 @@ export class StageExecutor {
    * `commitFinalize('finalizing')` 把 Phase B 的 `forkSessionId` 持久化为顶层
    * `assessSessionId`（偏离 3：Phase A 评估用完即删、不持久化；自 Phase B 起才落
    * state）。**透传变量写回仅在本阶段执行**（commitFinalize 按 currentPhase 门控）。
+   *
+   * **Round 20（shell 跳过）**：shell 步骤直接返回 undefined（跳过 assess）——
+   * shell 无收尾压缩、命令输出直接展示，且 shell 的 passThroughVars refresh 提取
+   * 另行设计；Phase C 门禁对 shell 不跳过（primary 纯代码产物校验仍生效）。
    */
   private async runPhaseB(
     step: WorkflowStep,
@@ -1059,7 +1067,10 @@ export class StageExecutor {
     gates: Gates | undefined,
     state: StageRunState,
   ): Promise<FinalizeAssessResult | undefined> {
-    if (!hasUnresolvedPassThroughVars(step) && !hasEnabledGates(gates)) {
+    // shell 步骤跳过 Phase B assess（Round 20）；非 shell 与旧谓词一致
+    // （无未解析透传变量且无门禁 → 不重评估）。
+    const isShellStep = step.command?.type === 'shell';
+    if (isShellStep || (!hasUnresolvedPassThroughVars(step) && !hasEnabledGates(gates))) {
       return undefined;
     }
     // 预置 currentPhase='finalizing'（评估耗时期间 UI 展示「收尾中」；commitFinalize 落终态）。

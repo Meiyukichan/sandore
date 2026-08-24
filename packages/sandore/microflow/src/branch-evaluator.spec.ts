@@ -1,10 +1,11 @@
 /**
- * branch-evaluator.ts（BranchEvaluator + extractShouldExecute/extractBreakResult/
- * matchesExpectation + evaluateCondition 重试）的单元测试。
+ * branch-evaluator.ts（BranchEvaluator + extractShouldExecute/extractShouldExecuteBatch/
+ * extractBreakResult/matchesExpectation + evaluateConditions 批量评估重试）的单元测试。
  *
  * 覆盖两阶段 start/collect/evaluate（agent 临时会话 + shell 直接执行）、shell 三注入
- * （透传替换/env/stdin）、条件分支 shouldExecute 两层解析、break 结果解析、分支匹配与
- * 条件分支 AI 路径解析失败重试（首轮 + follow-up 纠正，上限 MAX_BRANCH_EVAL_RETRIES）。
+ * （透传替换/env/stdin）、条件分支 shouldExecute 两层解析、批量分支 shouldExecute 分支
+ * id 数组三层解析、break 结果解析、分支匹配与条件分支 AI 路径批量解析失败重试
+ * （首轮 + follow-up 纠正，上限 MAX_BRANCH_EVAL_RETRIES）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/branch-evaluator.spec
  */
 import { Context } from '@deepseek-ai/cordis';
@@ -15,7 +16,7 @@ import { FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../../workflow/tests/mocks/llm.ts';
 import { FakeShell, successResult } from '../../workflow/tests/mocks/shell.ts';
 import { FakeSubprocess } from '../../workflow/tests/mocks/subprocess.ts';
-import { BranchEvaluator, extractBreakResult, extractShouldExecute, matchesExpectation } from './branch-evaluator.ts';
+import { BranchEvaluator, buildBatchBranchPrompt, extractBreakResult, extractShouldExecute, extractShouldExecuteBatch, matchesExpectation } from './branch-evaluator.ts';
 import type { BranchEvaluatorConfig } from './branch-evaluator.ts';
 
 /** 组装 BranchEvaluator 测试环境（注入 mock llm/shell/subprocess）。 */
@@ -73,6 +74,61 @@ describe('extractShouldExecute', () => {
     // 关键：裸 'true' 不再被判定为通过（与 buildBranchPrompt 要求的 JSON 格式对齐）。
     expect(extractShouldExecute('true')).toBeUndefined();
     expect(extractShouldExecute('  false  ')).toBeUndefined();
+  });
+});
+
+describe('extractShouldExecuteBatch', () => {
+  it('returns the branch id array for pure JSON (① JSON.parse)', () => {
+    expect(extractShouldExecuteBatch('{"shouldExecute": ["b1", "b2"]}')).toEqual(['b1', 'b2']);
+  });
+
+  it('parses a markdown-fenced JSON block (② stripJsonFence)', () => {
+    expect(extractShouldExecuteBatch('```json\n{"shouldExecute": ["b1"]}\n```')).toEqual(['b1']);
+    // 围栏前可有散文、语言标记可大写。
+    expect(extractShouldExecuteBatch('好的，以下是结果：```JSON\n{"shouldExecute": ["b2"]}\n```')).toEqual(['b2']);
+  });
+
+  it('falls back to the regex for prose-wrapped output (③ regex)', () => {
+    expect(extractShouldExecuteBatch('前文 {"shouldExecute": ["a","b"]} 后文')).toEqual(['a', 'b']);
+    expect(extractShouldExecuteBatch('... "shouldExecute": ["x"] ...')).toEqual(['x']);
+  });
+
+  it('returns an empty array for {"shouldExecute": []}', () => {
+    expect(extractShouldExecuteBatch('{"shouldExecute": []}')).toEqual([]);
+  });
+
+  it('returns undefined for unparseable or non-array outputs', () => {
+    expect(extractShouldExecuteBatch('')).toBeUndefined();
+    expect(extractShouldExecuteBatch('totally not json')).toBeUndefined();
+    // 布尔/字符串不是数组 → 解析失败（批量路径不接受逐条布尔格式）。
+    expect(extractShouldExecuteBatch('{"shouldExecute": true}')).toBeUndefined();
+    expect(extractShouldExecuteBatch('{"shouldExecute": "b1"}')).toBeUndefined();
+    expect(extractShouldExecuteBatch('{"foo": "bar"}')).toBeUndefined();
+  });
+
+  it('tolerates single quotes and extra whitespace in the regex fallback (⑥)', () => {
+    expect(extractShouldExecuteBatch("{\"shouldExecute\": ['a', 'b']}")).toEqual(['a', 'b']);
+    expect(extractShouldExecuteBatch('{"shouldExecute": [ "a" , "b" ]}')).toEqual(['a', 'b']);
+  });
+
+  it('buildBatchBranchPrompt lists branchId + executeCondition and requires an array response', () => {
+    const prompt = buildBatchBranchPrompt([
+      { next: 'b1', label: 'L1', condition: { type: 'prompt', value: { promptText: '目标满足？' } } },
+      { next: 'b2', label: 'L2' },
+      { next: 'b3' },
+    ]);
+    // 批量模板字段与返回格式（数组）。
+    expect(prompt).toContain('branchId');
+    expect(prompt).toContain('executeCondition');
+    expect(prompt).toContain('{"shouldExecute": ["branchId1", "branchId2"]}');
+    // branchId = branch.next。
+    expect(prompt).toContain('"branchId": "b1"');
+    expect(prompt).toContain('"branchId": "b2"');
+    expect(prompt).toContain('"branchId": "b3"');
+    // executeCondition 回退链：promptText → label → next。
+    expect(prompt).toContain('"executeCondition": "目标满足？"');
+    expect(prompt).toContain('"executeCondition": "L2"');
+    expect(prompt).toContain('"executeCondition": "b3"');
   });
 });
 
@@ -339,31 +395,36 @@ describe('BranchEvaluator provider/model fallback', () => {
   });
 });
 
-describe('BranchEvaluator evaluateCondition retry', () => {
-  it('returns valid shouldExecute on the first attempt without retry', async () => {
+describe('BranchEvaluator evaluateConditions 批量评估', () => {
+  it('returns valid shouldExecute branch ids on the first attempt without retry', async () => {
     const { llm, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["b1"]}');
 
-    const result = await evaluator.evaluateCondition({ type: 'prompt', value: { promptText: 'check' } });
+    const { result, passedBranchIds } = await evaluator.evaluateConditions([
+      { branch: { next: 'b1', label: 'L1' }, condition: { type: 'prompt', value: { promptText: 'check' } } },
+    ]);
 
     expect(llm.calls).toHaveLength(1);
-    expect(result.output).toBe('{"shouldExecute": true}');
+    expect(result.output).toBe('{"shouldExecute": ["b1"]}');
+    expect(result.output).toContain('shouldExecute');
     expect(result.sessionHandle).not.toBeNull();
-    expect(extractShouldExecute(result.output)).toBe(true);
+    expect(passedBranchIds).toEqual(['b1']);
   });
 
-  it('retries with a follow-up when the first output is unparseable', async () => {
+  it('retries with a follow-up when the first batch output is unparseable', async () => {
     const { llm, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
-    const outputs = ['I cannot decide', '{"shouldExecute": true}'];
+    const outputs = ['I cannot decide', '{"shouldExecute": ["b1"]}'];
     let callIndex = 0;
     llm.streamHandler = () => textChunks(outputs[callIndex++] ?? '');
 
-    const result = await evaluator.evaluateCondition({ type: 'prompt', value: { promptText: 'check' } });
+    const { result, passedBranchIds } = await evaluator.evaluateConditions([
+      { branch: { next: 'b1', label: 'L1' }, condition: { type: 'prompt', value: { promptText: 'check' } } },
+    ]);
 
-    // 首轮乱码不可解析 → 1 次 follow-up 纠正重试 → 第二轮返回合法 JSON。
+    // 首轮乱码不可解析 → 1 次 follow-up 纠正重试 → 第二轮返回合法分支 id 数组。
     expect(llm.calls).toHaveLength(2);
-    expect(result.output).toBe('{"shouldExecute": true}');
-    expect(extractShouldExecute(result.output)).toBe(true);
+    expect(result.output).toBe('{"shouldExecute": ["b1"]}');
+    expect(passedBranchIds).toEqual(['b1']);
 
     // 重试调用为多轮：原始 user + 上一轮 assistant 输出 + 纠正 user follow-up。
     const retryMessages = llm.calls[1]?.messages ?? [];
@@ -375,28 +436,68 @@ describe('BranchEvaluator evaluateCondition retry', () => {
     expect(hintBlock?.text).toContain('shouldExecute');
   });
 
-  it('gives up after MAX_BRANCH_EVAL_RETRIES and returns the last unparseable output', async () => {
+  it('gives up after MAX_BRANCH_EVAL_RETRIES and returns an empty passedBranchIds', async () => {
     const { llm, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
     llm.streamHandler = () => textChunks('totally not json');
 
-    const result = await evaluator.evaluateCondition({ type: 'prompt', value: { promptText: 'check' } });
+    const { result, passedBranchIds } = await evaluator.evaluateConditions([
+      { branch: { next: 'b1', label: 'L1' }, condition: { type: 'prompt', value: { promptText: 'check' } } },
+    ]);
 
-    // 首轮 + 2 次重试 = 3 次 stream 调用；输出仍不可解析（调用方 decideCondition 兜底 false）。
+    // 首轮 + 2 次重试 = 3 次 stream 调用；输出仍不可解析 → passedBranchIds 空数组（无命中）。
     expect(llm.calls).toHaveLength(3);
     expect(result.output).toBe('totally not json');
-    expect(extractShouldExecute(result.output)).toBeUndefined();
+    expect(passedBranchIds).toEqual([]);
   });
 
   it('delegates a shell condition to evaluate without any LLM call', async () => {
     const { llm, shell, evaluator } = harness();
     shell.runHandler = async spec => successResult(spec, 'lint-clean');
 
-    const result = await evaluator.evaluateCondition({ type: 'shell', value: { command: 'echo lint-clean' } });
+    const { result, passedBranchIds } = await evaluator.evaluateConditions([
+      { branch: { next: 'b1', label: 'lint-clean' }, condition: { type: 'shell', value: { command: 'echo lint-clean' } } },
+    ]);
 
+    // shell 逐条执行 + matchesExpectation(output, label) 判定通过。
     expect(llm.calls).toHaveLength(0);
     expect(shell.specs).toHaveLength(1);
+    expect(passedBranchIds).toEqual(['b1']);
     expect(result.sessionHandle).toBeNull();
     expect(result.output).toBe('lint-clean');
+  });
+
+  it('merges shell-passed and AI-returned branch ids in one batch call', async () => {
+    const { llm, shell, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
+    shell.runHandler = async spec => successResult(spec, 'lint-clean');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["b2"]}');
+
+    const { result, passedBranchIds } = await evaluator.evaluateConditions([
+      { branch: { next: 'b1', label: 'lint-clean' }, condition: { type: 'shell', value: { command: 'echo lint-clean' } } },
+      { branch: { next: 'b2', label: 'L2' }, condition: { type: 'prompt', value: { promptText: 'check' } } },
+    ]);
+
+    // shell 逐条执行（1 次）+ AI 一次 fork 批量（1 次 llm 调用）→ 合并 passedBranchIds。
+    expect(shell.specs).toHaveLength(1);
+    expect(llm.calls).toHaveLength(1);
+    expect(passedBranchIds).toEqual(['b1', 'b2']);
+    // result 取 AI 批量结果（sessionHandle 非 null）。
+    expect(result.output).toBe('{"shouldExecute": ["b2"]}');
+    expect(result.sessionHandle).not.toBeNull();
+  });
+
+  it('evaluates multiple AI branches in a single fork (llm.calls = 1, two branchIds)', async () => {
+    const { llm, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["b1", "b2"]}');
+
+    const { result, passedBranchIds } = await evaluator.evaluateConditions([
+      { branch: { next: 'b1', label: 'L1' }, condition: { type: 'prompt', value: { promptText: 'check 1' } } },
+      { branch: { next: 'b2', label: 'L2' }, condition: { type: 'prompt', value: { promptText: 'check 2' } } },
+    ]);
+
+    // 多 AI 分支一次 fork 批量：只 1 次 llm 调用，两条 branchId 全部收录。
+    expect(llm.calls).toHaveLength(1);
+    expect(passedBranchIds).toEqual(['b1', 'b2']);
+    expect(result.sessionHandle).not.toBeNull();
   });
 });
 
@@ -448,10 +549,10 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
       createAgent: options => agents.create(options),
       getStepSessionEvents: async childId => (childId === 'child-1' ? childEvents() : undefined),
     });
-    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": true}' }];
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": ["step-branch"]}' }];
 
-    const result = await evaluator.evaluateCondition(
-      { type: 'prompt', value: { promptText: '判断分支' } },
+    const { result, passedBranchIds } = await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
       { stepSessionId: 'child-1', stepId: 'step-branch' },
     );
 
@@ -461,7 +562,8 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
     expect(agents.createMetas[0]).toMatchObject({ parentSession: 'host-1', origin: 'subagent', seedLength: 4 });
     // sessionHandle = 路由子代理 id（纯 UUID）。
     expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    expect(result.output).toBe('{"shouldExecute": true}');
+    expect(result.output).toBe('{"shouldExecute": ["step-branch"]}');
+    expect(passedBranchIds).toEqual(['step-branch']);
     // followup 驱动一轮 + whenIdle + 评估完 dispose（live 移除、持久化保留）。
     const routingAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
     expect(routingAgent.followups).toHaveLength(1);
@@ -480,32 +582,33 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
     let call = 0;
     agents.createFollowupHandler = () => {
       call += 1;
-      return call === 1 ? [{ type: 'text', text: 'not json' }] : [{ type: 'text', text: '{"shouldExecute": true}' }];
+      return call === 1 ? [{ type: 'text', text: 'not json' }] : [{ type: 'text', text: '{"shouldExecute": ["step-branch"]}' }];
     };
 
-    const result = await evaluator.evaluateCondition(
-      { type: 'prompt', value: { promptText: '判断分支' } },
+    const { result } = await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
       { stepSessionId: 'child-1', stepId: 'step-branch' },
     );
 
     const routingAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
     expect(routingAgent.followups).toHaveLength(2);
-    expect(result.output).toBe('{"shouldExecute": true}');
+    expect(result.output).toBe('{"shouldExecute": ["step-branch"]}');
     expect(llm.calls).toHaveLength(0);
   });
 
   it('degrades to a temp llm.stream session when no fork config is provided (UUID handle, 不传历史)', async () => {
     const { llm, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["step-branch"]}');
 
-    const result = await evaluator.evaluateCondition(
-      { type: 'prompt', value: { promptText: '判断分支' } },
+    const { result, passedBranchIds } = await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
       { stepSessionId: 'child-1', stepId: 'step-branch' },
     );
 
     // 配置缺省 → fork 子代理不可用 → 降级一次性临时会话（纯 UUID 句柄，无历史注入）。
     expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    expect(result.output).toBe('{"shouldExecute": true}');
+    expect(result.output).toBe('{"shouldExecute": ["step-branch"]}');
+    expect(passedBranchIds).toEqual(['step-branch']);
     expect(llm.calls).toHaveLength(1);
     expect(llm.calls[0]?.messages).toHaveLength(1);
   });
@@ -516,10 +619,10 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
       createAgent: options => agents.create(options),
       getStepSessionEvents: async () => undefined,
     });
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["step-branch"]}');
 
-    const result = await evaluator.evaluateCondition(
-      { type: 'prompt', value: { promptText: '判断分支' } },
+    const { result } = await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
       { stepSessionId: 'step-sh-abcdef01', stepId: 'step-branch' },
     );
 

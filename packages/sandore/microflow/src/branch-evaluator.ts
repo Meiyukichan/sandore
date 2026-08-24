@@ -11,14 +11,16 @@
  * `ctx.shell.run()`（简单命令）或 `ctx.subprocess.spawn()`（透传变量替换 → 环境变量注入 →
  * stdin 注入）直接执行（`sessionHandle = null`）。`collect(partial)` 聚合 AI 输出文本
  * （shell 直接返回 stdout）；`evaluate()` 一步完成两阶段。
- * `evaluateCondition()` 在条件分支 AI 路径上叠加解析失败重试（首轮评估 +
- * 最多 {@link MAX_BRANCH_EVAL_RETRIES} 次 follow-up 纠正），shell 路径直接委托
- * `evaluate()`（走 matchesExpectation，无重试）。
+ * `evaluateConditions()` 批量评估条件分支：shell 条件逐条执行（每条命令不同，
+ * 走 matchesExpectation，无重试），AI 条件一次 fork 批量判断（批量提示词
+ * `buildBatchBranchPrompt`，返回 `{"shouldExecute": ["id1", "id2"]}` 分支 id 数组；
+ * 解析失败最多 {@link MAX_BRANCH_EVAL_RETRIES} 次 follow-up 纠正）。
  *
  * 另提供纯函数 `extractShouldExecute`（条件分支 shouldExecute 两层解析，public；
- * 解析失败返回 undefined 触发重试）、`extractBreakResult`（循环跳出 shouldBreak 三级
- * 解析，public，供 LoopManager 复用；分场景字段互不复用）与 `matchesExpectation`
- * （大小写不敏感+包含匹配；显式 `/.../ ` 定界时走正则）。
+ * 解析失败返回 undefined 触发重试）、`extractShouldExecuteBatch`（批量分支
+ * shouldExecute 分支 id 数组三层解析，public）、`extractBreakResult`（循环跳出
+ * shouldBreak 三级解析，public，供 LoopManager 复用；分场景字段互不复用）与
+ * `matchesExpectation`（大小写不敏感+包含匹配；显式 `/.../ ` 定界时走正则）。
  * @module @deepseek-ai/dsh-sandore-microflow/src/branch-evaluator
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -137,9 +139,9 @@ const BRANCH_RED_LINES = [
 /** 条件分支 AI 评估解析失败重试上限（首次评估 + 最多 N 次 follow-up 纠正重试）。 */
 const MAX_BRANCH_EVAL_RETRIES = 2;
 
-/** 重试时附给 AI 的纠正提示（要求仅返回合法 shouldExecute JSON）。 */
+/** 重试时附给 AI 的纠正提示（要求仅返回合法 shouldExecute 分支 id 数组 JSON）。 */
 const SHOULD_EXECUTE_CORRECTION_HINT =
-  '未能从你的上一轮输出中解析出 shouldExecute 布尔值，请仅返回 JSON：{"shouldExecute": true} 或 {"shouldExecute": false}。';
+  '未能从你的上一轮输出中解析出 shouldExecute 数组，请仅返回 JSON：{"shouldExecute": ["branchId1", "branchId2"]}，其中 branchId 为满足执行条件的分支。若没有分支满足条件，请返回 {"shouldExecute": []}。';
 
 /**
  * 构建结构化分支评估提示词（主头部 + 任务 + 候选分支 + 返回格式 + 红线规则）。
@@ -170,6 +172,54 @@ function buildBranchPrompt(taskText: string, branches: readonly DagBranch[]): st
     sections.push(`- ${rule}`);
   }
   return sections.join('\n');
+}
+
+/** 取分支的执行条件文本：condition 的 promptText（回退 label → next）。 */
+function branchExecuteCondition(branch: DagBranch): string {
+  const condition = branch.condition;
+  if (condition !== undefined && condition.type !== 'shell') {
+    return condition.value.promptText;
+  }
+  return branch.label ?? branch.next;
+}
+
+/**
+ * 构建批量分支评估提示词（对齐 docs/prompts/branch.md 批量模板）。
+ *
+ * 条件分支一次 fork 批量评估：`branchId` = 分支 `next`（唯一且与路由目标一致），
+ * `executeCondition` 取 condition 的 `promptText`（回退 label → next）；要求返回
+ * `{"shouldExecute": ["branchId1", "branchId2"]}` 数组（满足执行条件的分支 id 列表）。
+ * 供 {@link BranchEvaluator.evaluateConditions} 批量路径使用——逐条
+ * {@link buildBranchPrompt} 保持不动（startAi/evaluate 两阶段接口依赖）。
+ */
+export function buildBatchBranchPrompt(branches: readonly DagBranch[]): string {
+  const sections: string[] = [
+    '你是严谨准确的DAG分支评估Agent，你的任务是根据`分支执行条件`与上下文，判断哪些分支满足其执行条件。',
+    '',
+    '## 分支执行条件',
+    '```json',
+    JSON.stringify(
+      branches.map(b => ({
+        branchId: b.next,
+        executeCondition: branchExecuteCondition(b),
+      })),
+      null,
+      4,
+    ),
+    '```',
+    '',
+    '## 返回格式',
+    '请仅返回 JSON，格式如下：',
+    '```json',
+    '{"shouldExecute": ["branchId1", "branchId2"]}',
+    '```',
+    '',
+    '其中，`shouldExecute` 为满足其 `executeCondition` 条件的分支的 `branchId` 列表。',
+    '',
+    '## 红线规则',
+    '- 禁止编辑、创建或删除任何文件',
+  ]
+  return sections.join('\n')
 }
 
 /** 循环跳出专用提示词主头部（缺陷 4：不复用条件分支 shouldExecute 模板）。 */
@@ -256,9 +306,10 @@ export function extractBreakResult(raw: string): string {
  * ① JSON 解析取 `shouldExecute`（布尔直接返回；字符串 `"true"`/`"false"` 大小写
  * 不敏感转布尔）；② regex 回退 `/\{"shouldExecute"\s*:\s*(true|false)/i`（匹配后
  * 转小写判定）。两层均不满足返回 undefined（解析失败，触发
- * {@link BranchEvaluator.evaluateCondition} 重试或由调用方按 false 处理）。
- * **仅条件分支使用**——循环跳出走 {@link extractBreakResult} 的 shouldBreak 字段，
- * 两者分场景字段互不复用。
+ * {@link BranchEvaluator.evaluateConditions} 重试或由调用方按 false 处理）。
+ * **仅逐条条件分支使用**——批量路径走 {@link extractShouldExecuteBatch}（分支 id
+ * 数组）；循环跳出走 {@link extractBreakResult} 的 shouldBreak 字段，三者分场景
+ * 字段互不复用。
  */
 export function extractShouldExecute(raw: string): boolean | undefined {
   const parsed = parseJsonObject(raw);
@@ -275,6 +326,63 @@ export function extractShouldExecute(raw: string): boolean | undefined {
   const extracted = match?.[1];
   if (extracted !== undefined) {
     return extracted.toLowerCase() === 'true';
+  }
+  return undefined;
+}
+
+/** 剥离 markdown ```json 围栏，提取围栏内 JSON 文本（本地实现，参考 finalize-manager 同名单函数逻辑）。 */
+function stripJsonFence(raw: string): string {
+  // 容忍围栏前任意文字（如「好的，以下是结果：」），取第一个 ```json 或 ``` 代码块内容。
+  const match = raw.match(/```[ \t]*json[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```/i)
+    ?? raw.match(/```\r?\n([\s\S]*?)\r?\n[ \t]*```/);
+  return match?.[1]?.trim() ?? raw;
+}
+
+/** 从已解析对象取 shouldExecute 分支 id 数组；非 string 数组（含布尔/缺失）返回 undefined。 */
+function extractShouldExecuteArray(parsed: Record<string, unknown>): readonly string[] | undefined {
+  const shouldExecute = parsed['shouldExecute'];
+  if (Array.isArray(shouldExecute) && shouldExecute.every(item => typeof item === 'string')) {
+    return shouldExecute;
+  }
+  return undefined;
+}
+
+/**
+ * 三层解析批量分支评估的 shouldExecute 分支 id 数组（public）。
+ *
+ * ① `JSON.parse` 取 `shouldExecute`（元素全为 string 的数组直接返回）；
+ * ② 失败剥离 markdown fence（```json ... ```）后再 parse 一次；
+ * ③ 仍失败 regex 回退 `/"shouldExecute"\s*:\s*\[([^\]]*)\]/i`（捕获内容按逗号
+ * 拆分、trim、去双/单引号、过滤空串）。
+ * 全部失败返回 undefined（解析失败，触发 {@link BranchEvaluator.evaluateConditions}
+ * 重试或由调用方按空数组处理）。**仅批量条件分支使用**——逐条路径走
+ * {@link extractShouldExecute}（布尔），循环跳出走 {@link extractBreakResult}
+ * （shouldBreak），分场景字段互不复用。
+ */
+export function extractShouldExecuteBatch(raw: string): readonly string[] | undefined {
+  // ① JSON.parse 取 shouldExecute 数组。
+  const parsed = parseJsonObject(raw);
+  if (parsed !== undefined) {
+    const ids = extractShouldExecuteArray(parsed);
+    if (ids !== undefined) return ids;
+  }
+  // ② 剥离 markdown fence 后再 parse 一次。
+  const fenced = stripJsonFence(raw);
+  if (fenced !== raw) {
+    const reparsed = parseJsonObject(fenced);
+    if (reparsed !== undefined) {
+      const ids = extractShouldExecuteArray(reparsed);
+      if (ids !== undefined) return ids;
+    }
+  }
+  // ③ regex 回退（文本包裹场景：`前文 {"shouldExecute": ["a","b"]} 后文`）。
+  const match = raw.match(/"shouldExecute"\s*:\s*\[([^\]]*)\]/i);
+  const captured = match?.[1];
+  if (captured !== undefined) {
+    return captured
+      .split(',')
+      .map(item => item.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(item => item !== '');
   }
   return undefined;
 }
@@ -412,7 +520,7 @@ export class BranchEvaluator {
    * 模板提示词，由 {@link extractBreakResult} 解析 shouldBreak（与提示词格式对齐，消除缺陷 2/4
    * 指出的「buildBranchPrompt 要求 shouldExecute 而 decideBreak 解析 shouldBreak」
    * 字段错配）。仅循环跳出使用——条件分支仍走 {@link evaluate}/
-   * {@link evaluateCondition} 的 shouldExecute 路径。
+   * {@link evaluateConditions} 的 shouldExecute 路径。
    */
   async evaluateBreak(condition: CommandConfig, options: BranchEvalOptions = {}): Promise<BranchEvalResult> {
     const partial = await this.startBreak(condition, options);
@@ -420,41 +528,69 @@ export class BranchEvaluator {
   }
 
   /**
-   * 条件分支评估（带解析失败重试，Phase D 路由 fork 子代理机制）。
+   * 条件分支批量评估（带解析失败重试，Phase D 路由 fork 子代理机制）。
    *
-   * shell 条件直接委托 {@link evaluate}（走 matchesExpectation，无重试）；AI 条件
-   * （agent/prompt/skill/mcp）经 {@link runRoutingAi} 用 fork 子代理机制（`agents.create`
-   * + seed 完整事件 + followup + whenIdle + finalAssistantOutput + dispose）重建宿主子
-   * 代理跑判断，首轮发送分支评估提示词，若 {@link extractShouldExecute} 解析失败
-   * （undefined），则给**同一个 fork 子代理** `followup` 纠正提示重新返回，最多重试
-   * {@link MAX_BRANCH_EVAL_RETRIES} 次；重试耗尽记日志（条件不通过由调用方
-   * decideCondition 的 `extractShouldExecute === true` 判定兜底为 false）。fork 失败
-   * 降级 `llm.stream` 临时会话（单条判断提示词 + messages 追加重试）。仅条件分支使用——
-   * 循环跳出仍走 {@link evaluateBreak} + extractBreakResult（shouldBreak 字段，缺陷 4 范畴）。
+   * **一次批量**（Round 20 批量模板）：shell 条件逐条委托 {@link evaluate}（每条命令
+   * 不同不能批量；走 matchesExpectation 判定 branch.label，无重试），通过则
+   * `passedBranchIds` 收录 `branch.next`；AI 条件（agent/prompt/skill/mcp）按第一个
+   * AI condition 的 route 经 {@link runRoutingAi} **一次 fork**（`agents.create` + seed
+   * 完整事件 + followup + whenIdle + finalAssistantOutput + dispose）重建宿主子代理跑
+   * 批量判断，首轮发送 {@link buildBatchBranchPrompt} 批量提示词（要求返回
+   * `{"shouldExecute": ["id1", "id2"]}` 分支 id 数组），若 {@link extractShouldExecuteBatch}
+   * 解析失败（undefined），则给**同一个 fork 子代理** `followup` 纠正提示重新返回，
+   * 最多重试 {@link MAX_BRANCH_EVAL_RETRIES} 次；重试耗尽记日志（返回空数组按无命中
+   * 处理）。AI 返回的分支 id 即 `branch.next`，全部收录进 `passedBranchIds`。
+   * fork 失败降级 `llm.stream` 临时会话（单条判断提示词 + messages 追加重试）。
+   *
+   * `result` 约定：AI 分支存在时取 AI 批量评估结果（output = AI JSON 文本，
+   * sessionHandle = fork 子代理 id / 降级 eval- 句柄）；纯 shell 组取最后一条 shell
+   * 结果（output = stdout，sessionHandle = null）；空 branches 返回空结果。
+   * 仅条件分支使用——循环跳出仍走 {@link evaluateBreak} + extractBreakResult
+   * （shouldBreak 字段，缺陷 4 范畴）。
    */
-  async evaluateCondition(
-    condition: CommandConfig,
+  async evaluateConditions(
+    branches: readonly { branch: DagBranch; condition: CommandConfig }[],
     options: BranchEvalOptions = {},
-  ): Promise<BranchEvalResult> {
-    if (condition.type === 'shell') {
-      return this.evaluate(condition, options);
+  ): Promise<{ result: BranchEvalResult; passedBranchIds: readonly string[] }> {
+    const passed: string[] = [];
+    // shell 组：逐条执行（每条命令不同，不能批量）→ matchesExpectation(output, label) 判定。
+    let lastShellResult: BranchEvalResult | undefined;
+    for (const { branch, condition } of branches) {
+      if (condition.type !== 'shell') continue;
+      const result = await this.evaluate(condition, options);
+      if (matchesExpectation(result.output.trim(), branch.label)) {
+        passed.push(branch.next);
+      }
+      lastShellResult = result;
     }
-    const route = await this.resolveProviderModel(condition.value);
-    const taskText = replacePassThroughVars(
-      condition.value.promptText,
-      resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations),
+    // AI 组：一次 fork（第一个 AI condition 的 route），批量提示词。
+    const aiPairs = branches.filter(
+      (pair): pair is { branch: DagBranch; condition: AiCommand } => pair.condition.type !== 'shell',
     );
-    const promptText = buildBranchPrompt(taskText, options.branches ?? []);
-    return this.runRoutingAi(route, promptText, options, {
-      isSatisfied: output => extractShouldExecute(output) !== undefined,
+    if (aiPairs.length === 0) {
+      return {
+        result: lastShellResult ?? { output: '', sessionHandle: null },
+        passedBranchIds: passed,
+      };
+    }
+    const firstAi = aiPairs[0]!.condition;
+    const route = await this.resolveProviderModel(firstAi.value);
+    const promptText = buildBatchBranchPrompt(aiPairs.map(({ branch }) => branch));
+    const result = await this.runRoutingAi(route, promptText, options, {
+      isSatisfied: output => extractShouldExecuteBatch(output) !== undefined,
       correctionHint: SHOULD_EXECUTE_CORRECTION_HINT,
       maxRetries: MAX_BRANCH_EVAL_RETRIES,
       onExhausted: output => {
         this.ctx.logger.warn(
-          `sandore: branch condition shouldExecute unparseable after ${MAX_BRANCH_EVAL_RETRIES} retry attempt(s); last output: ${output.slice(0, 200)}`,
+          `sandore: batch branch shouldExecute array unparseable after ${MAX_BRANCH_EVAL_RETRIES} retry attempt(s); last output: ${output.slice(0, 200)}`,
         );
       },
     });
+    // AI 返回的 id 即 branch.next，全部收录（调用方按 passedBranchIds 路由）。
+    for (const id of extractShouldExecuteBatch(result.output) ?? []) {
+      passed.push(id);
+    }
+    return { result, passedBranchIds: passed };
   }
 
   /**

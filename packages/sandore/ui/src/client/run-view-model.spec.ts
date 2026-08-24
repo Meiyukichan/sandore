@@ -396,6 +396,45 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
     expect(stepItem.finalizeAssessResult).toEqual({ assessmentRaw: 'raw output', compressedOutput: '三段式压缩摘要' })
   })
 
+  it('maps sessionMeta.command → commandType and assessResult.errorDetail → finalizeAssessErrorDetail', () => {
+    // Round 20：UI 依据 commandType（shell 直接显示命令输出）与 finalizeAssessErrorDetail
+    // （Phase B 降级检测）渲染 completed 分支。
+    const executed = step({
+      status: 'completed',
+      sessionMeta: { childId: 'child-1', synthetic: true, command: 'shell' },
+      finalizeMeta: {
+        currentPhase: 'completed',
+        assessResult: {
+          passThroughVars: {},
+          forkSessionId: 'assess-1',
+          assessmentRaw: '',
+          errorDetail: 'fork subagent finalize degraded to temp session: no event source',
+        },
+      },
+    })
+    const state = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      status: 'completed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [executed],
+      stageInfos: [],
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildTimeline>[0]
+
+    const items = buildTimeline(state)
+    const stepItem = items[0]
+    expect(stepItem.kind).toBe('step')
+    if (stepItem.kind !== 'step') return
+    expect(stepItem.commandType).toBe('shell')
+    expect(stepItem.finalizeAssessErrorDetail).toBe('fork subagent finalize degraded to temp session: no event source')
+    // 无降级时字段为 undefined（completed 分支走 compressedOutput 判定）。
+    expect(stepItem.finalizeAssessResult).toEqual({ assessmentRaw: '' })
+  })
+
   it('omits the finalize fields when finalizeMeta is absent', () => {
     const state = {
       taskId: 'inst-1',
