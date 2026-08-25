@@ -485,6 +485,14 @@ function parseFinalizeResult(raw: string): FinalizeParsed | undefined {
 function buildSecondaryGatePrompt(context: FinalizeStepContext, secondaryPrompt: string | undefined): string {
   const sections: string[] = [SECONDARY_GATE_PROMPT_HEADER, '', buildStepContextBlock(context)];
   sections.push('');
+  // 2026-08-25 real-e2e 增强：引导门禁子代理**实际使用工具验证**（Round 21 已注入
+  // 完整工具集 + 正确 cwd，但 AI 偶发「仅凭 Step 输出文本猜测」不查文件 → 误判 error，
+  // 导致工作流失败）。要求基于文件系统事实判断，而非文本推断。
+  sections.push('## 审查要求');
+  sections.push('你必须**实际使用文件系统工具验证**（如 glob/read/stat 等）确认审查依据，而不是仅凭 Step 输出文本推断结论。');
+  sections.push('若审查要求涉及产物文件的存在性/内容，请先使用工具在当前项目目录中搜索确认，再给出结论。');
+  sections.push('只有当工具验证结果与审查要求不符时，才判定不通过。');
+  sections.push('');
   sections.push('## 你的任务');
   sections.push(secondaryPrompt ?? '请根据门控审查要求审查当前 Step 的输出，并给出通过或不通过的结论。');
   sections.push('');

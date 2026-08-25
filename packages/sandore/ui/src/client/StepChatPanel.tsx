@@ -40,6 +40,7 @@ import {
 
 import { buildStepChatFlow, type StepChatFlowRow, type StepChatTailData } from './chat-flow.ts'
 import { resolveWorkspacePath } from './workspace-path.ts'
+import { formatOpenError, stepChatRebindDelayMs, stepChatRetryDelayMs } from './step-chat-retry.ts'
 import { AssistantMarkdown } from './chat/AssistantMarkdown.tsx'
 import {
   CompactionNodeView, ContextMessageNodeView, RetryNodeView, TurnErrorNodeView,
@@ -173,12 +174,21 @@ function TurnStatus({ startTime, t }: {
 /**
  * 面板根：解析 binding（订阅会话列表——子代理会话可能晚于 step 出现，host 流推送
  * 进列表后 binding 才可解析），绑定可用后挂载 `StepChatBody`。
+ *
+ * Round 25：binding 缺失（子代理 settle/dispose 后 host 广播 `session-removed` →
+ * client 列表移除该 child）时按退避序列有界重拉 host 会话列表（`sessions.refresh()`，
+ * host 列表包含持久化冷会话，refresh 后 child 可重新绑定）；达上限后停在 loading
+ * 占位，避免对已删除 child 空转。
  */
 export function StepChatPanel({ sessionId, t }: {
   readonly sessionId: string
   readonly t: TranslateNS<'sandore'>
 }) {
   const sessions = getStepChatSessions()
+
+  // Round 25：binding 重解析纪元（refresh 完成后 +1 强制重渲染以重解析 binding）。
+  const [rebindEpoch, setRebindEpoch] = useState(0)
+  const rebindAttempt = useRef(0)
 
   // 订阅会话列表快照：binding 可用性由「列表包含 / 已 scoped」决定，列表变化时
   // 重解析 binding（子代理会话新建后由 host 流推送进列表）。
@@ -194,6 +204,32 @@ export function StepChatPanel({ sessionId, t }: {
     if (binding === undefined) return
     openSessionWindow(binding)
   }, [binding])
+
+  // Round 25：binding 缺失时按退避序列重拉 host 会话列表（有界）。成功恢复绑定或
+  // 列表重新包含该 child 后计数清零；child 确已删除则停在 loading 占位。
+  // 注：`sessions.refresh()` 在 client-runtime 公开面（ISessions）未导出（rc.6），
+  // 但运行时具体类存在且幂等只读（仅重拉 session.list，不改变 history transport
+  // 路由）；cast 调用，缺失时降级为等待列表自然变化。
+  useEffect(() => {
+    if (sessions === undefined) return
+    if (binding !== undefined) {
+      rebindAttempt.current = 0
+      return
+    }
+    const delay = stepChatRebindDelayMs(rebindAttempt.current)
+    if (delay === undefined) return
+    rebindAttempt.current += 1
+    const timer = setTimeout(() => {
+      const refreshList = (sessions as unknown as { refresh?(): Promise<void> }).refresh
+      if (refreshList === undefined) return // 公开面缺失：等待列表自然变化（host 推送）
+      void refreshList.call(sessions as never)
+        .then(() => { setRebindEpoch(value => value + 1) })
+        .catch(() => {
+          // 重拉失败：等待下一轮退避重试。
+        })
+    }, delay)
+    return () => { clearTimeout(timer) }
+  }, [sessions, sessionId, binding, rebindEpoch])
 
   if (binding === undefined) {
     return (
@@ -270,6 +306,30 @@ function StepChatBody({ session, sessionId, t }: {
     () => session.getSnapshot(),
   )
   const rows = useMemo(() => buildStepChatFlow(snapshot), [snapshot])
+
+  // Round 25：open 失败粘滞自愈——openState='error' 时有界退避重试 open()。
+  // Session.open() 对 'error' 会重跑 doOpen（瞬时失败——短 turn 子代理
+  // settle/dispose 过渡窗口——可自愈）；成功（'open'）后计数清零；达上限后停在
+  // error 占位并展示 openError（便于现场锁定确切错误码）。
+  const retryAttempt = useRef(0)
+  useEffect(() => {
+    if (snapshot.openState === 'open') {
+      retryAttempt.current = 0
+      return
+    }
+    if (snapshot.openState !== 'error') return
+    const delay = stepChatRetryDelayMs(retryAttempt.current)
+    if (delay === undefined) return // 已达重试上限：停在 error 占位（openError 可见）。
+    retryAttempt.current += 1
+    const timer = setTimeout(() => {
+      const opener = session as unknown as { open(): Promise<void> }
+      void opener.open().catch(() => {
+        // 重试失败：openState 保持 error，退避序列在下次 error 触发时继续。
+      })
+    }, delay)
+    return () => { clearTimeout(timer) }
+  }, [snapshot.openState, session])
+
   const [fileOpenError, setFileOpenError] = useState<{ path: string; message: string } | null>(null)
   const [fileOpenBusy, setFileOpenBusy] = useState(false)
   const fileOpenRequest = useRef(0)
@@ -349,9 +409,15 @@ function StepChatBody({ session, sessionId, t }: {
     )
   }
   if (snapshot.openState === 'error') {
+    // Round 25：error 占位附带 openError（code/message），便于现场锁定确切错误码；
+    // 有界退避重试进行中时此处维持占位，恢复后自动切回对话流。
+    const detail = formatOpenError(snapshot.openError)
     return (
       <div className={css.stepChatPanel} data-step-chat>
         <div className={css.stepChatError}>{t('run.step.chat.error')}</div>
+        {detail !== undefined && (
+          <div className={css.stepChatErrorDetail} data-step-chat-error-detail>{detail}</div>
+        )}
       </div>
     )
   }

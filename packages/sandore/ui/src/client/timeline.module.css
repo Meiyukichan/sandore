@@ -447,6 +447,16 @@
   color: var(--sd-destructive);
 }
 
+/* Round 25：error 占位的 openError 详情（code/message，次要字号，便于现场锁定错误码）。 */
+.stepChatErrorDetail {
+  padding: 0 16px 12px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--sd-muted-foreground);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 /* ── Round 13：统一内容卡片（与 badge 颜色体系对齐，复制自 DagStepNodeView.module.css） ── */
 
 .contentCard {

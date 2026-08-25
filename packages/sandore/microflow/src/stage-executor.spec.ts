@@ -31,6 +31,7 @@ import { StageExecutor } from './stage-executor.ts';
 import type { StageExecutorOptions, StageExecutorResume } from './stage-executor.ts';
 import { StepNavigator } from './step-navigator.ts';
 import type { StepRunnerConfig } from './step-runner.ts';
+import type { SubagentSettlement, SubagentStopReason } from './subagents.ts';
 
 /** 纯 UUID 形状（8-4-4-4-12 十六进制）。 */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -157,7 +158,10 @@ function harness(): {
       ...(finalizeConfig ?? {}),
     };
     const finalizeManager = new FinalizeManager(ctx, config);
-    const runnerConfig: StepRunnerConfig = { defaultTimeoutMs: 60000 };
+    const runnerConfig: StepRunnerConfig = {
+      defaultTimeoutMs: 60000,
+      ...(options?.runnerConfig === undefined ? {} : options.runnerConfig),
+    };
     return new StageExecutor({
       ctx,
       stageDef,
@@ -172,7 +176,8 @@ function harness(): {
       ...(options?.concurrencyLimiter === undefined ? {} : { concurrencyLimiter: options.concurrencyLimiter }),
       visitCounts: {},
       ...(options?.resumeFrom === undefined ? {} : { resumeFrom: options.resumeFrom }),
-      onPersist: async () => {},
+      onPersist: options?.onPersist ?? (async () => {}),
+      ...(options?.commitState === undefined ? {} : { commitState: options.commitState }),
     });
   };
 
@@ -1091,5 +1096,334 @@ describe('StageExecutor 收尾真 fork（5 阶段收尾重构）', () => {
     expect(segment.finalizeMeta?.assessResult?.errorDetail).toContain('no event source');
     // Phase A + Phase B 降级 = 2 次 llm.stream。
     expect(llm.calls).toHaveLength(2);
+  });
+});
+
+// ── bugfix round22：runLoop pendingQueue+Promise.race 重构（新并发模型专项） ────────
+
+/** settle 控制器（对齐 step-runner.spec）：注入 awaitSubagentSettlement + 测试手动 settle。 */
+function settleController(): {
+  awaitSubagentSettlement: (childId: string, signal: AbortSignal) => Promise<SubagentSettlement>;
+  settle: (childId: string, stopReason: SubagentStopReason, output?: readonly ContentBlock[]) => void;
+} {
+  const pending = new Map<string, (settlement: SubagentSettlement) => void>();
+  const buffered = new Map<string, SubagentSettlement>();
+  return {
+    awaitSubagentSettlement: async childId => {
+      const existing = buffered.get(childId);
+      if (existing !== undefined) {
+        buffered.delete(childId);
+        return existing;
+      }
+      return await new Promise<SubagentSettlement>(resolve => {
+        pending.set(childId, resolve);
+      });
+    },
+    settle: (childId, stopReason, output) => {
+      const settlement: SubagentSettlement = {
+        childId,
+        stopReason,
+        ...(output === undefined ? {} : { output }),
+      };
+      const resolve = pending.get(childId);
+      if (resolve !== undefined) {
+        pending.delete(childId);
+        resolve(settlement);
+      } else {
+        buffered.set(childId, settlement);
+      }
+    },
+  };
+}
+
+/** 组装失败/成功 shell 结果（减少重复样板）。 */
+function shellResult(spec: { timeoutMs?: number }, stdout: string, exitCode = 0) {
+  return {
+    exitCode,
+    signal: null,
+    timedOut: false,
+    aborted: false,
+    timeoutMs: spec.timeoutMs,
+    stdout: { text: stdout, truncated: false },
+    stderr: { text: exitCode === 0 ? '' : 'boom', truncated: false },
+  };
+}
+
+describe('StageExecutor bugfix round22：runLoop pendingQueue+Promise.race 新模型', () => {
+  // 新增单测 ①：并发完成/失败 status 竞态——条件 completed 写被终态拦截，最终 failed。
+  it('concurrent completed + failed branches settle to failed (conditional completed write)', async () => {
+    const { definition, stage } = parallelBranchDefinition();
+    const { shell, makeExecutor } = harness();
+    // step-a（echo a）成功但延迟完成（gate 放行）；step-b（echo b）立即失败。
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    shell.runHandler = async spec => {
+      if (spec.command === 'echo b') {
+        return shellResult(spec, '', 1);
+      }
+      if (spec.command === 'echo a') {
+        await gate; // 先让 step-b 失败落终态，再放行 step-a（条件 completed 写被 failed 拦截）
+      }
+      return shellResult(spec, 'done');
+    };
+    const commits: Array<{ status?: string; errorDetail?: string }> = [];
+    const executor = makeExecutor({
+      stageDef: stage,
+      workflowDef: definition,
+      commitState: patch => commits.push(patch),
+    });
+    const resultP = executor.execute();
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    release();
+    const result = await resultP;
+
+    expect(result.status).toBe('failed');
+    // step-a 段仍 completed（P3 persist 无条件、段快照完整）；step-b 段 failed。
+    expect(result.executedSteps.find(s => s.stepId === 'step-a')?.status).toBe('completed');
+    expect(result.executedSteps.find(s => s.stepId === 'step-b')?.status).toBe('failed');
+    // 终态后不再有 completed commit（条件写被拦）；最后一次 status commit 为 failed。
+    const lastStatusCommit = [...commits].reverse().find(p => p.status !== undefined);
+    expect(lastStatusCommit?.status).toBe('failed');
+    // 终止态跳过剩余节点：step-end 不执行。
+    expect(result.executedSteps.some(s => s.stepId === 'step-end')).toBe(false);
+  });
+
+  // 新增单测 ②：循环门 quiescent barrier——并行循环体汇聚回循环门不提前路由（G10）。
+  it('loop gate routes only when quiescent (parallel body branches converge, iteration count correct)', async () => {
+    const stepLoop: WorkflowStep = { id: 'step-loop', name: 'Loop' };
+    const stepBodyRouter: WorkflowStep = { id: 'step-body-router', name: 'BodyRouter' };
+    const stepB1: WorkflowStep = { id: 'step-b1', name: 'B1', command: { type: 'shell', value: { command: 'echo b1' } } };
+    const stepB2: WorkflowStep = { id: 'step-b2', name: 'B2', command: { type: 'shell', value: { command: 'echo b2' } } };
+    const stepEnd: WorkflowStep = { id: 'step-end', name: 'End', command: { type: 'shell', value: { command: 'echo end' } } };
+    const stage: WorkflowStage = {
+      id: 'stg-1', name: 'LoopBarrier',
+      steps: [
+        { id: 'step-loop', branches: [{ loop: { next: 'step-body-router', exitTo: 'step-end', maxIterations: 3 } }] },
+        { id: 'step-body-router', branches: [{ next: 'step-b1' }, { next: 'step-b2' }] },
+        { id: 'step-b1', branches: [{ next: 'step-loop' }] },
+        { id: 'step-b2', branches: [{ next: 'step-loop' }] },
+        { id: 'step-end' },
+      ],
+    };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-loop-barrier', name: 'wfl-loop-barrier', version: '1', settings: {}, stages: [stage],
+      steps: [stepLoop, stepBodyRouter, stepB1, stepB2, stepEnd],
+    };
+    const { shell, makeExecutor } = harness();
+    // b2 延迟完成：b1 完成后循环门入队，barrier 必须等同迭代 b2 落地才路由；若提前路由
+    // （无 barrier）→ 迭代语义破坏（visitCount 超前 → 提前 break → 循环发散/计数错误）。
+    shell.runHandler = async spec => {
+      if (spec.command === 'echo b2') {
+        await new Promise<void>(resolve => setTimeout(resolve, 20));
+      }
+      return shellResult(spec, spec.command);
+    };
+
+    const executor = makeExecutor({ stageDef: stage, workflowDef: definition });
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    // maxIterations=3 → 2 轮迭代 × 2 并行分支 = body 恰好执行 4 次（barrier 保证不提前 break）。
+    const bodySegs = result.executedSteps.filter(s => s.stepId === 'step-b1' || s.stepId === 'step-b2');
+    expect(bodySegs).toHaveLength(4);
+    expect(bodySegs.every(s => s.status === 'completed')).toBe(true);
+    // 循环跳出 exitTo 推进 step-end 恰好一次。
+    const endSegs = result.executedSteps.filter(s => s.stepId === 'step-end');
+    expect(endSegs).toHaveLength(1);
+    expect(endSegs[0]?.status).toBe('completed');
+  });
+
+  // 新增单测 ③：persist 顺序——完成节点 P3 持久化快照已含其 nexts（enqueue 先于 P3）。
+  it('completed step persist snapshot already contains its nexts (enqueue before P3)', async () => {
+    const { definition, stage } = singleShellDefinition();
+    const stepA: WorkflowStep = { id: 'step-a', name: 'a', command: { type: 'shell', value: { command: 'echo a' } } };
+    const stepB: WorkflowStep = { id: 'step-b', name: 'b', command: { type: 'shell', value: { command: 'echo b' } } };
+    const twoStepStage: WorkflowStage = { ...stage, steps: [{ id: 'step-a' }, { id: 'step-b' }] };
+    const twoStepDef: WorkflowDefinition = { ...definition, stages: [twoStepStage], steps: [stepA, stepB] };
+    const { shell, makeExecutor } = harness();
+    shell.runHandler = async spec => shellResult(spec, spec.command);
+    const persists: Array<{ stepId: string | undefined; status: string; pendingQueue: readonly string[] | undefined }> = [];
+    const executor = makeExecutor({
+      stageDef: twoStepStage,
+      workflowDef: twoStepDef,
+      onPersist: async (executed, pendingQueue) => {
+        persists.push({ stepId: executed.stepId, status: executed.status, pendingQueue });
+      },
+    });
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    // step-a 的 P3 completed 快照必须已含 next（step-b）——enqueue 先于 persist（崩溃窗口闭合）。
+    const aCompleted = persists.find(p => p.stepId === 'step-a' && p.status === 'completed');
+    expect(aCompleted?.pendingQueue).toContain('step-b');
+    // step-a 的 P1 running 快照在路由前：不含 step-b。
+    const aRunning = persists.find(p => p.stepId === 'step-a' && p.status === 'running');
+    expect(aRunning?.pendingQueue).not.toContain('step-b');
+  });
+
+  // 新增单测 ④：resume 混合播种——resumeSubagents 走 resumeSegments 分流、快照节点正常拉起、去重生效。
+  it('resume mixed seeding: segments go through resumeSegments, snapshot nodes pull up, dedupe works', async () => {
+    const stepRouter: WorkflowStep = { id: 'step-router', name: 'Router' };
+    const stepB: WorkflowStep = { id: 'step-b', name: 'B', command: { type: 'agent', value: { promptText: 'do B' } } };
+    const stepC: WorkflowStep = { id: 'step-c', name: 'C', command: { type: 'shell', value: { command: 'echo c' } } };
+    const stepEnd: WorkflowStep = { id: 'step-end', name: 'End', command: { type: 'shell', value: { command: 'echo end' } } };
+    const stage: WorkflowStage = {
+      id: 'stg-1', name: 'MixedResume',
+      steps: [
+        { id: 'step-router', branches: [{ next: 'step-b' }, { next: 'step-c' }] },
+        { id: 'step-b', branches: [{ next: 'step-end' }] },
+        { id: 'step-c', branches: [{ next: 'step-end' }] },
+        { id: 'step-end' },
+      ],
+    };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-mixed-resume', name: 'wfl-mixed-resume', version: '1', settings: {}, stages: [stage],
+      steps: [stepRouter, stepB, stepC, stepEnd],
+    };
+    const routerSeg: WorkflowTaskState['executedSteps'][number] = {
+      id: 'exec-router', stepId: 'step-router', stageId: 'stg-1', name: 'Router', status: 'completed',
+      visitCount: 1, createdAt: '2026-08-16T00:00:00.000Z', attemptIndex: 0,
+    };
+    const runningB: WorkflowTaskState['executedSteps'][number] = {
+      id: 'exec-b', stepId: 'step-b', stageId: 'stg-1', name: 'B', status: 'running',
+      command: { type: 'agent', value: { promptText: 'do B' } },
+      sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' },
+      visitCount: 1, createdAt: '2026-08-16T00:00:00.000Z', attemptIndex: 0,
+    };
+    const resumeFrom: StageExecutorResume = {
+      completedSteps: [routerSeg],
+      resumeSubagents: [{ step: stepB, executed: runningB, childId: 'child-1' }],
+      // 快照 pendingQueue：step-c 正常拉起；step-b 命中 resumeSegments → initState 去重跳过。
+      pendingQueue: ['step-c', 'step-b'],
+    };
+    const { shell, agents, makeExecutor } = harness();
+    // resume 段续跑：子代理 child-1 已有输出（whenIdle + finalAssistantOutput 回退路径）。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'resumed B' }]));
+    agents.register(child);
+    // step-end 延迟完成：确保两个分支先后路由到同一后继时 running 去重生效（不二次执行）。
+    shell.runHandler = async spec => {
+      if (spec.command === 'echo end') {
+        await new Promise<void>(resolve => setTimeout(resolve, 20));
+      }
+      return shellResult(spec, 'done');
+    };
+
+    const executor = makeExecutor({ stageDef: stage, workflowDef: definition, resumeFrom });
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    // resume 段走 resumeSegments 分流：沿用原段 id（exec-b），不新建执行段（非重新执行）。
+    const bSegs = result.executedSteps.filter(s => s.stepId === 'step-b');
+    expect(bSegs).toHaveLength(1);
+    expect(bSegs[0]?.id).toBe('exec-b');
+    expect(bSegs[0]?.status).toBe('completed');
+    // 快照节点 step-c 正常拉起执行（新段）。
+    const cSegs = result.executedSteps.filter(s => s.stepId === 'step-c');
+    expect(cSegs).toHaveLength(1);
+    expect(cSegs[0]?.status).toBe('completed');
+    // 汇聚 step-end 恰好一次（两分支先后路由到同一后继 → enqueue/running 去重生效）。
+    const endSegs = result.executedSteps.filter(s => s.stepId === 'step-end');
+    expect(endSegs).toHaveLength(1);
+  });
+
+  // 新增单测 ⑤：终态优先级——并发 failed + paused → 最终 failed（runLoop 末尾 re-assert，G11）。
+  it('concurrent failed + paused settle to failed (terminal priority re-assert)', async () => {
+    const stepRouter: WorkflowStep = { id: 'step-router', name: 'Router' };
+    const stepA: WorkflowStep = { id: 'step-a', name: 'A', command: { type: 'agent', value: { promptText: 'do A' } } };
+    const stepB: WorkflowStep = { id: 'step-b', name: 'B', command: { type: 'shell', value: { command: 'echo fail' } } };
+    const stepEnd: WorkflowStep = { id: 'step-end', name: 'End', command: { type: 'shell', value: { command: 'echo end' } } };
+    const stage: WorkflowStage = {
+      id: 'stg-1', name: 'Priority',
+      steps: [
+        { id: 'step-router', branches: [{ next: 'step-a' }, { next: 'step-b' }] },
+        { id: 'step-a', branches: [{ next: 'step-end' }] },
+        { id: 'step-b', branches: [{ next: 'step-end' }] },
+        { id: 'step-end' },
+      ],
+    };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-priority', name: 'wfl-priority', version: '1', settings: {}, stages: [stage],
+      steps: [stepRouter, stepA, stepB, stepEnd],
+    };
+    const ctrl = settleController();
+    const { llm, shell, agents, makeExecutor } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'A output' }]));
+    agents.register(child);
+    // step-b 立即失败；step-a（agent）等 settle（aborted → 暂停）。
+    shell.runHandler = async spec => shellResult(spec, '', 1);
+    const commits: Array<{ status?: string }> = [];
+    const executor = makeExecutor({
+      stageDef: stage,
+      workflowDef: definition,
+      runnerConfig: { defaultTimeoutMs: 60000, awaitSubagentSettlement: ctrl.awaitSubagentSettlement },
+      commitState: patch => commits.push(patch),
+    });
+    const resultP = executor.execute();
+    // 等 step-b 失败先落终态（failed），再让 step-a 暂停（paused 的 last-write-wins 覆盖
+    // failed —— 由 runLoop 末尾 terminalPriority re-assert 纠正回 failed，G11）。
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    ctrl.settle('child-1', 'aborted');
+    const result = await resultP;
+
+    expect(result.status).toBe('failed');
+    // step-a 段 paused（暂停落段）、step-b 段 failed。
+    expect(result.executedSteps.find(s => s.stepId === 'step-a')?.status).toBe('paused');
+    expect(result.executedSteps.find(s => s.stepId === 'step-b')?.status).toBe('failed');
+    // 终止态跳过剩余节点：step-end 不执行。
+    expect(result.executedSteps.some(s => s.stepId === 'step-end')).toBe(false);
+    // re-assert 兜底：最后一次 status commit 为 failed（paused 覆盖 failed 被纠正）。
+    const lastStatusCommit = [...commits].reverse().find(p => p.status !== undefined);
+    expect(lastStatusCommit?.status).toBe('failed');
+  });
+
+  // 新增单测 ⑥：resume 空队列——resumeFrom 仅 completedSteps（反推空 next）→ completed（循环末兜底）。
+  it('resumeFrom with only completedSteps and empty reverse-derived nexts → status completed', async () => {
+    const { definition, stage } = singleShellDefinition();
+    const completed: WorkflowTaskState['executedSteps'][number] = {
+      id: 'exec-sh', stepId: 'step-sh', stageId: 'stg-1', name: 'echo', status: 'completed',
+      command: { type: 'shell', value: { command: 'echo hi' } },
+      sessionMeta: { childId: 'step-sh-synthetic', synthetic: true, command: 'shell' },
+      visitCount: 1, createdAt: '2026-08-16T00:00:00.000Z', attemptIndex: 0,
+      output: [{ type: 'text', text: 'hi' }],
+    };
+    const resumeFrom: StageExecutorResume = {
+      completedSteps: [completed],
+      resumeBetweenSteps: true,
+    };
+    const { shell, makeExecutor } = harness();
+    shell.runHandler = async spec => shellResult(spec, 'hi');
+
+    const executor = makeExecutor({ stageDef: stage, workflowDef: definition, resumeFrom });
+    const result = await executor.execute();
+
+    // 反推空 next → pendingQueue 空 → 循环末兜底 completed（不重跑已完成 Step）。
+    expect(result.status).toBe('completed');
+    expect(result.executedSteps).toHaveLength(1);
+    expect(result.executedSteps[0]?.id).toBe('exec-sh');
+  });
+
+  // 新增单测 ⑦：limiter 等待窗口终态跳过——acquire 期间另一节点失败 → acquire 后返回 skipped 不执行。
+  it('limiter waiting window: terminal state before acquire → startNode returns skipped without executing', async () => {
+    const { definition, stage } = parallelBranchDefinition();
+    const { shell, makeExecutor } = harness();
+    // step-a（echo a）持有槽位并失败；step-b（echo b）排队等待 acquire。
+    const startedCommands: string[] = [];
+    shell.runHandler = async spec => {
+      startedCommands.push(spec.command);
+      return spec.command === 'echo a' ? shellResult(spec, '', 1) : shellResult(spec, 'done');
+    };
+    const limiter = new TrackingLimiter(1);
+    const executor = makeExecutor({ stageDef: stage, workflowDef: definition, concurrencyLimiter: limiter });
+    const result = await executor.execute();
+
+    expect(result.status).toBe('failed');
+    // step-a 段 failed 落盘；step-b 未执行（acquire 后终态检查返回 skipped：不产段、不跑 shell）。
+    expect(result.executedSteps.find(s => s.stepId === 'step-a')?.status).toBe('failed');
+    expect(result.executedSteps.some(s => s.stepId === 'step-b')).toBe(false);
+    expect(startedCommands).not.toContain('echo b');
   });
 });

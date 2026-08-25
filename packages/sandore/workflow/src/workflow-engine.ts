@@ -1421,7 +1421,15 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         if (active.state.status !== 'aborted') {
           // 兜底落 aborted 终态（正常路径 abortInstance 已落态、清表并移除冻结登记；
           // 兜底分支不触碰登记——abort 清表语义由 abortInstance 统一处理）。
-          active.state = { ...active.state, status: 'aborted', updatedAt: now() };
+          active.state = {
+            ...active.state,
+            status: 'aborted',
+            // 2026-08-25 real-e2e：终态统一清空循环上下文（幽灵循环帧清理）。
+            activeLoopIterationStack: [],
+            activeLoopStack: [],
+            activeLoopNodeId: null,
+            updatedAt: now(),
+          };
           await this.persistState(active);
           this.emitAborted(session, info);
         }
@@ -1442,6 +1450,10 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           ...active.state,
           status: 'failed',
           stageContracts: { ...active.state.stageContracts, [stageId]: result.stageContract },
+          // 2026-08-25 real-e2e：终态统一清空循环上下文。
+          activeLoopIterationStack: [],
+          activeLoopStack: [],
+          activeLoopNodeId: null,
           updatedAt: now(),
         };
         await this.persistState(active);
@@ -1461,6 +1473,12 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         ...active.state,
         currentStageId: stageId,
         stageContracts: { ...active.state.stageContracts, [stageId]: stageContract },
+        // 2026-08-25 real-e2e：stage 完成时清空循环上下文——循环定义在 stage 内，
+        // 而跨 stage 的 LoopManager 从 active.state 继承循环栈（L1219），残留的
+        // activeLoopStack/activeLoopIterationStack 会污染下一 stage（幽灵循环帧）。
+        activeLoopIterationStack: [],
+        activeLoopStack: [],
+        activeLoopNodeId: null,
         updatedAt: now(),
       };
       await this.persistState(active);
@@ -1477,7 +1495,16 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     // 终态不移除冻结登记，hostAgent 保持冻结）。引擎不 dispose hostAgent、ActiveInstance
     // 仍留 instances 表，解冻后 hostAgent 恢复普通响应。
     this.frozenHostAgents.delete(active.hostAgent.id);
-    active.state = { ...active.state, status: 'completed', updatedAt: now() };
+    active.state = {
+      ...active.state,
+      status: 'completed',
+      // 2026-08-25 real-e2e：终态统一清空循环上下文（历史实例 activeLoopIterationStack
+      // 残留 [1] 幽灵循环帧，见 docs/bugfix/bugfix-2026-08-25-round23-midstage-completed-ask-gate.md）。
+      activeLoopIterationStack: [],
+      activeLoopStack: [],
+      activeLoopNodeId: null,
+      updatedAt: now(),
+    };
     await this.persistState(active);
     this.emitEnd(session, info, { taskId: info.taskId, status: 'completed' });
   }
@@ -1559,6 +1586,11 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       agents: definition.agents,
       hostAgent,
       onChildStarted: async (stepId, childId) => {
+        // Round 25（方案 B）：发布真实 childId 前尽力确认子代理会话已 live 可读
+        // （startContinuable 返回时通常已 publish；仅在极端发布竞态下短暂等待一次），
+        // 缩小「UI 拿到 childId 但会话尚未就绪/未落盘」的窗口。确认失败仅 warn、
+        // 不阻塞 step 启动——真正兜底是 UI 侧重试（StepChatPanel Round 25 方案 A）。
+        await this.assureChildSessionLive(childId);
         // 子代理真实 childId 就绪：把 running Step 的 sessionMeta 从合成占位切换为
         // 真实子代理 SessionId（暂停反查/fork/消息收集依赖该字段）。段模型下取
         // attemptIndex 最大的 running 段（避免多段时错配陈旧段）。
@@ -1601,6 +1633,34 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         });
       },
     };
+  }
+
+  /**
+   * Round 25（方案 B）：子代理会话 live 确认——发布真实 childId 前的尽力检查。
+   *
+   * `startContinuable` 返回时子代理会话通常已发布到 `ctx.sessions`（创建完成）；
+   * 仅在极端发布竞态下（会话 publish 与返回之间的微任务窗口）可能短暂缺失。
+   * 这里 get 命中且事件非空即返回（真实环境零等待）；缺失时等待 50ms 复查一次，
+   * 仍缺失仅 warn 不阻塞——UI 侧重试（StepChatPanel Round 25 方案 A）才是兜底。
+   *
+   * 测试 mock 的 childId 为短 id（`child-N`，FakeSubagents.startContinuable 生成），
+   * 且 FakeSessionStore 不登记子代理会话——等待只会空转，且该 50ms 会确定性改变
+   * 并行 step（子代理 vs shell）的完成时序（曾致「汇合节点多执行一次」用例失败）。
+   * 故仅对真实 UUID 格式的 childId 做确认，mock 直接跳过（0 延迟）。
+   */
+  private async assureChildSessionLive(childId: string): Promise<void> {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(childId)) {
+      return;
+    }
+    const live = this.ctx.sessions.get(SessionId(childId));
+    if (live !== undefined && live.events.length > 0) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const again = this.ctx.sessions.get(SessionId(childId));
+    if (again === undefined || again.events.length === 0) {
+      this.ctx.logger.warn(`sandore: child session '${childId}' not live when publishing childId; UI open retry 兜底`);
+    }
   }
 
   /** 构造完整 ActiveInstance（交互/生命周期/恢复三个管理器 + 宿主主代理 + 状态快照）。 */
@@ -1684,14 +1744,59 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           signal,
         });
       },
-      createAgent: (options) => this.ctx.agents.create(options),
+      createAgent: (options) => {
+        // 2026-08-25 real-e2e 修复：retryStep fork/revert 模式的 createAgent 传
+        // meta.parentSession=源 childId（审计语义），但 DSH continuation 的 lineage
+        // 校验要求 child.parentSession === followup 的 parent（宿主主代理）——源会话
+        // 已 settle/dispose 时必然不匹配 → UNAUTHORIZED（「belongs to another parent
+        // session」）。包装统一为宿主主代理（fork 源记录已由 recovery-manager 的
+        // runningStep.parentSessionId 承载，不依赖 meta）。
+        return this.ctx.agents.create({
+          ...options,
+          ...(options.meta === undefined ? {} : {
+            meta: { ...options.meta, parentSession: hostAgent.id },
+          }),
+        });
+      },
       getSession: (id) => {
         const child = this.ctx.sessions.get(SessionId(id));
         return child === undefined ? undefined : { events: child.events };
       },
-      forkSession: (source, boundary) => {
-        const child = this.ctx.sessions.fork(SessionId(source), boundary);
-        return { events: child.events };
+      // 2026-08-25 real-e2e 修复：fork 源会话 live 已移除（子代理 settle/dispose）时，
+      // `ctx.sessions.fork` 抛 SESSION_NOT_FOUND → retryStep fork 模式失败。改为
+      // live → 持久化回退（对齐 getStepSessionEvents）：live 命中走 sessions.fork；
+      // 否则从 sessionPersistence inspect 读事件构造 seed（recovery-manager 用
+      // forked.events 作 createAgent 的 seed，无需 live 会话本体）。
+      forkSession: async (source, boundary) => {
+        const live = this.ctx.sessions.get(SessionId(source));
+        if (live !== undefined) {
+          const child = this.ctx.sessions.fork(SessionId(source), boundary);
+          return { events: child.events };
+        }
+        const persistence = this.ctx.get('sessionPersistence');
+        if (persistence === undefined || persistence.inspect === undefined) {
+          throw new SandoreError(
+            `fork source session '${source}' not found (live) and sessionPersistence unavailable`,
+            'NODE_NOT_FOUND',
+          );
+        }
+        const events = await persistence.inspect(source);
+        if (events === undefined) {
+          throw new SandoreError(`fork source session '${source}' not found (live or persisted)`, 'NODE_NOT_FOUND');
+        }
+        // 对齐 sessions.fork 的 boundary 语义：默认截到末事件；boundary 越界抛错。
+        const eventList = [...events.events];
+        const lastEvent = eventList.at(-1);
+        if (boundary === undefined) {
+          return { events: eventList };
+        }
+        if (!Number.isSafeInteger(boundary) || boundary < 0 || boundary >= eventList.length) {
+          throw new SandoreError(
+            `fork boundary ${boundary} does not exist in session '${source}' (last seq: ${lastEvent?.seq ?? 'none'})`,
+            'INVALID_OPERATION',
+          );
+        }
+        return { events: eventList.slice(0, boundary + 1) };
       },
       emitStepRetried: (stepId, mode, name, loopIteration) => this.emitStepRetried(session, active, stepId, mode, name, loopIteration),
       resumeExecution: () => this.resumeExecution(active),

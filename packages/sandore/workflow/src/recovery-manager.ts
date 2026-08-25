@@ -76,8 +76,13 @@ export interface RecoveryManagerOptions {
   readonly createAgent: (options: CreateAgentOptions) => Promise<AgentHandle>;
   /** `ctx.sessions.get` 的注入包装（安全边界计算读子代理事件流）。 */
   readonly getSession: (id: string) => ForkSourceSession | undefined;
-  /** `ctx.sessions.fork` 的注入包装（boundary 省略 = 全量历史）。 */
-  readonly forkSession: (source: string, boundary?: number) => ForkSourceSession;
+  /**
+   * 子代理会话 fork 的注入包装（boundary 省略 = 全量历史）。
+   *
+   * 2026-08-25 real-e2e：改异步——live 已移除（子代理 settle/dispose）时从持久化
+   * 回退读事件（`ctx.sessions.fork` 只认 live，直接抛 SESSION_NOT_FOUND）。
+   */
+  readonly forkSession: (source: string, boundary?: number) => ForkSourceSession | Promise<ForkSourceSession>;
   /** 双发 `sandore/step-retried` 事件（含 Step 名称与可选循环迭代路径）。 */
   readonly emitStepRetried: (stepId: string, mode: RetryMode, name: string, loopIteration?: number[]) => void;
   /** 重试/恢复后的续跑执行（whenIdle + finalAssistantOutput + finalize + DAG 推进）。 */
@@ -291,7 +296,7 @@ export class RecoveryManager {
             }
           }
         }
-        const forked = this.deps.forkSession(childId, boundary);
+        const forked = await this.deps.forkSession(childId, boundary);
         const newChildId = synthesizeChildId(stepIdOf(step));
         await this.deps.createAgent({
           sessionId: newChildId,

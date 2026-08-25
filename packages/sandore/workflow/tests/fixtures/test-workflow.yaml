@@ -1,0 +1,128 @@
+id: wfl-2dcf2ae6-c87a-4bd4-95cd-f6001de0a13c
+name: test-workflow
+version: 1.0.0
+skills: []
+mcps: []
+agents: []
+settings:
+  defaultTimeout: 120
+  maxConcurrentAgents: 4
+gates:
+  primary:
+    enabled: true
+stages:
+  - id: stg-9b259283-4921-4fd7-9613-0b6ffee35898
+    name: demo1
+    steps:
+      - id: step-1846d923-133b-4617-9aac-b0b7e9344795
+        branches:
+          - next: step-1eb7f032-7a25-4371-8a51-24aa2fb97b9f
+          - next: step-0437f4aa-ce99-45f6-8088-698bd51aa363
+            condition:
+              type: prompt
+              value:
+                promptText: 当前项目下存在artifacts/{change-name}/proposal.md，则走这个分支
+          - next: step-ce33867a-d2c8-4379-ad48-d335f957ba09
+            condition:
+              type: prompt
+              value:
+                promptText: 当前项目下不存在artifacts/{change-name}/proposal.md，则走这个分支
+      - id: step-1eb7f032-7a25-4371-8a51-24aa2fb97b9f
+      - id: step-0437f4aa-ce99-45f6-8088-698bd51aa363
+        branches:
+          - next: step-66af1c6f-3498-4aee-af39-95745c4b05ec
+      - id: step-ce33867a-d2c8-4379-ad48-d335f957ba09
+        branches:
+          - next: step-18641f1a-3fa8-4e45-bf48-ecc854e42bd5
+      - id: step-66af1c6f-3498-4aee-af39-95745c4b05ec
+        branches:
+          - next: step-0437f4aa-ce99-45f6-8088-698bd51aa363
+            loop:
+              next: step-0437f4aa-ce99-45f6-8088-698bd51aa363
+              maxIterations: 3
+              exitTo: step-18641f1a-3fa8-4e45-bf48-ecc854e42bd5
+      - id: step-18641f1a-3fa8-4e45-bf48-ecc854e42bd5
+        branches:
+          - next: step-1846d923-133b-4617-9aac-b0b7e9344795
+            loop:
+              breakCondition:
+                type: prompt
+                value:
+                  promptText: counts.json的times字段的值大于10则跳出循环
+              next: step-1846d923-133b-4617-9aac-b0b7e9344795
+              maxIterations: 3
+    branches:
+      - next: stg-d7554ec0-aca1-4667-a3a1-69928a4eb94c
+  - id: stg-d7554ec0-aca1-4667-a3a1-69928a4eb94c
+    name: demo2
+    steps: []
+steps:
+  - id: step-1846d923-133b-4617-9aac-b0b7e9344795
+    name: sce1
+    command:
+      type: prompt
+      value:
+        promptText: 先用ask_user工具随便问我个问题，然后看下当前项目下是否已经存在图书管理页面的变更;
+          如果存在则简单更新部分内容：proposal.md，如果不存在则直接写入proposal.md；注意！写入的文件路径为：artifacts/{change-name}/proposal.md（不要使用子代理）
+    outputTo:
+      - id: opt-88745e46-d75e-47be-ae50-c29b244b3df3
+        path: artifacts/${change-name}/proposal.md
+    passThroughVars:
+      - name: change-name
+        value: ""
+        description: 当前变更名称
+    gates:
+      secondary:
+        enabled: true
+        prompt: 判断下当前步骤中，是否存在proposal.md文件
+  - id: step-1eb7f032-7a25-4371-8a51-24aa2fb97b9f
+    name: parallel1
+    command:
+      type: shell
+      value:
+        command: echo miku
+    inputFrom:
+      - id: ipt-773db054-cc3a-4378-93bd-54c27b7299d7
+        path: step-1846d923-133b-4617-9aac-b0b7e9344795
+  - id: step-0437f4aa-ce99-45f6-8088-698bd51aa363
+    name: sce2
+    command:
+      type: prompt
+      value:
+        promptText: 读取出counts.json的内容
+    inputFrom:
+      - id: ipt-3bcec04b-bc02-4ed7-8d87-acf9c2792d52
+        path: step-1846d923-133b-4617-9aac-b0b7e9344795
+  - id: step-ce33867a-d2c8-4379-ad48-d335f957ba09
+    name: sce3
+    command:
+      type: prompt
+      value:
+        promptText: 输出miku
+    inputFrom:
+      - id: ipt-19e0ebc3-2230-468f-b854-681be2be379e
+        path: step-1846d923-133b-4617-9aac-b0b7e9344795
+      - id: ipt-3bb7e177-d5dc-4dde-aea4-dc18fdbb1c8b
+        regex: artifacts/${change-name}/proposal.md
+    passThroughVars:
+      - name: change-name
+        value: ""
+        description: 当前变更名称
+  - id: step-66af1c6f-3498-4aee-af39-95745c4b05ec
+    name: 修复问题
+    command:
+      type: prompt
+      value:
+        promptText: 在counts.json里面，维护times这个字段，从0开始，如果存在这个文件，则对这个字段做+1，然后更新到文件
+    inputFrom:
+      - id: ipt-7aa5c126-964b-4e9c-90b2-b3a2fc1b3e65
+        path: step-0437f4aa-ce99-45f6-8088-698bd51aa363
+    outputTo:
+      - id: opt-458bd2bb-e41a-4ce6-a4bf-65c494d10cd8
+        path: counts.json
+  - id: step-18641f1a-3fa8-4e45-bf48-ecc854e42bd5
+    name: loop
+    command:
+      type: prompt
+      value:
+        promptText: 输出miku-love!

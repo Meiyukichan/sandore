@@ -38,3 +38,5 @@ packages/**/lib/*
 # Sandbox scratch files — local-only workflow task dumps / test output, never commit.
 a.json
 test-output.txt
+# Sandbox design / proposal scratch files — never commit (project-side plans live in docs/openspec or PRs).
+artifacts/

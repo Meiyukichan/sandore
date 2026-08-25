@@ -92,7 +92,7 @@ export interface StageExecutorOptions {
   readonly signal?: AbortSignal;
   readonly hooks?: StageStepHooks;
   /** 单个 Step 完成/失败后的持久化回调（由引擎注入，逐 Step 持久化状态快照 +
-   * pendingQueue 快照）。pendingQueue 为当前 ready/processing Step IDs（batch + nextBatch）。 */
+   * pendingQueue 快照）。pendingQueue 为当前 ready/processing Step IDs（单队列快照）。 */
   readonly onPersist?: (executedStep: ExecutedStepDefault, pendingQueue?: readonly string[]) => Promise<void> | void;
   /** 循环管理器（引擎共享：ID 后缀 + 迭代路径；由 `stepNavigator` 创建并注入）。 */
   readonly loopManager: LoopManager;
@@ -191,6 +191,11 @@ type PhaseAResult =
 type PhaseCResult =
   | { readonly kind: 'failed'; readonly message: string }
   | { readonly kind: 'ok'; readonly gateResult: GateEvalResult | undefined };
+
+/** runLoop 节点处理结果（命令节点产出 + resume 分流 + limiter 跳过）。 */
+type Outcome = 'ok' | 'ask' | 'failed' | 'paused' | 'skipped';
+/** runLoop 终态优先级聚合（failed > paused > interacting/ask）。 */
+type TerminalKind = 'failed' | 'paused' | 'interacting';
 
 /** 当前时间 ISO 串（供 executedStep 的 startedAt/updatedAt 写入）。 */
 function now(): string {
@@ -323,9 +328,8 @@ interface StageRunState {
   readonly executedSteps: ExecutedStepDefault[];
   readonly previousOutputs: PreviousStepOutput[];
   readonly passThroughVars: Record<string, PassThroughVarValue>;
-  batch: string[];
-  batchIndex: number;
-  nextBatch: string[];
+  /** ready 节点队列（FIFO；去重由 enqueue 保证）。取代 batch/batchIndex/nextBatch。 */
+  pendingQueue: string[];
   status: StepStatus;
   errorDetail: string | undefined;
   /** ask 断点：等待回复的 Step（resume 时重收集输出 + 重跑完整 finalize）。 */
@@ -344,20 +348,17 @@ interface StageRunState {
     readonly childId: string;
   } | undefined;
   /**
-   * resume 断点：崩溃恢复/重试续跑的子代理 Step 列表（多路恢复，缺陷 10）。
-   * 从快照播种，resumeSubagents 各自重新收集输出。并发恢复时多个 running/interacting
-   * Step 全部入列，execute() 用 Promise.all 并发续跑。
+   * resume 分流表：nodeId → 续跑 Step 定义 + 既有执行段 + childId（initState 从
+   * resumeSubagents 播种）。取代 pendingResumes。startNode 入口查表分流——命中走
+   * resumeSubagentStep 续跑（**不 acquire limiter**；step 取 resumeFrom 携带的定义，
+   * 而非 stepIndex 合并视图——崩溃恢复时二者可能不一致，续跑须以 resumeFrom 的
+   * command 为准，对齐旧 resumePendingResumes 直传 pending.step 的语义）。
    */
-  pendingResumes: ReadonlyArray<{
-    readonly nodeId: string;
-    readonly step: WorkflowStep;
-    readonly executed: ExecutedStepDefault;
-    readonly childId: string;
-  }>;
+  resumeSegments: Map<string, { step: WorkflowStep; executed: ExecutedStepDefault; childId: string }>;
   /**
    * between-steps 崩溃续跑标志（缺陷 9 G）：无活跃段但有已完成 Step。execute() 入口
-   * 据此从最后完成 Step 反推 DAG next 播种 batch（跳过已完成 Step），避免从 Stage
-   * 首步重跑。仅 {@link initState} 的 resumeFrom 分支（`resumeBetweenSteps`）置 true。
+   * 据此从最后完成 Step 反推 DAG next 播种 pendingQueue（跳过已完成 Step），避免从
+   * Stage 首步重跑。仅 {@link initState} 的 resumeFrom 分支（`resumeBetweenSteps`）置 true。
    */
   pendingBetweenSteps: boolean;
 }
@@ -410,20 +411,21 @@ export class StageExecutor {
       state = await this.initState();
       this.runState = state;
     }
+    // 续跑入口重置（审查第 5 项）：pendingPaused/pendingAsk 挂起时 state.status 为
+    // paused/interacting 终态，条件 completed 写会被 isTerminalState 拦截 → 先重置
+    // 'running' + commitState，续跑完成后条件写才可落 completed（ask/pause 断点续跑语义）。
     if (state.pendingPaused !== undefined) {
+      state.status = 'running';
+      this.options.commitState?.({ status: 'running' });
       const resumed = await this.resumePendingPaused(state);
       if (resumed !== 'ok') {
         // ask 中断（续跑收尾判定为 ask）或 failed：返回结果，交由引擎 ask/失败循环处理。
         return await this.buildResult(state);
       }
     }
-    if (state.pendingResumes.length > 0) {
-      const resumed = await this.resumePendingResumes(state);
-      if (resumed !== 'ok') {
-        return await this.buildResult(state);
-      }
-    }
     if (state.pendingAsk !== undefined) {
+      state.status = 'running';
+      this.options.commitState?.({ status: 'running' });
       const resumed = await this.resumePendingAsk(state);
       if (resumed !== 'ok') {
         // 'ask'：新 output 再次判定需提问（断点已重新挂回），引擎 ask 循环再走一轮；
@@ -432,19 +434,19 @@ export class StageExecutor {
       }
     }
     // between-steps 崩溃续跑（缺陷 9 G）：无活跃段但有已完成 Step → 从最后完成 Step
-    // 反推 DAG next 播种 batch，避免从 Stage 首步重跑已完成 Step（非恰好一次语义）。
+    // 反推 DAG next 播种 pendingQueue，避免从 Stage 首步重跑已完成 Step（非恰好一次语义）。
     // resumeFrom 播种的 completedSteps 已进 executedSteps/previousOutputs；此处仅决定
-    // 本轮 batch 起始位置（剩余未执行 Step）。primary 覆盖线性/分支命令链；循环回边
+    // 本轮队列起始位置（剩余未执行 Step）。primary 覆盖线性/分支命令链；循环回边
     // 等边角由保留的循环栈 + StepNavigator 路由承接（超出文档化 gap 的边界场景）。
+    // （resumePendingResumes 已并入 runLoop：resume 段经 startNode 的 resumeSegments 分流。）
     if (state.pendingBetweenSteps) {
       state.pendingBetweenSteps = false;
       const lastSeeded = state.executedSteps[state.executedSteps.length - 1];
       const lastNodeId = lastSeeded?.stepId;
       if (lastNodeId !== undefined) {
         const routed = await this.options.stepNavigator.resolveNextNodes(lastNodeId, this.buildContext(state));
-        state.batch = [...new Set(routed.nextNodeIds)];
-        state.batchIndex = 0;
-        if (state.batch.length === 0) {
+        this.enqueue(routed.nextNodeIds, state);
+        if (state.pendingQueue.length === 0) {
           // 该 Stage 已无未执行 Step（崩溃发生在末步完成与 Stage 收尾之间）：标完成交引擎推进。
           state.status = 'completed';
         }
@@ -484,10 +486,24 @@ export class StageExecutor {
       const artifactsPerStep = await Promise.all(
         completedSteps.map(s => collectStepArtifacts(this.options.ctx.fs, s, this.options.sharedState.cwd, toVarMap(passThroughVars))),
       );
-      // pendingQueue 直接播种为初始 batch（精确重放，缺陷 10 恢复可靠性增强）。
-      const initialBatch = pendingQueue !== undefined && pendingQueue.length > 0
-        ? [...pendingQueue]
-        : [];
+      // resume 分流表（方案 3.5）：resumeSubagents 各自入 segments（nodeId → 既有段 +
+      // childId），并把 resume 段 nodeId 优先入队 pendingQueue——startNode 查表分流走
+      // resumeSubagentStep（不 acquire limiter，对齐旧 resumePendingResumes 语义）；
+      // 快照 pendingQueue 去重追加入队（命中 segments 的 nodeId 跳过——旧快照 batch
+      // 可能同时含 running 节点，防重复拉起）。
+      const segments = new Map<string, { step: WorkflowStep; executed: ExecutedStepDefault; childId: string }>();
+      const initialQueue: string[] = [];
+      for (const rs of resumeSubagents ?? []) {
+        segments.set(rs.step.id, { step: rs.step, executed: rs.executed, childId: rs.childId });
+        initialQueue.push(rs.step.id);
+      }
+      const seen = new Set(initialQueue);
+      for (const id of pendingQueue ?? []) {
+        if (!segments.has(id) && !seen.has(id)) {
+          seen.add(id);
+          initialQueue.push(id);
+        }
+      }
       return {
         stepIndex,
         executedSteps: [...completedSteps],
@@ -495,45 +511,29 @@ export class StageExecutor {
           toPreviousOutput(s, artifactsPerStep[i]!.flatMap(a => a.value)),
         ),
         passThroughVars,
-        batch: initialBatch,
-        batchIndex: 0,
-        nextBatch: [],
+        pendingQueue: initialQueue,
         status: 'running',
         errorDetail: undefined,
         pendingAsk: undefined,
         pendingPaused: undefined,
-        // 多路恢复：并发崩溃时多个 running/interacting 段各自续跑（缺陷 10）。
-        // pendingQueue 非空时直接播种 batch（精确重放），pendingBetweenSteps 留 false。
-        // pendingQueue 空且有 completedSteps 时 fallback 到 between-steps 反推。
-        pendingResumes: resumeSubagents === undefined
-          ? []
-          : resumeSubagents.map(rs => ({
-            nodeId: rs.step.id,
-            step: rs.step,
-            executed: rs.executed,
-            childId: rs.childId,
-          })),
-        pendingBetweenSteps: resumeBetweenSteps === true && (pendingQueue === undefined || pendingQueue.length === 0),
+        resumeSegments: segments,
+        // pendingQueue 非空时直接播种（精确重放），pendingBetweenSteps 留 false；
+        // pendingQueue 空且有 completedSteps 时 fallback 到 between-steps 反推（缺陷 9 G）。
+        pendingBetweenSteps: resumeBetweenSteps === true && (pendingQueue === undefined || pendingQueue.length === 0) && segments.size === 0,
       };
     }
-    const batch: string[] = [];
     const firstStep = this.steps[0];
-    if (firstStep !== undefined) {
-      batch.push(firstStep.id);
-    }
     return {
       stepIndex,
       executedSteps: [],
       previousOutputs: [],
       passThroughVars,
-      batch,
-      batchIndex: 0,
-      nextBatch: [],
+      pendingQueue: firstStep === undefined ? [] : [firstStep.id],
       status: 'completed',
       errorDetail: undefined,
       pendingAsk: undefined,
       pendingPaused: undefined,
-      pendingResumes: [],
+      resumeSegments: new Map(),
       pendingBetweenSteps: false,
     };
   }
@@ -570,121 +570,124 @@ export class StageExecutor {
   }
 
   /**
-   * 主调度循环：批量工作队列真并发驱动（缺陷 10 队列驱动真并发改造）。
+   * 主调度循环：pendingQueue + Promise.race 真并发驱动（bugfix round22：batch+Promise.all
+   * 重构为 pendingQueue+Promise.race，对齐基准并发模型）。
    *
-   * **并发模型**（对齐基准 Promise.race + pendingQueue）：
-   * - batch 内节点分两批处理：路由节点串行（preserve loopManager state consistency），
-   *   命令节点并发（limiter 控制全局 Step 并发度）。
-   * - 路由节点（resolveNextNodes/分支评估）轻量不跑 subagent，不 acquire limiter。
-   * - 命令节点（subagent/shell/prompt）在 processCommandNode 前 acquire limiter，
-   *   finally release。maxConcurrentSteps=0 时无上限（UnlimitedLimiter）。
-   * - 并行分支（multiple nextNodeIds）真并发执行（Promise.all，不再逐个串行）。
+   * **并发模型**：
+   * - 单一 ready 队列 `pendingQueue`（FIFO；enqueue 去重），命令节点**即出队即拉起**
+   *   （eager spawn，线性链不必等兄弟完成——重构的核心收益）；路由节点串行处理
+   *   （preserve loopManager activeLoopStack state consistency）。
+   * - **quiescent routing barrier（G10/审查第 6 项）**：路由节点仅在 `running.size === 0`
+   *   （无命令在飞）时 shift + await 串行处理，否则 peek-and-stop 留队——路由
+   *   `resolveNextNodes` 永不与命令 Phase D 重叠（loopManager 栈不被破坏），循环门只在
+   *   当前迭代全部命令落地后路由（迭代语义与旧批模型一致，不提前 break）。
+   * - 命令节点在 startNode 内 acquire limiter（全局 Step 并发度），finally release；
+   *   maxConcurrentSteps=0 时无上限（UnlimitedLimiter）。resume 分流段不 acquire。
+   * - `Promise.race` 等待任一在飞节点 settle（running 非空才 race；race 空集永不 settle）。
    *
-   * **计数模型并发安全**（缺陷 3 不改语义）：处理节点**之前**对每个节点
-   * visitCount +1（串行递增，DAG 结构保证同 nodeId 在一个 batch 内不重复）。
+   * **计数模型并发安全**（缺陷 3 不改语义）：处理节点**之前**对每个节点 visitCount +1
+   * （单一递增点，路由门与命令门一致，peek-and-stop + running 去重保证不重复）。
    * recordScopeVisit 把节点记入活跃循环作用域集。回边/checkLoopBreak 只读不递增。
    *
-   * **终止语义**：任何命令节点产出 failed/paused/ask 时停止推进（剩余未启动节点跳过）。
-   * 多个命令节点并发产出不同终止态时按优先级 failed > paused > ask 取最终状态。
+   * **终止语义**：任何命令节点产出 failed/paused/ask 时停止推进（剩余未启动节点跳过）；
+   * 终止态写（failed/paused/interacting）无条件 last-write-wins，completed 写条件化
+   * （!isTerminalState），循环末按 terminalPriority 重断言（failed > paused > ask，G11）
+   * 后落终态；非终止态兜底 completed（覆盖空队列 resume 等边缘）。
    *
-   * @param state - Stage 运行时状态（batch/nextBatch 驱动循环）。
+   * @param state - Stage 运行时状态（pendingQueue 驱动循环）。
    */
   private async runLoop(state: StageRunState): Promise<void> {
     const { visitCounts, loopManager } = this.options;
-    // 崩溃恢复/重试续跑：resume 收尾已把剩余 Step 写入 nextBatch，而 batch 为空，
-    // 需先晋升 nextBatch 为 batch 才能继续推进（正常首轮 batch 非空时此分支无副作用）。
-    if (state.batch.length === 0) {
-      state.batch = [...new Set(state.nextBatch)];
-      state.nextBatch = [];
-      state.batchIndex = 0;
-    }
-    while (state.batch.length > 0) {
-      // 单一递增点（对齐基准 processNode L93-94）：处理节点**之前**对每个节点
-      // visitCount +1，路由门与命令门一致。回边/checkLoopBreak 只读不递增，
-      // 根治命令门双重计数（缺陷 3 case ①）。recordScopeVisit 把节点记入活跃
-      // 循环作用域集，供跳出时 resetLoopVisitCounts 归零。
-      //
-      // 串行递增（此 for 循环内同步执行）：DAG dedupe 保证同 nodeId 在一个 batch 内
-      // 不重复 → 并发下不同 nodeId 各自递增互不冲突（计数模型并发安全确认）。
-      const routingNodes: Array<{ nodeId: string; step: MergedStep }> = [];
-      const commandNodes: Array<{ nodeId: string; step: WorkflowStep }> = [];
-      for (const nodeId of state.batch) {
+    const running = new Map<string, Promise<Outcome>>();
+    let terminalPriority: TerminalKind | undefined;
+
+    while (true) {
+      if (this.isTerminalState(state)) break;
+
+      // drain：拉起 pendingQueue；路由节点仅 quiescent（running.size===0）时串行处理。
+      while (state.pendingQueue.length > 0) {
+        const nodeId = state.pendingQueue[0]!;              // peek，不 shift（peek-and-stop）
         const step = state.stepIndex.get(nodeId);
         if (step === undefined) {
-          // 跨阶段或 Stage 级目标：由引擎 tryAdvanceStage 承接。
+          // 跨 Stage 目标：引擎 tryAdvanceStage 承接（同旧模型 L613-615）。
+          state.pendingQueue.shift();
           continue;
         }
-        visitCounts[nodeId] = (visitCounts[nodeId] ?? 0) + 1;
-        loopManager.recordScopeVisit(nodeId);
         const isRoutingNode = step.command === undefined && step.branches !== undefined;
+        if (isRoutingNode && running.size > 0) break;        // ← quiescent barrier（G10/第6项）
+        state.pendingQueue.shift();
+        if (running.has(nodeId)) {
+          // 共享后继去重（偏离 3.2 补充，审查第 7 项延伸）：同一 nodeId 已在飞（eager
+          // enqueue 下两个并行分支可能先后路由到同一后继）时跳过重复拉起，避免重复执行
+          // 与 visitCount 双计（旧批模型由 nextBatch 批量去重保证，新模型需在出队点补
+          // running 去重——串行用例实证：b1 完成后 step-end 已出队在飞，b2 完成再入队
+          // 若不跳过会二次执行）。已在飞节点 settle 后其 nexts 正常入队，不丢节点。
+          continue;
+        }
+        visitCounts[nodeId] = (visitCounts[nodeId] ?? 0) + 1; // 单一递增点
+        loopManager.recordScopeVisit(nodeId);
         if (isRoutingNode) {
-          routingNodes.push({ nodeId, step });
+          await this.processRoutingNode(nodeId, step, state); // 串行（barrier 满足时）
+          if (this.isTerminalState(state)) break;
         } else {
-          commandNodes.push({ nodeId, step });
+          const p = this.startNode(nodeId, step, state);      // limiter 在 startNode 内
+          running.set(nodeId, p.then(outcome => {
+            running.delete(nodeId);
+            terminalPriority = this.recordTerminal(terminalPriority, outcome);
+            return outcome;
+          }));
         }
-      }
-      state.batch = [];
-      state.batchIndex = 0;
-
-      // 路由节点串行处理（preserve loopManager activeLoopStack state consistency —
-      // 两个不同循环节点并发处理会破坏栈状态；路由节点轻量不跑 subagent，串行无吞吐损失）。
-      for (const { nodeId, step } of routingNodes) {
-        await this.processRoutingNode(nodeId, step, state);
       }
 
-      // 命令节点并发处理（limiter 控制全局 Step 并发度，路由节点不占槽）。
-      // Promise.all 等待全部命令节点完成；任一产出终止态时剩余未 acquire 的节点跳过。
-      const outcomes = await Promise.all(
-        commandNodes.map(({ nodeId, step }) =>
-          this.processCommandNodeWithLimiter(nodeId, step, state),
-        ),
-      );
+      if (running.size === 0) {
+        if (state.pendingQueue.length === 0) break;
+        continue;   // 仅剩路由节点且无在飞命令 → 下轮直接路由（drain 已先执行，不丢节点）
+      }
+      await Promise.race(running.values());   // running 非空才 race（race 空集永不 settle）
+    }
 
-      // 聚合终止态：failed > paused > ask > completed（processCommandNode 各自已设
-      // state.status + pending 状态，此处按优先级确定最终状态）。
-      // 注：并发下多个命令节点同时产出 ask/paused 时仅保留最后一个的 pending 状态
-      // （last-write-wins 限制）；failed 优先级最高，任一 failed 即整 Stage failed。
-      let finalStatus: StepStatus = 'completed';
-      for (const outcome of outcomes) {
-        if (outcome === 'failed') {
-          finalStatus = 'failed';
-          break;
-        }
-        if (outcome === 'paused' && finalStatus === 'completed') {
-          finalStatus = 'paused';
-        }
-        if (outcome === 'ask' && finalStatus === 'completed') {
-          finalStatus = 'interacting';
-        }
+    // 终止态收尾：等全部在飞节点落地（P3/failed persist 完成，executedSteps 完整），
+    // 再按 terminalPriority 断言终态（G11，修复并发 failed+paused 时 paused 覆盖 failed）。
+    await Promise.allSettled(running.values());
+    if (terminalPriority !== undefined) {
+      if (state.status !== terminalPriority) {
+        state.status = terminalPriority;
+        this.options.commitState?.({ status: terminalPriority });
       }
-      if (finalStatus !== 'completed') {
-        state.status = finalStatus;
-        return;
-      }
+    } else if (!this.isTerminalState(state)) {
+      // 循环末兜底（覆盖空队列 resume 等边缘）：**仅设内部状态，不 commit 引擎级
+      // completed**（Round 23）——引擎级 completed 只在工作流真正完成时统一设置
+      // （workflow-engine L1480）；中途 commit 会命中 ask 工具注入 gate 的
+      // TERMINAL_STATUSES（completed ∈ 终态集）→ 后续 ask step 子代理用全局版
+      // ask 工具 → headless 挂起（真实 e2e 2026-08-25 根因）。
       state.status = 'completed';
-
-      // 晋升 nextBatch 为下一轮 batch（dedupe 保证同 nodeId 不重复）。
-      state.batch = [...new Set(state.nextBatch)];
-      state.nextBatch = [];
     }
   }
 
+  /** 按优先级聚合节点产出为终态（failed > paused > ask；ok/skipped 不改变优先级）。 */
+  private recordTerminal(priority: TerminalKind | undefined, outcome: Outcome): TerminalKind | undefined {
+    const kind = outcome === 'failed' ? 'failed' : outcome === 'paused' ? 'paused' : outcome === 'ask' ? 'interacting' : undefined;
+    if (kind === undefined) return priority;
+    const order: Record<TerminalKind, number> = { failed: 0, paused: 1, interacting: 2 };
+    return priority === undefined || order[kind] < order[priority] ? kind : priority;
+  }
+
   /**
-   * 带 limiter 的命令节点处理（缺陷 10 队列驱动真并发改造）。
+   * 命令节点处理入口（取代 processCommandNodeWithLimiter；bugfix round22）。
    *
-   * acquire limiter → processCommandNode → finally release。
+   * **resume 分流（审查第 3 项）**：resumeSegments 命中 → delete + resumeSubagentStep
+   * 续跑（**不 acquire limiter**——对齐旧 resumePendingResumes 不经 limiter 的语义，
+   * 避免 maxConcurrentSteps=1 时多路恢复被串行化；行为变更已文档化）。
+   * 未命中 → acquire limiter → acquire 后 isTerminalState 检查（limiter 等待窗口内
+   * 可能已有终态发生，对齐旧 L695）→ processCommandNode → finally release。
    * 路由节点不 acquire（轻量不跑 subagent，不占槽）。maxConcurrentSteps=0 时
-   * UnlimitedLimiter 立即返回（无上限）。终止态已发生时跳过（不 acquire）。
+   * UnlimitedLimiter 立即返回（无上限）。
    */
-  private async processCommandNodeWithLimiter(
-    nodeId: string,
-    step: WorkflowStep,
-    state: StageRunState,
-  ): Promise<'ok' | 'ask' | 'failed' | 'paused' | 'skipped'> {
-    // 终止态已发生（其他并发节点先产出 failed/paused/ask）：跳过不 acquire。
-    // 用方法调用避免 TS 控制流收窄（await 后 state.status 可能已变，但 TS 不会 un-narrow）。
-    if (this.isTerminalState(state)) {
-      return 'skipped';
+  private async startNode(nodeId: string, step: WorkflowStep, state: StageRunState): Promise<Outcome> {
+    const resume = state.resumeSegments.get(nodeId);
+    if (resume !== undefined) {
+      state.resumeSegments.delete(nodeId);
+      return this.resumeSubagentStep(state, nodeId, resume.step, resume.executed, resume.childId);
     }
     const limiter = this.options.concurrencyLimiter;
     if (limiter !== undefined) {
@@ -741,9 +744,14 @@ export class StageExecutor {
         ...(hasLoopMeta ? { loopMeta: routed.loopMeta } : {}),
       };
       state.executedSteps.push(routingEntry);
+      // 先入队再 persist（崩溃窗口闭合：单次 persist 快照即含新 nexts——审查第 4/7 项）。
+      this.enqueue(routed.nextNodeIds, state);
       await this.persist(routingEntry, state);
+    } else {
+      // 纯循环控制节点（无 command 且仅 loop 分支）不产路由条目：nexts 仍需入队
+      // （等价旧 `state.nextBatch.push(...)` 的无条件分支）。
+      this.enqueue(routed.nextNodeIds, state);
     }
-    state.nextBatch.push(...routed.nextNodeIds);
   }
 
   /** 命令节点：run + finalize + resolveNextNodes；ask 中断 / 失败 / 暂停时返回对应标记。 */
@@ -1191,11 +1199,15 @@ export class StageExecutor {
     // 终态 status；无中间 completed 脏状态）。
     executed.status = 'completed';
     executed.updatedAt = now();
-    // P3 completed 持久化（含终态 finalizeMeta）。
+    // 先入队再 P3 persist（崩溃窗口闭合：单次 persist 快照即含新 nexts——审查第 4/7 项；
+    // enqueue 保持无条件——ask/paused 续跑必须重拉这些 next）。
+    this.enqueue(routed.nextNodeIds, state);
     await this.persist(executed, state);
-    state.nextBatch.push(...routed.nextNodeIds);
-    state.status = 'completed';
-    this.options.commitState?.({ status: 'completed' });
+    // Round 23：**不 commit 引擎级 completed**——引擎级 status='completed' 只在工作流
+    // 真正完成时统一设置（workflow-engine L1480 唯一设点）。中途 commit 会把 ask 工具
+    // 注入 gate 的 TERMINAL_STATUSES（completed ∈ 终态集）命中 → 循环回跳/后续 ask
+    // step 的子代理不再注入 sandore 版 ask 工具 → 全局版工具 headless 挂起（真实 e2e
+    // 2026-08-25 根因）。终态（failed/paused/interacting）仍由各失败路径无条件写。
     return 'ok';
   }
 
@@ -1275,38 +1287,6 @@ export class StageExecutor {
     // running 新段先持久化（崩溃恢复/暂停定位需要 executedSteps 含运行中 Step）。
     await this.persist(segment, state);
     return this.resumeSubagentStep(state, pending.nodeId, pending.step, segment, pending.childId);
-  }
-
-  /**
-   * 多路崩溃恢复续跑（缺陷 10）：并发崩溃时多个 running/interacting 段各自续跑。
-   *
-   * 用 Promise.all 并发续跑全部 pendingResumes（各调 resumeSubagentStep → finishCommandNode）。
-   * 终止态聚合：任一 failed/ask 即返回（对齐 runLoop 聚合语义）。pendingResumes 各自
-   * 的 finishCommandNode → resolveNextNodes → nextBatch.push（synchronous push，并发安全）。
-   */
-  private async resumePendingResumes(state: StageRunState): Promise<'ok' | 'ask' | 'failed' | 'paused'> {
-    const resumes = [...state.pendingResumes];
-    state.pendingResumes = [];
-    const outcomes = await Promise.all(
-      resumes.map(pending =>
-        this.resumeSubagentStep(state, pending.nodeId, pending.step, pending.executed, pending.childId),
-      ),
-    );
-    // 聚合终止态：failed > paused > ask > ok（re-pause 期间用户可再次暂停 → settle aborted）。
-    let finalStatus: 'ok' | 'ask' | 'failed' | 'paused' = 'ok';
-    for (const outcome of outcomes) {
-      if (outcome === 'failed') {
-        finalStatus = 'failed';
-        break;
-      }
-      if (outcome === 'paused' && finalStatus === 'ok') {
-        finalStatus = 'paused';
-      }
-      if (outcome === 'ask' && finalStatus === 'ok') {
-        finalStatus = 'ask';
-      }
-    }
-    return finalStatus;
   }
 
   /** 续跑子代理 Step 的公共尾段：重新收集输出 + 公共收尾（finishCommandNode）。 */
@@ -1447,12 +1427,25 @@ export class StageExecutor {
   }
 
   /**
-   * 持久化回调封装（缺陷 10 恢复可靠性增强）：snapshot pendingQueue（batch + nextBatch
-   * 的 Step IDs）随 executed 一起传入 onPersist → 引擎写入 WorkflowTaskState.pendingQueue。
-   * 崩溃恢复时直接读回 pendingQueue → re-queue ready Steps（精确重放，不再反推 DAG next）。
+   * 去重入队（bugfix round22）：纯 push + includes 去重（O(n)，队列小；量大可加 Set 镜像）。
+   * 完成节点/路由节点的 nexts 先入队再 persist（崩溃窗口闭合，审查第 4/7 项）；重复路由到
+   * 同一后继时只保留一个队列条目（出队点另有 running 去重防重复执行）。
+   */
+  private enqueue(ids: readonly string[], state: StageRunState): void {
+    for (const id of ids) {
+      if (!state.pendingQueue.includes(id)) {
+        state.pendingQueue.push(id);
+      }
+    }
+  }
+
+  /**
+   * 持久化回调封装（缺陷 10 恢复可靠性增强）：snapshot pendingQueue 随 executed 一起
+   * 传入 onPersist → 引擎写入 WorkflowTaskState.pendingQueue。崩溃恢复时直接读回
+   * pendingQueue → re-queue ready Steps（精确重放，不再反推 DAG next）。
    */
   private async persist(executed: ExecutedStepDefault, state: StageRunState): Promise<void> {
-    const pendingQueue = [...new Set([...state.batch, ...state.nextBatch])];
+    const pendingQueue = [...state.pendingQueue];
     await this.options.onPersist?.(executed, pendingQueue);
   }
 }
