@@ -40,3 +40,5 @@ a.json
 test-output.txt
 # Sandbox design / proposal scratch files — never commit (project-side plans live in docs/openspec or PRs).
 artifacts/
+# Sandbox ad-hoc diagnostic / inspection scripts — never commit.
+scripts/tmp-*

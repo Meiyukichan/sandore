@@ -37,6 +37,9 @@ export interface InteractionManagerOptions {
   readonly hostAgent: Agent;
   /** `ctx.userQuestions` 软依赖获取器（可能不存在）。 */
   readonly userQuestions: () => UserQuestions | undefined;
+  /** Round 26：是否把 ask 上报宿主主代理（复用 hostSessionId 时 true；overlay 新建
+   *  false——只走 discussion composer 卡，经 replyQuestion 兼容路径回答）。 */
+  readonly reportToHost: boolean;
   /** 把当前 pending 条目全量镜像持久化到状态快照。 */
   readonly persist: (entries: PendingInteractionEntry[]) => void;
   /** 双发 `sandore/question` 事件（Cordis + Session append）。 */
@@ -149,6 +152,9 @@ export class InteractionManager {
   private readonly pendingPermissions = new Map<string, PendingPermissionEntry>();
   private readonly resolvedEntries: PendingInteractionEntry[] = [];
   private readonly questionWaiters = new Map<string, QuestionWaiter>();
+  /** Round 26：按 requestId 的 DSH 弹窗 AbortController（场景 B 同步——composer 回答 /
+   *  拒绝 / 清理时主动 abort，DSH 弹窗收到 question/resolved 自动关闭）。 */
+  private readonly questionAborts = new Map<string, AbortController>();
 
   constructor(private readonly deps: InteractionManagerOptions) {}
 
@@ -167,31 +173,48 @@ export class InteractionManager {
   }
 
   /**
-   * 引擎级 ask 主通道：登记 → `ctx.userQuestions.ask`（hostAgent 身份）→ await 答案。
+   * 引擎级 ask 主通道：登记 → 视场景决定是否 `ctx.userQuestions.ask`（hostAgent 身份）
+   * → await 答案。
    *
-   * 无 `userQuestions`（卡片通道不可用）时挂起，仅能由 {@link replyQuestion} 兼容
-   * 路径 resolve。返回前条目已终态化（status=replied + answer）并持久化。
+   * Round 26 场景拆分：`reportToHost === true`（复用 hostSessionId）时向宿主主代理
+   * 上报（DSH 弹窗）+ sandore composer 卡双通道；`false`（overlay 新建）时**不上报**
+   * 宿主（不调 userQuestions.ask），仅由 {@link replyQuestion} 兼容路径（composer 卡）
+   * resolve。无论是否上报，每次 ask 使用**独立内部 AbortController**（链式继承调用方
+   * signal：调用方 abort → 内部 abort；finish/reject/cancel 主动 abort 关闭 DSH 弹窗
+   * 时不会误杀实例/子代理）。返回前条目已终态化（status=replied + answer）并持久化。
    * @param input - pending 条目与可选取消信号。
    * @returns 用户整批回答。
    */
   async ask(input: { entry: PendingQuestionEntry; signal?: AbortSignal }): Promise<AskUserQuestionAnswer> {
     const { entry, signal } = input;
     this.addPendingQuestion(entry);
-    const answer = await new Promise<AskUserQuestionAnswer>((resolve, reject) => {
-      this.questionWaiters.set(entry.requestId, { resolve, reject });
-      const userQuestions = this.deps.userQuestions();
-      if (userQuestions !== undefined) {
-        void userQuestions.ask({
-          questions: toAskItems(entry.payload),
-          agent: this.deps.hostAgent,
-          ...(signal === undefined ? {} : { signal }),
-        }).then(
-          (result) => this.finishQuestion(entry, result),
-          (error: unknown) => this.failQuestion(entry, error),
-        );
-      }
-    });
-    return answer;
+    // 每次 ask 独立 controller：主动 abort 只关本次 DSH 弹窗；调用方 signal 链式继承。
+    const controller = new AbortController();
+    this.questionAborts.set(entry.requestId, controller);
+    const onOuterAbort = (): void => { controller.abort(); };
+    signal?.addEventListener('abort', onOuterAbort, { once: true });
+    try {
+      return await new Promise<AskUserQuestionAnswer>((resolve, reject) => {
+        this.questionWaiters.set(entry.requestId, { resolve, reject });
+        const userQuestions = this.deps.userQuestions();
+        // Round 26：reportToHost=false（overlay 新建）不上报宿主——挂起等 replyQuestion。
+        if (userQuestions !== undefined && this.deps.reportToHost) {
+          void userQuestions.ask({
+            questions: toAskItems(entry.payload),
+            agent: this.deps.hostAgent,
+            signal: controller.signal,
+          }).then(
+            (result) => this.finishQuestion(entry, result),
+            (error: unknown) => this.failQuestion(entry, error),
+          );
+        }
+      });
+    } finally {
+      // promise 结算后清理：移除链式监听 + 删 controller（finish/reject/cancel 的
+      // abort 已在结算前同步执行）。
+      signal?.removeEventListener('abort', onOuterAbort);
+      this.questionAborts.delete(entry.requestId);
+    }
   }
 
   /**
@@ -233,6 +256,8 @@ export class InteractionManager {
     const waiter = this.questionWaiters.get(requestId);
     this.questionWaiters.delete(requestId);
     waiter?.resolve(REJECTED_ANSWER);
+    // Round 26：拒绝后同步关闭宿主 DSH 弹窗（场景 B 双通道同步）。
+    this.questionAborts.get(requestId)?.abort();
     this.deps.emitQuestionRejected(rejected);
   }
 
@@ -268,6 +293,10 @@ export class InteractionManager {
     const waiter = this.questionWaiters.get(entry.requestId);
     this.questionWaiters.delete(entry.requestId);
     waiter?.resolve(answer);
+    // Round 26：回答后同步关闭宿主 DSH 弹窗（场景 B——composer 卡回答后宿主弹窗
+    // 立即 question/resolved；abort 触发 failQuestion 幂等守卫（条目已删）静默吞掉，
+    // 不 reject 引擎 waiter、不冒泡 runAndCatch）。先 resolve 再 abort（同一同步栈）。
+    this.questionAborts.get(entry.requestId)?.abort();
   }
 
   /** 卡片 ask 失败（取消/拒绝）时清理 pending 条目并拒绝其等待 Promise。 */
@@ -334,6 +363,8 @@ export class InteractionManager {
         this.questionWaiters.delete(requestId);
         waiter.resolve(CANCELLED_ANSWER);
       }
+      // Round 26：清理时同步关闭宿主 DSH 弹窗（pause/retry/崩溃恢复路径）。
+      this.questionAborts.get(requestId)?.abort();
       changed = true;
     }
     // permissions：终态化 + 删 Map（无 waiter）。

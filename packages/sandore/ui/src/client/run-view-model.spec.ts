@@ -8,8 +8,9 @@ import { describe, expect, it } from 'vitest'
 import type { PendingPermissionEntry, PendingQuestionEntry } from '@deepseek-ai/dsh-sandore-workflow/schema'
 
 import {
-  buildTimeline, isBlank, isRunningStatus, isSubagentStep, isTerminalStatus, partitionInteractions, RETRY_MODES,
-  runDotState, stepDotState, stepIdOf, relativeTimeOf, chatLinesOf,
+  buildRunTree, buildTimeline, isBlank, isRunningStatus, isSubagentStep, isTerminalStatus,
+  partitionInteractions, RETRY_MODES, runDotState, stepDotState, stepIdOf, relativeTimeOf, chatLinesOf,
+  UNASSIGNED_STAGE_ID,
 } from './run-view-model.ts'
 import type { ExecutedStep } from './run-view-model.ts'
 
@@ -460,5 +461,181 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
     expect(stepItem.finalizeGateSessionId).toBeUndefined()
     expect(stepItem.finalizeAssessResult).toBeUndefined()
     expect(stepItem.finalizeGateResult).toBeUndefined()
+  })
+})
+
+describe('buildRunTree（Round 26：完全按 executedSteps 渲染导航树）', () => {
+  it('shows every executed step segment grouped by stageId, skips empty stages, keeps creation order', () => {
+    const s1 = step({ id: 'exec-1', stageId: 'stg-1', stepId: 'step-a', name: 'sce1', status: 'completed' })
+    const s2 = step({ id: 'exec-2', stageId: 'stg-1', stepId: 'step-b', name: 'sce2', status: 'paused' })
+    // 同 stepId 第二次 visit（第三段）：不聚合，两段都展示。
+    const s3 = step({ id: 'exec-3', stageId: 'stg-1', stepId: 'step-b', name: 'sce2', status: 'completed' })
+    const s4 = step({ id: 'exec-4', stageId: 'stg-3', stepId: 'step-c', name: 'fail1', status: 'failed' })
+    // 无 stageId 的异常段：归入「未分组」兜底（仍展示）。
+    const s5 = {
+      ...step({ id: 'exec-5', stepId: 'step-d', name: 'orphan', status: 'completed' }),
+      stageId: undefined,
+    } as unknown as ExecutedStep
+    const state = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      workflowName: 'wf',
+      status: 'running',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [s1, s2, s3, s4, s5],
+      stageInfos: [
+        { id: 'stg-1', name: 'demo1', status: 'completed' },
+        { id: 'stg-2', name: 'demo2-empty', status: 'completed' },
+        { id: 'stg-3', name: 'demo3', status: 'running' },
+      ],
+      stageContracts: {},
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildRunTree>[0]
+
+    const tree = buildRunTree(state)
+    expect(tree).toHaveLength(1)
+    const root = tree[0]
+    expect(root.type).toBe('workflow')
+    if (root.type !== 'workflow') return
+
+    // 只展示有 step 的 stage（demo2 空 stage 不展示）；顺序 = 第一个 step 出现顺序。
+    expect(root.children?.map(stage => stage.id)).toEqual(['stg-1', 'stg-3', UNASSIGNED_STAGE_ID])
+
+    // stg-1（demo1）：所有 step 段都展示（含 paused 段与同 stepId 第二段），数组顺序保持。
+    const stg1 = root.children?.[0]
+    expect(stg1?.name).toBe('demo1')
+    expect(stg1?.children?.map(s => s.id)).toEqual(['exec-1', 'exec-2', 'exec-3'])
+    expect(stg1?.children?.map(s => s.status)).toEqual(['completed', 'paused', 'completed'])
+    expect(stg1?.children?.[1]?.stepId).toBe('step-b')
+
+    // stg-3（demo3）：failed 段展示。
+    const stg3 = root.children?.[1]
+    expect(stg3?.name).toBe('demo3')
+    expect(stg3?.children?.map(s => s.id)).toEqual(['exec-4'])
+    expect(stg3?.children?.[0]?.status).toBe('failed')
+
+    // 未分组兜底：无 stageId 的 step 仍展示。
+    const unassigned = root.children?.[2]
+    expect(unassigned?.name).toBe(UNASSIGNED_STAGE_ID)
+    expect(unassigned?.children?.map(s => s.id)).toEqual(['exec-5'])
+  })
+
+  it('mounts result leaves per segment and artifact leaves only on the last segment', () => {
+    const s1 = step({
+      id: 'exec-1', stageId: 'stg-1', stepId: 'step-a', name: 'sce1', status: 'completed',
+      output: [{ type: 'text', text: 'first output' }],
+    })
+    const s1b = step({
+      id: 'exec-1b', stageId: 'stg-1', stepId: 'step-a', name: 'sce1', status: 'completed',
+      output: [{ type: 'text', text: 'second output' }],
+    })
+    const state = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      workflowName: 'wf',
+      status: 'completed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [s1, s1b],
+      stageInfos: [{ id: 'stg-1', name: 'demo1', status: 'completed' }],
+      stageContracts: {
+        'stg-1': {
+          stageId: 'stg-1', stageName: 'demo1', status: 'completed',
+          artifacts: [{ stepId: 'step-a', outputToId: 'opt-1', files: ['out/proposal.md'] }],
+        },
+      },
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildRunTree>[0]
+
+    const tree = buildRunTree(state)
+    const root = tree[0]
+    if (root.type !== 'workflow') return
+    const stg1 = root.children?.[0]
+    const seg1 = stg1?.children?.[0]
+    const seg2 = stg1?.children?.[1]
+    expect(stg1?.children?.map(s => s.id)).toEqual(['exec-1', 'exec-1b'])
+    // 返回结果按执行段挂载：每段只挂自己这段的 output 文本。
+    expect(seg1?.children?.filter(leaf => leaf.type === 'result').map(leaf => leaf.text)).toEqual(['first output'])
+    expect(seg2?.children?.filter(leaf => leaf.type === 'result').map(leaf => leaf.text)).toEqual(['second output'])
+    // 产物按 step 级归并，只挂到该 stepId 的最后一段（exec-1b），避免重复。
+    expect(seg1?.children?.filter(leaf => leaf.type === 'artifact')).toEqual([])
+    expect(seg2?.children?.filter(leaf => leaf.type === 'artifact').map(leaf => leaf.name)).toEqual(['proposal.md'])
+  })
+
+  it('prefers segment-snapshot artifacts and falls back to stage contracts', () => {
+    // 段快照优先：每段挂自己这段的 artifacts（运行中即可见，不再等 stage 契约）。
+    const s1 = step({
+      id: 'exec-1', stageId: 'stg-1', stepId: 'step-a', name: 'sce1', status: 'completed',
+      artifacts: ['D:/work/a.md'],
+    })
+    const s1b = step({
+      id: 'exec-1b', stageId: 'stg-1', stepId: 'step-a', name: 'sce1', status: 'completed',
+      artifacts: ['D:/work/b.md'],
+    })
+    const stateWithSegments = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      workflowName: 'wf',
+      status: 'running',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [s1, s1b],
+      stageInfos: [{ id: 'stg-1', name: 'demo1', status: 'running' }],
+      stageContracts: {
+        'stg-1': {
+          stageId: 'stg-1', stageName: 'demo1', status: 'completed',
+          artifacts: [{ stepId: 'step-a', outputToId: 'opt-1', files: ['D:/work/stage.md'] }],
+        },
+      },
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildRunTree>[0]
+
+    const tree1 = buildRunTree(stateWithSegments)
+    const root1 = tree1[0]
+    if (root1.type !== 'workflow') return
+    const stg1a = root1.children?.[0]
+    const seg1 = stg1a?.children?.[0]
+    const seg2 = stg1a?.children?.[1]
+    // 段快照存在 → 各挂各的，stage 契约产物不参与（避免重复）。
+    // name = basename（文件名）；text = 完整路径（预览用）。
+    expect(seg1?.children?.filter(leaf => leaf.type === 'artifact').map(leaf => leaf.name)).toEqual(['a.md'])
+    expect(seg1?.children?.filter(leaf => leaf.type === 'artifact').map(leaf => leaf.text)).toEqual(['D:/work/a.md'])
+    expect(seg2?.children?.filter(leaf => leaf.type === 'artifact').map(leaf => leaf.name)).toEqual(['b.md'])
+
+    // 回退：无段快照（旧数据/历史实例）→ stageContracts 挂该 stepId 的最后一段。
+    const s2 = step({ id: 'exec-2', stageId: 'stg-1', stepId: 'step-b', name: 'sce2', status: 'completed' })
+    const stateLegacy = {
+      taskId: 'inst-1',
+      workflowId: 'wfl-1',
+      workflowName: 'wf',
+      status: 'completed',
+      originalInput: 'do it',
+      currentStageId: 'stg-1',
+      executedSteps: [s2],
+      stageInfos: [{ id: 'stg-1', name: 'demo1', status: 'completed' }],
+      stageContracts: {
+        'stg-1': {
+          stageId: 'stg-1', stageName: 'demo1', status: 'completed',
+          artifacts: [{ stepId: 'step-b', outputToId: 'opt-2', files: ['D:/work/counts.json'] }],
+        },
+      },
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as Parameters<typeof buildRunTree>[0]
+
+    const tree2 = buildRunTree(stateLegacy)
+    const root2 = tree2[0]
+    if (root2.type !== 'workflow') return
+    const stg1b = root2.children?.[0]
+    expect(stg1b?.children?.[0]?.children?.filter(leaf => leaf.type === 'artifact').map(leaf => leaf.name))
+      .toEqual(['counts.json'])
   })
 })

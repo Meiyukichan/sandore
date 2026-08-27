@@ -376,29 +376,70 @@ export function loopLabelOf(loopIteration: readonly number[] | undefined): strin
     : `#${loopIteration.join('.')}`
 }
 
+/** 取文件路径的 basename（兼容 / 与 \ 分隔；无分隔符时原样返回）。 */
+export function fileBaseName(file: string): string {
+  const parts = file.split(/[\\/]/)
+  return parts[parts.length - 1] ?? file
+}
+
 /**
  * 从 `WorkflowTaskState` 构建树形导航数据：workflow → stage → step → result/artifact 叶子。
  * result 叶子来自 step 输出文本；artifact 叶子来自 `stageContracts` 产物契约的 files。
+ *
+ * Round 26：**完全按 `state.executedSteps` 渲染**——
+ * ① `executedSteps` 里**每条执行段**都展示（含 paused/failed/同 stepId 多次 visit 的
+ *    每一段，不做 attemptIndex 聚合）；
+ * ② step 按自身 `stageId` 归组到 stage 下；
+ * ③ **只展示「有 step 执行记录」的 stage**（空 stage / 尚未执行的 stage 不展示）；
+ * ④ stage 与 step 均按**创建顺序**（executedSteps 数组序 = 引擎追加序）排列。
+ * ⑤ **返回结果按执行段挂载**（每段只挂自己这段的 output 文本）；**产物按 step 级
+ *    归并、只挂到该 stepId 的「最后一段」**（loop 多次 visit 产出同一 outputTo 文件，
+ *    挂一次展示最新产物状态，避免每段重复）。
+ * 无 `stageId` 的异常段归入合成 stage「未分组」兜底（保证所有 step 可见）。
  * @param state - 实例状态快照。
  * @returns 树形导航根节点列表（单个 workflow 根）。
  */
 export function buildRunTree(state: WorkflowTaskState): RunTreeNode[] {
-  // 叶子按「定义 stepId」分组（artifact.stepId 为定义 id；step 用 stepIdOf 对齐）。
-  const leavesByStepId = new Map<string, RunTreeNode[]>()
+  // 返回结果：按「执行段 id（step.id）」挂载——每段只显示自己这段的 output。
+  const resultByExecId = new Map<string, RunTreeNode[]>()
   for (const step of state.executedSteps) {
     const output = outputTextOf(step.output)
     if (output === undefined) continue
-    const key = stepIdOf(step)
-    const current = leavesByStepId.get(key) ?? []
-    leavesByStepId.set(key, [...current, { id: `${step.id}:result`, name: '', type: 'result', stepId: key, text: output }])
+    const current = resultByExecId.get(step.id) ?? []
+    resultByExecId.set(step.id, [...current, {
+      id: `${step.id}:result`,
+      name: '',
+      type: 'result',
+      stepId: stepIdOf(step),
+      text: output,
+    }])
+  }
+  // 产物（Round 26）：优先**段快照** `executedStep.artifacts`（step 完成收尾时引擎
+  // collectStepArtifacts 收集写入——运行中即可展示，真正按执行段归属）；
+  // 旧数据/历史实例无该字段时**回退 stage 契约**（stageContracts 的 artifacts 无执行段
+  // id，按定义 stepId 归并、只挂到该 stepId 的「最后一段」）。
+  const artifactByExecId = new Map<string, RunTreeNode[]>()
+  const artifactByStepId = new Map<string, RunTreeNode[]>()
+  for (const step of state.executedSteps) {
+    for (const file of step.artifacts ?? []) {
+      const current = artifactByExecId.get(step.id) ?? []
+      artifactByExecId.set(step.id, [...current, {
+        id: `${step.id}:file:${file}`,
+        // 导航只展示文件名（basename）；完整路径保留在 text（预览用）。
+        name: fileBaseName(file),
+        type: 'artifact',
+        stepId: stepIdOf(step),
+        text: file,
+      }])
+    }
   }
   for (const contract of Object.values(state.stageContracts)) {
     for (const artifact of contract.artifacts) {
       for (const file of artifact.files) {
-        const current = leavesByStepId.get(artifact.stepId) ?? []
-        leavesByStepId.set(artifact.stepId, [...current, {
+        const current = artifactByStepId.get(artifact.stepId) ?? []
+        artifactByStepId.set(artifact.stepId, [...current, {
           id: `${artifact.stepId}:file:${file}`,
-          name: file,
+          name: fileBaseName(file),
           type: 'artifact',
           stepId: artifact.stepId,
           meta: artifact.outputToId,
@@ -407,37 +448,50 @@ export function buildRunTree(state: WorkflowTaskState): RunTreeNode[] {
       }
     }
   }
+  // 每个 stepId 的「最后一段」执行 id（数组顺序 = 创建顺序 → 最后一个为最新段）。
+  const lastSegmentByStepId = new Map<string, string>()
+  for (const step of state.executedSteps) {
+    lastSegmentByStepId.set(stepIdOf(step), step.id)
+  }
 
-  const stageNodes = state.stageInfos.map(stage => {
-    // 段模型下同 stepId 多次执行段（暂停续跑/重试/ask 续问）在树导航里聚合成一个
-    // step 节点：取 attemptIndex 最大（最后）的一段展示状态，避免重复展开。
-    const steps = state.executedSteps
-      .filter(step => step.stageId === stage.id)
-      .sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0))
-    const seen = new Set<string>()
-    const uniqueSteps = steps.filter(step => {
-      const key = stepIdOf(step)
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+  // Round 26：stage/step 全部从 executedSteps 派生（创建顺序 = 数组顺序）；
+  // stage 元信息（name/status）从 stageInfos 查表，查不到回退 stageId。
+  const stageMeta = new Map(state.stageInfos.map(stage => [stage.id, stage]))
+  const stageOrder: string[] = []
+  const stepsByStage = new Map<string, RunTreeNode[]>()
+  for (const step of state.executedSteps) {
+    const stageId = step.stageId ?? UNASSIGNED_STAGE_ID
+    if (!stageOrder.includes(stageId)) stageOrder.push(stageId)
+    const key = stepIdOf(step)
+    const children = [
+      ...(resultByExecId.get(step.id) ?? []),
+      // 段快照产物（按段）优先；无段快照（旧数据）时回退 stage 契约产物（挂最后一段）。
+      ...(artifactByExecId.get(step.id) ?? []),
+      ...(artifactByExecId.has(step.id) ? [] : (
+        lastSegmentByStepId.get(key) === step.id ? (artifactByStepId.get(key) ?? []) : []
+      )),
+    ]
+    const node: RunTreeNode = {
+      id: step.id,
+      name: step.name,
+      type: 'step',
+      status: step.status,
+      stepId: key,
+      childId: step.sessionMeta?.childId,
+      children: children.length > 0 ? children : undefined,
+    }
+    const list = stepsByStage.get(stageId) ?? []
+    list.push(node)
+    stepsByStage.set(stageId, list)
+  }
+  const stageNodes = stageOrder.map(stageId => {
+    const meta = stageMeta.get(stageId)
     return {
-      id: stage.id,
-      name: stage.name,
+      id: stageId,
+      name: meta?.name ?? stageId,
       type: 'stage' as const,
-      status: stage.status,
-      children: uniqueSteps.map(step => {
-        const key = stepIdOf(step)
-        return {
-          id: step.id,
-          name: step.name,
-          type: 'step' as const,
-          status: step.status,
-          stepId: key,
-          childId: step.sessionMeta?.childId,
-          children: leavesByStepId.get(key),
-        }
-      }),
+      status: meta?.status,
+      children: stepsByStage.get(stageId),
     }
   })
 
@@ -449,6 +503,9 @@ export function buildRunTree(state: WorkflowTaskState): RunTreeNode[] {
     children: stageNodes,
   }]
 }
+
+/** Round 26：无 stageId 的异常执行段归入的合成 stage id（名称「未分组」）。 */
+export const UNASSIGNED_STAGE_ID = '_unassigned'
 
 /**
  * 段模型下按「最后活跃段」聚合 Step 列表（DiscussionInput @Step 定点恢复用）。
@@ -474,8 +531,10 @@ export function lastActiveSegmentsOf(steps: readonly ExecutedStep[]): ExecutedSt
  * 从 `WorkflowTaskState` 构建统一时间线（段模型 + 用户消息统一排序）。
  *
  * 三路来源严格按 `createdAt` 排序合并：
- * 1. `userMessages`（input/resume/retry/answer，含原始需求——初始 input 消息
- *    由引擎 makeInitialState 写入，前端不再单独拼 `state.originalInput` 气泡）
+ * 1. `userMessages`（input/resume/retry/message，含原始需求——初始 input 消息
+ *    由引擎 makeInitialState 写入，前端不再单独拼 `state.originalInput` 气泡；
+ *    Round 26：**过滤 kind:'answer'**——Phase A ask 的回答是给子代理的内部闭环
+ *    消息，不注入 discussion 时间轴；历史实例已落盘的 answer 记录同样隐藏）
  * 2. executedSteps 各**执行段**（`createdAt` 为段开始时间；同 stepId 多次执行段
  *    各自成卡，`attemptIndex` 标注第几次）
  * 3. running 卡无实时消息流（引擎不写 sessionMessages、无 step-message 事件），
@@ -487,6 +546,8 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
   const items: TimelineItem[] = []
 
   for (const message of state.userMessages ?? []) {
+    // Round 26：回答不进讨论页（Phase A ask 回答已 followup 注回子代理）。
+    if (message.kind === 'answer') continue
     items.push({
       kind: 'user',
       content: message.content,

@@ -7,9 +7,9 @@
  * `execute`；`execute` 以 Stage 级线性主循环编排（每 Stage 新建 microflow `StepNavigator`
  * 承担 Step 级路由/循环，`StageExecutor` 执行 Stage 内 Step → 收集 StageContract →
  * `tryAdvanceStage` 评估 Stage `branch.condition`（基于 StageContract）选下一 Stage）。每次状态
- * 变化 `persistState` 并双发 `sandore/*` 事件（`ctx.emit` + 宿主 Session
- * `append`）；每个 Step 完成后经 `onPersist` 钩子立即追加到
- * `state.executedSteps` 并持久化；`childId = step-{stepId}-{execId 前 8 位}`
+ * 变化 `persistState` 并单发 `sandore/*` 事件（`ctx.emit` → SSE → UI；Round 25 起
+ * 不再 append 到宿主会话，宿主会话保持工作流级编排身份）；每个 Step 完成后经
+ * `onPersist` 钩子立即追加到 `state.executedSteps` 并持久化；`childId = step-{stepId}-{execId 前 8 位}`
  * 合成 sessionMeta。
  * @module @deepseek-ai/dsh-sandore-workflow/src/workflow-engine
  */
@@ -20,18 +20,6 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 // 加载 @deepseek-ai/dsh-session-title 的 Cordis 面声明（使 `ctx.sessionTitle` 类型可用）。
 import type { SessionTitleService } from '@deepseek-ai/dsh-session-title';
 import z from '@deepseek-ai/schemastery';
-
-/**
- * `Session.append` 的编译期最小面：新 harness 支持可选 `ignorable` 第三参数
- * （sandore/* 事件为 out-of-repo 事件词表，必须带 `ignorable: true` 信封标记，
- * 旧 harness 重建日志时才不会拒绝）。沙盒链接的 dsh-session 类型尚未包含该
- * 参数，此处以窄断言桥接；运行时由真实 harness 的 `Session.append` 承接。
- */
-type SessionAppendWithIgnorable = (
-  type: string,
-  data: unknown,
-  opts?: { ignorable?: true },
-) => unknown;
 
 /**
  * `ctx.workspaceRegistry` 服务的最小面（由引擎 get 后窄断言使用，签名对齐 DSH
@@ -272,6 +260,9 @@ function makeInitialState(options: {
       createdAt,
     }],
     stageContracts: {},
+    // Round 26：ask/permission 是否上报宿主主代理——复用 hostSessionId（场景 B）为
+    // true；overlay 新建（场景 A，hostSessionId 未传）为 false（只走 discussion）。
+    reportToHost: request.hostSessionId !== undefined,
     createdAt,
     updatedAt: createdAt,
   };
@@ -493,8 +484,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     const state = makeInitialState({ instanceId, request, definition, createdAt, cwd });
     const controller = new AbortController();
     // 宿主主代理会话 id：调用方可传 `hostSessionId` 复用已存在的宿主会话（不新建）；
-    // 未传入时以 instanceId 新建（hostAgent 会话 id = instanceId，历史行为）。事件双发
-    // 的 live 会话统一按 hostSessionId 读回。
+    // 未传入时以 instanceId 新建（hostAgent 会话 id = instanceId，历史行为）。事件单发
+    // （ctx.emit → SSE）的 live 会话统一按 hostSessionId 读回。
     const hostSessionId = request.hostSessionId ?? instanceId;
     let hostAgent: Agent;
     let session: Session;
@@ -516,7 +507,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         setup: createHostAgentSetup({ instanceId, ...(presets === undefined ? {} : { presets }) }),
       });
       hostAgent = handle.agent;
-      // agents.create 已把宿主 Session 发布进 ctx.sessions，此处读回 live 会话用于事件双发。
+      // agents.create 已把宿主 Session 发布进 ctx.sessions，此处读回 live 会话供宿主
+      // 会话身份使用（sandbox/mode append、sessionTitle、workspace attach）。
       const createdSession = this.ctx.sessions.get(SessionId(instanceId));
       if (createdSession === undefined) {
         throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
@@ -579,7 +571,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       return;
     }
     try {
-      (session.append as SessionAppendWithIgnorable)('sandbox/mode', { mode: spec.sandbox });
+      // Round 25：内联窄断言（sandbox/mode 为 DSH known 事件，无需 ignorable 桥）。
+      (session.append as (type: string, data: unknown) => unknown)('sandbox/mode', { mode: spec.sandbox });
     } catch (error) {
       this.ctx.logger.warn(`sandore: apply sandbox mode failed: ${renderError(error)}`);
     }
@@ -646,7 +639,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
 
   /**
    * 中止运行中的实例：置中止标志 → 登记表内全部子代理 interrupt（ancestor）→
-   * 实例 aborted 终态（保留持久化快照）→ 双发 `sandore/aborted` → 清理内存
+   * 实例 aborted 终态（保留持久化快照）→ 单发 `sandore/aborted` → 清理内存
    * ActiveInstance（getState 退回 state 表仍可读到 aborted 快照）。
    */
   async abortInstance(instanceId: string): Promise<void> {
@@ -677,7 +670,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     // 实例 aborted 终态（清理前落盘，保证清理后 getState 仍能读到 aborted 快照）。
     active.state = { ...active.state, status: 'aborted', updatedAt: now() };
     await this.persistState(active);
-    this.emitAborted(active.session, info);
+    this.emitAborted(info);
     // 清表分支：实例清出 instances 表后冻结登记同步移除——监听器对 subject 自动放行
     // （hostAgent 恢复普通响应；failed/aborted 中仅清表分支放行，留表分支保持冻结）。
     this.frozenHostAgents.delete(active.hostAgent.id);
@@ -758,7 +751,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       active.state = { ...active.state, status: 'failed', updatedAt: now() };
       await this.persistState(active);
       const failInfo: DagRunInfo = { taskId: active.state.taskId, workflowId: active.state.workflowId };
-      this.emitEnd(active.session, failInfo, { taskId: active.state.taskId, status: 'failed', error: renderError(error) });
+      this.emitEnd(failInfo, { taskId: active.state.taskId, status: 'failed', error: renderError(error) });
       // 清表分支：实例清出 instances 表后冻结登记同步移除——监听器对 subject 自动放行。
       this.frozenHostAgents.delete(active.hostAgent.id);
       // 清内存：避免持有崩溃恢复期不一致的运行时对象；getState 兜底读快照（failed 终态）。
@@ -772,7 +765,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       active.state = { ...active.state, status: 'failed', updatedAt: now() };
       await this.persistState(active);
       const failInfo: DagRunInfo = { taskId: active.state.taskId, workflowId: active.state.workflowId };
-      this.emitEnd(active.session, failInfo, { taskId: active.state.taskId, status: 'failed', error: 'unrecoverable synthetic session step' });
+      this.emitEnd(failInfo, { taskId: active.state.taskId, status: 'failed', error: 'unrecoverable synthetic session step' });
       return { instanceId, status: 'failed' };
     }
     if (recoverResult.hasResume) {
@@ -852,7 +845,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
    * 从 `subagent.session.header.parentSession`（= 宿主主代理会话 id）反查
    * ActiveInstance → 按 `subagent.id`（childId）反查 Step（`sessionMeta.childId`
    * 匹配，取最后活跃段）→ 构造 pending 条目 → `interactions.ask`（与引擎级 ask 闭环
-   * 同一通道，registerPending + 双发 `sandore/question`）→ 返回答案。答案**不写
+   * 同一通道，registerPending + 单发 `sandore/question`）→ 返回答案。答案**不写
    * userMessages**（作为普通 tool result 进入子代理会话，时间轴由子代理会话承载）。
    *
    * 问答被拒（`rejectQuestion` 占位答案）抛 `STEP_EXECUTION`（子代理工具调用失败 →
@@ -992,7 +985,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
    *    （SA8 核实：'input' 语义为原始需求/resume 输入，与讨论消息混淆会污染
    *    originalInput 语义；新增独立 kind:'message' 供时间轴区分渲染）
    * 6. persistState（落盘快照）
-   * 7. 双发 `sandore/step-message`（Cordis emit + Session append，供 UI 刷新）
+   * 7. 单发 `sandore/step-message`（Cordis emit → SSE，供 UI 刷新）
    *
    * 与 rejectQuestion（缺陷 26）/clearPendingInteractions（缺陷 9 #27）/retryStep
    * （缺陷 8 revertBoundary）/setPermissionMode（缺陷 29）是不同方法，互不影响：
@@ -1037,7 +1030,6 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     };
     await this.persistState(active);
     this.emitStepMessage(
-      active.session,
       { taskId: active.state.taskId, workflowId: active.state.workflowId },
       step.stepId ?? step.id,
       childId,
@@ -1107,7 +1099,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         taskId: active.state.taskId,
         workflowId: active.state.workflowId,
       };
-      this.emitEnd(active.session, info, {
+      this.emitEnd(info, {
         taskId: active.state.taskId,
         status: 'failed',
         error: renderError(error),
@@ -1116,7 +1108,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   }
 
   private async runInstance(active: ActiveInstance, isResume = false): Promise<void> {
-    const { controller, session, hostAgent, definition } = active;
+    const { controller, hostAgent, definition } = active;
     const signal = controller.signal;
     const info: DagRunInfo = {
       taskId: active.state.taskId,
@@ -1126,7 +1118,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     if (!isResume) {
       active.state = { ...active.state, status: 'running', updatedAt: now() };
       await this.persistState(active);
-      this.emitStart(session, info);
+      this.emitStart(info);
     }
 
     const runnerConfig = this.runnerConfig(definition, hostAgent, active);
@@ -1207,7 +1199,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
 
       this.markStageStatus(active, stageId, 'running');
       await this.persistState(active);
-      this.emitStageStart(session, info, stageId);
+      this.emitStageStart(info, stageId);
 
       // Step 级导航器（microflow 自有）：每 Stage 新建，持当前 Stage 的 Step 节点图 +
       // 循环管理器。LoopManager 经共享 `active.state` 的循环栈数组实现续跑状态连续
@@ -1228,12 +1220,12 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       };
 
       const hooks: StageStepHooks = {
-        onStepStart: (step, childId) => this.emitStepStart(session, info, step.id, childId, step.name ?? step.id, currentLoopIteration()),
-        onStepCompleted: (step, childId, output) => this.emitStepCompleted(session, info, step.id, childId, output, step.name ?? step.id, currentLoopIteration()),
-        onStepFailed: (step, childId, error) => this.emitStepFailed(session, info, step.id, childId, error, step.name ?? step.id, currentLoopIteration()),
-        // 收尾阶段流转：commitFinalize 写入 currentPhase 后双发 sandore/step-phase，
-        // 供 UI 不经 5s 轮询即时刷新（childId 缺省时回退 stepId 占位）。
-        onPhaseChange: (step, childId, phase) => this.emitStepPhase(session, info, step.id, childId ?? step.id, phase, step.name ?? step.id, currentLoopIteration()),
+        onStepStart: (step, childId) => this.emitStepStart(info, step.id, childId, step.name ?? step.id, currentLoopIteration()),
+        onStepCompleted: (step, childId, output) => this.emitStepCompleted(info, step.id, childId, output, step.name ?? step.id, currentLoopIteration()),
+        onStepFailed: (step, childId, error) => this.emitStepFailed(info, step.id, childId, error, step.name ?? step.id, currentLoopIteration()),
+        // 收尾阶段流转：commitFinalize 写入 currentPhase 后单发 sandore/step-phase，
+        // 供 UI 经 SSE 即时刷新（childId 缺省时回退 stepId 占位）。
+        onPhaseChange: (step, childId, phase) => this.emitStepPhase(info, step.id, childId ?? step.id, phase, step.name ?? step.id, currentLoopIteration()),
       };
 
       const resumeFrom = this.resumeInfo(active, stage);
@@ -1311,7 +1303,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           if (ask === undefined) {
             // 无 ask 载荷（异常收尾）：不再静默 return（实例永久卡 interacting、UI 无
             // 选择框）——记 warn 并把滞留 ask-detect 的 Step 落 failed + 落 Stage/实例
-            // failed + 双发 sandore/step-failed + sandore/end（对齐 runAndCatch 语义与
+            // failed + 单发 sandore/step-failed + sandore/end（对齐 runAndCatch 语义与
             // handleRejectedQuestion 的显式落态写法）。findAskStep 返回 undefined 意味着
             // 所有 ask-detect Step 均无 askQuestion 载荷（有则必命中），故全部标 failed。
             this.ctx.logger.warn(
@@ -1321,7 +1313,6 @@ export default class SandoreEngineRuntime extends SandoreEngine {
             const stuckSteps = active.state.executedSteps.filter(item => item.finalizeMeta?.currentPhase === 'ask-detect');
             for (const stuck of stuckSteps) {
               this.emitStepFailed(
-                session,
                 info,
                 stuck.stepId ?? stuck.id,
                 stuck.sessionMeta?.childId ?? stuck.id,
@@ -1343,7 +1334,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
               updatedAt: now(),
             };
             await this.persistState(active);
-            this.emitEnd(session, info, { taskId: info.taskId, status: 'failed', error: errorMessage });
+            this.emitEnd(info, { taskId: info.taskId, status: 'failed', error: errorMessage });
             return;
           }
           const entry: PendingQuestionEntry = {
@@ -1358,15 +1349,17 @@ export default class SandoreEngineRuntime extends SandoreEngine {
             createdAt: now(),
           };
           // §3.6A ask 收尾闭环：接收回答（而非只当解锁信号）→ 真实子代理（synthetic ===
-          // false）followup 注回让子代理基于回答继续 → 回答写入 userMessages（kind:'answer'）
-          // 统一时间轴 → 循环续跑（executor 重收集新 output + 重跑门禁）。
+          // false）followup 注回让子代理基于回答继续 → 循环续跑（executor 重收集新
+          // output + 重跑门禁）。Round 26：回答**不写入 userMessages**（kind:'answer'）——
+          // 回答是给子代理的内部闭环消息，不注入 discussion 时间轴（用户可见性由
+          // composer 问答卡 + 子代理续跑输出承载）。
           const answer = await active.interactions.ask({ entry, ...(signal === undefined ? {} : { signal }) });
           // 缺陷 26：问答被拒（rejectQuestion 以 REJECTED_ANSWER 占位 resolve，非 reject——
           // 避免冒泡 runAndCatch 把整实例落 failed 且 Step 滞留 interacting）。检测占位标记后
           // 标 ask Step failed + 落 Stage/实例 failed（经显式代码非异常冒泡），对齐基准
           // rejectQuestion→StepRunner 标 failed 的本质。
           if (isRejectedAnswer(answer)) {
-            await this.handleRejectedQuestion(active, stageId, ask, info, session, currentLoopIteration());
+            await this.handleRejectedQuestion(active, stageId, ask, info, currentLoopIteration());
             return;
           }
           const answerText = buildAnswerText(answer);
@@ -1377,20 +1370,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
               signal: controller.signal,
             });
           }
-          active.state = {
-            ...active.state,
-            userMessages: [
-              ...(active.state.userMessages ?? []),
-              {
-                id: globalThis.crypto.randomUUID(),
-                kind: 'answer',
-                target: ask.step.stepId ?? ask.step.id,
-                content: answerText,
-                createdAt: now(),
-              },
-            ],
-            updatedAt: now(),
-          };
+          // 回答已注回子代理（子代理会话内可见）；不追加 userMessages（Round 26 去讨论页污染）。
+          active.state = { ...active.state, updatedAt: now() };
           await this.persistState(active);
         } else {
           // Step 被 interrupt 打断且命中暂停登记表：等待 resumeStep/resumeAllSteps 的
@@ -1415,8 +1396,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       if (signal.aborted) {
         // aborted 处理分支：paused 等待期命中（waitForResume 与 signal.aborted 竞争后
         // 退出循环，result 仍为 'paused'）或 Step 因中止失败（result 为 'failed'）。
-        // abortInstance 已落 aborted 态并双发 sandore/aborted，此处仅在尚未落态时兜底
-        // （`active.state.status !== 'aborted'` 守卫避免 sandore/aborted 双发）。
+        // abortInstance 已落 aborted 态并单发 sandore/aborted，此处仅在尚未落态时兜底
+        // （`active.state.status !== 'aborted'` 守卫避免 sandore/aborted 重复发）。
         this.markStageStatus(active, stageId, 'failed');
         if (active.state.status !== 'aborted') {
           // 兜底落 aborted 终态（正常路径 abortInstance 已落态、清表并移除冻结登记；
@@ -1431,7 +1412,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
             updatedAt: now(),
           };
           await this.persistState(active);
-          this.emitAborted(session, info);
+          this.emitAborted(info);
         }
         return;
       }
@@ -1457,7 +1438,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           updatedAt: now(),
         };
         await this.persistState(active);
-        this.emitEnd(session, info, {
+        this.emitEnd(info, {
           taskId: info.taskId,
           status: 'failed',
           ...(result.errorDetail === undefined ? {} : { error: result.errorDetail }),
@@ -1482,7 +1463,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         updatedAt: now(),
       };
       await this.persistState(active);
-      this.emitStageCompleted(session, info, stageId, stageContract);
+      this.emitStageCompleted(info, stageId, stageContract);
 
       if (!(await navigator.tryAdvanceStage(signal))) {
         stageId = '';
@@ -1506,7 +1487,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       updatedAt: now(),
     };
     await this.persistState(active);
-    this.emitEnd(session, info, { taskId: info.taskId, status: 'completed' });
+    this.emitEnd(info, { taskId: info.taskId, status: 'completed' });
   }
 
   // ── 状态辅助 ─────────────────────────────────────────────────────────────
@@ -1524,8 +1505,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
    * `rejectQuestion` 以 `REJECTED_ANSWER` 占位 resolve waiter（非 reject，避免冒泡
    * `runAndCatch` 落整实例 failed 且 Step 滞留 interacting）；引擎 ask 调用处经
    * {@link isRejectedAnswer} 检测占位标记后转此方法：标 ask Step failed（写
-   * `executedSteps` + persist）+ 双发 `sandore/step-failed` + 落 Stage failed +
-   * 实例 failed + 双发 `sandore/end`（failed）。经显式代码落态而非异常冒泡，对齐
+   * `executedSteps` + persist）+ 单发 `sandore/step-failed` + 落 Stage failed +
+   * 实例 failed + 单发 `sandore/end`（failed）。经显式代码落态而非异常冒泡，对齐
    * 基准 `rejectQuestion → StepRunner 标 failed` 的本质。
    *
    * **续跑/失败策略**：当前 Stage 无失败容错字段（`StageContract`/`Stage` schema
@@ -1538,7 +1519,6 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     stageId: string,
     ask: { step: WorkflowTaskState['executedSteps'][number]; payload: AskUserQuestionPayload },
     info: DagRunInfo,
-    session: Session,
     loopIteration: number[] | undefined,
   ): Promise<void> {
     const stepEntry = ask.step;
@@ -1549,7 +1529,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     // 标 ask Step failed（写 executedSteps + persist）。该 Step 此前在 ask 保底中断
     // （executed.status=running + finalizeMeta currentPhase='ask-detect'，偏离 8），
     // StageExecutor 的 onStepFailed 钩子未对其触发（仅在 executor.execute() 内触发），
-    // 故此处显式双发 sandore/step-failed。
+    // 故此处显式单发 sandore/step-failed。
     active.state = {
       ...active.state,
       executedSteps: active.state.executedSteps.map(item =>
@@ -1560,14 +1540,14 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       updatedAt: now(),
     };
     await this.persistState(active);
-    this.emitStepFailed(session, info, stepId, childId, errorMessage, name, loopIteration);
+    this.emitStepFailed(info, stepId, childId, errorMessage, name, loopIteration);
     // 落 Stage failed + 实例 failed（无 Stage 级失败容错 → 整实例 failed，但经显式
     // 代码非异常冒泡；Step 正确置 failed 而非滞留 interacting）。
     this.markStageStatus(active, stageId, 'failed');
     // 落 failed 终态（保持冻结：工作流未成功完成，hostAgent 不恢复活跃）。
     active.state = { ...active.state, status: 'failed', updatedAt: now() };
     await this.persistState(active);
-    this.emitEnd(session, info, { taskId: info.taskId, status: 'failed', error: errorMessage });
+    this.emitEnd(info, { taskId: info.taskId, status: 'failed', error: errorMessage });
   }
 
   private runnerConfig(definition: WorkflowDefinition, hostAgent: Agent, active: ActiveInstance): StepRunnerConfig {
@@ -1687,13 +1667,16 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     const interactions = new InteractionManager({
       hostAgent,
       userQuestions: () => this.ctx.get('userQuestions'),
+      // Round 26：ask 是否上报宿主主代理（场景 A/B）。快照持久化（崩溃恢复后仍知）；
+      // 旧快照无该字段（undefined）时按 true 兼容（复用语义）。
+      reportToHost: state.reportToHost ?? true,
       persist: (entries) => {
         active.state = { ...active.state, pendingInteractions: entries, updatedAt: now() };
         void this.persistState(active);
       },
-      emitQuestion: (entry) => this.emitQuestion(session, active, entry),
-      emitPermission: (entry) => this.emitPermission(session, active, entry),
-      emitQuestionRejected: (entry) => this.emitQuestionRejected(session, active, entry),
+      emitQuestion: (entry) => this.emitQuestion(active, entry),
+      emitPermission: (entry) => this.emitPermission(active, entry),
+      emitQuestionRejected: (entry) => this.emitQuestionRejected(active, entry),
     });
     const lifecycle = new LifecycleManager({
       hostAgent,
@@ -1720,8 +1703,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         };
         void this.persistState(active);
       },
-      emitStepPaused: (stepId, childId, name, loopIteration) => this.emitStepPaused(session, active, stepId, childId, name, loopIteration),
-      emitStepResumed: (stepId, childId, resumePrompt, name, loopIteration) => this.emitStepResumed(session, active, stepId, childId, resumePrompt, name, loopIteration),
+      emitStepPaused: (stepId, childId, name, loopIteration) => this.emitStepPaused(active, stepId, childId, name, loopIteration),
+      emitStepResumed: (stepId, childId, resumePrompt, name, loopIteration) => this.emitStepResumed(active, stepId, childId, resumePrompt, name, loopIteration),
     });
     const recovery = new RecoveryManager({
       signal: controller.signal,
@@ -1798,7 +1781,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         }
         return { events: eventList.slice(0, boundary + 1) };
       },
-      emitStepRetried: (stepId, mode, name, loopIteration) => this.emitStepRetried(session, active, stepId, mode, name, loopIteration),
+      emitStepRetried: (stepId, mode, name, loopIteration) => this.emitStepRetried(active, stepId, mode, name, loopIteration),
       resumeExecution: () => this.resumeExecution(active),
     });
     active = {
@@ -2030,7 +2013,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     await active.reactiveState.flush();
   }
 
-  // ── 事件双发 ─────────────────────────────────────────────────────────────
+  // ── 事件单发（ctx.emit → SSE → UI） ───────────────────────────────────────
 
   private emitContained(name: string, args: unknown[]): void {
     for (const callback of this.ctx.events.dispatch('emit', [name, ...args])) {
@@ -2045,86 +2028,66 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     }
   }
 
-  private safeAppend(fn: () => void): void {
-    try {
-      fn();
-    } catch (error) {
-      this.ctx.logger.warn(`sandore: session append failed: ${renderError(error)}`);
-    }
-  }
-
-  private emitStart(session: Session, info: DagRunInfo): void {
+  private emitStart(info: DagRunInfo): void {
     this.emitContained('sandore/start', [info]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/start', { taskId: info.taskId, workflowId: info.workflowId }, { ignorable: true }));
   }
 
-  private emitStageStart(session: Session, info: DagRunInfo, stageId: string): void {
+  private emitStageStart(info: DagRunInfo, stageId: string): void {
     this.emitContained('sandore/stage-start', [info, stageId]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/stage-start', { taskId: info.taskId, stageId }, { ignorable: true }));
   }
 
-  private emitStageCompleted(session: Session, info: DagRunInfo, stageId: string, stageContract: StageContract): void {
+  private emitStageCompleted(info: DagRunInfo, stageId: string, stageContract: StageContract): void {
     this.emitContained('sandore/stage-completed', [info, stageId, stageContract]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/stage-completed', { taskId: info.taskId, stageId, stageContract }, { ignorable: true }));
   }
 
-  private emitStepStart(session: Session, info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void {
+  private emitStepStart(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void {
     this.emitContained('sandore/step-start', [info, stepId, childId, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-start', { stepId, childId, name, ...(loopIteration === undefined ? {} : { loopIteration }) }, { ignorable: true }));
   }
 
-  private emitStepCompleted(session: Session, info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[], name: string, loopIteration?: number[]): void {
+  private emitStepCompleted(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[], name: string, loopIteration?: number[]): void {
     this.emitContained('sandore/step-completed', [info, stepId, childId, output, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-completed', { stepId, childId, output, name, ...(loopIteration === undefined ? {} : { loopIteration }) }, { ignorable: true }));
   }
 
-  private emitStepFailed(session: Session, info: DagRunInfo, stepId: string, childId: string, error: string, name: string, loopIteration?: number[]): void {
+  private emitStepFailed(info: DagRunInfo, stepId: string, childId: string, error: string, name: string, loopIteration?: number[]): void {
     this.emitContained('sandore/step-failed', [info, stepId, childId, error, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-failed', { stepId, childId, error, name, ...(loopIteration === undefined ? {} : { loopIteration }) }, { ignorable: true }));
   }
 
-  private emitStepPaused(session: Session, active: ActiveInstance, stepId: string, childId: string, name: string, loopIteration?: number[]): void {
+  private emitStepPaused(active: ActiveInstance, stepId: string, childId: string, name: string, loopIteration?: number[]): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
     };
     this.emitContained('sandore/step-paused', [info, stepId, childId, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-paused', { stepId, childId, name, ...(loopIteration === undefined ? {} : { loopIteration }) }, { ignorable: true }));
   }
 
-  private emitStepResumed(session: Session, active: ActiveInstance, stepId: string, childId: string, resumePrompt: string | undefined, name: string, loopIteration?: number[]): void {
+  private emitStepResumed(active: ActiveInstance, stepId: string, childId: string, resumePrompt: string | undefined, name: string, loopIteration?: number[]): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
     };
     this.emitContained('sandore/step-resumed', [info, stepId, childId, resumePrompt, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-resumed', { stepId, childId, ...(resumePrompt === undefined ? {} : { resumePrompt }), name, ...(loopIteration === undefined ? {} : { loopIteration }) }, { ignorable: true }));
   }
 
-  private emitStepRetried(session: Session, active: ActiveInstance, stepId: string, mode: RetryMode, name: string, loopIteration?: number[]): void {
+  private emitStepRetried(active: ActiveInstance, stepId: string, mode: RetryMode, name: string, loopIteration?: number[]): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
     };
     this.emitContained('sandore/step-retried', [info, stepId, mode, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-retried', { stepId, mode, name, ...(loopIteration === undefined ? {} : { loopIteration }) }, { ignorable: true }));
   }
 
-  /** 双发 `sandore/step-message`（Cordis `emit` + Session `append`，缺陷 31，供 UI 刷新）。 */
-  private emitStepMessage(session: Session, info: DagRunInfo, stepId: string, childId: string, message: string, name: string): void {
+  /** 单发 `sandore/step-message`（Cordis `emit` → SSE → UI；缺陷 31 讨论消息端点）。 */
+  private emitStepMessage(info: DagRunInfo, stepId: string, childId: string, message: string, name: string): void {
     this.emitContained('sandore/step-message', [info, stepId, childId, message, name]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/step-message', { stepId, childId, message, name }, { ignorable: true }));
   }
 
   /**
-   * 双发 `sandore/step-phase`（Cordis `emit` + Session `append`）。
+   * 单发 `sandore/step-phase`（Cordis `emit` → SSE → UI）。
    *
    * 收尾阶段流转（ask-detect/finalizing/gating/completed）由 microflow
-   * `commitFinalize` 写入 `currentPhase` 时经 `onPhaseChange` 钩子透传到本方法；
-   * Session append 载荷对齐 SessionEventMap（taskId 隐含于会话，不带入 data）。
+   * `commitFinalize` 写入 `currentPhase` 时经 `onPhaseChange` 钩子透传到本方法。
    */
   private emitStepPhase(
-    session: Session,
     info: DagRunInfo,
     stepId: string,
     childId: string,
@@ -2133,48 +2096,38 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     loopIteration?: number[],
   ): void {
     this.emitContained('sandore/step-phase', [info, stepId, childId, phase, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)(
-      'sandore/step-phase',
-      { stepId, childId, phase, name, ...(loopIteration === undefined ? {} : { loopIteration }) },
-      { ignorable: true },
-    ));
   }
 
-  private emitEnd(session: Session, info: DagRunInfo, result: DagResultInfo): void {
+  private emitEnd(info: DagRunInfo, result: DagResultInfo): void {
     this.emitContained('sandore/end', [info, result]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/end', { taskId: info.taskId, result }, { ignorable: true }));
   }
 
-  private emitAborted(session: Session, info: DagRunInfo): void {
+  private emitAborted(info: DagRunInfo): void {
     this.emitContained('sandore/aborted', [info]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/aborted', { taskId: info.taskId }, { ignorable: true }));
   }
 
-  private emitQuestion(session: Session, active: ActiveInstance, entry: PendingQuestionEntry): void {
+  private emitQuestion(active: ActiveInstance, entry: PendingQuestionEntry): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
     };
     this.emitContained('sandore/question', [info, entry]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/question', { question: entry }, { ignorable: true }));
   }
 
-  private emitPermission(session: Session, active: ActiveInstance, entry: PendingPermissionEntry): void {
+  private emitPermission(active: ActiveInstance, entry: PendingPermissionEntry): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
     };
     this.emitContained('sandore/permission', [info, entry]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/permission', { permission: entry }, { ignorable: true }));
   }
 
-  /** 双发 `sandore/question_rejected`（Cordis `emit` + Session `append`，缺陷 26）。 */
-  private emitQuestionRejected(session: Session, active: ActiveInstance, entry: PendingQuestionEntry): void {
+  /** 单发 `sandore/question_rejected`（Cordis `emit` → SSE → UI；缺陷 26）。 */
+  private emitQuestionRejected(active: ActiveInstance, entry: PendingQuestionEntry): void {
     const info: DagRunInfo = {
       taskId: active.state.taskId,
       workflowId: active.state.workflowId,
     };
     this.emitContained('sandore/question_rejected', [info, entry]);
-    this.safeAppend(() => (session.append as SessionAppendWithIgnorable)('sandore/question_rejected', { question: entry }, { ignorable: true }));
   }
 }

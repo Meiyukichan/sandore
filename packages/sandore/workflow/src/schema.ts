@@ -441,6 +441,9 @@ export const ExecutedStepDefaultSchema = z.object({
   retryHistory: z.array(RetryRecordSchema).optional(),
   parentSessionId: z.string().optional(),
   output: z.array(ContentBlockSchema).optional(),
+  /** Round 26：本执行段实际产物文件（进程绝对路径；step 完成收尾时 collectStepArtifacts
+   *  收集写入——运行中即可展示，不等 stage 契约；旧数据缺省回退 stageContracts）。 */
+  artifacts: z.array(z.string()).optional(),
 })
 
 /** 单个 Stage 的状态快照。 */
@@ -502,6 +505,9 @@ export const WorkflowTaskStateSchema = z.object({
   /** 用户指令消息（恢复/重试；统一时间轴渲染，初始需求由 originalInput 承载）。 */
   userMessages: z.array(UserMessageRecordSchema).optional(),
   stageContracts: z.record(z.string(), StageContractSchema),
+  /** Round 26：是否把 ask/permission 上报宿主主代理（复用 hostSessionId 时 true；
+   *  overlay 新建 false——只走 discussion composer）。缺省（旧快照）true 兼容。 */
+  reportToHost: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

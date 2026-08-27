@@ -1483,20 +1483,10 @@ describe('SandoreEngineRuntime linear execution', () => {
       'sandore/end',
     ]);
 
-    // 事件双发：宿主 Session 记录同序事件。
+    // Round 25（去污染）：宿主会话不再承载 sandore/* 事件（Cordis 事件断言见上
+    // L1473-1484 records；宿主会话仅保留 sandbox/mode 等宿主自身事件）。
     const session = sessions.get(run.instanceId);
-    expect(session?.events.map(event => event.type)).toEqual([
-      'sandore/start',
-      'sandore/stage-start',
-      'sandore/step-start',
-      'sandore/step-completed',
-      'sandore/stage-completed',
-      'sandore/stage-start',
-      'sandore/step-start',
-      'sandore/step-completed',
-      'sandore/stage-completed',
-      'sandore/end',
-    ]);
+    expect(session?.events.some(event => event.type.startsWith('sandore/'))).toBe(false);
 
     // prompt 成功：step-completed 事件 payload 的 output 即聚合 ContentBlock[]，
     // 且 name 为 Step 定义 id（YAML 未写 name 时兜底回退 id）；非循环 Step 无 loopIteration。
@@ -2590,10 +2580,14 @@ describe('SandoreEngineRuntime Stage-level conditional branching', () => {
 
 describe('SandoreEngineRuntime interaction', () => {
   it('registers a pending question, asks via userQuestions (hostAgent), and resumes after the card reply', async () => {
-    const { ctx, engine, persistence, llm, agents, userQuestions } = await harness();
+    const { ctx, engine, persistence, llm, agents, subagents, sessions, userQuestions } = await harness();
     await putDefinition(persistence, 'wfl-ask', askYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Round 26（场景 B）：复用宿主会话（hostSessionId）→ ask 上报宿主（userQuestions.ask）。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
     // prompt Step（step-ask）走可续接子代理：注册真实 childId 并回填最终输出。
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
@@ -2618,12 +2612,12 @@ describe('SandoreEngineRuntime interaction', () => {
     };
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     await ended;
 
-    // ask 以 hostAgent（id = instanceId）身份发起。
+    // ask 以 hostAgent（id = hostSessionId）身份发起（场景 B：复用宿主会话 → 上报宿主）。
     expect(userQuestions.calls).toHaveLength(1);
-    expect(userQuestions.calls[0]?.agent?.id).toBe(run.instanceId);
+    expect(userQuestions.calls[0]?.agent?.id).toBe('host-1');
 
     // sandore/question 事件：pending 条目（kind/status/payload）。
     expect(firedQuestions).toHaveLength(1);
@@ -2633,19 +2627,21 @@ describe('SandoreEngineRuntime interaction', () => {
     expect(fired.question.payload.questions[0]?.id).toBe('q1');
 
     // 回复后恢复：Step completed + 实例 completed + 条目不再持久化（pending 已清，
-    // 回答写入 userMessages kind:'answer'——交互管理器只持久化 pending，§3.6A）。
+    // 交互管理器只持久化 pending，§3.6A）。Round 26：回答**不写入** userMessages
+    // （kind:'answer'）——回答仅 followup 注回子代理，不注入 discussion 时间轴。
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
     expect(state?.executedSteps.find(step => step.stepId === 'step-ask')?.status).toBe('completed');
     expect(state?.pendingInteractions).toEqual([]);
     const answers = state?.userMessages?.filter(message => message.kind === 'answer');
-    expect(answers).toHaveLength(1);
-    expect(answers?.[0]?.target).toBe('step-ask');
-    expect(answers?.[0]?.content).toBe('A');
+    expect(answers).toEqual([]);
+    // 回答经 followup 注回子代理（source user，内容 'A'——子代理会话内可见）。
+    const followup = subagents.followups.find(item => item.childId === 'child-1');
+    expect(followup?.content).toEqual([{ type: 'text', text: 'A' }]);
   });
 
   it('supports the replyQuestion compat path when the card channel is unavailable', async () => {
-    const { ctx, engine, persistence, llm, agents } = await harness();
+    const { ctx, engine, persistence, llm, agents, subagents } = await harness();
     await putDefinition(persistence, 'wfl-ask', askYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
@@ -2672,19 +2668,25 @@ describe('SandoreEngineRuntime interaction', () => {
 
     const state = persistence.state.get(run.instanceId);
     expect(state?.status).toBe('completed');
-    // 回答后 pending 已清（只持久化 pending），回答进 userMessages kind:'answer'。
+    // 回答后 pending 已清（只持久化 pending）。Round 26：回答不写入 userMessages。
     expect(state?.pendingInteractions).toEqual([]);
     const answers = state?.userMessages?.filter(message => message.kind === 'answer');
-    expect(answers).toHaveLength(1);
-    expect(answers?.[0]?.content).toBe('B');
+    expect(answers).toEqual([]);
+    // 回答经 followup 注回子代理（内容 'B'）。
+    const followup = subagents.followups.find(item => item.childId === 'child-1');
+    expect(followup?.content).toEqual([{ type: 'text', text: 'B' }]);
   });
 
   it('resumes the remaining steps and re-runs the gate after a mid-stage ask', async () => {
-    const { ctx, engine, persistence, llm, shell, agents, userQuestions } = await harness();
+    const { ctx, engine, persistence, llm, shell, agents, sessions, userQuestions } = await harness();
     await putDefinition(persistence, 'wfl-ask-mid', askMidYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
     shell.runHandler = async spec => successResult(spec, 'done');
+    // Round 26（场景 B）：复用宿主会话 → ask 上报宿主。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
     // prompt Step（step-ask）走可续接子代理：注册真实 childId 并回填最终输出。
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
@@ -2705,7 +2707,7 @@ describe('SandoreEngineRuntime interaction', () => {
     userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask-mid', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask-mid', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     await ended;
 
     const state = persistence.state.get(run.instanceId);
@@ -2724,6 +2726,10 @@ describe('SandoreEngineRuntime interaction', () => {
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
     shell.runHandler = async spec => successResult(spec, 'gate done');
+    // Round 26（场景 B）：复用宿主会话 → ask 上报宿主。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
     // prompt Step（step-ask）走可续接子代理：注册真实 childId 并回填最终输出。
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
@@ -2759,7 +2765,7 @@ describe('SandoreEngineRuntime interaction', () => {
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-phase-flow', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-phase-flow', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     await ended;
 
     // 收尾阶段流转事件：step-ask ask-detect → finalizing → routing → completed（ask 回复
@@ -2784,8 +2790,9 @@ describe('SandoreEngineRuntime interaction', () => {
       { stepId: 'step-gate', childId: expect.stringMatching(UUID_RE), phase: 'gating', name: 'step-gate' },
     ]);
 
-    // 双发 sandore/step-phase：Cordis emit（监听器触发）+ 宿主 Session append 同发。
-    expect(sessions.get(run.instanceId)?.events.some(event => event.type === 'sandore/step-phase')).toBe(true);
+    // Round 25（去污染）：宿主会话不再承载 sandore/* 事件（Cordis 半边断言已覆盖
+    // L2758-2775 records；此处反转断言宿主会话保持干净——复用场景宿主会话 id = host-1）。
+    expect(sessions.get('host-1')?.events.some(event => event.type === 'sandore/step-phase')).toBe(false);
 
     // 阶段状态落盘对齐事件：step-ask completed（finalizeMeta completed）、
     // step-gate failed（finalizeMeta gating + gateResult 未过）。
@@ -2803,11 +2810,15 @@ describe('SandoreEngineRuntime interaction', () => {
   // ── Round 7：收尾阶段中间态同步集成测试 ──────────────────────────────────
 
   it('emitStepPhase 发出时 active.state 已含最新 finalizeMeta（Round 7 中间态同步）', async () => {
-    const { ctx, engine, persistence, llm, shell, agents, userQuestions } = await harness();
+    const { ctx, engine, persistence, llm, shell, agents, sessions, userQuestions } = await harness();
     await putDefinition(persistence, 'wfl-phase-flow', phaseFlowYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
     shell.runHandler = async spec => successResult(spec, 'gate done');
+    // Round 26（场景 B）：复用宿主会话 → ask 上报宿主。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
     agents.register(child);
@@ -2845,7 +2856,7 @@ describe('SandoreEngineRuntime interaction', () => {
     });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-phase-flow', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-phase-flow', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     await ended;
 
     // 验证每个 step-phase 事件发出时，active.state 里的 finalizeMeta.currentPhase 已是最新。
@@ -2905,10 +2916,14 @@ describe('SandoreEngineRuntime interaction', () => {
   });
 
   it('rejectQuestion emits sandore/question_rejected for UI refresh (缺陷 26)', async () => {
-    const { ctx, engine, persistence, llm, agents } = await harness();
+    const { ctx, engine, persistence, llm, agents, sessions } = await harness();
     await putDefinition(persistence, 'wfl-ask', askYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Round 26（场景 B）：复用宿主会话 → ask 上报宿主。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
     // prompt Step（step-ask）走可续接子代理：注册真实 childId 并回填最终输出。
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
@@ -2922,7 +2937,7 @@ describe('SandoreEngineRuntime interaction', () => {
     const rejectedFired: unknown[] = [];
     ctx.on('sandore/question_rejected', (info, questionEntry) => rejectedFired.push({ info, questionEntry }));
     const question = waitForQuestion(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     const fired = await question;
     const requestId = (fired.question as { requestId: string }).requestId;
 
@@ -2937,10 +2952,14 @@ describe('SandoreEngineRuntime interaction', () => {
   });
 
   it('caps finalize ask rounds at MAX_FINALIZE_ASK_ROUNDS (3) and completes with the last output (status 流转)', async () => {
-    const { ctx, engine, persistence, llm, agents, userQuestions } = await harness();
+    const { ctx, engine, persistence, llm, agents, sessions, userQuestions } = await harness();
     await putDefinition(persistence, 'wfl-ask', askYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Round 26（场景 B）：复用宿主会话 → ask 上报宿主。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
     agents.register(child);
@@ -2951,7 +2970,7 @@ describe('SandoreEngineRuntime interaction', () => {
     userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     await ended;
 
     // 轮次上限（4.7）：最多 3 轮 ask（首次 + 2 次续问），之后 runPhaseA 把最后 output
@@ -3020,10 +3039,14 @@ describe('SandoreEngineRuntime 双通道 ask（4.4：[[SANDORE_ASK]] 机制已�
 
 describe('SandoreEngineRuntime askFromSubagent（双通道 ask 通道 1）', () => {
   it('routes a subagent question to the engine-level ask (hostAgent identity) and returns the answer', async () => {
-    const { ctx, engine, persistence, llm, agents, userQuestions } = await harness();
+    const { ctx, engine, persistence, llm, agents, sessions, userQuestions } = await harness();
     await putDefinition(persistence, 'wfl-ask', askYaml);
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Round 26（场景 B）：复用宿主会话 → ask 上报宿主（askFromSubagent 同受 reportToHost 门控）。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'work done' }]));
     agents.register(child);
@@ -3031,11 +3054,11 @@ describe('SandoreEngineRuntime askFromSubagent（双通道 ask 通道 1）', () 
 
     // 等待实例跑完（Step 段已写入 executedSteps，sessionMeta.childId = child-1）。
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-ask', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     await ended;
     // 真实 DSH：子代理 session.header.parentSession = 宿主主代理会话 id（childSessionMeta）；
-    // mock 手动补写（hostAgent.id = instanceId）。
-    child.session.header = { parentSession: run.instanceId };
+    // mock 手动补写（hostAgent.id = hostSessionId = host-1）。
+    child.session.header = { parentSession: 'host-1' };
 
     const firedQuestions: unknown[] = [];
     ctx.on('sandore/question', (info, question) => firedQuestions.push({ info, question }));
@@ -3046,8 +3069,8 @@ describe('SandoreEngineRuntime askFromSubagent（双通道 ask 通道 1）', () 
     const answer = await engine.askFromSubagent(child, [{ id: 'q1', question: 'Which?' }]);
 
     expect(answer).toEqual({ answers: [{ id: 'q1', selected: ['A'] }] });
-    // 以宿主主代理（id = instanceId）身份发起（非子代理自身——避免 DELEGATED_CALLER）。
-    expect(userQuestions.calls[userQuestions.calls.length - 1]?.agent?.id).toBe(run.instanceId);
+    // 以宿主主代理（id = hostSessionId）身份发起（非子代理自身——避免 DELEGATED_CALLER）。
+    expect(userQuestions.calls[userQuestions.calls.length - 1]?.agent?.id).toBe('host-1');
     // 提问登记期间发射 sandore/question（pending 条目；回答后已终态化，仅 pending 持久化）。
     expect(firedQuestions).toHaveLength(1);
     const firedEntry = firedQuestions[0] as { question: { kind: string; payload: { questions: Array<{ id: string }> } } };
@@ -3256,9 +3279,8 @@ describe('SandoreEngineRuntime recovery', () => {
     expect(step?.retryHistory?.[0]?.result).toBe('completed');
     expect(subagents.followups.some(item => item.childId === 'child-1')).toBe(true);
 
-    // sandore/step-retried 双发：Cordis emit + Session append 同发。
+    // sandore/step-retried 单发：Cordis 事件断言（Round 25 去污染：宿主会话不再承载）。
     expect(retried).toEqual([{ stepId: 'step-agent', mode: 'continue', name: 'step-agent' }]);
-    expect(sessions.get(run.instanceId)?.events.some(event => event.type === 'sandore/step-retried')).toBe(true);
   });
 
   it('retries a failed middle agent step and runs all remaining steps to completed', async () => {
@@ -3978,13 +4000,12 @@ describe('SandoreEngineRuntime sendStepMessage (缺陷 31: @mention 讨论消息
     expect(messages[0]?.target).toBe('step-agent');
     expect(messages[0]?.content).toBe('请确认参数');
 
-    // 双发 sandore/step-message：Cordis emit（listener 触发）+ Session append。
+    // 单发 sandore/step-message：Cordis emit（listener 触发；Round 25 去污染：宿主会话不再承载）。
     expect(messageEvents).toHaveLength(1);
     expect(messageEvents[0]?.stepId).toBe('step-agent');
     expect(messageEvents[0]?.childId).toBe('child-1');
     expect(messageEvents[0]?.message).toBe('请确认参数');
     expect(messageEvents[0]?.name).toBe('step-agent');
-    expect(sessions.get(run.instanceId)?.events.some(e => e.type === 'sandore/step-message')).toBe(true);
 
     // 清理：让挂起的 Step 正常完成（append assistant 输出 + settle completed），令 run 收敛。
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
@@ -4030,7 +4051,6 @@ describe('SandoreEngineRuntime sendStepMessage (缺陷 31: @mention 讨论消息
     expect(messages[0]?.target).toBe('step-prompt');
     expect(messages[0]?.content).toBe('hi');
     expect(messageEvents).toHaveLength(1);
-    expect(sessions.get(run.instanceId)?.events.some(e => e.type === 'sandore/step-message')).toBe(true);
 
     // 清理：append 输出 + settle completed，令 run 收敛。
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));

@@ -73,7 +73,7 @@ function answer(selected: string[]): AskUserQuestionAnswer {
 }
 
 /** 组装测试依赖（hostAgent + FakeUserQuestions + vi.fn 桩）。 */
-function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Agent }): {
+function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Agent; reportToHost?: boolean }): {
   deps: InteractionManagerOptions;
   userQuestions: FakeUserQuestions;
   hostAgent: Agent;
@@ -91,6 +91,8 @@ function makeDeps(options?: { userQuestions?: FakeUserQuestions; hostAgent?: Age
   const deps: InteractionManagerOptions = {
     hostAgent,
     userQuestions: () => userQuestions,
+    // Round 26：默认上报宿主（场景 B，兼容既有用例）；场景 A 用例显式传 false。
+    reportToHost: options?.reportToHost ?? true,
     persist,
     emitQuestion,
     emitPermission,
@@ -351,5 +353,38 @@ describe('InteractionManager.clearPendingInteractions / clearAll（缺陷 27 + �
     mgr.clearAll();
 
     expect(persist).toHaveBeenCalledWith([]);
+  });
+
+  it('场景 A（reportToHost=false）：ask 不上报宿主（不调 userQuestions.ask），仅 replyQuestion 驱动', async () => {
+    const { deps, userQuestions, persist } = makeDeps({ reportToHost: false });
+    const mgr = new InteractionManager(deps);
+    const asking = mgr.ask({ entry: questionEntry('req-a', singleQuestionPayload()) });
+
+    // 不上报宿主：userQuestions.ask 不被调用（等 replyQuestion 兼容路径）。
+    await Promise.resolve();
+    expect(userQuestions.calls).toHaveLength(0);
+
+    await mgr.replyQuestion('req-a', answer(['A']));
+    await expect(asking).resolves.toEqual(answer(['A']));
+    const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingInteractionEntry[];
+    expect(lastCall).toEqual([]);
+  });
+
+  it('场景 B（reportToHost=true）：composer 回答（replyQuestion）后同步 abort 宿主 DSH 弹窗', async () => {
+    const { deps, userQuestions, persist } = makeDeps();
+    const mgr = new InteractionManager(deps);
+    const asking = mgr.ask({ entry: questionEntry('req-b', singleQuestionPayload()) });
+
+    await Promise.resolve();
+    expect(userQuestions.calls).toHaveLength(1);
+    const signal = userQuestions.calls[0]?.signal;
+    expect(signal?.aborted).toBe(false);
+
+    // composer 卡回答 → finishQuestion resolve 引擎 waiter + abort DSH 弹窗 signal。
+    await mgr.replyQuestion('req-b', answer(['B']));
+    await expect(asking).resolves.toEqual(answer(['B']));
+    expect(signal?.aborted).toBe(true);
+    const lastCall = persist.mock.calls[persist.mock.calls.length - 1]?.[0] as PendingInteractionEntry[];
+    expect(lastCall).toEqual([]);
   });
 });

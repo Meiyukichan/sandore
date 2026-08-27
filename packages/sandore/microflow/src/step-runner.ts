@@ -110,6 +110,8 @@ export interface PreviousStepOutput {
 /** 单 Step 执行请求。 */
 export interface StepRunRequest {
   readonly step: WorkflowStep;
+  /** 执行段唯一 id（executed.id，纯 UUID）；区别于 `step.stepId`（定义 id）——提示词 title 展示用执行段 id。 */
+  readonly executedId: string;
   readonly workdir: string;
   readonly originalInput: string;
   readonly previousOutputs: readonly PreviousStepOutput[];
@@ -146,9 +148,13 @@ export interface StepRunResult {
   readonly sessionMessages?: SessionMessage[];
 }
 
-/** 结构化提示词主头部。 */
-const PROMPT_MAIN_HEADER =
-  '你是严谨准确的Step执行Agent，你的任务是参考`## 参考信息`和`## 前置Steps输出`中的信息，\n准确完成`## 你的任务`中的要求。';
+/** 结构化提示词主头部（v6：行动引导 + 职责三点；无角色声明、无行为要求、无输出格式要求）。 */
+const PROMPT_MAIN_HEADER = [
+  '你正在执行工作流中的一个 Step。必须先明确以下三点，再开始执行：',
+  '- `## 用户指令` —— 用户提供的当前任务指令，是本次 Step 要达成的**唯一验收目标**。',
+  '- `## 任务规则` —— 用户配置的约束，执行时**不得违反**。',
+  '- `## 参考信息` —— 执行上下文，按需查阅。',
+].join('\n');
 
 /** fillParams 临时会话的任务指令。 */
 const FILL_PARAMS_TASK =
@@ -175,26 +181,45 @@ function createHostAgentStub(): Agent {
   };
 }
 
-/** 渲染「## 前置Steps输出与产物」子节（无前置输出返回空）。 */
+/** XML 内容转义：`&`（必须最先）→ `&amp;`、`<` → `&lt;`、`>` → `&gt;`。 */
+function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** XML 属性值转义：内容转义 + 双引号 → `&quot;`（title 属性承载 name/id）。 */
+function escapeXmlAttr(text: string): string {
+  return escapeXml(text).replace(/"/g, '&quot;');
+}
+
+/** 多行文本每行前加 N 空格缩进（XML 块内内容对齐）。 */
+function indentLines(text: string, spaces: number): string[] {
+  const prefix = ' '.repeat(spaces);
+  return text.split('\n').map(line => `${prefix}${line}`);
+}
+
+/**
+ * 渲染「前置 Steps 输出和产物」XML 块（v6：`<Reference title="前置Step: {{name}} (id: {{id}}) 的输出和产物">`，
+ * 内容为 `<Output>` + `<Artifacts>`，全部转义；无前置输出返回空）。
+ */
 function renderPreviousOutputs(previousOutputs: readonly PreviousStepOutput[]): string[] {
   if (previousOutputs.length === 0) {
     return [];
   }
-  const sections: string[] = ['', '## 前置Steps输出与产物'];
+  const sections: string[] = [];
   for (const previous of previousOutputs) {
-    sections.push(`### 前置Step: ${previous.name} (${previous.id})`);
-    sections.push(`<${previous.id}>`);
-    sections.push('  <output>');
-    for (const line of previous.returnPrompt.split('\n')) {
-      sections.push(`    ${line}`);
-    }
-    sections.push('  </output>');
-    sections.push('  <artifacts>');
+    const name = escapeXmlAttr(previous.name);
+    const id = escapeXmlAttr(previous.id);
+    sections.push(`  <Reference title="前置Step: ${name} (id: ${id}) 的输出和产物">`);
+    sections.push('    <Output>');
+    sections.push(...indentLines(escapeXml(previous.returnPrompt), 6));
+    sections.push('    </Output>');
+    sections.push('    <Artifacts>');
     for (const file of previous.files) {
-      sections.push(`    - ${file}`);
+      sections.push(`      <Artifact>${escapeXml(file)}</Artifact>`);
     }
-    sections.push('  </artifacts>');
-    sections.push(`</${previous.id}>`);
+    sections.push('    </Artifacts>');
+    sections.push('  </Reference>');
+    sections.push('');
   }
   return sections;
 }
@@ -230,19 +255,25 @@ function buildTaskText(
 }
 
 /**
- * 构建结构化提示词（主头部 + `## 你的任务` + `## 参考信息` + 可选
- * `### 当前Step参数` + `## 前置Steps输出与产物` + 可选 `## 任务规则`）。
+ * 构建结构化提示词（v6：头部三点 + `## 用户指令`（`<UserInstruction>` XML 隔离 + 转义）
+ * + 可选 `## 任务规则` + `## 参考信息`（`<ReferenceInfo>`：当前 Step 身份块（含可选
+ * `<Params>`）+ 整体目标块 + 前置输出和产物块）。
  *
  * 双通道 ask 重构后不再注入「向用户提问」引导节（`[[SANDORE_ASK]]` 标记块机制已删）：
  * 子代理提问走 child-scope `ask_user_question` 工具（registerContinuableSetup 注入，
  * 见 workflow/ask-tool.ts），prompt/agent/skill/mcp 四路 AI 提示词共用本函数。
  *
- * `## 任务规则` 节位置对齐基准 `workflow-step.ts` L615-619（置于 `## 前置Steps
- * 输出与产物` 之后）；仅当 `resolvedRules` 非空时渲染，逐键输出
- * `- **{key}**: {content}`。prompt/agent/skill/mcp 四路 AI 提示词共用本函数注入。
+ * `## 任务规则` 节置于参考信息**之前**（与头部三点顺序一致：用户指令 → 任务规则 →
+ * 参考信息）；仅当 `resolvedRules` 非空时渲染，逐键输出 `- **{key}**: {content}`。
+ *
+ * 所有 XML 内容统一转义（`escapeXml`，含 `<UserInstruction>`）；title 属性值用
+ * `escapeXmlAttr`。`<UserInstruction>` 内容为 `buildTaskText` 输出（agent/skill/mcp
+ * 名称命中定义数组时带「使用 Agent：/使用 skill：/使用 MCP：」前缀，防纯名称歧义）。
  */
 function buildPromptText(
   taskText: string,
+  stepName: string,
+  executedId: string,
   originalInput: string,
   previousOutputs: readonly PreviousStepOutput[],
   paramsText: string | undefined,
@@ -251,27 +282,45 @@ function buildPromptText(
   const sections: string[] = [];
   sections.push(PROMPT_MAIN_HEADER);
   sections.push('');
-  sections.push('## 你的任务');
-  sections.push(taskText);
-  sections.push('');
-  sections.push('## 参考信息');
-  sections.push('### 用户原始需求');
-  sections.push(originalInput);
-  if (paramsText !== undefined) {
-    sections.push('### 当前Step参数');
-    sections.push(paramsText);
-  }
-  sections.push(...renderPreviousOutputs(previousOutputs));
-  // ## 任务规则（缺陷 7 修复）：非空时注入，对齐基准位置（前置输出之后）。
+  sections.push('## 用户指令');
+  sections.push('<UserInstruction>');
+  sections.push(escapeXml(taskText));
+  sections.push('</UserInstruction>');
+  // `## 任务规则`（可选）——置于参考信息之前，与头部三点顺序一致。
   if (resolvedRules !== undefined) {
     const ruleKeys = Object.keys(resolvedRules);
     if (ruleKeys.length > 0) {
-      const ruleLines = ruleKeys.map(key => `- **${key}**: ${resolvedRules[key]}`).join('\n');
       sections.push('');
       sections.push('## 任务规则');
-      sections.push(ruleLines);
+      for (const key of ruleKeys) {
+        sections.push(`- **${key}**: ${resolvedRules[key]}`);
+      }
     }
   }
+  sections.push('');
+  sections.push('## 参考信息');
+  sections.push('<ReferenceInfo>');
+  // 当前 Step 身份块（含可选 <Params> 子标签；无参数时为空块锚点）。
+  // id 展示执行段 id（executed.id，本次执行唯一），非定义 stepId。
+  const stepNameEscaped = escapeXmlAttr(stepName);
+  const executedIdEscaped = escapeXmlAttr(executedId);
+  if (paramsText === undefined) {
+    sections.push(`  <Reference title="你正在执行的Step: ${stepNameEscaped} (id: ${executedIdEscaped})"></Reference>`);
+  } else {
+    sections.push(`  <Reference title="你正在执行的Step: ${stepNameEscaped} (id: ${executedIdEscaped})">`);
+    sections.push('    <Params>');
+    sections.push(...indentLines(escapeXml(paramsText), 6));
+    sections.push('    </Params>');
+    sections.push('  </Reference>');
+  }
+  sections.push('');
+  // 用户原始需求（整个工作流的整体目标）。
+  sections.push('  <Reference title="用户原始需求（整个工作流的整体目标）">');
+  sections.push(...indentLines(escapeXml(originalInput), 4));
+  sections.push('  </Reference>');
+  // 前置 Steps 输出和产物（可选，每个前置一块）。
+  sections.push(...renderPreviousOutputs(previousOutputs));
+  sections.push('</ReferenceInfo>');
   return sections.join('\n');
 }
 
@@ -303,6 +352,59 @@ function buildFillParamsPrompt(
 /** 从 `inputFrom` 的 `path` 取 Step id（简化格式：path 直接为 stepId，单段）。 */
 function stepIdFromPath(path: string): string {
   return path;
+}
+
+/**
+ * 按 `step.inputFrom` 过滤前置输出（v6 修复：prompt 提示词只注入**声明的依赖**，
+ * 对齐 `resolveShellStdin` 的匹配语义——此前全量注入导致「配置只依赖 sce1 却显示
+ * 所有前置 step 输出」）。
+ *
+ * - `inputFrom` 未配置/为空 → 返回全量（向后兼容：未声明依赖的工作流仍可引用全部前置）。
+ * - 配置后按 `path`（stepId 匹配 `idMatches`）/ `regex`（returnPrompt 匹配）筛选；
+ *   循环/重试多段同 stepId 时**按 id 去重、只保留最近一段**（数组序 = 完成顺序）。
+ */
+function filterPreviousOutputs(
+  step: WorkflowStep,
+  previousOutputs: readonly PreviousStepOutput[],
+): readonly PreviousStepOutput[] {
+  const inputFrom = step.inputFrom;
+  if (inputFrom === undefined || inputFrom.length === 0) {
+    return previousOutputs;
+  }
+  const matched: PreviousStepOutput[] = [];
+  for (const item of inputFrom) {
+    if (item.regex !== undefined) {
+      let regex: RegExp;
+      try {
+        regex = new RegExp(item.regex);
+      } catch {
+        continue;
+      }
+      for (const previous of previousOutputs) {
+        if (regex.test(previous.returnPrompt)) {
+          matched.push(previous);
+        }
+      }
+    } else if (item.path !== undefined) {
+      const stepId = stepIdFromPath(item.path);
+      for (const previous of previousOutputs) {
+        if (idMatches(previous.id, stepId)) {
+          matched.push(previous);
+        }
+      }
+    }
+  }
+  // 按 id 去重、保留最近一段（数组序 = 完成顺序，最后一段为最新）。
+  const seen = new Set<string>();
+  const result: PreviousStepOutput[] = [];
+  for (let index = matched.length - 1; index >= 0; index -= 1) {
+    const previous = matched[index]!;
+    if (!seen.has(previous.id)) {
+      seen.add(previous.id);
+      result.unshift(previous);
+    }
+  }
+  return result;
 }
 
 /** 解析 shell Step 的 stdin：`inputFrom` 命中前置输出时返回 JSON 序列化，否则 undefined。 */
@@ -458,9 +560,12 @@ export class StepRunner {
    * `collectSubagentOutput` 等 settle 终态（completed/aborted/error 路由）+ final output。
    */
   private async runSubagent(command: SubagentCommand | PromptCommand, request: StepRunRequest): Promise<StepRunResult> {
+    // v6：按 step.inputFrom 过滤前置输出（未配置依赖 → 全量；配置后只注入声明的依赖，
+    // 多段同 stepId 去重取最近一段）——prompt 与 fillParams 共用过滤后的列表。
+    const previousOutputs = filterPreviousOutputs(request.step, request.previousOutputs);
     const paramsText =
       command.type === 'agent' && command.value.agentParamsTemplate !== undefined
-        ? await this.fillParams(command, command.value.agentParamsTemplate, request)
+        ? await this.fillParams(command, command.value.agentParamsTemplate, { ...request, previousOutputs })
         : undefined;
     const route = await this.resolveProviderModel(command.value);
     const taskText = buildTaskText(
@@ -470,7 +575,15 @@ export class StepRunner {
       this.config.mcps,
       this.config.agents,
     );
-    const promptText = buildPromptText(taskText, request.originalInput, request.previousOutputs, paramsText, request.resolvedRules);
+    const promptText = buildPromptText(
+      taskText,
+      request.step.name ?? request.step.id,
+      request.executedId,
+      request.originalInput,
+      previousOutputs,
+      paramsText,
+      request.resolvedRules,
+    );
     const started = await this.ctx.subagents.startContinuable({
       // `provider` 是 DSH subagent provider 注册名（固定 `this.subagentProvider`，
       // 缺省 'fork'，DSH base bundle 已注册），与模型路由完全解耦：模型路由经

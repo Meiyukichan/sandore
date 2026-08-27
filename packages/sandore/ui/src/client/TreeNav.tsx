@@ -9,7 +9,8 @@
  */
 import { useState } from 'react'
 import {
-  IconChevronDownOutline14, IconChevronRightOutline14, StateDot,
+  IconChevronDownOutline14, IconChevronRightOutline14, IconSparkle16,
+  StateDot,
   type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -63,12 +64,17 @@ function dotState(status: RunTreeNode['status']): StateDotState {
 }
 
 /** 可折叠行：chevron + 状态点 + 标题 +（可选行尾按钮），点击整行展开/折叠。 */
-function DisclosureRow({ node, className, headerClassName, leadingClassName, titleClassName, trailing, children }: {
+function DisclosureRow({ node, className, headerClassName, leadingClassName, titleClassName, alwaysShowChevron, trailing, children }: {
   readonly node: RunTreeNode
   readonly className?: string | undefined
   readonly headerClassName: string | undefined
   readonly leadingClassName: string | undefined
   readonly titleClassName: string | undefined
+  /**
+   * 始终显示 chevron（即使暂无子节点）——step 行专用：running 的 step 尚无
+   * result/artifact 叶子，若用占位符会与产物叶子视觉混淆（看起来像上一个 step 的产物）。
+   */
+  readonly alwaysShowChevron?: boolean | undefined
   /** 行尾元素（如 running step 的跳子会话按钮）。 */
   readonly trailing?: React.ReactNode
   readonly children?: React.ReactNode
@@ -76,12 +82,13 @@ function DisclosureRow({ node, className, headerClassName, leadingClassName, tit
   const hasChildren = (node.children ?? []).length > 0
   // 默认全部展开（用户要求）；workflow/stage/step 均可点击整行切换展开/折叠。
   const [open, setOpen] = useState(true)
+  const expandable = hasChildren || alwaysShowChevron === true
   return (
     <div className={className} data-open={open || undefined}>
       <div
         className={headerClassName}
         data-disclosure-row
-        data-expandable={hasChildren || undefined}
+        data-expandable={expandable || undefined}
         role="button"
         tabIndex={0}
         aria-expanded={open}
@@ -93,9 +100,9 @@ function DisclosureRow({ node, className, headerClassName, leadingClassName, tit
           }
         }}
       >
-        {/* 最左：chevron（展开变向下；无子节点用占位保持对齐） */}
+        {/* 最左：chevron（展开变向下；无子节点且非 alwaysShowChevron 用占位保持对齐） */}
         <span className={leadingClassName}>
-          {hasChildren
+          {expandable
             ? (open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />)
             : <span className={css.chevronPlaceholder} />}
         </span>
@@ -159,6 +166,9 @@ function StepRow({ node, onOpenChild, t, children }: {
       headerClassName={css.memberHeader}
       leadingClassName={css.memberLeading}
       titleClassName={css.memberLabel}
+      // step 行始终显示 chevron：running 段尚无 result/artifact 叶子，占位符会让它
+      // 看起来像产物叶子（与上一个 step 的产物混淆）。
+      alwaysShowChevron
       trailing={navigable ? (
         <button
           type="button"
@@ -179,22 +189,75 @@ function StepRow({ node, onOpenChild, t, children }: {
   )
 }
 
-/** result 叶子图标：文本行（简单线框 SVG，currentColor）。 */
-function ResultGlyph() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <rect x="1" y="1" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M3 4.5h6M3 7h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  )
+/** 文件类型分类（按 basename 扩展名）。 */
+type FileKind = 'markdown' | 'image' | 'code' | 'data' | 'doc' | 'archive' | 'other'
+
+/** 按扩展名归类文件类型（未知扩展名 → other）。 */
+function fileKindOf(name: string): FileKind {
+  const base = name.toLowerCase()
+  const dot = base.lastIndexOf('.')
+  const ext = dot === -1 ? '' : base.slice(dot + 1)
+  if (['md', 'markdown'].includes(ext)) return 'markdown'
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return 'image'
+  if (['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'css', 'html', 'sh', 'ps1', 'vue'].includes(ext)) return 'code'
+  if (['json', 'yaml', 'yml', 'toml', 'xml', 'ini', 'csv'].includes(ext)) return 'data'
+  if (['txt', 'doc', 'docx', 'pdf', 'rst'].includes(ext)) return 'doc'
+  if (['zip', 'tar', 'gz', '7z', 'rar'].includes(ext)) return 'archive'
+  return 'other'
 }
 
-/** artifact 叶子图标：文件方块（简单线框 SVG，currentColor）。 */
-function ArtifactGlyph() {
+/** VSCode 风格类型色（文件轮廓保持灰色 currentColor，内部符号用类型色）。 */
+function kindColorOf(name: string, kind: FileKind): string {
+  const base = name.toLowerCase()
+  if (kind === 'code') {
+    if (base.endsWith('.ts') || base.endsWith('.tsx') || base.endsWith('.mts')) return '#3178c6'
+    if (base.endsWith('.js') || base.endsWith('.jsx') || base.endsWith('.mjs')) return '#f1e05a'
+    if (base.endsWith('.py')) return '#3572a5'
+    if (base.endsWith('.go')) return '#00add8'
+    if (base.endsWith('.rs')) return '#dea584'
+    if (base.endsWith('.css')) return '#563d7c'
+    if (base.endsWith('.html') || base.endsWith('.vue')) return base.endsWith('.vue') ? '#41b883' : '#e34c26'
+    if (base.endsWith('.sh') || base.endsWith('.ps1') || base.endsWith('.bash')) return '#89e051'
+    if (base.endsWith('.java')) return '#b07219'
+    if (base.endsWith('.c') || base.endsWith('.cpp') || base.endsWith('.h')) return '#555555'
+    return '#3572a5'
+  }
+  if (kind === 'data') {
+    if (base.endsWith('.yaml') || base.endsWith('.yml')) return '#cb171e'
+    if (base.endsWith('.xml')) return '#e37933'
+    return '#cbcb41'
+  }
+  switch (kind) {
+    case 'markdown': return '#519aba'
+    case 'image': return '#e37933'
+    case 'archive': return '#af8743'
+    case 'doc': return '#848484'
+    default: return '#848484'
+  }
+}
+
+/** 文件类型图标：VSCode 语言徽标风格——已知类型 = 彩色圆角徽标 + 白色符号（无文件框）；
+ *  未知类型（other）= 灰色文件轮廓（VSCode 未知文件样式）。 */
+function FileTypeGlyph({ name }: { readonly name: string }) {
+  const kind = fileKindOf(name)
+  if (kind === 'other') {
+    return (
+      <svg width="14" height="14" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+        <path d="M3 1h4.5L10 3.5V10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+        <path d="M7.5 1v2.5H10" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+  const color = kindColorOf(name, kind)
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path d="M2.5 1h5L10 3.5v7a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 2 10.5v-9A.5.5 0 0 1 2.5 1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-      <path d="M7.5 1v2.5H10" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    <svg width="14" height="14" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <rect x="1" y="1" width="10" height="10" rx="2.5" fill={color} />
+      {kind === 'image' && <path d="M4 8l1.3-1.5 1.2 1.3.9-1L8.6 8H4Z" stroke="#fff" strokeWidth="1.1" strokeLinejoin="round" />}
+      {kind === 'code' && <path d="M4.5 5.2 3.2 6.4l1.3 1.2M7.5 5.2 8.8 6.4 7.5 7.6" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />}
+      {kind === 'data' && <path d="M5 5c-.5.3-.8.8-.8 1.6 0 .8.3 1.3.8 1.6M7 5c.5.3.8.8.8 1.6 0 .8-.3 1.3-.8 1.6" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" />}
+      {kind === 'doc' && <path d="M4 5.4h4M4 7.2h3" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" />}
+      {kind === 'markdown' && <path d="M4.2 4.9v3.2L6 6.7l1.8 1.4V4.9" stroke="#fff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />}
+      {kind === 'archive' && <path d="M3.8 8.4h4.4" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" />}
     </svg>
   )
 }
@@ -223,7 +286,9 @@ function LeafRow({ node, activePreviewId, onSelectLeaf, t }: {
         })
       }}
     >
-      <span className={css.leafIcon}>{node.type === 'result' ? <ResultGlyph /> : <ArtifactGlyph />}</span>
+      <span className={css.leafIcon}>
+        {node.type === 'result' ? <IconSparkle16 /> : <FileTypeGlyph name={node.name} />}
+      </span>
       <span className={css.leafLabel}>{node.name === '' ? t('run.result') : node.name}</span>
       {node.meta !== undefined && <span className={css.leafMeta}>{node.meta}</span>}
     </button>

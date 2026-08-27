@@ -469,15 +469,20 @@ export class StageExecutor {
     for (const step of this.steps) {
       stepIndex.set(step.id, step);
     }
-    // 合并顺序：定义默认值（collectPassThroughVars）在前、input 已提取/已持久化值
-    // 在后——已提取值覆盖定义默认值，对齐基准「first-wins + 非空提取值优先于定义
-    // 默认值」语义（缺陷 15 残余差异二）。消除跨 Stage 同名变量场景下后置 Stage 的
-    // 定义默认值覆盖前置 Stage 已提取值的 bug（A 提取 projectName、B 声明同名默认
-    // 值 → B 不再覆盖 A 的提取值）。input 为空（首次执行）时退化为纯定义默认值。
-    const passThroughVars: Record<string, PassThroughVarValue> = {
-      ...collectPassThroughVars(this.steps),
-      ...(input.passThroughVars as Record<string, PassThroughVarValue>),
-    };
+    // 合并语义：定义默认值（collectPassThroughVars）补种 input 已持久化值——**保持 input
+    // 引用**（就地补缺失项，不 spread 拷贝）：stage 内 writeBack 就地更新该对象 → 引擎
+    // active.state.passThroughVars（input 同引用）同步可见 → onPersist 的 persistState
+    // 持久化新值（多 step 长流程/崩溃恢复不丢变量）。原 spread 拷贝方案导致 stage 写回
+    // 只落内部拷贝、引擎侧保持旧值——「stage 执行中 persist 旧值、跨 step 变量丢失、
+    // 产物收集空（outputTo 引用 ${xxx}）」根因（2026-08-25 e2e 定位）。
+    // 语义不变：input 已提取值优先于定义默认值（缺陷 15 残余差异二：跨 Stage 同名变量
+    // 场景下后置 Stage 的定义默认值不覆盖前置 Stage 已提取值——已有 key 跳过补种）。
+    const passThroughVars = input.passThroughVars as Record<string, PassThroughVarValue>;
+    for (const [name, value] of Object.entries(collectPassThroughVars(this.steps))) {
+      if (passThroughVars[name] === undefined) {
+        passThroughVars[name] = value;
+      }
+    }
     // 崩溃恢复/重试续跑播种：跳过已完成 Step，续跑指定子代理 Step 列表 + pendingQueue re-queue。
     const resumeFrom = this.options.resumeFrom;
     if (resumeFrom !== undefined) {
@@ -624,7 +629,14 @@ export class StageExecutor {
           // 若不跳过会二次执行）。已在飞节点 settle 后其 nexts 正常入队，不丢节点。
           continue;
         }
-        visitCounts[nodeId] = (visitCounts[nodeId] ?? 0) + 1; // 单一递增点
+        // 单一递增点。**resume 节点（resumeSegments 命中，崩溃恢复续跑同一执行段）出队
+        // 不 +1**——initState 把 resumeSubagents 重新入队（initialQueue），若出队再加 1
+        // 会导致 visitCount 虚高（如 sce1 执行 1 次却计数 2）→ loop 的 `maxIterations`
+        // 判定提前命中 → 循环体少跑（2026-08-25 e2e 定位：配置 3 次实际只跑 2 次）。
+        // resume 节点执行前的 visitCount 快照已含其首次出队 +1，续跑不应重复计数。
+        if (!state.resumeSegments.has(nodeId)) {
+          visitCounts[nodeId] = (visitCounts[nodeId] ?? 0) + 1;
+        }
         loopManager.recordScopeVisit(nodeId);
         if (isRoutingNode) {
           await this.processRoutingNode(nodeId, step, state); // 串行（barrier 满足时）
@@ -812,6 +824,7 @@ export class StageExecutor {
       const resolvedRules = resolveStepRules(this.options.workflowDef, stageDef, step);
       const result = await this.runner.run({
         step,
+        executedId: executed.id,
         workdir: sharedState.cwd,
         originalInput: input.originalInput,
         previousOutputs: state.previousOutputs,
@@ -934,6 +947,11 @@ export class StageExecutor {
     // processCommandNode 从 step.outputTo 拷贝，故 executed 收集即 step 收集。
     // 缺陷 34：传引擎累加器 vars（pre-finalize 快照，自引用变量此时未提取→deferred）。
     const artifacts = (await collectStepArtifacts(this.options.ctx.fs, step, this.options.sharedState.cwd, toVarMap(state.passThroughVars))).flatMap(a => a.value);
+    // Round 26：把该步实际产物写入段快照（onPersist 持久化）——运行中（stage 未完成、
+    // stageContracts 为空）导航树也能展示该步产物；stage 契约仍是 stage 级权威汇总。
+    if (artifacts.length > 0) {
+      executed.artifacts = artifacts;
+    }
     return {
       input: this.options.input.originalInput,
       output: textSummary(executed.output),
@@ -1224,8 +1242,17 @@ export class StageExecutor {
     compressedOutput: string | undefined,
     state: StageRunState,
   ): Promise<PreviousStepOutput> {
-    // 缺陷 16/34：用引擎累加器值替换 outputTo 中的 ${xxx}（自引用变量此时未提取→deferred）。
+    // 缺陷 16/34：用引擎累加器值替换 outputTo 中的 ${xxx}（自引用变量此时已由
+    // Phase B commitFinalize('finalizing') 写回 state.passThroughVars——与
+    // buildFinalizeContext 的 pre-finalize 快照不同，能解析自引用变量）。
     const artifacts = (await collectStepArtifacts(this.options.ctx.fs, executed, this.options.sharedState.cwd, toVarMap(state.passThroughVars))).flatMap(a => a.value);
+    // 2026-08-25（导航产物缺失修复）：Phase B 后的收集结果**写回段快照**——buildFinalizeContext
+    // 的早期收集用 pre-finalize vars，自引用变量（outputTo 引用本 step 提取的 ${xxx}）
+    // 解析不了会收集空 → 导航无产物；而门禁用合并 vars 能通过（「门禁过但导航无产物」根因）。
+    // 此处用写回后的 vars 重收集并覆盖段快照，保证最终产物与门禁一致。
+    if (artifacts.length > 0) {
+      executed.artifacts = artifacts;
+    }
     const base = toPreviousOutput(executed, artifacts);
     return compressedOutput === undefined || compressedOutput === '' ? base : { ...base, returnPrompt: compressedOutput };
   }

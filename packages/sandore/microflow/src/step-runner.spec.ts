@@ -96,6 +96,7 @@ function mcpStep(promptText: string): WorkflowStep {
 function request(step: WorkflowStep, overrides?: Partial<StepRunRequest>): StepRunRequest {
   return {
     step,
+    executedId: 'exec-1',
     workdir: '/tmp',
     originalInput: 'do the thing',
     previousOutputs: [],
@@ -570,7 +571,7 @@ describe('StepRunner agent', () => {
     await runner.run(request(agentStep({ agentParamsTemplate: '审查：${lintErrorCount} 个错误' })));
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('<Params>');
     expect(promptText).toContain('{"lintErrorCount": 3}');
   });
 
@@ -588,7 +589,7 @@ describe('StepRunner agent', () => {
     await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('<Params>');
     expect(promptText).toContain('TEMPLATE_RAW');
   });
 
@@ -606,7 +607,7 @@ describe('StepRunner agent', () => {
     await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('<Params>');
     expect(promptText).toContain('TEMPLATE_RAW');
   });
 
@@ -627,7 +628,7 @@ describe('StepRunner agent', () => {
     await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('### 当前Step参数');
+    expect(promptText).toContain('<Params>');
     expect(promptText).toContain('TEMPLATE_RAW');
   });
 });
@@ -765,6 +766,7 @@ describe('StepRunner ## 任务规则 注入（缺陷 7）', () => {
   function requestWithRules(step: WorkflowStep, rules: Record<string, string>): StepRunRequest {
     return {
       step,
+      executedId: 'exec-1',
       workdir: '/tmp',
       originalInput: 'do the thing',
       previousOutputs: [],
@@ -792,12 +794,11 @@ describe('StepRunner ## 任务规则 注入（缺陷 7）', () => {
     expect(promptText).toContain('## 任务规则');
     expect(promptText).toContain('- **chinese-output**: 所有输出必须使用中文');
     expect(promptText).toContain('- **no-direct-commit**: 禁止直接执行 git commit');
-    // 位置对齐基准：## 任务规则 在 ## 前置Steps输出与产物 之后（此处无前置输出，
-    // ## 任务规则 应在 ## 参考信息 之后作为最后一节）。
+    // 位置对齐 v6：## 任务规则 在 ## 参考信息 之前（用户指令 → 任务规则 → 参考信息）。
     const rulesIdx = promptText.indexOf('## 任务规则');
     const refIdx = promptText.indexOf('## 参考信息');
-    expect(rulesIdx).toBeGreaterThan(refIdx);
     expect(rulesIdx).toBeGreaterThan(-1);
+    expect(rulesIdx).toBeLessThan(refIdx);
   });
 
   it('agent 路注入 ## 任务规则 节（非空 resolvedRules）', async () => {
@@ -866,7 +867,9 @@ describe('StepRunner ## 任务规则 注入（缺陷 7）', () => {
     await runner.run(request(promptStep()));
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).not.toContain('## 任务规则');
+    // 头部三点列表含 `` `## 任务规则` `` 引用（行内反引号），正文节标题为独立行
+    // `\n## 任务规则\n`——此处断言正文节不注入。
+    expect(promptText).not.toContain('\n## 任务规则\n');
   });
 
   it('resolvedRules 为空对象时不注入 ## 任务规则 节', async () => {
@@ -882,7 +885,7 @@ describe('StepRunner ## 任务规则 注入（缺陷 7）', () => {
     await runner.run(requestWithRules(promptStep(), {}));
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).not.toContain('## 任务规则');
+    expect(promptText).not.toContain('\n## 任务规则\n');
   });
 });
 
@@ -1029,5 +1032,79 @@ describe('StepRunner subagent settle completion (DSH subagent/end alignment)', (
     const runP = runner.run(request(agentStep()));
     ctrl.settle('child-1', 'completed');
     await expect(runP).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
+  });
+});
+
+// ── v6：前置输出按 step.inputFrom 过滤（配置只依赖 sce1 却显示所有前置 step） ──
+describe('StepRunner inputFrom 前置输出过滤（v6）', () => {
+  it('只注入 inputFrom 声明的依赖（path 匹配），未声明的前置不出现', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    const step: WorkflowStep = { ...promptStep(), inputFrom: [{ path: 'sce1' }] };
+    const previousOutputs = [
+      { name: 'sce1', id: 'sce1', returnPrompt: 'sce1 output', files: [] },
+      { name: 'parallel1', id: 'parallel1', returnPrompt: 'miku', files: [] },
+      { name: 'sce2', id: 'sce2', returnPrompt: 'sce2 old round', files: [] },
+    ];
+
+    await runner.run(request(step, { previousOutputs }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('前置Step: sce1');
+    expect(promptText).toContain('sce1 output');
+    expect(promptText).not.toContain('前置Step: parallel1');
+    expect(promptText).not.toContain('前置Step: sce2');
+    expect(promptText).not.toContain('miku');
+  });
+
+  it('同 stepId 多段（循环/重试）去重，只保留最近一段', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    const step: WorkflowStep = { ...promptStep(), inputFrom: [{ path: 'sce1' }] };
+    const previousOutputs = [
+      { name: 'sce1', id: 'sce1', returnPrompt: 'old round', files: [] },
+      { name: 'sce1', id: 'sce1', returnPrompt: 'nearest round', files: [] },
+    ];
+
+    await runner.run(request(step, { previousOutputs }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('nearest round');
+    expect(promptText).not.toContain('old round');
+    expect(promptText).toContain('前置Step: sce1');
+  });
+
+  it('inputFrom 未配置时保留全量前置输出（向后兼容）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    const previousOutputs = [
+      { name: 'sce1', id: 'sce1', returnPrompt: 'sce1 output', files: [] },
+      { name: 'parallel1', id: 'parallel1', returnPrompt: 'miku', files: [] },
+    ];
+
+    await runner.run(request(promptStep(), { previousOutputs }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('前置Step: sce1');
+    expect(promptText).toContain('前置Step: parallel1');
+    expect(promptText).toContain('miku');
   });
 });

@@ -26,7 +26,6 @@ import {
 import { TreeNav, type TreeLeafSelection } from './TreeNav.tsx'
 import { UnifiedTimeline } from './UnifiedTimeline.tsx'
 import { DiscussionInput } from './DiscussionInput.tsx'
-import { subscribeStepPhase } from './step-phase.ts'
 import { subscribeSandoreSse } from './sandore-sse.ts'
 import type { ModelDirectoryFace, ObservableFace, PermissionSelectValue } from './model-faces.ts'
 import { PreviewPanel } from './PreviewPanel.tsx'
@@ -148,17 +147,9 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
     }
   }, [refresh])
 
-  // 收尾阶段流转订阅：引擎 `sandore/step-phase` 事件（Session append 通道经
-  // conversationEvents 折叠）到达即立即刷新实例状态。
-  useEffect(() => {
-    return subscribeStepPhase(() => {
-      if (disposedRef.current) return
-      void forceRefresh()
-    })
-  }, [forceRefresh])
-
   // SSE 事件通道订阅：引擎 `/sandore/events` 推送即时刷新。
-  // 保留 subscribeStepPhase 作双保险（SSE 断线时 conversationEvents 仍可达）。
+  // Round 25：宿主会话不再承载 sandore/* 事件（去污染），step-phase conversationEvents
+  // 通道随 sandoreStepDefinition/stepPhaseDefinition 一并移除——SSE 为唯一即时刷新源。
   useEffect(() => {
     return subscribeSandoreSse((_type, _data) => {
       if (disposedRef.current) return

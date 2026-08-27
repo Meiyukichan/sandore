@@ -176,6 +176,8 @@ function harness(): {
       ...(options?.concurrencyLimiter === undefined ? {} : { concurrencyLimiter: options.concurrencyLimiter }),
       visitCounts: {},
       ...(options?.resumeFrom === undefined ? {} : { resumeFrom: options.resumeFrom }),
+      // visitCounts 注入透传（崩溃恢复测试需要播种快照计数；缺省空对象）。
+      ...(options?.visitCounts === undefined ? {} : { visitCounts: options.visitCounts }),
       onPersist: options?.onPersist ?? (async () => {}),
       ...(options?.commitState === undefined ? {} : { commitState: options.commitState }),
     });
@@ -436,7 +438,8 @@ describe('StageExecutor 缺陷 7：解析并注入任务规则', () => {
 
     expect(result.status).toBe('completed');
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).not.toContain('## 任务规则');
+    // 头部三点列表含 `` `## 任务规则` `` 引用（行内反引号），此处断言正文节不注入。
+    expect(promptText).not.toContain('\n## 任务规则\n');
   });
 });
 
@@ -574,8 +577,8 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     // step-b 无 gates 无未解析透传变量 → finalize 跳过 → 无 assess/gate stream。
     expect(subagents.continuableStarts).toHaveLength(1);
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('## 前置Steps输出与产物');
-    expect(promptText).toContain('<artifacts>');
+    expect(promptText).toContain('的输出和产物');
+    expect(promptText).toContain('<Artifacts>');
     expect(promptText).toContain('/tmp/out/report.md');
   });
 
@@ -1048,10 +1051,10 @@ describe('StageExecutor 收尾真 fork（5 阶段收尾重构）', () => {
     expect(result.passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
     expect(result.stageContract.passThroughVars['projectName']).toEqual({ value: 'sandore', description: 'project' });
     // Phase B JSON 的 compressedOutput 经 previousOutputs 落入 step-b 的提示词
-    // （「## 前置Steps输出与产物」的 returnPrompt，替代原 compressStepOutput）。
+    // （「前置Step: ... 的输出和产物」Reference 块的 Output，替代原 compressStepOutput）。
     // step-a（agent）为第 1 个 startContinuable（child-1），step-b（prompt）为第 2 个。
     const stepBPrompt = textOf(subagents.continuableStarts[1]?.request.prompt[0]);
-    expect(stepBPrompt).toContain('## 前置Steps输出与产物');
+    expect(stepBPrompt).toContain('的输出和产物');
     expect(stepBPrompt).toContain('agent 压缩摘要');
     // 收尾阶段流转：step-a finalizing（进入 Phase B 先 commit 快照）→ finalizing（Phase B 完成后 commit）
     // → routing（Phase D）→ completed；step-b 无变量无门禁跳过收尾。
@@ -1425,5 +1428,150 @@ describe('StageExecutor bugfix round22：runLoop pendingQueue+Promise.race 新�
     expect(result.executedSteps.find(s => s.stepId === 'step-a')?.status).toBe('failed');
     expect(result.executedSteps.some(s => s.stepId === 'step-b')).toBe(false);
     expect(startedCommands).not.toContain('echo b');
+  });
+});
+
+// ── 端到端复现：崩溃恢复后 loop maxIterations 计数不虚高（resume 节点出队不重复 +1） ──
+//
+// 2026-08-25 实测根因：实例（1cf77eea）内层循环配置 maxIterations=3 只跑了 2 次——
+// resumeInfo 把崩溃活跃段放入 resumeSubagents，initState 又将其重新入队（initialQueue），
+// 恢复后 runLoop 出队时 visitCount 再次 +1（虚高，如 sce1 执行 1 段却计数 2）→
+// checkLoopBreak 的 `visitCount >= maxIterations` 提前命中 → 循环体少跑一次。
+// 修复：resumeSegments 命中的节点出队不 +1（续跑同一执行段，非新访问）。
+describe('StageExecutor e2e：崩溃恢复 loop 计数（resume 节点不重复计 visitCount）', () => {
+  it('resume 续跑后 maxIterations=3 循环体仍执行满 3 次', async () => {
+    const sce2: WorkflowStep = { id: 'sce2', name: 'sce2', command: { type: 'shell', value: { command: 'echo sce2' } } };
+    const fix: WorkflowStep = {
+      id: 'fix', name: 'fix',
+      command: { type: 'agent', value: { promptText: 'fix counts' } },
+      branches: [{
+        next: 'sce2',
+        loop: { next: 'sce2', maxIterations: 3, exitTo: 'done' },
+      }],
+    };
+    const done: WorkflowStep = { id: 'done', name: 'done', command: { type: 'shell', value: { command: 'echo done' } } };
+    const stage: WorkflowStage = {
+      id: 'stg-1', name: 'demo1',
+      steps: [{ id: 'sce2' }, { id: 'fix', branches: [{ next: 'sce2', loop: { next: 'sce2', maxIterations: 3, exitTo: 'done' } }] }, { id: 'done' }],
+    };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-loop-resume', name: 'wfl-loop-resume', version: '1', stages: [stage],
+      steps: [sce2, fix, done], settings: {},
+    };
+    const { agents, llm, shell, makeExecutor } = harness();
+    shell.runHandler = async spec => shellResult(spec, 'done');
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // fix 的子代理（resume 续跑与正常执行共用；同一 child 复用）。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'fix done' }]));
+    agents.register(child);
+    // 第 3 次 fix 正常执行的 startContinuable 会生成 child-2（FakeSubagents 递增 index）。
+    const child2 = new FakeAgent('child-2');
+    child2.session.append(assistantMessageEvent([{ type: 'text', text: 'fix done 2' }]));
+    agents.register(child2);
+
+    // 崩溃快照（循环体顺序 sce2 → fix）：sce2(0)、sce2(1)、fix(0) 已 completed；
+    // fix(1) 正在跑（活跃段，第 2 次循环的 fix）；pendingQueue=[fix]。
+    const completedSteps = [
+      { id: 'exec-1', stepId: 'sce2', stageId: 'stg-1', name: 'sce2', status: 'completed', visitCount: 1 },
+      { id: 'exec-1b', stepId: 'sce2', stageId: 'stg-1', name: 'sce2', status: 'completed', visitCount: 2 },
+      { id: 'exec-2', stepId: 'fix', stageId: 'stg-1', name: 'fix', status: 'completed', visitCount: 1 },
+    ];
+    const resumeFrom: StageExecutorResume = {
+      completedSteps,
+      resumeSubagents: [{
+        step: fix,
+        executed: { id: 'exec-3', stepId: 'fix', stageId: 'stg-1', name: 'fix', status: 'running', visitCount: 2, sessionMeta: { childId: 'child-1', synthetic: false, command: 'agent' } },
+        childId: 'child-1',
+      }],
+      pendingQueue: ['fix'],
+    };
+
+    const visitCounts = { sce2: 2, fix: 2 }; // 崩溃前出队计数：sce2(0,1)、fix(0,1)
+    const executor = makeExecutor({
+      stageDef: stage,
+      workflowDef: definition,
+      resumeFrom,
+      visitCounts,
+    });
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    // 循环体执行满 3 次（maxIterations=3）：sce2 段 3 个（exec-1/exec-1b + 1 个新）、
+    // fix 段 3 个（exec-2 + exec-3 续跑 + 1 个新）。
+    const sce2Segs = result.executedSteps.filter(s => s.stepId === 'sce2');
+    const fixSegs = result.executedSteps.filter(s => s.stepId === 'fix');
+    expect(sce2Segs).toHaveLength(3);
+    expect(fixSegs).toHaveLength(3);
+    expect(fixSegs.map(s => s.status)).toEqual(['completed', 'completed', 'completed']);
+    // done 恰好一次（exitTo）。
+    expect(result.executedSteps.filter(s => s.stepId === 'done')).toHaveLength(1);
+  });
+});
+//
+// 2026-08-25 实测根因：outputTo 路径引用本 step 提取的透传变量（`artifacts/${change-name}/...`）
+// 时，「buildFinalizeContext 早期收集」用 pre-finalize vars（变量未写回）→ 收集空 → 段快照
+// artifacts 不写 → 导航无产物；而门禁用「累加器 + 当次提取」合并 vars → 能解析 → 门禁通过
+// （「门禁过但导航无产物」）。修复：buildPhaseBPreviousOutput（Phase B 后、变量已写回）的
+// 收集结果写回 executed.artifacts，保证最终产物与门禁一致。
+describe('StageExecutor e2e：自引用透传变量产物（导航产物缺失根因复现）', () => {
+  it('Phase B 写回后收集产物 → executed.artifacts 与 stage 契约一致', async () => {
+    const stepA: WorkflowStep = {
+      id: 'step-a', name: 'sce1',
+      command: { type: 'agent', value: { promptText: 'generate proposal' } },
+      passThroughVars: [{ name: 'change-name', value: '', description: '当前变更名称' }],
+      outputTo: [{ id: 'opt-1', path: 'artifacts/${change-name}/proposal.md' }],
+      // 门禁启用 → runPhaseA/B 的跳过谓词（无未解析变量且无门禁）不命中 → 评估提取执行
+      // （与真实工作流一致：有门禁的 step 才会跑收尾评估提取透传变量）。
+      gates: { primary: { enabled: true } },
+    };
+    const stage: WorkflowStage = { id: 'stg-1', name: 'demo1', steps: [{ id: 'step-a' }] };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-self-var', name: 'wfl-self-var', version: '1', stages: [stage], steps: [stepA], settings: {},
+    };
+    const { llm, agents, fs, makeExecutor } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    // Phase A 临时会话：提取为空（ask 判定 false）。
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'proposal generated' }]));
+    agents.register(child);
+    // Phase B 真 fork 评估回复：提取 change-name=book-management（LLM 从输出提取）。
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"passThroughVars":{"change-name":"book-management"},"compressedOutput":"proposal 摘要"}' }];
+    // 产物文件已由子代理生成（outputTo 命中路径）。
+    fs.seedFile('/tmp/artifacts/book-management/proposal.md');
+    // 源子代理完整事件（turn 0 闭合：start/user/assistant/end，供 forkStepSubagent 重建）。
+    const childEvents = (): Array<{ type: string; seq: number; time: number; data: unknown }> => [
+      { type: 'turn/start', seq: 0, time: 0, data: { turn: 0 } },
+      { type: 'user/message', seq: 1, time: 0, data: { id: 'u1', content: [{ type: 'text', text: 'do work' }] } },
+      { type: 'assistant/message', seq: 2, time: 0, data: { turn: 0, step: 0, message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'proposal generated' }], source: { kind: 'model', provider: 'p', model: 'm' } } } },
+      { type: 'turn/end', seq: 3, time: 0, data: { turn: 0, reason: { kind: 'completed' } } },
+    ];
+
+    const executor = makeExecutor(
+      {
+        stageDef: stage,
+        workflowDef: definition,
+        hooks: { onStepStart: () => {}, onStepCompleted: () => {}, onStepFailed: () => {} },
+      },
+      {
+        defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm',
+        hostAgentId: 'host-1',
+        createAgent: options => agents.create(options),
+        getStepSessionEvents: async childId => (childId === 'child-1' ? childEvents() : undefined),
+      },
+    );
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    // ① 写回：引擎累加器含提取值（Phase B commitFinalize('finalizing')）。
+    expect(result.passThroughVars['change-name']).toEqual({ value: 'book-management', description: '当前变更名称' });
+    // ② 段快照产物：自引用变量解析后收集成功（修复前为 undefined）。
+    const segment = result.executedSteps.find(s => s.stepId === 'step-a')!;
+    expect(segment.artifacts).toEqual(['/tmp/artifacts/book-management/proposal.md']);
+    // ③ stage 契约产物一致（stage 级权威汇总）。
+    expect(result.stageContract.artifacts[0]?.files).toEqual(['/tmp/artifacts/book-management/proposal.md']);
   });
 });

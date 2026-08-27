@@ -241,14 +241,12 @@ describe('LifecycleManager pause/resume via engine', () => {
     expect(state?.pausedChildIds).toEqual(['child-1']);
     expect(state?.status).toBe('paused');
 
-    // sandore/step-paused 双发（Cordis 载荷含 childId + 宿主 Session append）。
+    // sandore/step-paused 单发（Cordis 载荷含 childId；Round 25 去污染：宿主会话不再承载）。
     const record = records.find(r => r.name === 'sandore/step-paused');
     expect(record?.args[1]).toBe('step-agent');
     expect(record?.args[2]).toBe('child-1');
     expect(record?.args[3]).toBe('step-agent');
     expect(record?.args[4]).toBeUndefined();
-    const session = sessions.get(run.instanceId);
-    expect(session?.events.some(e => e.type === 'sandore/step-paused')).toBe(true);
 
     // 清理：让挂起的 Step settle 完成（pauseStep 的 interrupt 已 settle aborted 使 run 收敛为
     // paused；此处显式 settle completed 令残余 awaiter 释放，避免悬挂 run）。

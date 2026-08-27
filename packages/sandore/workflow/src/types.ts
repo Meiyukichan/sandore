@@ -206,6 +206,8 @@ export interface ExecutedStepDefault {
   retryHistory?: RetryRecord[]
   parentSessionId?: string
   output?: ContentBlock[]
+  /** Round 26：本执行段实际产物文件（进程绝对路径；step 完成收尾时收集写入，与 schema 同步）。 */
+  artifacts?: string[]
 }
 
 /** 工作流 DAG 中单个 Stage 的状态快照。 */
