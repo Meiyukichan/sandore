@@ -58,11 +58,18 @@ declare module '@deepseek-ai/cordis' {
 
 // ── 透传变量替换 ────────────────────────────────────────────────────────────
 
-/** 替换 `${xxx}` 透传变量：已定义替换为值，未定义保留原文。 */
+/**
+ * 替换 `${xxx}` 透传变量：已定义**且值非空**替换为值，未定义或值为空保留原文。
+ *
+ * 2026-08-25（分支条件变量替换 + 空值守卫）：值为空时保留 `${xxx}` 占位符——避免
+ * 替换成空导致路径粘连（如 `artifacts/${change-name}/proposal.md` + 空值 →
+ * `artifacts//proposal.md` 误匹配）；占位符保留后由 `hasUnresolvedVars` 标 deferred，
+ * 模型/下游可见「变量未解析」而非静默空值。
+ */
 export function replacePassThroughVars(str: string, vars: Readonly<Record<string, string>>): string {
   return str.replace(/\$\{([^}]+)\}/g, (whole, name: string) => {
     const value = vars[name];
-    return value === undefined ? whole : value;
+    return value === undefined || value === '' ? whole : value;
   });
 }
 

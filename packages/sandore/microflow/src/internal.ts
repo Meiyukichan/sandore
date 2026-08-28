@@ -45,6 +45,16 @@ export function textSummary(output: readonly ContentBlock[] | undefined): string
   return texts.join('\n');
 }
 
+/** XML 内容转义（`&` 必须最先 → `&amp;`、`<` → `&lt;`、`>` → `&gt;`）——v6 模板内容统一转义。 */
+export function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/** XML 属性值转义：内容转义 + 双引号 → `&quot;`（title 属性承载 name/id）。 */
+export function escapeXmlAttr(text: string): string {
+  return escapeXml(text).replace(/"/g, '&quot;');
+}
+
 /**
  * 将命令串拆分为 argv（subprocess 不 shell 解释）。
  *

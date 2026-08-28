@@ -538,9 +538,9 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     // AI 调用，产物存在即通过。
     expect(result.status).toBe('completed');
     expect(llm.calls).toHaveLength(2);
-    // Phase B 重新评估提示词同样含 <artifacts> 块（缺陷 16：收尾评估上下文带产物）。
+    // Phase B 重新评估提示词同样含 <Artifacts> 块（缺陷 16：收尾评估上下文带产物）。
     const phaseBAssessPrompt = textOf(llm.calls[1]?.messages[0]?.content[0]);
-    expect(phaseBAssessPrompt).toContain('<artifacts>');
+    expect(phaseBAssessPrompt).toContain('<Artifacts>');
     expect(phaseBAssessPrompt).toContain('/tmp/out/report.md');
   });
 

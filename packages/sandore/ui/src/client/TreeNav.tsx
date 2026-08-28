@@ -5,9 +5,12 @@
  * member 行、细线 chevron（IconChevronRightOutline14 / Down）、16px 逐级缩进。
  * 状态一律用**左侧状态点**（chevron 后、标题前），右侧无任何文字。默认全部
  * 展开；result/artifact 叶子点击 → 打开右栏预览；running Step 可点跳子会话。
+ * 产物文件图标照 DSH-better-sidebar 文件树（FileTree）：`react-icons/vsc` 的
+ * `VscFile`（14px、currentColor 灰色轮廓）；result 叶子用 IconSparkle16。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/TreeNav
  */
 import { useState } from 'react'
+import { VscFile } from 'react-icons/vsc'
 import {
   IconChevronDownOutline14, IconChevronRightOutline14, IconSparkle16,
   StateDot,
@@ -189,79 +192,6 @@ function StepRow({ node, onOpenChild, t, children }: {
   )
 }
 
-/** 文件类型分类（按 basename 扩展名）。 */
-type FileKind = 'markdown' | 'image' | 'code' | 'data' | 'doc' | 'archive' | 'other'
-
-/** 按扩展名归类文件类型（未知扩展名 → other）。 */
-function fileKindOf(name: string): FileKind {
-  const base = name.toLowerCase()
-  const dot = base.lastIndexOf('.')
-  const ext = dot === -1 ? '' : base.slice(dot + 1)
-  if (['md', 'markdown'].includes(ext)) return 'markdown'
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return 'image'
-  if (['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'css', 'html', 'sh', 'ps1', 'vue'].includes(ext)) return 'code'
-  if (['json', 'yaml', 'yml', 'toml', 'xml', 'ini', 'csv'].includes(ext)) return 'data'
-  if (['txt', 'doc', 'docx', 'pdf', 'rst'].includes(ext)) return 'doc'
-  if (['zip', 'tar', 'gz', '7z', 'rar'].includes(ext)) return 'archive'
-  return 'other'
-}
-
-/** VSCode 风格类型色（文件轮廓保持灰色 currentColor，内部符号用类型色）。 */
-function kindColorOf(name: string, kind: FileKind): string {
-  const base = name.toLowerCase()
-  if (kind === 'code') {
-    if (base.endsWith('.ts') || base.endsWith('.tsx') || base.endsWith('.mts')) return '#3178c6'
-    if (base.endsWith('.js') || base.endsWith('.jsx') || base.endsWith('.mjs')) return '#f1e05a'
-    if (base.endsWith('.py')) return '#3572a5'
-    if (base.endsWith('.go')) return '#00add8'
-    if (base.endsWith('.rs')) return '#dea584'
-    if (base.endsWith('.css')) return '#563d7c'
-    if (base.endsWith('.html') || base.endsWith('.vue')) return base.endsWith('.vue') ? '#41b883' : '#e34c26'
-    if (base.endsWith('.sh') || base.endsWith('.ps1') || base.endsWith('.bash')) return '#89e051'
-    if (base.endsWith('.java')) return '#b07219'
-    if (base.endsWith('.c') || base.endsWith('.cpp') || base.endsWith('.h')) return '#555555'
-    return '#3572a5'
-  }
-  if (kind === 'data') {
-    if (base.endsWith('.yaml') || base.endsWith('.yml')) return '#cb171e'
-    if (base.endsWith('.xml')) return '#e37933'
-    return '#cbcb41'
-  }
-  switch (kind) {
-    case 'markdown': return '#519aba'
-    case 'image': return '#e37933'
-    case 'archive': return '#af8743'
-    case 'doc': return '#848484'
-    default: return '#848484'
-  }
-}
-
-/** 文件类型图标：VSCode 语言徽标风格——已知类型 = 彩色圆角徽标 + 白色符号（无文件框）；
- *  未知类型（other）= 灰色文件轮廓（VSCode 未知文件样式）。 */
-function FileTypeGlyph({ name }: { readonly name: string }) {
-  const kind = fileKindOf(name)
-  if (kind === 'other') {
-    return (
-      <svg width="14" height="14" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-        <path d="M3 1h4.5L10 3.5V10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-        <path d="M7.5 1v2.5H10" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-  const color = kindColorOf(name, kind)
-  return (
-    <svg width="14" height="14" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <rect x="1" y="1" width="10" height="10" rx="2.5" fill={color} />
-      {kind === 'image' && <path d="M4 8l1.3-1.5 1.2 1.3.9-1L8.6 8H4Z" stroke="#fff" strokeWidth="1.1" strokeLinejoin="round" />}
-      {kind === 'code' && <path d="M4.5 5.2 3.2 6.4l1.3 1.2M7.5 5.2 8.8 6.4 7.5 7.6" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />}
-      {kind === 'data' && <path d="M5 5c-.5.3-.8.8-.8 1.6 0 .8.3 1.3.8 1.6M7 5c.5.3.8.8.8 1.6 0 .8-.3 1.3-.8 1.6" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" />}
-      {kind === 'doc' && <path d="M4 5.4h4M4 7.2h3" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" />}
-      {kind === 'markdown' && <path d="M4.2 4.9v3.2L6 6.7l1.8 1.4V4.9" stroke="#fff" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />}
-      {kind === 'archive' && <path d="M3.8 8.4h4.4" stroke="#fff" strokeWidth="1.1" strokeLinecap="round" />}
-    </svg>
-  )
-}
-
 /** 叶子（result/artifact）：图标与 step 状态点同列对齐，点击打开右栏预览。 */
 function LeafRow({ node, activePreviewId, onSelectLeaf, t }: {
   readonly node: RunTreeNode
@@ -287,7 +217,8 @@ function LeafRow({ node, activePreviewId, onSelectLeaf, t }: {
       }}
     >
       <span className={css.leafIcon}>
-        {node.type === 'result' ? <IconSparkle16 /> : <FileTypeGlyph name={node.name} />}
+        {/* 产物文件图标照 DSH-better-sidebar FileTree（VscFile）；result 用 Sparkle。 */}
+        {node.type === 'result' ? <IconSparkle16 /> : <VscFile size={14} />}
       </span>
       <span className={css.leafLabel}>{node.name === '' ? t('run.result') : node.name}</span>
       {node.meta !== undefined && <span className={css.leafMeta}>{node.meta}</span>}

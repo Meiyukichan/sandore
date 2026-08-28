@@ -2,9 +2,10 @@
  * dag-navigator.ts（WorkflowDagNavigator）的单元测试：Stage 级条件分支评估。
  *
  * 直接单测 tryAdvanceStage 评估 Stage branch.condition 选下一 Stage（修前盲取首
- * Stage 目标）。覆盖：多条件分支（A 命中→Stage A、B 命中→Stage B）、无命中数组
- * 顺序兜底、无 condition 默认分支、StageContract 注入评估 context、shell 匹配
- * label、未完成/末位 Stage 边界。Step 级路由已迁 microflow（本导航器只持 Stage 图）。
+ * Stage 目标）。覆盖：多条件分支批量评估（A 命中→Stage A、B 命中→Stage B，AI 条件
+ * 一次批量调用返回 branchId 数组）、无命中数组顺序兜底、无 condition 默认分支、
+ * StageContract 注入评估 context、shell 匹配 label、未完成/末位 Stage 边界。Step 级
+ * 路由已迁 microflow（本导航器只持 Stage 图）。
  * @module @deepseek-ai/dsh-sandore-workflow/src/dag-navigator.spec
  */
 import { Context } from '@deepseek-ai/cordis';
@@ -59,6 +60,20 @@ function makeDef(stages: WorkflowStage[]): WorkflowDefinition {
   };
 }
 
+/** 取 llm 首次调用的首条用户消息文本（单 text block）。 */
+function firstPromptText(llm: FakeLlm): string {
+  const content = llm.calls[0]?.messages[0]?.content;
+  if (content === undefined) {
+    return '';
+  }
+  for (const block of content) {
+    if (block.type === 'text') {
+      return block.text;
+    }
+  }
+  return '';
+}
+
 /** 新建导航器并把 currentStage 标记完成（setStageContract）。 */
 function makeNavigator(ctx: Context, stages: WorkflowStage[], currentStageId: string, contract?: StageContract): WorkflowDagNavigator {
   const def = makeDef(stages);
@@ -90,28 +105,34 @@ describe('WorkflowDagNavigator Stage 级条件分支评估', () => {
 
   it('条件 A 命中 → 推进到 Stage A', async () => {
     const { ctx, llm } = makeCtx();
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-a"]}');
     const nav = makeNavigator(ctx, fourStages, 'stg-entry', doneContract('stg-entry', '入口'));
     const advanced = await nav.tryAdvanceStage();
     expect(advanced).toBe(true);
     expect(nav.currentNodeId).toBe('stg-a');
   });
 
-  it('条件 A false、条件 B 命中 → 推进到 Stage B（非数组顺序 stg-a）', async () => {
+  it('批量评估：条件 A false、条件 B 命中 → 推进到 Stage B（一次调用，非数组顺序 stg-a）', async () => {
     const { ctx, llm } = makeCtx();
-    let call = 0;
-    llm.streamHandler = () => textChunks(call++ === 0 ? '{"shouldExecute": false}' : '{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-b"]}');
     const nav = makeNavigator(ctx, fourStages, 'stg-entry', doneContract('stg-entry', '入口'));
     const advanced = await nav.tryAdvanceStage();
     expect(advanced).toBe(true);
     // 第二个条件命中 → stg-b（不是数组顺序的 stg-a，证明按 condition 选）。
     expect(nav.currentNodeId).toBe('stg-b');
-    expect(llm.calls).toHaveLength(2);
+    // AI 条件一次批量调用（对齐 branch-evaluate-batch），不逐条调用。
+    expect(llm.calls).toHaveLength(1);
+    // 批量提示词含两个分支的 branchId + executeCondition。
+    const promptText = firstPromptText(llm);
+    expect(promptText).toContain('"branchId": "stg-a"');
+    expect(promptText).toContain('"branchId": "stg-b"');
+    expect(promptText).toContain('"executeCondition": "go-a?"');
+    expect(promptText).toContain('"executeCondition": "go-b?"');
   });
 
   it('全条件 false 且无默认分支 → 数组顺序兜底', async () => {
     const { ctx, llm } = makeCtx();
-    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": []}');
     const stages = [
       stage('stg-entry', '入口', branchesNoDefault),
       stage('stg-a', 'A'),
@@ -126,7 +147,7 @@ describe('WorkflowDagNavigator Stage 级条件分支评估', () => {
 
   it('全条件 false 有默认分支（无 condition）→ 走默认 Stage（非数组顺序）', async () => {
     const { ctx, llm } = makeCtx();
-    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": []}');
     const nav = makeNavigator(ctx, fourStages, 'stg-entry', doneContract('stg-entry', '入口'));
     const advanced = await nav.tryAdvanceStage();
     expect(advanced).toBe(true);
@@ -136,7 +157,7 @@ describe('WorkflowDagNavigator Stage 级条件分支评估', () => {
 
   it('评估基于 StageContract：AI 提示词含当前 Stage 契约内容（stage 名/产物）', async () => {
     const { ctx, llm } = makeCtx();
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-a"]}');
     const nav = makeNavigator(
       ctx,
       [stage('stg-entry', '入口Stage', [{ condition: { type: 'prompt', value: { promptText: 'go-a?' } }, next: 'stg-a' }]), stage('stg-a', 'A')],
@@ -144,10 +165,12 @@ describe('WorkflowDagNavigator Stage 级条件分支评估', () => {
       doneContract('stg-entry', '入口Stage', '产物: 报告'),
     );
     await nav.tryAdvanceStage();
-    // StageContract 摘要注入 AI 提示词：含 stage 名与产物 returnPrompt。
-    const promptText = JSON.stringify(llm.calls[0]?.messages ?? []);
+    // StageContract 摘要注入 AI 提示词：含 stage 名与产物 returnPrompt（<ReferenceInfo> 内）。
+    const promptText = firstPromptText(llm);
     expect(promptText).toContain('入口Stage');
     expect(promptText).toContain('产物: 报告');
+    expect(promptText).toContain('<ReferenceInfo>');
+    expect(promptText).toContain('<Reference title="当前 Stage 完成契约">');
   });
 
   it('shell condition stdout 匹配 label → 命中该分支', async () => {
@@ -182,7 +205,7 @@ describe('WorkflowDagNavigator Stage 级条件分支评估', () => {
 
   it('未完成 Stage（无 completed 契约）→ 不推进，返回 false', async () => {
     const { ctx, llm } = makeCtx();
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-a"]}');
     const nav = makeNavigator(ctx, fourStages, 'stg-entry');
     const advanced = await nav.tryAdvanceStage();
     expect(advanced).toBe(false);
@@ -193,7 +216,7 @@ describe('WorkflowDagNavigator Stage 级条件分支评估', () => {
 
   it('末位 Stage 完成 → 无下一 Stage，返回 false', async () => {
     const { ctx, llm } = makeCtx();
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-a"]}');
     const nav = makeNavigator(ctx, fourStages, 'stg-default', doneContract('stg-default', '默认'));
     const advanced = await nav.tryAdvanceStage();
     expect(advanced).toBe(false);

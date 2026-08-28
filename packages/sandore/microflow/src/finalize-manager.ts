@@ -37,7 +37,7 @@ import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
 
 import { SandoreError } from './errors.ts';
 import { fileExists, findFilesByGlob, findFilesByRegex, hasUnresolvedVars, isGlobPattern, resolveOutputToVars } from './file-utils.ts';
-import { describeError, resolveProviderModel, textSummary } from './internal.ts';
+import { describeError, escapeXml, resolveProviderModel, textSummary } from './internal.ts';
 import { driveAgentRound, forkStepSubagent } from './fork-session.ts';
 import { finalAssistantOutput } from './subagents.ts';
 import type { Agent, AgentHandle, AgentOptions, CreateAgentOptions, SubagentSettlement } from './subagents.ts';
@@ -202,25 +202,6 @@ interface SecondaryGateEval {
   readonly degraded?: string;
 }
 
-/** 收尾评估提示词主头部。 */
-const ASSESS_PROMPT_HEADER = '你是严谨准确的Step执行后处理Agent，在当前Step的会话分支中进行收尾评估。';
-
-/** 收尾评估红线规则（只读，禁止文件改动与过度探索）。 */
-const ASSESS_RED_LINES = [
-  '禁止编辑、创建或删除任何文件',
-  '禁止过度探索',
-  'askQuestion 的 questions 数组每项必须有稳定的 id 和具体的 question',
-] as const;
-
-/**
- * secondary 门禁（AI 门禁审查）提示词主头部。primary 为纯代码产物校验、无 AI 提示词。
- *
- * 框架只注入身份声明 + stepContext + 用户 prompt 原样 + 返回 JSON 格式——**不内置**
- * 「检查完成度/质量」等要求：是否做完成度/质量判断完全由用户显式配置的
- * `secondary.prompt` 内容决定。
- */
-const SECONDARY_GATE_PROMPT_HEADER = '你是严谨准确的Step门禁审查Agent，请按照用户给定的门控审查要求，对当前Step的输出进行审查。';
-
 /** 解析外部输出 JSON 为对象；解析失败或非对象返回 undefined。 */
 function parseJsonObject(text: string): Record<string, unknown> | undefined {
   let raw: unknown;
@@ -342,88 +323,131 @@ function resolveForkAgentOptions(config: FinalizeManagerConfig): AgentOptions | 
     : undefined;
 }
 
-/** 按 4 空格缩进多行文本。 */
-function indentBlock(text: string): string[] {
-  return text.split('\n').map(line => `    ${line}`);
-}
-
-/** 构建 `<stepContext>`（input/output/artifacts XML 块）。 */
-function buildStepContextBlock(context: FinalizeStepContext): string {
-  const lines: string[] = ['<stepContext>', '  <input>'];
-  lines.push(...indentBlock(context.input));
-  lines.push('  </input>');
-  lines.push('  <output>');
-  lines.push(...indentBlock(context.output));
-  lines.push('  </output>');
-  lines.push('  <artifacts>');
-  for (const artifact of context.artifacts ?? []) {
-    lines.push(`    - ${artifact}`);
-  }
-  lines.push('  </artifacts>');
-  lines.push('</stepContext>');
-  return lines.join('\n');
+/** 按 N 空格缩进多行文本（XML 块内内容对齐）。 */
+function indentBlock(text: string, spaces: number): string[] {
+  const prefix = ' '.repeat(spaces);
+  return text.split('\n').map(line => `${prefix}${line}`);
 }
 
 /**
- * 构建收尾评估提示词（头部 + stepContext + 任务 + 透传变量列表 + 返回格式 + 红线规则）。
+ * 构建收尾输入信息 v6 块（`<ReferenceInfo>`：当前 Step 的输入和输出）。
  *
- * **一个 LLM 调用返回合并 JSON**：`{"hasAsk": ..., "passThroughVars": {...},
- * "compressedOutput": "..."}`——Phase A（临时会话）只消费 `hasAsk`/`askQuestion`
- * （ask 判定），Phase B（真 fork 子代理）校验 `passThroughVars`（透传变量提取）+
- * `compressedOutput`（当前 Step 关键产出压缩摘要，替代原 compressStepOutput 的
- * returnPrompt 产物，落入 previousOutputs）。输出压缩任务对两个 Phase 统一生效。
+ * v6 框架（2026-08-25）：`<ReferenceInfo>` root + `<Reference title>` 自描述块 +
+ * `<Input>`/`<Output>`/`<Artifacts>`/`<Artifact>`（全驼峰）；内容统一转义
+ * （`escapeXml`）。替代 v1 的 `<stepContext>` 小写根标签（违反全目录 PascalCase 规范）。
  */
-function buildAssessPrompt(context: FinalizeStepContext, passThroughVars: readonly PassThroughVar[]): string {
-  const sections: string[] = [ASSESS_PROMPT_HEADER, '', buildStepContextBlock(context)];
+function buildStepContextBlock(context: FinalizeStepContext): string {
+  return [
+    '<ReferenceInfo>',
+    '  <Reference title="当前 Step 的输入和输出">',
+    '    <Input>',
+    ...indentBlock(escapeXml(context.input), 6),
+    '    </Input>',
+    '    <Output>',
+    ...indentBlock(escapeXml(context.output), 6),
+    '    </Output>',
+    '    <Artifacts>',
+    ...(context.artifacts ?? []).map(artifact => `      <Artifact>${escapeXml(artifact)}</Artifact>`),
+    '    </Artifacts>',
+    '  </Reference>',
+    '</ReferenceInfo>',
+  ].join('\n');
+}
+
+/**
+ * 构建 Phase A 收尾评估提示词（v6 结构，2026-08-25 精简——**只做 ask 判断**）。
+ *
+ * Phase A 职责 = 判断当前 Step 的输出（Output）**本身**是否就是在向用户提问
+ * （hasAsk + askQuestion 载荷）——**不是**判断任务是否完成/走偏，也**不**根据上下文
+ * 需要推断是否需要提问（2026-08-26 语义收紧：曾出现把「读取 counts.json 的结果」这类
+ * 正常输出误判为 ask 并编造无关问题的案例）。透传变量提取与输出压缩是 Phase B 的职责
+ * （`buildPhaseBFinalizePrompt`）——Phase B 注释明确「不复用 Phase A 结果」，Phase A 做
+ * 这两项是纯浪费，故本模板不再要求（返回格式仅 hasAsk/askQuestion）。
+ *
+ * 参考信息**只注入 Output**（不注入 Input/Artifacts，2026-08-26）：判断对象唯一是
+ * step 返回的结果文本，输入/上下文会带偏判断（模型会从「用户原始需求/指令」推断
+ * 流程需要澄清，而非看输出本身是否在提问）。
+ */
+function buildAssessPrompt(context: FinalizeStepContext): string {
+  const header = [
+    '当前 Step 已执行完成。请判断当前 Step 的输出是否是在向用户提问。必须先明确以下三点，再开始执行：',
+    '- `## 你的任务` —— 本次 ask 判断要达成的**唯一目标**。',
+    '- `## 参考信息` —— 当前 Step 的执行输出（Output），按需查阅。',
+    '- `## 返回格式` —— 必须返回的 JSON 格式。',
+  ];
+  const sections: string[] = [...header];
   sections.push('');
   sections.push('## 你的任务');
-  sections.push('1. 判断是否需要向用户提问确认后继续（hasAsk: true = 需要提问；false = 不需要，直接进入后续收尾）');
-  sections.push('2. 提取透传变量值：对每个列出的透传变量，从 <output> 中提取其值并写入 passThroughVars；若变量值就是 <output> 的完整文本，直接使用它。');
-  sections.push('3. 输出压缩：把 <output> 完整总结写入 compressedOutput，按以下结构组织：');
-  sections.push('   - 【任务要求】：本次 step 要求完成什么');
-  sections.push('   - 【执行过程】：实际做了什么（关键步骤、调用的工具/文件、产生的中间结果）');
-  sections.push('   - 【最终成果】：完整的最终产出总结（包含所有关键信息，不得比原始 <output> 更简短）');
-  sections.push('   注意：compressedOutput 是后续 step 的唯一上下文来源，必须完整保留关键信息，禁止过度压缩。');
+  sections.push('根据 `## 参考信息` 中当前 Step 的输出，判断它**本身**是否就是在向用户提问（询问用户、等待用户回答后继续）。');
+  sections.push('- hasAsk: true —— 输出本身就是一句提问（如「请问您的具体需求是什么？」）；');
+  sections.push('- hasAsk: false —— 输出是正常结果（完成报告、数据、文件路径等）。');
+  sections.push('**唯一判断依据是输出文本本身是否就是一句提问**；不得根据任务是否完成、是否走偏或任何上下文需要推断是否需要提问。');
+  sections.push('若 hasAsk: true，askQuestion 的 question 应**提取自输出中的问题**（取原文或简洁概括），不得编造与输出无关的问题。');
   sections.push('');
-  sections.push('## 透传变量');
-  if (passThroughVars.length === 0) {
-    sections.push('（无透传变量，passThroughVars 返回空对象）');
-  }
-  for (const variable of passThroughVars) {
-    sections.push(`- ${variable.name}: ${variable.description}`);
-  }
+  sections.push('## 参考信息');
+  sections.push('<ReferenceInfo>');
+  sections.push('  <Reference title="当前 Step 的执行输出">');
+  sections.push('    <Output>');
+  sections.push(...indentBlock(escapeXml(context.output.trim() === '' ? '(无输出)' : context.output), 6));
+  sections.push('    </Output>');
+  sections.push('  </Reference>');
+  sections.push('</ReferenceInfo>');
   sections.push('');
-  sections.push('## 返回格式（JSON）');
+  sections.push('## 返回格式');
   sections.push('请将结果以 ```json 代码围栏包裹输出，围栏内只放 JSON，不要包含任何其他文字或解释。');
-  sections.push('示例：');
+  sections.push('示例（输出是正常结果，不是提问）：');
   sections.push('```json');
-  sections.push('{"hasAsk": false, "passThroughVars": {}, "askQuestion": {"questions": []}, "compressedOutput": "..."}');
+  sections.push('{"hasAsk": false, "askQuestion": {"questions": []}}');
+  sections.push('```');
+  sections.push('示例（输出本身就是提问）：');
+  sections.push('```json');
+  sections.push('{"hasAsk": true, "askQuestion": {"questions": [{"id": "550e8400-e29b-41d4-a716-446655440000", "question": "请问您的具体需求是什么？"}]}}');
   sections.push('```');
   sections.push('');
   sections.push('## 红线规则');
-  for (const rule of ASSESS_RED_LINES) {
-    sections.push(`- ${rule}`);
-  }
+  sections.push('- 仅当输出本身是提问时 hasAsk: true；不得根据任务是否完成或上下文需要推断提问');
+  sections.push('- askQuestion 的 questions 数组每项必须有稳定的 id 和具体的 question');
   return sections.join('\n');
 }
 
 /**
- * Phase B 专用收尾提示词（`assessForked` / `degradeFinalize` 使用）。
+ * Phase B 专用收尾提示词（v6 结构，2026-08-25 改造）。
  *
- * 与 `buildAssessPrompt`（Phase A 共用）不同：**不含 hasAsk 判断**——Phase A 已完成
- * ask 判定，Phase B 只需提取透传变量 + 输出压缩。返回 JSON：
+ * 与 `buildAssessPrompt`（Phase A）分工：**不含 hasAsk 判断**——Phase A 已完成 ask
+ * 判定，Phase B 只做透传变量提取 + 执行总结（compressedOutput）。返回 JSON：
  * `{"passThroughVars": {...}, "compressedOutput": "..."}`。
+ *
+ * `degradedContext`（可选）：fork 降级（`degradeFinalize` 临时会话无 fork 历史）时注入
+ * step 执行输入/输出 v6 块——渲染为 `## 参考信息` 节 + 头部三点加「参考信息」点（对齐
+ * batch/loop-break 降级模式）；fork 成功（上下文在会话里）不传。
  */
-function buildPhaseBFinalizePrompt(context: FinalizeStepContext, passThroughVars: readonly PassThroughVar[]): string {
-  const sections: string[] = [ASSESS_PROMPT_HEADER, '', buildStepContextBlock(context)];
+function buildPhaseBFinalizePrompt(
+  context: FinalizeStepContext,
+  passThroughVars: readonly PassThroughVar[],
+  degradedContext?: string,
+): string {
+  const header = [
+    '当前 Step 已执行完成。请完成本次收尾处理。必须先明确以下三点，再开始执行：',
+    '- `## 你的任务` —— 本次收尾处理要达成的**唯一目标**。',
+    '- `## 透传变量` —— 需要提取的透传变量列表。',
+    ...(degradedContext === undefined
+      ? ['- `## 返回格式` —— 必须返回的 JSON 格式。']
+      : ['- `## 参考信息` —— 当前 Step 的执行输入与输出，按需查阅。', '- `## 返回格式` —— 必须返回的 JSON 格式。']),
+  ];
+  const sections: string[] = [...header];
   sections.push('');
   sections.push('## 你的任务');
-  sections.push('1. 提取透传变量值：对每个列出的透传变量，从 <output> 中提取其值并写入 passThroughVars；若变量值就是 <output> 的完整文本，直接使用它。');
-  sections.push('2. 输出压缩：把 <output> 完整总结写入 compressedOutput，按以下结构组织：');
-  sections.push('   - 【任务要求】：本次 step 要求完成什么');
-  sections.push('   - 【执行过程】：实际做了什么（关键步骤、调用的工具/文件、产生的中间结果）');
-  sections.push('   - 【最终成果】：完整的最终产出总结（包含所有关键信息，不得比原始 <output> 更简短）');
-  sections.push('   注意：compressedOutput 是后续 step 的唯一上下文来源，必须完整保留关键信息，禁止过度压缩。');
+  sections.push(degradedContext === undefined
+    ? '1. 提取透传变量值：对每个列出的透传变量，根据当前 Step 的执行上下文（输出、工具调用与中间结果）提取其值并写入 passThroughVars。'
+    : '1. 提取透传变量值：对每个列出的透传变量，根据 `## 参考信息` 中的信息提取其值并写入 passThroughVars。');
+  sections.push(degradedContext === undefined
+    ? '2. 执行总结：按 `## 输出模板` 的 Markdown 模板，把当前 Step 执行输出完整总结写入 compressedOutput。'
+    : '2. 执行总结：按 `## 输出模板` 的 Markdown 模板，把 <Output> 完整总结写入 compressedOutput。');
+  if (degradedContext !== undefined) {
+    sections.push('');
+    sections.push('## 参考信息');
+    sections.push(degradedContext);
+  }
   sections.push('');
   sections.push('## 透传变量');
   if (passThroughVars.length === 0) {
@@ -433,7 +457,23 @@ function buildPhaseBFinalizePrompt(context: FinalizeStepContext, passThroughVars
     sections.push(`- ${variable.name}: ${variable.description}`);
   }
   sections.push('');
-  sections.push('## 返回格式（JSON）');
+  sections.push('## 输出模板（compressedOutput 按此 Markdown 模板书写）');
+  sections.push('注意：compressedOutput 是后续 Step 的唯一上下文来源，必须完整保留关键信息，禁止过度压缩。');
+  sections.push('```md');
+  sections.push('# 任务要求');
+  sections.push('本次 Step 要达成的目标：原始指令的要点与验收标准。');
+  sections.push('');
+  sections.push('# 执行过程');
+  sections.push('实际执行的关键步骤：调用的工具与操作的文件路径、读取与写入的内容、产生的中间结果、关键决策及其依据、遇到的异常与处理方式。');
+  sections.push('');
+  sections.push('# 最终成果');
+  sections.push('本次 Step 的完整产出：生成/修改的文件与路径、核心数据与结论、验证方式与结果（包含所有关键信息，不得比原始输出更简短）。');
+  sections.push('');
+  sections.push('# 未完成与遗留');
+  sections.push('未达成的部分、原因与已完成的进展、对后续 Step 的依赖与建议。');
+  sections.push('```');
+  sections.push('');
+  sections.push('## 返回格式');
   sections.push('请将结果以 ```json 代码围栏包裹输出，围栏内只放 JSON，不要包含任何其他文字或解释。');
   sections.push('示例：');
   sections.push('```json');
@@ -441,18 +481,43 @@ function buildPhaseBFinalizePrompt(context: FinalizeStepContext, passThroughVars
   sections.push('```');
   sections.push('');
   sections.push('## 红线规则');
-  for (const rule of ASSESS_RED_LINES) {
-    sections.push(`- ${rule}`);
-  }
+  // 仅保留只读安全约束（fork 子代理有工具）；「禁止过度探索」主观性已删（2026-08-25）。
+  sections.push('- 禁止编辑、创建或删除任何文件');
   return sections.join('\n');
 }
 
-/** Phase B 收尾 JSON 解析失败时的 followup 纠正提示（重试上限内重复注入）。 */
-const FINALIZE_JSON_RETRY_HINT =
-  '未能从你的输出中解析出合法的收尾处理 JSON。请严格按以下格式返回（用 ```json ``` 代码围栏包裹，围栏内只放 JSON）：\n```json\n{"passThroughVars": {}, "compressedOutput": "..."}\n```';
+/**
+ * Phase B 收尾 JSON 解析失败原因诊断（public）：`parseFinalizeResult` 失败时的具体原因，
+ * 供动态纠正提示 `buildFinalizeRetryHint` 携带；解析成功返回 undefined。
+ */
+export function explainFinalizeResultParse(raw: string): string | undefined {
+  const parsed = parseJsonObject(raw) ?? parseJsonObject(stripJsonFence(raw));
+  if (parsed === undefined) {
+    return '输出既不是合法 JSON，也不包含收尾处理字段';
+  }
+  const compressedOutput = parsed['compressedOutput'];
+  if (typeof compressedOutput !== 'string') {
+    return '输出缺少 compressedOutput 字段（或不是字符串）';
+  }
+  return undefined;
+}
+
+/** 构建带解析失败原因的 Phase B 重试纠正提示（格式对齐 Phase B 返回格式节）。 */
+export function buildFinalizeRetryHint(output: string): string {
+  const reason = explainFinalizeResultParse(output) ?? '无法解析输出';
+  return [
+    '未能从你的输出中解析出合法的收尾处理 JSON：' + reason + '。请严格按以下格式返回（用 ```json 代码围栏包裹，围栏内只放 JSON）：',
+    '```json',
+    '{"passThroughVars": {}, "compressedOutput": "..."}',
+    '```',
+  ].join('\n');
+}
 
 /** Phase B 收尾 JSON 解析重试上限（首次 + 最多 N 次 followup 重试，超限报错 Step 落 failed）。 */
 const MAX_FINALIZE_JSON_RETRIES = 3;
+
+/** secondary 门禁输出解析失败重试上限（首次 + 最多 N 次 followup 纠正重试；超限按不通过）。 */
+const MAX_SECONDARY_GATE_RETRIES = 2;
 
 /** Phase B 收尾解析结果（passThroughVars + compressedOutput）。 */
 interface FinalizeParsed {
@@ -475,15 +540,25 @@ function parseFinalizeResult(raw: string): FinalizeParsed | undefined {
 }
 
 /**
- * 构建 secondary 门禁提示词（注入 secondaryPrompt 完整审查）。
+ * 构建 secondary 门禁提示词（v6 结构，2026-08-25 改造）。
  *
- * 框架 = 身份头部 + stepContext + `## 你的任务`（**用户 prompt 原样注入**，未配置时
- * 用中性 fallback，不内置「检查完成度/质量」要求）+ 返回 JSON 格式框架。primary
- * 门禁为纯代码产物校验（零 AI），不再有对应提示词——本函数是唯一的门禁 AI 提示词
- * 构建入口。
+ * 框架 = 时序开场 + 三点 + `## 你的任务`（**用户 prompt 原样注入**，未配置时用中性
+ * fallback，不内置「检查完成度/质量」要求）+ `## 审查要求`（工具验证引导）+
+ * `## 参考信息`（v6 `<ReferenceInfo>` 块，**必注入**——门禁子代理无 seed 无 fork 历史）+
+ * 返回 JSON 格式。primary 门禁为纯代码产物校验（零 AI），不再有对应提示词——本函数是
+ * 唯一的门禁 AI 提示词构建入口。
  */
 function buildSecondaryGatePrompt(context: FinalizeStepContext, secondaryPrompt: string | undefined): string {
-  const sections: string[] = [SECONDARY_GATE_PROMPT_HEADER, '', buildStepContextBlock(context)];
+  const header = [
+    '当前 Step 已执行完成。请完成门禁审查。必须先明确以下三点，再开始执行：',
+    '- `## 你的任务` —— 用户配置的门控审查要求，是本次审查的**唯一目标**。',
+    '- `## 参考信息` —— 当前 Step 的执行输入与输出，按需查阅。',
+    '- `## 返回格式` —— 必须返回的 JSON 格式。',
+  ];
+  const sections: string[] = [...header];
+  sections.push('');
+  sections.push('## 你的任务');
+  sections.push(secondaryPrompt ?? '请根据门控审查要求审查当前 Step 的输出，并给出通过或不通过的结论。');
   sections.push('');
   // 2026-08-25 real-e2e 增强：引导门禁子代理**实际使用工具验证**（Round 21 已注入
   // 完整工具集 + 正确 cwd，但 AI 偶发「仅凭 Step 输出文本猜测」不查文件 → 误判 error，
@@ -493,11 +568,20 @@ function buildSecondaryGatePrompt(context: FinalizeStepContext, secondaryPrompt:
   sections.push('若审查要求涉及产物文件的存在性/内容，请先使用工具在当前项目目录中搜索确认，再给出结论。');
   sections.push('只有当工具验证结果与审查要求不符时，才判定不通过。');
   sections.push('');
-  sections.push('## 你的任务');
-  sections.push(secondaryPrompt ?? '请根据门控审查要求审查当前 Step 的输出，并给出通过或不通过的结论。');
+  sections.push('## 参考信息');
+  sections.push(buildStepContextBlock(context));
   sections.push('');
-  sections.push('## 返回格式（JSON）');
-  sections.push('{"gateStatus": "done" | "error", "gateDetail": "..."}');
+  sections.push('## 返回格式');
+  sections.push('请仅返回 JSON，格式如下：');
+  sections.push('```json');
+  sections.push('{"gateStatus": "done", "gateDetail": "..."}');
+  sections.push('```');
+  sections.push('或');
+  sections.push('```json');
+  sections.push('{"gateStatus": "error", "gateDetail": "..."}');
+  sections.push('```');
+  sections.push('');
+  sections.push('其中，`gateStatus` 为审查结论（`done` = 通过，`error` = 不通过），`gateDetail` 为审查说明。');
   return sections.join('\n');
 }
 
@@ -542,6 +626,42 @@ export function parseSecondaryGate(raw: string): SecondaryGateParsed {
     passed,
     ...(passed || typeof detail !== 'string' ? {} : { detail }),
   };
+}
+
+/**
+ * secondary 门禁输出解析失败原因诊断（public）：`parseSecondaryGate` 无法得出合法结论时的
+ * 具体原因（供动态纠正提示 `buildSecondaryGateCorrectionHint` 携带）；合法结论
+ * （`gateStatus` 为 `done`/`error`）返回 undefined。
+ */
+export function explainSecondaryGateParse(raw: string): string | undefined {
+  const parsed = parseJsonObject(raw) ?? parseJsonObject(stripJsonFence(raw));
+  if (parsed === undefined) {
+    return '输出既不是合法 JSON，也不包含门禁审查结果';
+  }
+  const status = parsed['gateStatus'];
+  if (status === 'done' || status === 'error') {
+    return undefined; // 合法结论（done 通过 / error 不通过）
+  }
+  if (status === undefined) {
+    return '输出缺少 gateStatus 字段';
+  }
+  return 'gateStatus 必须是 done 或 error';
+}
+
+/** 构建带解析失败原因的 secondary 门禁纠正提示（格式对齐门禁返回格式节）。 */
+export function buildSecondaryGateCorrectionHint(output: string): string {
+  const reason = explainSecondaryGateParse(output) ?? '无法解析输出';
+  return [
+    '未能从你的输出中解析出门禁审查结果：' + reason + '。请仅返回 JSON，格式如下：',
+    '```json',
+    '{"gateStatus": "done", "gateDetail": "..."}',
+    '```',
+    '或',
+    '```json',
+    '{"gateStatus": "error", "gateDetail": "..."}',
+    '```',
+    '其中，`gateStatus` 为审查结论（`done` = 通过，`error` = 不通过），`gateDetail` 为审查说明。',
+  ].join('\n');
 }
 
 /** 判定 Step 是否含未解析透传变量（value 仍含 `${xxx}` 占位）。 */
@@ -731,7 +851,7 @@ export class FinalizeAssessor {
   /** 执行收尾评估（Phase A 临时会话路径），返回 `FinalizeAskResult`（含 hasAsk/forkSessionId/assessmentRaw + 可选 compressedOutput）。 */
   async assess(input: FinalizeAssessInput): Promise<FinalizeAskResult> {
     const forkSessionId = newSessionHandle();
-    const promptText = buildAssessPrompt(input.context, input.step.passThroughVars ?? []);
+    const promptText = buildAssessPrompt(input.context);
     const raw = await runStream(this.ctx, this.config, promptText, input.signal, {
       code: 'FINALIZE_FAILED',
       action: 'finalize assess',
@@ -763,8 +883,9 @@ export class FinalizeAssessor {
    *
    * **JSON 校验 + 重试**：`parseFinalizeResult` 不满足（非法 JSON / `compressedOutput`
    * 缺失或非字符串 / `passThroughVars` 无法解析）→ 给**同一个 fork 子代理**
-   * `followup(FINALIZE_JSON_RETRY_HINT)` 重新返回 JSON（说明缺什么、要求重新返回合法
-   * JSON），再 `whenIdle` + 收集，最多重试 {@link MAX_FINALIZE_JSON_RETRIES} 次；超限
+   * `followup(buildFinalizeRetryHint(raw))` 重新返回 JSON（动态携带上一轮解析失败原因，
+   * 说明缺什么、要求重新返回合法 JSON），再 `whenIdle` + 收集，最多重试
+   * {@link MAX_FINALIZE_JSON_RETRIES} 次；超限
    * **抛错（Step 落 failed，errorDetail 说明「Phase B JSON 解析失败」）**——不降级。
    *
    * **降级（不失败）**：fork/驱动失败（配置缺省 / 事件源缺失 / 无闭合 turn /
@@ -805,7 +926,7 @@ export class FinalizeAssessor {
         let retries = 0;
         while (parsed === undefined && retries < MAX_FINALIZE_JSON_RETRIES) {
           retries += 1;
-          raw = await driveAgentRound(handle, FINALIZE_JSON_RETRY_HINT);
+          raw = await driveAgentRound(handle, buildFinalizeRetryHint(raw));
           parsed = parseFinalizeResult(raw);
         }
         if (parsed === undefined) {
@@ -841,7 +962,13 @@ export class FinalizeAssessor {
     input: FinalizeAssessInput,
     reason: string,
   ): Promise<FinalizeAssessResult> {
-    const promptText = buildPhaseBFinalizePrompt(input.context, input.step.passThroughVars ?? []);
+    // 降级版：注入 step 执行输入/输出 v6 块（`buildStepContextBlock`）作参考信息，
+    // 弥补临时会话无 fork 历史（对齐 batch/loop-break 降级模式）。
+    const promptText = buildPhaseBFinalizePrompt(
+      input.context,
+      input.step.passThroughVars ?? [],
+      buildStepContextBlock(input.context),
+    );
     const raw = await runStream(this.ctx, this.config, promptText, input.signal, {
       code: 'FINALIZE_FAILED',
       action: 'finalize Phase B',
@@ -1006,7 +1133,21 @@ export class GateEvaluator {
         },
         signal: input.signal ?? new AbortController().signal,
       });
-      const raw = await this.awaitGateOutput(started.childId, input.signal);
+      // 2026-08-25：解析失败（非合法 done/error）给**同一个子代理** followup 纠正重试
+      // （上限 MAX_SECONDARY_GATE_RETRIES，纠正提示携带失败原因，对齐 batch/loop-break）；
+      // 合法 `error`（不通过）不算解析失败、不重试。
+      let raw = await this.awaitGateOutput(started.childId, input.signal);
+      let retries = 0;
+      while (explainSecondaryGateParse(raw) !== undefined && retries < MAX_SECONDARY_GATE_RETRIES) {
+        retries += 1;
+        await this.ctx.subagents.followup(this.config.hostAgent, started.childId, [
+          { type: 'text', text: buildSecondaryGateCorrectionHint(raw) },
+        ], {
+          source: { kind: 'user' },
+          signal: input.signal ?? new AbortController().signal,
+        });
+        raw = await this.awaitGateOutput(started.childId, input.signal);
+      }
       return this.secondaryFromRaw(raw, started.childId);
     } catch (error) {
       const raw = await runStream(this.ctx, this.config, promptText, input.signal, {

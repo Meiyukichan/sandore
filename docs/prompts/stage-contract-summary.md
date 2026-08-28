@@ -1,6 +1,6 @@
 # Stage 完成契约摘要（summarizeStageContract）
 
-> 源码：`packages/sandore/workflow/src/dag-navigator.ts:327`（`summarizeStageContract`，private）
+> 源码：`packages/sandore/workflow/src/dag-navigator.ts:391`（`summarizeStageContract`，private）
 > 场景：汇总 Stage 契约为紧凑文本，供 Stage 级 AI 条件作 context（stage-branch-evaluate.md）与 shell 条件 stdin；避免全量 JSON 转储。
 > 说明：`errorDetail` 仅存在时输出；`artifacts`/`passThroughVars` 为空时对应节省略；产物无文本摘要时用 `(无文本摘要)`。
 

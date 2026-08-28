@@ -2497,8 +2497,8 @@ describe('SandoreEngineRuntime Stage-level conditional branching', () => {
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    // Stage 条件评估（StageContract-based，非 fork）：shouldExecute=true → 取 stg-b。
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    // Stage 条件评估（StageContract-based，非 fork）：批量返回命中的 branchId → 取 stg-b。
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-b"]}');
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
@@ -2518,8 +2518,8 @@ describe('SandoreEngineRuntime Stage-level conditional branching', () => {
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    // Stage 条件评估：shouldExecute=false → 跳过 stg-b，走无 condition 的默认分支 stg-default。
-    llm.streamHandler = () => textChunks('{"shouldExecute": false}');
+    // Stage 条件评估：批量返回空数组 → 跳过 stg-b，走无 condition 的默认分支 stg-default。
+    llm.streamHandler = () => textChunks('{"shouldExecute": []}');
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
@@ -2540,8 +2540,8 @@ describe('SandoreEngineRuntime Stage-level conditional branching', () => {
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    // 条件 A shouldExecute=true → 取 stg-a（首个条件命中，循环 break，condB 不评估）。
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    // 批量一次评估：condA 命中 → 取 stg-a（定义序首个命中；condB 同批评估但不影响结果）。
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-a"]}');
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
@@ -2561,9 +2561,8 @@ describe('SandoreEngineRuntime Stage-level conditional branching', () => {
     shell.runHandler = async spec => successResult(spec, 'ok');
     llm.providers.push({ id: 'p', name: 'Provider' });
     llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    // 条件 A false → 跳过；条件 B true → 取 stg-b（第二条件命中）。
-    let call = 0;
-    llm.streamHandler = () => textChunks(call++ === 0 ? '{"shouldExecute": false}' : '{"shouldExecute": true}');
+    // 批量一次评估：condA false → 跳过；condB 命中 → 取 stg-b。
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["stg-b"]}');
 
     const records = recordSandoreEvents(ctx);
     const ended = waitForEnd(ctx);
@@ -2741,21 +2740,27 @@ describe('SandoreEngineRuntime interaction', () => {
     // Phase A/B 收尾评估，零 llm 调用）→ Phase C primary 纯代码门禁（outputTo 缺失
     // 文件，fs 空 → 不通过）→ gating → Step failed → 实例 failed。
     // 按首条消息文本分发：分支/循环专用模板（shouldExecute/shouldBreak）按其字段名；
-    // 其余为收尾调用（统一 buildAssessPrompt 后 Phase A 与 Phase B 的 prompt 均含
-    // compressedOutput）——按调用序：第 1 次收尾调用（step-ask Phase A 首次）返回 ask
-    // JSON，后续返回统一收尾 JSON（hasAsk + passThroughVars + compressedOutput，对
-    // Phase A 的 parseAssessResult 与 Phase B 的 parseFinalizeResult 均有效）。
-    let finalizeCall = 0;
+    // 其余为收尾调用——Phase A（buildAssessPrompt 精简后）含「输出是否是在向用户提问」，
+    // Phase B（buildPhaseBFinalizePrompt）含 compressedOutput——按调用序：第 1 次 Phase A
+    // 调用（step-ask）返回 ask JSON 触发 ask-detect；后续 Phase A 返回无 ask JSON；
+    // Phase B 返回统一收尾 JSON（passThroughVars + compressedOutput，对 parseFinalizeResult
+    // 有效）。
+    let phaseACall = 0;
     llm.streamHandler = (options) => {
       const text = (options.messages[0]?.content[0] as TextBlock | undefined)?.text ?? '';
       if (text.includes('shouldBreak')) {
         return textChunks('{"shouldBreak": false}');
       }
+      if (text.includes('输出是否是在向用户提问')) {
+        // Phase A ask 判定（精简：仅 hasAsk/askQuestion）。
+        phaseACall += 1;
+        return phaseACall === 1
+          ? textChunks('{"hasAsk":true,"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}}')
+          : textChunks('{"hasAsk":false,"askQuestion":{"questions":[]}}');
+      }
       if (text.includes('compressedOutput')) {
-        finalizeCall += 1;
-        return finalizeCall === 1
-          ? textChunks('{"hasAsk":true,"passThroughVars":{},"askQuestion":{"questions":[{"id":"q1","question":"Which?","options":[{"label":"A"},{"label":"B"}]}]},"compressedOutput":"摘要"}')
-          : textChunks('{"hasAsk":false,"passThroughVars":{},"compressedOutput":"摘要"}');
+        // Phase B 收尾（透传变量 + 输出压缩）。
+        return textChunks('{"hasAsk":false,"passThroughVars":{},"compressedOutput":"摘要"}');
       }
       // 理论不可达（收尾/分支均含特征字段）；兜底返回完成 JSON。
       return textChunks('{"hasAsk":false,"passThroughVars":{}}');
@@ -4362,7 +4367,8 @@ describe('SandoreEngineRuntime 收尾真 fork（Phase B agents.create 重建宿�
     const forkedAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
     expect(forkedAgent.followups).toHaveLength(1);
     const promptText = (forkedAgent.followups[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
-    expect(promptText).toContain('<stepContext>');
+    // 2026-08-25：fork 版不注入参考信息节（上下文在会话里）；降级才注入。
+    expect(promptText).not.toContain('<ReferenceInfo>');
     expect(promptText).toContain('compressedOutput');
     expect(forkedAgent.whenIdleCount).toBe(1);
 

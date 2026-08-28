@@ -13,21 +13,22 @@
  * Stage。
  *
  * **Stage 级条件分支**：`WorkflowStage.branches` 可带 `condition`（CommandConfig：
- * AI/shell）。`tryAdvanceStage` 在当前 Stage 完成后，对每个 Stage 分支评估 `condition`
- * （AI 走 `ctx.llm.stream` 一次性会话 + StageContract 作 context；shell 走
- * `matchesExpectation(label)`），命中条件的目标 Stage；无 `condition` 分支为默认
- * （始终走）；无命中按定义数组顺序兜底。Stage 级条件评估是 workflow 级、基于
- * StageContract——Stage 无单一 step 会话可 fork（fork 是 Step 级），Stage 条件基于
- * 聚合 StageContract 判断。
+ * AI/shell）。`tryAdvanceStage` 在当前 Stage 完成后，按定义序评估 Stage 分支
+ * `condition`：shell 条件本地逐条执行（`matchesExpectation(label)`）；AI 条件一次
+ * 批量调用（`ctx.llm.stream` 一次性会话 + StageContract 作 context，对齐 Step 级
+ * branch-evaluate-batch），返回满足条件的 branchId 数组。无 `condition` 分支为默认
+ * （始终走，按位置参与竞争）；无命中按定义数组顺序兜底。Stage 级条件评估是 workflow
+ * 级、基于 StageContract——Stage 无单一 step 会话可 fork（fork 是 Step 级），Stage
+ * 条件基于聚合 StageContract 判断。
  * @module @deepseek-ai/dsh-sandore-workflow/src/dag-navigator
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import type { GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm';
 
-import { extractShouldExecute, matchesExpectation } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
+import { extractShouldExecuteBatch, matchesExpectation } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
 import type { BranchEvaluatorConfig } from '@deepseek-ai/dsh-sandore-microflow/src/branch-evaluator';
-import { describeError, resolveProviderModel, textSummary } from '@deepseek-ai/dsh-sandore-microflow/src/internal';
+import { describeError, escapeXml, resolveProviderModel, textSummary } from '@deepseek-ai/dsh-sandore-microflow/src/internal';
 
 import type { CommandConfig, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowTaskState } from './schema.ts';
 import type { ShellExecRequest, ShellRunResult } from './shell.ts';
@@ -57,15 +58,9 @@ export interface DagNavigatorSeed {
   readonly stageContracts?: Readonly<Record<string, StageContractValue>>;
 }
 
-/** Stage 级条件分支评估提示词主头部。 */
+/** Stage 级条件分支评估提示词主头部（时序开场：当前 Stage 已执行完成，无角色声明）。 */
 const STAGE_BRANCH_PROMPT_HEADER =
-  '你是严谨准确的工作流 Stage 路由 Agent，你的任务是根据当前 Stage 的完成契约与分支条件，判断是否应推进到该分支的目标 Stage。';
-
-/** Stage 条件评估红线规则（只读，禁止文件改动与过度思考）。 */
-const STAGE_BRANCH_RED_LINES = [
-  '禁止编辑、创建或删除任何文件',
-  '禁止过度思考，你的职责是尽快判断分支并返回结果',
-] as const;
+  '当前 Stage 已执行完成。请根据当前 Stage 的完成契约，判断下列分支中哪些满足其执行条件。';
 
 /**
  * 工作流 DAG 导航器（Stage 级）。
@@ -143,15 +138,18 @@ export class WorkflowDagNavigator {
   }
 
   /**
-   * 推进到下一 Stage（Stage 级条件分支评估）。
+   * 推进到下一 Stage（Stage 级条件分支批量评估）。
    *
-   * 仅在当前 Stage 已完成（`isStageAllDone`）时推进：对当前 Stage 的每个 `branch`
-   * （Stage 级出边）：
+   * 仅在当前 Stage 已完成（`isStageAllDone`）时推进。对当前 Stage 的 `branch`（Stage 级
+   * 出边）按定义序分组评估：
    * ① 目标非 Stage 节点 → 跳过（Stage 路由只跟随 Stage 目标）；
-   * ② 无 `condition`（默认分支）→ 直接取该目标（首个有效 Stage 目标）；
-   * ③ 有 `condition` → 基于 StageContract 评估（AI 一次性会话 + StageContract context；
-   *    shell 走 `matchesExpectation(label)`），命中取该目标；
-   * 无命中按定义数组顺序推断下一 Stage。无下一 Stage 返回 false。
+   * ② 无 `condition`（默认分支）→ 恒通过（首个无 condition 位置）；
+   * ③ shell 条件 → 本地逐条执行（命令各异不可合并），`matchesExpectation(label)` 判定；
+   * ④ AI 条件 → **一次批量调用**（`ctx.llm.stream` 一次性会话，StageContract 摘要 +
+   *    分支执行条件列表作 context，对齐 Step 级 branch-evaluate-batch），返回命中的
+   *    branchId 数组。
+   * 定义序首个命中者胜出（默认分支按位置参与竞争）；无命中按定义数组顺序推断下一
+   * Stage。无下一 Stage 返回 false。
    *
    * Stage 级条件评估是 workflow 级、基于 StageContract——**不是 fork-based**（Stage 无
    * 单一 step 会话可 fork；Stage 条件基于聚合 StageContract 判断）。
@@ -165,19 +163,54 @@ export class WorkflowDagNavigator {
       return false;
     }
     const contract = this.getStageContract(this.currentStageId);
-    let nextId: string | undefined;
-    for (const branch of current.branches ?? []) {
+    const branches = current.branches ?? [];
+    // 定义序分组：默认分支（无 condition，恒通过）、shell 条件（本地逐条）、AI 条件（批量一次）。
+    const defaultIndexes: number[] = [];
+    const shellCandidates: Array<{ branch: DagBranch; index: number }> = [];
+    const aiCandidates: Array<{ branch: DagBranch; index: number }> = [];
+    branches.forEach((branch, index) => {
       // Stage 路由只跟随 Stage 目标；非 Stage 目标（理论上 Stage 分支只指 Stage）跳过。
+      if (!this.stageSet.has(branch.next)) {
+        return;
+      }
+      if (branch.condition === undefined) {
+        defaultIndexes.push(index);
+      } else if (branch.condition.type === 'shell') {
+        shellCandidates.push({ branch, index });
+      } else {
+        aiCandidates.push({ branch, index });
+      }
+    });
+    // 命中集合（定义序 index）：首个默认分支恒通过；shell 逐条评估；AI 条件一次批量调用。
+    const passed = new Set<number>();
+    if (defaultIndexes.length > 0) {
+      passed.add(defaultIndexes[0]!);
+    }
+    for (const { branch, index } of shellCandidates) {
+      if (await this.evaluateStageShellBranch(branch, contract, signal)) {
+        passed.add(index);
+      }
+    }
+    if (aiCandidates.length > 0) {
+      const passedIds = await this.evaluateStageAiBranchesBatch(
+        aiCandidates.map(candidate => candidate.branch),
+        contract,
+        signal,
+      );
+      for (const { branch, index } of aiCandidates) {
+        if (passedIds.includes(branch.next)) {
+          passed.add(index);
+        }
+      }
+    }
+    // 定义序首个命中（默认分支按位置参与竞争，与逐条语义一致）。
+    let nextId: string | undefined;
+    for (let index = 0; index < branches.length; index += 1) {
+      const branch = branches[index]!;
       if (!this.stageSet.has(branch.next)) {
         continue;
       }
-      if (branch.condition === undefined) {
-        // 无 condition = 默认分支，始终走（首个有效 Stage 目标）。
-        nextId = branch.next;
-        break;
-      }
-      const passed = await this.evaluateStageBranch(branch, contract, signal);
-      if (passed) {
+      if (passed.has(index)) {
         nextId = branch.next;
         break;
       }
@@ -194,13 +227,12 @@ export class WorkflowDagNavigator {
   }
 
   /**
-   * 评估单个 Stage 分支的 `condition` 是否通过（StageContract-based）。
+   * 评估单个 Stage shell 条件分支（StageContract-based）。
    *
    * shell：经 `ctx.shell` 执行命令（StageContract 摘要作 stdin + 透传变量 env），成功取
-   * stdout，失败降级为空串（→ 条件不通过）；AI（agent/prompt/skill/mcp）：`ctx.llm.stream`
-   * 一次性会话（StageContract 摘要 + 分支条件作 context），聚合输出后提取 shouldExecute。
+   * stdout，`matchesExpectation(label)` 判定；失败（非零退出/超时/中止）降级为条件不通过。
    */
-  private async evaluateStageBranch(
+  private async evaluateStageShellBranch(
     branch: DagBranch,
     contract: StageContractValue | undefined,
     signal: AbortSignal | undefined,
@@ -208,28 +240,31 @@ export class WorkflowDagNavigator {
     const condition = branch.condition!;
     const contractSummary = contract === undefined ? '(无已完成的 Stage 契约)' : this.summarizeStageContract(contract);
     try {
-      const output = condition.type === 'shell'
-        ? await this.runStageShell(condition, contractSummary, signal)
-        : await this.runStageAi(condition, contractSummary, signal);
-      return this.decideStageCondition(condition, output, branch.label);
+      const output = await this.runStageShell(condition as Extract<CommandConfig, { type: 'shell' }>, contractSummary, signal);
+      return matchesExpectation(output.trim(), branch.label);
     } catch (error) {
-      // 评估失败（shell 非零退出/超时、AI 会话错误）：降级为条件不通过（走兜底）。
-      this.ctx.logger.warn(`sandore: stage branch condition evaluation failed: ${describeError(error)}`);
+      // 评估失败（shell 非零退出/超时）：降级为条件不通过（走兜底）。
+      this.ctx.logger.warn(`sandore: stage shell branch condition evaluation failed: ${describeError(error)}`);
       return false;
     }
   }
 
-  /** 按 condition 类型判定 Stage 分支是否通过（shell 匹配 label；AI 提取 shouldExecute）。 */
-  private decideStageCondition(condition: CommandConfig, output: string, expectation: string | undefined): boolean {
-    if (condition.type === 'shell') {
-      if (expectation === undefined) {
-        return false;
-      }
-      return matchesExpectation(output.trim(), expectation);
+  /**
+   * Stage AI 条件分支批量评估入口：一次调用评估所有 AI 条件分支（对齐 Step 级
+   * branch-evaluate-batch）。会话失败/解析失败整批降级（warn 一次 + 空数组 → 条件不通过）。
+   */
+  private async evaluateStageAiBranchesBatch(
+    branches: readonly DagBranch[],
+    contract: StageContractValue | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<readonly string[]> {
+    const contractSummary = contract === undefined ? '(无已完成的 Stage 契约)' : this.summarizeStageContract(contract);
+    try {
+      return await this.runStageAiBatch(branches, contractSummary, signal);
+    } catch (error) {
+      this.ctx.logger.warn(`sandore: stage AI branch conditions evaluation failed: ${describeError(error)}`);
+      return [];
     }
-    // AI 条件：提取 shouldExecute 布尔（与 Stage 分支提示词要求的 JSON 格式对齐）；
-    // 解析失败（undefined）按 false 处理——条件分支不通过，走兜底。
-    return extractShouldExecute(output) === true;
   }
 
   /** Stage shell 条件：经 `ctx.shell` 执行命令，StageContract 摘要作 stdin。 */
@@ -250,7 +285,7 @@ export class WorkflowDagNavigator {
     return this.toStdout(result);
   }
 
-  /** shell 结果 → stdout；非零退出/超时/中止抛错（由 evaluateStageBranch 捕获降级）。 */
+  /** shell 结果 → stdout；非零退出/超时/中止抛错（由 evaluateStageShellBranch 捕获降级）。 */
   private toStdout(result: ShellRunResult): string {
     if (result.exitCode === 0 && !result.timedOut && !result.aborted) {
       return result.stdout.text;
@@ -267,19 +302,21 @@ export class WorkflowDagNavigator {
   }
 
   /**
-   * Stage AI 条件：`ctx.llm.stream` 一次性会话（StageContract 摘要 + 分支条件作 context）。
+   * Stage AI 条件批量评估：`ctx.llm.stream` 一次性会话（一次调用评估所有 AI 条件分支）。
    *
-   * 不 fork（Stage 无单一 step 会话可 fork）——一次性会话，StageContract 摘要拼进提示词
-   * 作 context。provider/model 三层回退（条件定义 → 引擎配置 → ctx.llm 目录兜底）。
+   * 不 fork（Stage 无单一 step 会话可 fork）——一次性会话，StageContract 摘要 + 分支
+   * 执行条件列表拼进提示词作 context。provider/model 三层回退（首个 AI 分支条件定义 →
+   * 引擎配置 → ctx.llm 目录兜底，对齐 Step 级批量评估）。输出聚合后提取命中的
+   * branchId 数组；解析失败（undefined）→ 空数组（整批条件不通过，走兜底）。
    */
-  private async runStageAi(
-    condition: Extract<CommandConfig, { type: 'agent' | 'prompt' | 'skill' | 'mcp' }>,
+  private async runStageAiBatch(
+    branches: readonly DagBranch[],
     contractSummary: string,
     signal: AbortSignal | undefined,
-  ): Promise<string> {
-    const value = condition.value as AiConditionValue;
+  ): Promise<readonly string[]> {
+    const value = (branches[0]!.condition!.value as AiConditionValue);
     const route = await resolveProviderModel(value, this.config, this.ctx.llm);
-    const promptText = this.buildStageBranchPrompt(value.promptText, contractSummary);
+    const promptText = this.buildStageBatchBranchPrompt(branches, contractSummary);
     const message = createUserMessage({
       source: { kind: 'user' },
       content: [{ type: 'text', text: promptText }],
@@ -296,26 +333,53 @@ export class WorkflowDagNavigator {
     for await (const chunk of stream as AsyncIterable<StreamChunk>) {
       assembler.push(chunk);
     }
-    return textSummary(assembler.blocks());
+    const output = textSummary(assembler.blocks());
+    return extractShouldExecuteBatch(output) ?? [];
   }
 
-  /** 构造 Stage 分支评估提示词（主头部 + 任务 + Stage 契约 context + 返回格式 + 红线）。 */
-  private buildStageBranchPrompt(taskText: string, contractSummary: string): string {
+  /**
+   * 构造 Stage 分支批量评估提示词（v6：时序开场 + 四点 + 参考信息 + 分支执行条件 +
+   * 返回格式）。
+   *
+   * 批量评估所有 AI 条件分支（一次 llm 调用）；shell 条件不经此（本地执行）。分支执行
+   * 条件列表（branchId + executeCondition）以 JSON 给出，executeCondition 取自各分支 AI
+   * 条件命令的 promptText；StageContract 摘要经 escapeXml 转义后以 `<ReferenceInfo>` 注入
+   * （必注入——一次性会话无 fork 历史，摘要是唯一判断依据）。无红线节：一次性会话
+   * （`llm.stream`）无工具，禁止类约束为空话（同 Phase A 原则）。
+   */
+  private buildStageBatchBranchPrompt(branches: readonly DagBranch[], contractSummary: string): string {
     const sections: string[] = [STAGE_BRANCH_PROMPT_HEADER];
     sections.push('');
-    sections.push('## 你的任务');
-    sections.push(taskText);
+    sections.push('必须先明确以下四点，再开始执行：');
+    sections.push('- `## 你的任务` —— 本次 Stage 路由判断要达成的**唯一目标**。');
+    sections.push('- `## 分支执行条件` —— 需要判断的分支及其执行条件。');
+    sections.push('- `## 参考信息` —— 当前 Stage 的完成契约，按需查阅。');
+    sections.push('- `## 返回格式` —— 必须返回的 JSON 格式。');
     sections.push('');
-    sections.push('## 当前 Stage 完成契约');
-    sections.push(contractSummary);
+    sections.push('## 你的任务');
+    sections.push('根据 `## 分支执行条件` 与 `## 参考信息` 中当前 Stage 的完成契约，判断哪些分支满足其执行条件。**唯一目标**：找出所有满足执行条件的分支，返回其 branchId 列表。');
+    sections.push('');
+    sections.push('## 参考信息');
+    sections.push('<ReferenceInfo>');
+    sections.push('  <Reference title="当前 Stage 完成契约">');
+    sections.push(escapeXml(contractSummary));
+    sections.push('  </Reference>');
+    sections.push('</ReferenceInfo>');
+    sections.push('');
+    sections.push('## 分支执行条件');
+    sections.push('```json');
+    sections.push(JSON.stringify(branches.map(branch => ({
+      branchId: branch.next,
+      executeCondition: (branch.condition!.value as AiConditionValue).promptText,
+    })), null, 2));
+    sections.push('```');
     sections.push('');
     sections.push('## 返回格式');
-    sections.push('请仅返回 JSON，格式为：{"shouldExecute": true} 或 {"shouldExecute": false}，其中 shouldExecute 表示是否应推进到该分支的目标 Stage。');
-    sections.push('');
-    sections.push('## 红线规则');
-    for (const rule of STAGE_BRANCH_RED_LINES) {
-      sections.push(`- ${rule}`);
-    }
+    sections.push('请仅返回 JSON，格式如下：');
+    sections.push('```json');
+    sections.push('{"shouldExecute": ["branchId1", "branchId2"]}');
+    sections.push('```');
+    sections.push('其中，`shouldExecute` 为满足其 `executeCondition` 条件的分支的 `branchId` 列表；没有任何分支满足时返回空数组 `[]`。');
     return sections.join('\n');
   }
 

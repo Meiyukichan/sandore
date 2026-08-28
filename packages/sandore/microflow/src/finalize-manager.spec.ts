@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../../workflow/tests/mocks/llm.ts';
-import { FinalizeAssessor, FinalizeManager, GateEvaluator, parseAssessResult, parseSecondaryGate } from './finalize-manager.ts';
+import { FinalizeAssessor, FinalizeManager, GateEvaluator, buildFinalizeRetryHint, buildSecondaryGateCorrectionHint, explainFinalizeResultParse, explainSecondaryGateParse, parseAssessResult, parseSecondaryGate } from './finalize-manager.ts';
 import type { FinalizeManagerConfig } from './finalize-manager.ts';
 import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome } from './file-utils.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
@@ -112,8 +112,24 @@ class FakeGateSubagents {
   outputHandler?: () => ContentBlock[] | undefined;
   /** 若设置，`startContinuable` 抛出该错误（模拟 secondary 门禁子代理启动失败）。 */
   startError?: Error;
+  /** followup 记录（重试纠正断言用）。 */
+  readonly followups: Array<{ childId: SessionId; content: ContentBlock[] }> = [];
+  /**
+   * followup 时的回复钩子（重试场景：纠正后产出合法 JSON）；缺省 undefined → 不追加输出。
+   */
+  followupHandler?: () => ContentBlock[] | undefined;
 
   constructor(private readonly agents: FakeAgentRegistry) {}
+
+  async followup(_parent: Agent, childId: SessionId, content: ContentBlock[], _options: SubagentFollowupOptions): Promise<MessageId> {
+    this.followups.push({ childId, content });
+    const agent = this.agents.get(childId);
+    const reply = this.followupHandler?.();
+    if (agent !== undefined && reply !== undefined && reply.length > 0) {
+      agent.session.append(assistantMessageEvent(reply, agent.session.events.length, Date.now()));
+    }
+    return `msg-${this.followups.length}`;
+  }
 
   async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
     if (this.startError !== undefined) {
@@ -442,7 +458,7 @@ describe('FinalizeAssessor.assess（Phase A 临时会话，不 fork）', () => {
     const prompt = (llm.calls[0]?.messages[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
     // buildFinalizeContext 已含当前 step 子代理返回结果 output 文本 → 评估可见全部 I/O。
     expect(prompt).toContain('agent final output');
-    expect(prompt).toContain('<stepContext>');
+    expect(prompt).toContain('<ReferenceInfo>');
   });
 
   it('throws FINALIZE_FAILED when the assess stream finishes with error', async () => {
@@ -469,7 +485,7 @@ describe('FinalizeAssessor.assess（Phase A 临时会话，不 fork）', () => {
     ).rejects.toMatchObject({ code: 'FINALIZE_FAILED', message: expect.stringContaining('cancelled') });
   });
 
-  it('assess 提示词只判断 ask 需求 + 输出压缩，不含完成度/质量检查要求', async () => {
+  it('assess 提示词只判断 ask 需求（Phase A 精简：不含变量提取/输出压缩/完成度检查）', async () => {
     const { llm, assessor } = harness();
     llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
 
@@ -479,16 +495,19 @@ describe('FinalizeAssessor.assess（Phase A 临时会话，不 fork）', () => {
     });
 
     const prompt = (llm.calls[0]?.messages[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
-    // ask 判断：只问「是否需要向用户提问」，保留 hasAsk 返回格式。
-    expect(prompt).toContain('是否需要向用户提问确认后继续');
+    // ask 判断：只判断输出本身是否是在向用户提问，保留 hasAsk 返回格式。
+    expect(prompt).toContain('输出是否是在向用户提问');
     expect(prompt).toContain('"hasAsk"');
-    // Phase B 合并 compress：输出压缩任务与 compressedOutput 返回格式统一注入。
-    expect(prompt).toContain('输出压缩');
-    expect(prompt).toContain('compressedOutput');
-    // 三段式 compressedOutput 结构要求。
-    expect(prompt).toContain('【任务要求】');
-    expect(prompt).toContain('【执行过程】');
-    expect(prompt).toContain('【最终成果】');
+    // 2026-08-26：参考信息只注入 Output（不注入 Input/Artifacts——判断对象唯一是
+    // step 返回的结果文本，输入/上下文会带偏判断）。
+    expect(prompt).toContain('<Output>');
+    expect(prompt).not.toContain('<Input>');
+    expect(prompt).not.toContain('req');
+    // 2026-08-25 精简：Phase A 不做透传变量提取/输出压缩（Phase B 职责，不复用 Phase A 结果）。
+    expect(prompt).not.toContain('输出压缩');
+    expect(prompt).not.toContain('compressedOutput');
+    expect(prompt).not.toContain('【任务要求】');
+    expect(prompt).not.toContain('透传变量');
     // 不判完成度：不要求判断任务是否真正完成、不要求完成度/质量检查。
     expect(prompt).not.toContain('是否真正完成');
     expect(prompt).not.toContain('已完成');
@@ -534,19 +553,22 @@ describe('FinalizeAssessor.assessForked（Phase B 真 fork 子代理）', () => 
     expect(agents.createMetas[0]).toEqual({ cwd: '/tmp', parentSession: 'host-1', seedLength: 4, origin: 'subagent' });
     // 合成 fork 会话 id：纯 UUID（globalThis.crypto.randomUUID()）。
     expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    // 驱动一轮：followup 收到收尾处理提示词（含 <stepContext> 与 compressedOutput 格式），whenIdle 被 await。
+    // 驱动一轮：followup 收到收尾处理提示词（含 <ReferenceInfo> 与 compressedOutput 格式），whenIdle 被 await。
     const forkedAgent = agents.createdAgents[0]!;
     expect(forkedAgent.followups).toHaveLength(1);
     const promptText = (forkedAgent.followups[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
-    expect(promptText).toContain('<stepContext>');
+    // 2026-08-25：fork 版不注入参考信息节（上下文在会话里）；降级才注入。
+    expect(promptText).not.toContain('<ReferenceInfo>');
     expect(promptText).toContain('compressedOutput');
     // Phase B 专用提示词不含 hasAsk 判断（Phase A 已处理）。
     expect(promptText).not.toContain('hasAsk');
     expect(promptText).not.toContain('是否需要向用户提问');
-    // Phase B 提示词含三段式 compressedOutput 结构要求。
-    expect(promptText).toContain('【任务要求】');
-    expect(promptText).toContain('【执行过程】');
-    expect(promptText).toContain('【最终成果】');
+    // Phase B 提示词含四段式输出模板结构要求（一级标题：任务要求/执行过程/最终成果/未完成与遗留）。
+    expect(promptText).toContain('# 任务要求');
+    expect(promptText).toContain('# 执行过程');
+    expect(promptText).toContain('# 最终成果');
+    expect(promptText).toContain('# 未完成与遗留');
+    expect(promptText).toContain('```md');
     expect(forkedAgent.whenIdleCount).toBe(1);
     // 一个 LLM 调用返回合并 JSON：passThroughVars + compressedOutput。
     expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
@@ -686,10 +708,27 @@ describe('FinalizeAssessor.assessForked（Phase B 真 fork 子代理）', () => 
     // 同一个 fork 子代理 followup 两次（首次判断 + 1 次纠正重试）。
     const forkedAgent = agents.createdAgents[0]!;
     expect(forkedAgent.followups).toHaveLength(2);
-    expect(forkedAgent.followups[1]?.content[0]).toMatchObject({ type: 'text', text: expect.stringContaining('compressedOutput') });
+    const hintText = (forkedAgent.followups[1]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    // 纠正提示动态携带解析失败原因（首次输出 'not json at all'）。
+    expect(hintText).toContain('不是合法 JSON');
+    expect(hintText).toContain('compressedOutput');
     expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
     expect(result.compressedOutput).toBe('重试后摘要');
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('explains finalize JSON parse failures with concrete reasons', () => {
+    expect(explainFinalizeResultParse('{"passThroughVars": {}, "compressedOutput": "ok"}')).toBeUndefined();
+    expect(explainFinalizeResultParse('not json')).toContain('不是合法 JSON');
+    expect(explainFinalizeResultParse('{"passThroughVars": {}}')).toContain('缺少 compressedOutput');
+    expect(explainFinalizeResultParse('{"compressedOutput": 123}')).toContain('不是字符串');
+  });
+
+  it('buildFinalizeRetryHint carries the concrete parse failure reason', () => {
+    const hint = buildFinalizeRetryHint('{"passThroughVars": {}}');
+    expect(hint).toContain('缺少 compressedOutput');
+    expect(hint).toContain('{"passThroughVars": {}, "compressedOutput": "..."}');
+    expect(hint).toContain('```json');
   });
 
   it('throws FINALIZE_FAILED when the Phase B JSON stays unparseable after 3 retries (超限报错，不降级)', async () => {
@@ -831,6 +870,50 @@ describe('GateEvaluator', () => {
     expect(result.gatesPassed).toBe(true);
     // 子代理路径不消费 llm.stream（agent loop 内模型调用由子代理自行处理）。
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('follows up the same gate subagent with a reason-carrying correction hint on unparseable output, then succeeds', async () => {
+    const { llm, fs, agents, subagents, gateEvaluator } = harness();
+    let call = 0;
+    subagents.outputHandler = () => {
+      call += 1;
+      return call === 1 ? [{ type: 'text', text: 'not json at all' }] : undefined;
+    };
+    subagents.followupHandler = () => [{ type: 'text', text: '{"gateStatus":"done","gateDetail":"ok"}' }];
+    fs.seedFile('/work/out/report.md');
+
+    const result = await gateEvaluator.evaluate({
+      step: step({ outputTo: [{ id: 'opt-a', path: 'out/*.md' }] }),
+      context: { input: 'req', output: 'out', artifacts: ['/work/out/report.md'] },
+      gates: { primary: { enabled: true }, secondary: { enabled: true, prompt: 'review' } },
+      workdir: '/work',
+      stepSessionId: 'step-session-1',
+    });
+
+    // 解析失败 → 同一个门禁子代理 followup 纠正（带失败原因）→ 第二次合法 done。
+    expect(subagents.followups).toHaveLength(1);
+    const hintText = (subagents.followups[0]?.content[0] as { type: string; text: string } | undefined)?.text ?? '';
+    expect(hintText).toContain('不是合法 JSON');
+    expect(hintText).toContain('"gateStatus": "done"');
+    expect(result.secondaryPassed).toBe(true);
+    expect(result.gatesPassed).toBe(true);
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('explains secondary gate parse failures with concrete reasons', () => {
+    expect(explainSecondaryGateParse('{"gateStatus": "done"}')).toBeUndefined();
+    expect(explainSecondaryGateParse('{"gateStatus": "error"}')).toBeUndefined();
+    expect(explainSecondaryGateParse('not json')).toContain('不是合法 JSON');
+    expect(explainSecondaryGateParse('{"gateDetail": "x"}')).toContain('缺少 gateStatus');
+    expect(explainSecondaryGateParse('{"gateStatus": "yes"}')).toContain('必须是 done 或 error');
+  });
+
+  it('buildSecondaryGateCorrectionHint carries the concrete parse failure reason', () => {
+    const hint = buildSecondaryGateCorrectionHint('{"gateStatus": "yes"}');
+    expect(hint).toContain('必须是 done 或 error');
+    expect(hint).toContain('"gateStatus": "done"');
+    expect(hint).toContain('"gateStatus": "error"');
+    expect(hint).toContain('```json');
   });
 
   it('degrades to a temp session when the secondary gate startContinuable throws (不失败，记 errorDetail)', async () => {

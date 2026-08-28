@@ -33,11 +33,14 @@ import { driveAgentRound, forkStepSubagent } from './fork-session.ts';
 import { replacePassThroughVars } from './file-utils.ts';
 import {
   buildShellEnv,
+  escapeXml,
+  escapeXmlAttr,
   resolvePassThroughVars,
   resolveProviderModel as resolveModelRoute,
   textSummary,
 } from './internal.ts';
-import type { AgentHandle, AgentOptions, CreateAgentOptions } from './subagents.ts';
+import type { AgentHandle, AgentOptions, CreateAgentOptions, SessionEvent } from './subagents.ts';
+import { finalAssistantOutput } from './subagents.ts';
 import type { CommandConfig, DagBranch } from '@deepseek-ai/dsh-sandore-workflow/src/schema';
 import type { ShellExecRequest, ShellRunResult } from '@deepseek-ai/dsh-sandore-workflow/src/shell';
 
@@ -126,52 +129,59 @@ export interface BranchEvalPartial {
   readonly outputPromise: Promise<string>;
 }
 
-/** 结构化分支评估提示词主头部。 */
-const BRANCH_PROMPT_HEADER =
-  '你是严谨准确的DAG分支评估Agent，你的任务是根据分支条件与上下文，判断本次执行应路由到哪个分支。';
-
-/** 分支评估红线规则（只读，禁止文件改动与过度思考）。 */
-const BRANCH_RED_LINES = [
-  '禁止编辑、创建或删除任何文件',
-  '禁止过度思考，你的职责是尽快判断分支并返回结果',
-] as const;
-
 /** 条件分支 AI 评估解析失败重试上限（首次评估 + 最多 N 次 follow-up 纠正重试）。 */
 const MAX_BRANCH_EVAL_RETRIES = 2;
 
-/** 重试时附给 AI 的纠正提示（要求仅返回合法 shouldExecute 分支 id 数组 JSON）。 */
-const SHOULD_EXECUTE_CORRECTION_HINT =
-  '未能从你的上一轮输出中解析出 shouldExecute 数组，请仅返回 JSON：{"shouldExecute": ["branchId1", "branchId2"]}，其中 branchId 为满足执行条件的分支。若没有分支满足条件，请返回 {"shouldExecute": []}。';
+/** 循环跳出 shouldBreak 解析失败重试上限（对齐批量条件分支；重试耗尽按「不跳出」处理）。 */
+const MAX_BREAK_EVAL_RETRIES = 2;
 
 /**
- * 构建结构化分支评估提示词（主头部 + 任务 + 候选分支 + 返回格式 + 红线规则）。
- *
- * **fork-based 改造（缺陷 2）**：删除原「### 前置上下文」节——判断走 fork 全量历史注入
- * （`forkStepSessionMessages`），AI 在 fork 会话上即可见全部上下文，不再手动拼 I/O 文本。
+ * 批量分支解析失败原因诊断（public）：`extractShouldExecuteBatch` 解析失败时的具体原因，
+ * 供动态纠正提示（`buildShouldExecuteCorrectionHint`）携带；解析成功返回 undefined。
  */
-function buildBranchPrompt(taskText: string, branches: readonly DagBranch[]): string {
-  const sections: string[] = [BRANCH_PROMPT_HEADER];
-  sections.push('');
-  sections.push('## 你的任务');
-  sections.push(taskText);
-  sections.push('');
-  sections.push('## 候选分支');
-  if (branches.length === 0) {
-    sections.push('（无显式分支，请依据任务判断返回 shouldExecute）');
+export function explainShouldExecuteBatchParse(raw: string): string | undefined {
+  const parsed = parseJsonObject(raw);
+  if (parsed !== undefined) {
+    if (extractShouldExecuteArray(parsed) !== undefined) {
+      return undefined; // 解析成功
+    }
+    if (!('shouldExecute' in parsed)) {
+      return '输出 JSON 中缺少 shouldExecute 字段';
+    }
+    return 'shouldExecute 不是字符串数组（应为分支 id 列表，如 ["branchId1", "branchId2"]）';
   }
-  for (const branch of branches) {
-    const label = branch.label ?? branch.next;
-    sections.push(`- ${label}`);
+  const fenced = stripJsonFence(raw);
+  if (fenced !== raw) {
+    const reparsed = parseJsonObject(fenced);
+    if (reparsed !== undefined) {
+      if (extractShouldExecuteArray(reparsed) !== undefined) {
+        return undefined; // 解析成功
+      }
+      if (!('shouldExecute' in reparsed)) {
+        return '输出 JSON 中缺少 shouldExecute 字段';
+      }
+      return 'shouldExecute 不是字符串数组（应为分支 id 列表，如 ["branchId1", "branchId2"]）';
+    }
   }
-  sections.push('');
-  sections.push('## 返回格式');
-  sections.push('请仅返回 JSON，格式为：{"shouldExecute": true} 或 {"shouldExecute": false}，其中 shouldExecute 表示是否执行当前候选分支。');
-  sections.push('');
-  sections.push('## 红线规则');
-  for (const rule of BRANCH_RED_LINES) {
-    sections.push(`- ${rule}`);
+  if (/"shouldExecute"\s*:\s*\[/i.test(raw)) {
+    return 'shouldExecute 数组内容无法解析为字符串列表';
   }
-  return sections.join('\n');
+  return '输出既不是合法 JSON，也不包含 shouldExecute 数组';
+}
+
+/** 构建带解析失败原因的纠正提示（格式对齐批量模板返回格式节：```json 围栏 + 同措辞）。 */
+export function buildShouldExecuteCorrectionHint(output: string): string {
+  const reason = explainShouldExecuteBatchParse(output) ?? '无法解析输出';
+  return [
+    `未能从你的上一轮输出中解析出 shouldExecute 数组：${reason}。请仅返回 JSON，格式如下：`,
+    '```json',
+    '{"shouldExecute": ["branchId1", "branchId2"]}',
+    '```',
+    '其中，`shouldExecute` 为满足执行条件的分支的 `branchId` 列表。若没有分支满足条件，请返回：',
+    '```json',
+    '{"shouldExecute": []}',
+    '```',
+  ].join('\n');
 }
 
 /** 取分支的执行条件文本：condition 的 promptText（回退 label → next）。 */
@@ -184,57 +194,70 @@ function branchExecuteCondition(branch: DagBranch): string {
 }
 
 /**
- * 构建批量分支评估提示词（对齐 docs/prompts/branch.md 批量模板）。
+ * 构建批量分支评估提示词（v6 结构，对齐 docs/prompts/branch-evaluate-batch.md）。
  *
  * 条件分支一次 fork 批量评估：`branchId` = 分支 `next`（唯一且与路由目标一致），
- * `executeCondition` 取 condition 的 `promptText`（回退 label → next）；要求返回
- * `{"shouldExecute": ["branchId1", "branchId2"]}` 数组（满足执行条件的分支 id 列表）。
- * 供 {@link BranchEvaluator.evaluateConditions} 批量路径使用——逐条
- * {@link buildBranchPrompt} 保持不动（startAi/evaluate 两阶段接口依赖）。
+ * `executeCondition` 取 condition 的 `promptText`（回退 label → next）——**经
+ * `replacePassThroughVars` 替换 `${xxx}` 透传变量**（值为空保留占位符，见 file-utils）；
+ * 要求返回 `{"shouldExecute": ["branchId1", "branchId2"]}` 数组（满足执行条件的分支
+ * id 列表）。供 {@link BranchEvaluator.evaluateConditions} 批量路径使用。
+ *
+ * `degradedContext`（可选）：fork 降级（临时会话无 fork 历史）时注入的 step 执行
+ * 输出 v6 块（`buildDegradedContext` 构建）——渲染为 `## 参考信息` 节 + 头部三点加
+ * 「参考信息」点；fork 成功（上下文在会话里）不传该参数。
  */
-export function buildBatchBranchPrompt(branches: readonly DagBranch[]): string {
-  const sections: string[] = [
-    '你是严谨准确的DAG分支评估Agent，你的任务是根据`分支执行条件`与上下文，判断哪些分支满足其执行条件。',
-    '',
-    '## 分支执行条件',
-    '```json',
+export function buildBatchBranchPrompt(
+  branches: readonly DagBranch[],
+  vars?: Readonly<Record<string, string>>,
+  degradedContext?: string,
+): string {
+  const header = [
+    '当前 Step 已执行完成。请根据它的执行过程，判断下列分支中哪些满足其执行条件。必须先明确以下三点，再开始执行：',
+    '- `## 你的任务` —— 本次分支判断要达成的**唯一目标**。',
+    '- `## 分支执行条件` —— 需要判断的分支及其执行条件。',
+    ...(degradedContext === undefined
+      ? ['- `## 返回格式` —— 必须返回的 JSON 格式。']
+      : ['- `## 参考信息` —— 当前 Step 的执行输出，按需查阅。', '- `## 返回格式` —— 必须返回的 JSON 格式。']),
+  ];
+  const sections: string[] = [...header];
+  sections.push('');
+  sections.push('## 你的任务');
+  sections.push('根据 `## 分支执行条件` 与执行上下文，判断哪些分支满足其执行条件。');
+  if (degradedContext !== undefined) {
+    sections.push('');
+    sections.push('## 参考信息');
+    sections.push(degradedContext);
+  }
+  sections.push('');
+  sections.push('## 分支执行条件');
+  sections.push('```json');
+  sections.push(
     JSON.stringify(
       branches.map(b => ({
         branchId: b.next,
-        executeCondition: branchExecuteCondition(b),
+        executeCondition: replacePassThroughVars(branchExecuteCondition(b), vars ?? {}),
       })),
       null,
       4,
     ),
-    '```',
-    '',
-    '## 返回格式',
-    '请仅返回 JSON，格式如下：',
-    '```json',
-    '{"shouldExecute": ["branchId1", "branchId2"]}',
-    '```',
-    '',
-    '其中，`shouldExecute` 为满足其 `executeCondition` 条件的分支的 `branchId` 列表。',
-    '',
-    '## 红线规则',
-    '- 禁止编辑、创建或删除任何文件',
-  ]
-  return sections.join('\n')
+  );
+  sections.push('```');
+  sections.push('');
+  sections.push('## 返回格式');
+  sections.push('请仅返回 JSON，格式如下：');
+  sections.push('```json');
+  sections.push('{"shouldExecute": ["branchId1", "branchId2"]}');
+  sections.push('```');
+  sections.push('');
+  sections.push('其中，`shouldExecute` 为满足其 `executeCondition` 条件的分支的 `branchId` 列表。');
+  sections.push('');
+  sections.push('## 红线规则');
+  sections.push('- 禁止编辑、创建或删除任何文件');
+  return sections.join('\n');
 }
 
-/** 循环跳出专用提示词主头部（缺陷 4：不复用条件分支 shouldExecute 模板）。 */
-const BREAK_PROMPT_HEADER =
-  '你是严谨准确的循环跳出判断Agent，你的任务是根据用户配置的跳出条件与当前循环体的输入输出，判断是否应该跳出当前循环。';
-
-/** 循环跳出红线规则（只读、禁止文件改动与过度思考、未完成不擅自跳出）。 */
-const BREAK_RED_LINES = [
-  '禁止编辑、创建或删除任何文件',
-  '禁止过度思考，你的职责是尽快判断是否跳出并返回结果',
-  '如果当前循环体实际未完成目标，禁止擅自判定跳出',
-] as const;
-
 /**
- * 构建循环跳出专用 shouldBreak 提示词（主头部 + 任务 + 返回格式 + 红线规则）。
+ * 构建循环跳出专用 shouldBreak 提示词（v6 结构，对齐 docs/prompts/loop-break.md）。
  *
  * **fork-based 改造（缺陷 4）**：删除原「## 当前循环体的输入输出」节——判断走 fork 全量
  * 历史注入（`forkStepSessionMessages`），AI 在 fork 会话上即可见循环体全部 I/O，不再手动
@@ -242,21 +265,52 @@ const BREAK_RED_LINES = [
  *
  * **缺陷 4/2 分场景字段**：循环跳出要求返回 `{"shouldBreak": true/false}`，与
  * {@link extractBreakResult} 的 shouldBreak 解析对齐；**不复用**条件分支
- * {@link buildBranchPrompt} 的 shouldExecute 模板——两者分场景字段互不复用。
+ * `buildBatchBranchPrompt` 的 shouldExecute 模板——两者分场景字段互不复用。
+ *
+ * `vars`：跳出条件经 `replacePassThroughVars` 替换 `${xxx}`（空值保留占位符）。
+ * `degradedContext`（可选）：fork 降级（临时会话无 fork 历史）时注入 step 执行输出
+ * v6 块——渲染为 `## 参考信息` 节 + 头部三点加「参考信息」点（同 batch）。
  */
-function buildBreakPrompt(taskText: string): string {
-  const sections: string[] = [BREAK_PROMPT_HEADER];
+function buildBreakPrompt(
+  taskText: string,
+  vars?: Readonly<Record<string, string>>,
+  degradedContext?: string,
+): string {
+  const header = [
+    '当前 Step 已执行完成。请判断是否应该跳出当前循环。必须先明确以下三点，再开始执行：',
+    '- `## 你的任务` —— 本次循环跳出判断要达成的**唯一目标**。',
+    '- `## 跳出条件` —— 用户配置的跳出条件。',
+    ...(degradedContext === undefined
+      ? ['- `## 返回格式` —— 必须返回的 JSON 格式。']
+      : ['- `## 参考信息` —— 当前 Step 的执行输出，按需查阅。', '- `## 返回格式` —— 必须返回的 JSON 格式。']),
+  ];
+  const sections: string[] = [...header];
   sections.push('');
   sections.push('## 你的任务');
-  sections.push(taskText);
+  sections.push('根据 `## 跳出条件` 与执行上下文，判断是否应该跳出当前循环。');
+  if (degradedContext !== undefined) {
+    sections.push('');
+    sections.push('## 参考信息');
+    sections.push(degradedContext);
+  }
+  sections.push('');
+  sections.push('## 跳出条件');
+  sections.push(replacePassThroughVars(taskText, vars ?? {}));
   sections.push('');
   sections.push('## 返回格式');
-  sections.push('请仅返回 JSON，格式为：{"shouldBreak": true} 或 {"shouldBreak": false}，其中 shouldBreak 表示是否应该跳出当前循环。');
+  sections.push('请仅返回 JSON，格式如下：');
+  sections.push('```json');
+  sections.push('{"shouldBreak": true}');
+  sections.push('```');
+  sections.push('或');
+  sections.push('```json');
+  sections.push('{"shouldBreak": false}');
+  sections.push('```');
+  sections.push('');
+  sections.push('其中，`shouldBreak` 表示是否应该跳出当前循环。');
   sections.push('');
   sections.push('## 红线规则');
-  for (const rule of BREAK_RED_LINES) {
-    sections.push(`- ${rule}`);
-  }
+  sections.push('- 禁止编辑、创建或删除任何文件');
   return sections.join('\n');
 }
 
@@ -298,6 +352,48 @@ export function extractBreakResult(raw: string): string {
     return extracted.toLowerCase();
   }
   return raw.trim();
+}
+
+/**
+ * 循环跳出 shouldBreak 解析失败原因诊断（public）：`extractBreakResult` 无法解析出
+ * 合法布尔时的具体原因（供动态纠正提示 `buildBreakCorrectionHint` 携带）；
+ * 解析成功（JSON 布尔/字符串 `true|false` 或 regex 命中）返回 undefined。
+ */
+export function explainBreakResultParse(raw: string): string | undefined {
+  const parsed = parseJsonObject(raw);
+  if (parsed !== undefined) {
+    const shouldBreak = parsed['shouldBreak'];
+    if (typeof shouldBreak === 'boolean') {
+      return undefined;
+    }
+    if (typeof shouldBreak === 'string' && /^(true|false)$/i.test(shouldBreak)) {
+      return undefined;
+    }
+    if (!('shouldBreak' in parsed)) {
+      return '输出 JSON 中缺少 shouldBreak 字段';
+    }
+    return 'shouldBreak 不是布尔值（应为 true 或 false）';
+  }
+  if (/"shouldBreak"\s*:\s*(true|false)/i.test(raw)) {
+    return undefined;
+  }
+  return '输出中未找到 shouldBreak 布尔值';
+}
+
+/** 构建带解析失败原因的循环跳出纠正提示（格式对齐 loop-break.md 返回格式节）。 */
+export function buildBreakCorrectionHint(output: string): string {
+  const reason = explainBreakResultParse(output) ?? '无法解析输出';
+  return [
+    `未能从你的上一轮输出中解析出 shouldBreak：${reason}。请仅返回 JSON，格式如下：`,
+    '```json',
+    '{"shouldBreak": true}',
+    '```',
+    '或',
+    '```json',
+    '{"shouldBreak": false}',
+    '```',
+    '其中，`shouldBreak` 表示是否应该跳出当前循环。',
+  ].join('\n');
 }
 
 /**
@@ -432,7 +528,11 @@ interface RoutingAiSpec {
   /** 输出是否满足（不再重试）。 */
   readonly isSatisfied: (output: string) => boolean;
   /** 不满足时 followup/追加的纠正提示。 */
-  readonly correctionHint: string;
+  /**
+   * 纠正提示：静态字符串或函数（`(上一轮输出) => 纠正提示`）——函数形式可携带
+   * 解析失败原因（`buildShouldExecuteCorrectionHint`）。
+   */
+  readonly correctionHint: string | ((output: string) => string);
   /** 重试上限（首次之外最多 N 次）。 */
   readonly maxRetries: number;
   /** 重试耗尽回调（记日志等；不抛错——不满足由调用方按 false 处理）。 */
@@ -459,7 +559,11 @@ export class BranchEvaluator {
     private readonly config: BranchEvaluatorConfig,
   ) {}
 
-  /** 启动评估，返回中间态；AI 会话带 sessionHandle（fork id 或降级 eval-xxxx），shell 直接执行完成。 */
+  /**
+   * 启动评估（**单条 AI 评估已废弃（2026-08-25）**：生产条件分支判断全部走批量
+   * `evaluateConditions` → `buildBatchBranchPrompt`；本方法仅保留 shell 单条路径
+   * （`evaluateConditions` 的 shell 组逐条执行），AI 条件抛废弃错误）。
+   */
   async start(condition: CommandConfig, options: BranchEvalOptions = {}): Promise<BranchEvalPartial> {
     switch (condition.type) {
       case 'shell':
@@ -468,7 +572,11 @@ export class BranchEvaluator {
       case 'prompt':
       case 'skill':
       case 'mcp':
-        return await this.startAi(condition, options);
+        // 单条 AI 分支评估已废弃（生产走批量模板）；防御性抛错避免静默走错模板。
+        throw new SandoreError(
+          `single branch AI evaluation is deprecated; use evaluateConditions (batch)`,
+          'STEP_EXECUTION',
+        );
       default:
         // 穷尽 5 类型后 `condition` 已收窄为 never；此处仅防御运行期注入的未知命令类型。
         throw new SandoreError(
@@ -513,18 +621,39 @@ export class BranchEvaluator {
   }
 
   /**
-   * 循环跳出一步完成两阶段评估（专用 shouldBreak 模板，单轮，无重试）。
+   * 循环跳出评估（完整驱动，对齐 `runRoutingAi` 批量条件分支的重试机制）。
    *
    * shell breakCondition 直接执行命令（不消费 I/O 上下文，decideBreak 走
    * matchesExpectation）；AI breakCondition fork step 会话注入全量历史后发送 shouldBreak
-   * 模板提示词，由 {@link extractBreakResult} 解析 shouldBreak（与提示词格式对齐，消除缺陷 2/4
-   * 指出的「buildBranchPrompt 要求 shouldExecute 而 decideBreak 解析 shouldBreak」
-   * 字段错配）。仅循环跳出使用——条件分支仍走 {@link evaluate}/
-   * {@link evaluateConditions} 的 shouldExecute 路径。
+   * 模板提示词——**解析失败给同一个 fork 子代理 `followup` 纠正重试**（上限
+   * `MAX_BREAK_EVAL_RETRIES`，纠正提示携带失败原因）；重试耗尽 warn + 按「不跳出」
+   * 处理（decideBreak 对不可解析输出判 false，现状语义）；降级临时会话 messages
+   * 追加同样重试。仅循环跳出使用——条件分支走 `evaluateConditions` 的 shouldExecute 路径。
    */
   async evaluateBreak(condition: CommandConfig, options: BranchEvalOptions = {}): Promise<BranchEvalResult> {
-    const partial = await this.startBreak(condition, options);
-    return await this.collect(partial);
+    if (condition.type === 'shell') {
+      const partial = await this.startShell(condition, options);
+      return await this.collect(partial);
+    }
+    // AI 四类（agent/prompt/skill/mcp）：完整驱动 + 纠正重试 + 降级上下文注入。
+    const route = await this.resolveProviderModel(condition.value);
+    const vars = resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations);
+    const taskText = replacePassThroughVars(condition.value.promptText, vars);
+    const promptText = buildBreakPrompt(taskText, vars);
+    const degradedContext = await this.buildDegradedContext(options);
+    const degradedPromptText = degradedContext === undefined
+      ? promptText
+      : buildBreakPrompt(taskText, vars, degradedContext);
+    return this.runRoutingAi(route, promptText, options, {
+      isSatisfied: output => explainBreakResultParse(output) === undefined,
+      correctionHint: output => buildBreakCorrectionHint(output),
+      maxRetries: MAX_BREAK_EVAL_RETRIES,
+      onExhausted: output => {
+        this.ctx.logger.warn(
+          `sandore: break shouldBreak unparseable after ${MAX_BREAK_EVAL_RETRIES} retry attempt(s); last output: ${output.slice(0, 200)}`,
+        );
+      },
+    }, degradedPromptText);
   }
 
   /**
@@ -575,22 +704,75 @@ export class BranchEvaluator {
     }
     const firstAi = aiPairs[0]!.condition;
     const route = await this.resolveProviderModel(firstAi.value);
-    const promptText = buildBatchBranchPrompt(aiPairs.map(({ branch }) => branch));
+    // v6：executeCondition 做透传变量替换（值为空保留占位符，见 replacePassThroughVars）。
+    const vars = resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations);
+    const aiBranches = aiPairs.map(({ branch }) => branch);
+    const promptText = buildBatchBranchPrompt(aiBranches, vars);
+    // 降级（fork 失败 → 临时会话无历史）提示词：从 step 事件提取执行输出注入 v6 块；
+    // 无上下文数据时降级提示词等于 fork 版（模型仅凭条件文本判断）。
+    const degradedContext = await this.buildDegradedContext(options);
+    const degradedPromptText = degradedContext === undefined
+      ? promptText
+      : buildBatchBranchPrompt(aiBranches, vars, degradedContext);
     const result = await this.runRoutingAi(route, promptText, options, {
       isSatisfied: output => extractShouldExecuteBatch(output) !== undefined,
-      correctionHint: SHOULD_EXECUTE_CORRECTION_HINT,
+      correctionHint: output => buildShouldExecuteCorrectionHint(output),
       maxRetries: MAX_BRANCH_EVAL_RETRIES,
       onExhausted: output => {
         this.ctx.logger.warn(
           `sandore: batch branch shouldExecute array unparseable after ${MAX_BRANCH_EVAL_RETRIES} retry attempt(s); last output: ${output.slice(0, 200)}`,
         );
       },
-    });
+    }, degradedPromptText);
     // AI 返回的 id 即 branch.next，全部收录（调用方按 passedBranchIds 路由）。
     for (const id of extractShouldExecuteBatch(result.output) ?? []) {
       passed.push(id);
     }
     return { result, passedBranchIds: passed };
+  }
+
+  /** 解析纠正提示（函数形式携带解析失败原因；静态字符串原样返回）。 */
+  private resolveCorrectionHint(spec: RoutingAiSpec, output: string): string {
+    return typeof spec.correctionHint === 'function' ? spec.correctionHint(output) : spec.correctionHint;
+  }
+
+  /**
+   * 构建 fork 降级用的 step 执行输出 v6 块（`<ReferenceInfo>`）。
+   *
+   * 降级路径（临时会话无 fork 历史）时注入——从 step 子代理完整事件（live →
+   * persistence 回退）提取最终 assistant 输出，按 v6 格式组织
+   * `<Reference title="你正在执行的Step: ...">` + `<Output>`。事件源缺失/无输出时
+   * 返回 undefined（提示词不带参考信息节，模型仅凭条件文本判断）。
+   */
+  private async buildDegradedContext(options: BranchEvalOptions): Promise<string | undefined> {
+    const getEvents = this.config.getStepSessionEvents;
+    if (options.stepSessionId === undefined || getEvents === undefined) {
+      return undefined;
+    }
+    const events = await getEvents(options.stepSessionId);
+    if (events === undefined) {
+      return undefined;
+    }
+    // finalAssistantOutput 只读 assistant/message 与 assistant/chunk（忽略其余事件），
+    // DshSessionEvent（完整联合）与 subagents.SessionEvent（5 种最小子集）运行时兼容。
+    const output = finalAssistantOutput(events as unknown as readonly SessionEvent[]);
+    if (output === undefined) {
+      return undefined;
+    }
+    const text = textSummary(output);
+    if (text.trim() === '') {
+      return undefined;
+    }
+    const stepId = escapeXmlAttr(options.stepId ?? 'route');
+    return [
+      '<ReferenceInfo>',
+      `  <Reference title="你正在执行的Step: ${stepId} (id: ${stepId})">`,
+      '    <Output>',
+      ...text.split('\n').map(line => `      ${escapeXml(line)}`),
+      '    </Output>',
+      '  </Reference>',
+      '</ReferenceInfo>',
+    ].join('\n');
   }
 
   /**
@@ -612,6 +794,8 @@ export class BranchEvaluator {
     promptText: string,
     options: BranchEvalOptions,
     spec: RoutingAiSpec,
+    /** 降级（临时会话）用的提示词——含 step 执行输出 v6 块；无降级上下文时等于 promptText。 */
+    degradedPromptText: string,
   ): Promise<BranchEvalResult> {
     const hostAgentId = this.config.hostAgentId;
     const createAgent = this.config.createAgent;
@@ -633,7 +817,7 @@ export class BranchEvaluator {
             let attempts = 0;
             while (!spec.isSatisfied(output) && attempts < spec.maxRetries) {
               attempts += 1;
-              output = await driveAgentRound(handle, spec.correctionHint);
+              output = await driveAgentRound(handle, this.resolveCorrectionHint(spec, output));
             }
             if (!spec.isSatisfied(output)) {
               spec.onExhausted?.(output);
@@ -648,10 +832,11 @@ export class BranchEvaluator {
         // fork 失败 → 降级 llm.stream 临时会话（下方）。
       }
     }
-    // 降级：一次性临时会话（无历史）+ messages 追加同样重试。
+    // 降级：一次性临时会话（无历史）——用 degradedPromptText（含 step 执行输出 v6 块，
+    // 弥补 fork 历史缺失）+ messages 追加同样重试。
     const messages: Message[] = [createUserMessage({
       source: { kind: 'user' },
-      content: [{ type: 'text', text: promptText }],
+      content: [{ type: 'text', text: degradedPromptText }],
     })];
     let output = await this.streamAi(route, messages, options.signal);
     let attempts = 0;
@@ -666,7 +851,7 @@ export class BranchEvaluator {
       messages.push(
         createUserMessage({
           source: { kind: 'user' },
-          content: [{ type: 'text', text: spec.correctionHint }],
+          content: [{ type: 'text', text: this.resolveCorrectionHint(spec, output) }],
         }),
       );
       output = await this.streamAi(route, messages, options.signal);
@@ -677,41 +862,30 @@ export class BranchEvaluator {
     return { output, sessionHandle: this.newSessionHandle() };
   }
 
-  private async startAi(condition: AiCommand, options: BranchEvalOptions): Promise<BranchEvalPartial> {
-    const route = await this.resolveProviderModel(condition.value);
-    const taskText = replacePassThroughVars(
-      condition.value.promptText,
-      resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations),
-    );
-    const promptText = buildBranchPrompt(taskText, options.branches ?? []);
-    return this.dispatchAi(route, promptText, {
-      ...(options.stepSessionId === undefined ? {} : { stepSessionId: options.stepSessionId }),
-      ...(options.stepId === undefined ? {} : { stepId: options.stepId }),
-      ...(options.workdir === undefined ? {} : { workdir: options.workdir }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  }
-
   /**
    * 循环跳出 AI 评估入口：专用 shouldBreak 模板（缺陷 4）。
    *
-   * 与条件分支 {@link startAi} 共用 route 解析、透传变量替换与流式聚合，仅提示词模板
-   * 不同——循环跳出要求 `{"shouldBreak": true/false}`，不复用 shouldExecute 模板；
-   * 会话机制同为 Phase D 路由 fork 子代理（不手动传 I/O）。
+   * 与条件分支批量（`evaluateConditions` → `buildBatchBranchPrompt`）共用 route 解析、
+   * 透传变量替换与流式聚合，仅提示词模板不同——循环跳出要求 `{"shouldBreak":
+   * true/false}`，不复用 shouldExecute 模板；会话机制同为 Phase D 路由 fork 子代理
+   * （不手动传 I/O）。
    */
   private async startBreakAi(condition: AiCommand, options: BranchEvalOptions): Promise<BranchEvalPartial> {
     const route = await this.resolveProviderModel(condition.value);
-    const taskText = replacePassThroughVars(
-      condition.value.promptText,
-      resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations),
-    );
-    const promptText = buildBreakPrompt(taskText);
+    const vars = resolvePassThroughVars(options.passThroughVars, options.loopTurn, options.loopMaxIterations);
+    const taskText = replacePassThroughVars(condition.value.promptText, vars);
+    const promptText = buildBreakPrompt(taskText, vars);
+    // 降级（fork 失败 → 临时会话无历史）提示词：注入 step 执行输出 v6 块（同 batch）。
+    const degradedContext = await this.buildDegradedContext(options);
+    const degradedPromptText = degradedContext === undefined
+      ? promptText
+      : buildBreakPrompt(taskText, vars, degradedContext);
     return this.dispatchAi(route, promptText, {
       ...(options.stepSessionId === undefined ? {} : { stepSessionId: options.stepSessionId }),
       ...(options.stepId === undefined ? {} : { stepId: options.stepId }),
       ...(options.workdir === undefined ? {} : { workdir: options.workdir }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
+    }, degradedPromptText);
   }
 
   /**
@@ -727,6 +901,8 @@ export class BranchEvaluator {
     route: { provider: string; model: string },
     promptText: string,
     options: DispatchOptions,
+    /** 降级（临时会话）用的提示词——含 step 执行输出 v6 块；无降级上下文时等于 promptText。 */
+    degradedPromptText: string,
   ): Promise<BranchEvalPartial> {
     const hostAgentId = this.config.hostAgentId;
     const createAgent = this.config.createAgent;
@@ -759,10 +935,10 @@ export class BranchEvaluator {
         // fork 失败 → 降级 llm.stream 临时会话（下方）。
       }
     }
-    // 降级：一次性临时会话（无历史）。
+    // 降级：一次性临时会话（无历史）——用 degradedPromptText（含 step 执行输出 v6 块）。
     const message = createUserMessage({
       source: { kind: 'user' },
-      content: [{ type: 'text', text: promptText }],
+      content: [{ type: 'text', text: degradedPromptText }],
     });
     return {
       sessionHandle: this.newSessionHandle(),

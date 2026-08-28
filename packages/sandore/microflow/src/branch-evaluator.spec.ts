@@ -16,7 +16,7 @@ import { FakeAgentRegistry } from '../../workflow/tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../../workflow/tests/mocks/llm.ts';
 import { FakeShell, successResult } from '../../workflow/tests/mocks/shell.ts';
 import { FakeSubprocess } from '../../workflow/tests/mocks/subprocess.ts';
-import { BranchEvaluator, buildBatchBranchPrompt, extractBreakResult, extractShouldExecute, extractShouldExecuteBatch, matchesExpectation } from './branch-evaluator.ts';
+import { BranchEvaluator, buildBatchBranchPrompt, buildBreakCorrectionHint, buildShouldExecuteCorrectionHint, explainBreakResultParse, explainShouldExecuteBatchParse, extractBreakResult, extractShouldExecute, extractShouldExecuteBatch, matchesExpectation } from './branch-evaluator.ts';
 import type { BranchEvaluatorConfig } from './branch-evaluator.ts';
 
 /** 组装 BranchEvaluator 测试环境（注入 mock llm/shell/subprocess）。 */
@@ -130,6 +130,48 @@ describe('extractShouldExecuteBatch', () => {
     expect(prompt).toContain('"executeCondition": "L2"');
     expect(prompt).toContain('"executeCondition": "b3"');
   });
+
+  it('buildBatchBranchPrompt replaces passThroughVars in executeCondition (空值保留占位符)', () => {
+    const prompt = buildBatchBranchPrompt(
+      [
+        { next: 'b1', condition: { type: 'prompt', value: { promptText: '存在 ${dir}/${file}/proposal.md 则走' } } },
+        { next: 'b2', condition: { type: 'prompt', value: { promptText: '未定义 ${missing} 保留' } } },
+      ],
+      { dir: 'artifacts', file: '' },
+    );
+    // 非空变量替换；空值与未定义保留 `${xxx}` 占位符（防路径粘连 artifacts//）。
+    expect(prompt).toContain('存在 artifacts/${file}/proposal.md 则走');
+    expect(prompt).toContain('未定义 ${missing} 保留');
+  });
+
+  it('buildBatchBranchPrompt with degradedContext adds 参考信息 section (v6 降级注入)', () => {
+    const prompt = buildBatchBranchPrompt(
+      [{ next: 'b1', condition: { type: 'prompt', value: { promptText: '判断' } } }],
+      undefined,
+      '<ReferenceInfo>\n  <Reference title="你正在执行的Step: step-a (id: step-a)">\n    <Output>\n      step 输出\n    </Output>\n  </Reference>\n</ReferenceInfo>',
+    );
+    expect(prompt).toContain('## 参考信息');
+    expect(prompt).toContain('<ReferenceInfo>');
+    expect(prompt).toContain('step 输出');
+    expect(prompt).toContain('- `## 参考信息` —— 当前 Step 的执行输出，按需查阅。');
+  });
+
+  it('explains batch parse failures with concrete reasons', () => {
+    expect(explainShouldExecuteBatchParse('{"shouldExecute": ["a"]}')).toBeUndefined();
+    expect(explainShouldExecuteBatchParse('not json')).toContain('不是合法 JSON');
+    expect(explainShouldExecuteBatchParse('{"other": 1}')).toContain('缺少 shouldExecute');
+    expect(explainShouldExecuteBatchParse('{"shouldExecute": true}')).toContain('不是字符串数组');
+    expect(explainShouldExecuteBatchParse('{"shouldExecute": [1, 2]}')).toContain('不是字符串数组');
+    expect(explainShouldExecuteBatchParse('前文 shouldExecute: [a 后文')).toContain('不是合法 JSON');
+  });
+
+  it('correction hint carries the concrete parse failure reason', () => {
+    const hint = buildShouldExecuteCorrectionHint('{"shouldExecute": true}');
+    expect(hint).toContain('不是字符串数组');
+    expect(hint).toContain('{"shouldExecute": ["branchId1", "branchId2"]}');
+    expect(hint).toContain('{"shouldExecute": []}');
+    expect(hint).toContain('```json');
+  });
 });
 
 describe('extractBreakResult', () => {
@@ -151,6 +193,23 @@ describe('extractBreakResult', () => {
 
   it('extracts shouldBreak via case-insensitive regex for mixed output', () => {
     expect(extractBreakResult('... {"shouldBreak": TRUE} ...')).toBe('true');
+  });
+
+  it('explains break parse failures with concrete reasons', () => {
+    expect(explainBreakResultParse('{"shouldBreak": true}')).toBeUndefined();
+    expect(explainBreakResultParse('{"shouldBreak": "false"}')).toBeUndefined();
+    expect(explainBreakResultParse('... {"shouldBreak": TRUE} ...')).toBeUndefined();
+    expect(explainBreakResultParse('not json')).toContain('未找到 shouldBreak');
+    expect(explainBreakResultParse('{"other": 1}')).toContain('缺少 shouldBreak');
+    expect(explainBreakResultParse('{"shouldBreak": "maybe"}')).toContain('不是布尔值');
+  });
+
+  it('buildBreakCorrectionHint carries the concrete reason and the shouldBreak format', () => {
+    const hint = buildBreakCorrectionHint('{"shouldBreak": "maybe"}');
+    expect(hint).toContain('不是布尔值');
+    expect(hint).toContain('{"shouldBreak": true}');
+    expect(hint).toContain('{"shouldBreak": false}');
+    expect(hint).toContain('```json');
   });
 
   it('falls back to the trimmed raw text for plain output', () => {
@@ -195,30 +254,11 @@ describe('matchesExpectation', () => {
 });
 
 describe('BranchEvaluator two-phase', () => {
-  it('runs an agent condition through a temp session with a non-null sessionHandle', async () => {
-    const { llm, evaluator } = harness();
-    llm.providers.push({ id: 'p', name: 'Provider' });
-    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
-
-    const partial = await evaluator.start(
+  it('rejects single AI evaluation as deprecated (生产走批量 evaluateConditions)', async () => {
+    const { evaluator } = harness();
+    await expect(evaluator.start(
       { type: 'agent', value: { promptText: 'check', providerId: 'p', modelId: 'm' } },
-    );
-    expect(partial.sessionHandle).not.toBeNull();
-    expect(llm.calls).toHaveLength(1);
-
-    const result = await evaluator.collect(partial);
-    expect(result.output).toBe('{"shouldExecute": true}');
-    expect(result.sessionHandle).toBe(partial.sessionHandle);
-  });
-
-  it('evaluates an agent condition in one step via evaluate()', async () => {
-    const { llm, evaluator } = harness({ defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm' });
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
-
-    const result = await evaluator.evaluate({ type: 'prompt', value: { promptText: 'check' } });
-    expect(result.output).toBe('{"shouldExecute": true}');
-    expect(result.sessionHandle).not.toBeNull();
+    )).rejects.toMatchObject({ code: 'STEP_EXECUTION' });
   });
 
   it('executes a shell condition directly with a null sessionHandle', async () => {
@@ -231,6 +271,13 @@ describe('BranchEvaluator two-phase', () => {
     expect(shell.specs).toHaveLength(1);
     expect(result.sessionHandle).toBeNull();
     expect(result.output).toBe('lint-clean');
+  });
+
+  it('rejects single AI evaluation as deprecated via evaluate()', async () => {
+    const { evaluator } = harness();
+    await expect(evaluator.evaluate({ type: 'prompt', value: { promptText: 'check' } })).rejects.toMatchObject({
+      code: 'STEP_EXECUTION',
+    });
   });
 });
 
@@ -369,9 +416,9 @@ describe('BranchEvaluator provider/model fallback', () => {
     const { llm, evaluator } = harness();
     llm.providers.push({ id: 'dir-p', name: 'Directory Provider' });
     llm.models.set('dir-p', [{ provider: 'dir-p', id: 'dir-m', name: 'Directory Model' }]);
-    llm.streamHandler = () => textChunks('{"shouldExecute": true}');
+    llm.streamHandler = () => textChunks('{"shouldBreak": false}');
 
-    await evaluator.evaluate({ type: 'prompt', value: { promptText: 'check' } });
+    await evaluator.evaluateBreak({ type: 'prompt', value: { promptText: 'check' } });
 
     expect(llm.calls[0]?.provider).toBe('dir-p');
     expect(llm.calls[0]?.model).toBe('dir-m');
@@ -380,7 +427,7 @@ describe('BranchEvaluator provider/model fallback', () => {
   it('throws STEP_EXECUTION when no LLM provider is available', async () => {
     const { evaluator } = harness();
 
-    await expect(evaluator.evaluate({ type: 'prompt', value: { promptText: 'check' } })).rejects.toThrow(
+    await expect(evaluator.evaluateBreak({ type: 'prompt', value: { promptText: 'check' } })).rejects.toThrow(
       /no LLM provider available/,
     );
   });
@@ -389,7 +436,7 @@ describe('BranchEvaluator provider/model fallback', () => {
     const { llm, evaluator } = harness();
     llm.providers.push({ id: 'p', name: 'Provider' });
 
-    await expect(evaluator.evaluate({ type: 'prompt', value: { promptText: 'check' } })).rejects.toThrow(
+    await expect(evaluator.evaluateBreak({ type: 'prompt', value: { promptText: 'check' } })).rejects.toThrow(
       /no LLM model available for provider 'p'/,
     );
   });
@@ -573,6 +620,33 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
     expect(llm.calls).toHaveLength(0);
   });
 
+  it('follows up the same fork subagent with a reason-carrying correction hint on unparseable shouldBreak, then succeeds', async () => {
+    const { llm, agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    let call = 0;
+    agents.createFollowupHandler = () => {
+      call += 1;
+      return call === 1 ? [{ type: 'text', text: 'not json' }] : [{ type: 'text', text: '{"shouldBreak": true}' }];
+    };
+
+    const result = await evaluator.evaluateBreak(
+      { type: 'prompt', value: { promptText: '判断跳出' } },
+      { stepSessionId: 'child-1', stepId: 'loop-node' },
+    );
+
+    // 解析失败 → 同一个 fork 子代理 followup 纠正（带失败原因）→ 第二次成功。
+    const routingAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
+    expect(routingAgent.followups).toHaveLength(2);
+    const hint = routingAgent.followups[1]?.content[0] as TextBlock | undefined;
+    expect(hint?.text).toContain('未找到 shouldBreak');
+    expect(hint?.text).toContain('{"shouldBreak": true}');
+    expect(result.output).toBe('{"shouldBreak": true}');
+    expect(llm.calls).toHaveLength(0);
+  });
+
   it('follows up the same routing subagent with the correction hint on unparseable output', async () => {
     const { llm, agents, evaluator } = harnessWithAgents({
       hostAgentId: 'host-1',
@@ -611,6 +685,30 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
     expect(passedBranchIds).toEqual(['step-branch']);
     expect(llm.calls).toHaveLength(1);
     expect(llm.calls[0]?.messages).toHaveLength(1);
+  });
+
+  it('injects step output (v6 ReferenceInfo) into the degraded prompt when events are available', async () => {
+    const { llm, evaluator } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+      getStepSessionEvents: async () => childEvents(),
+    });
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["step-branch"]}');
+
+    const { result, passedBranchIds } = await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
+      { stepSessionId: 'child-1', stepId: 'step-branch' },
+    );
+
+    expect(passedBranchIds).toEqual(['step-branch']);
+    expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // 降级上下文：v6 <ReferenceInfo> 块 + step 执行输出（childEvents 的 assistant 文本 'work output'）。
+    const prompt = llm.calls[0]?.messages[0]?.content[0] as TextBlock | undefined;
+    expect(prompt?.text).toContain('## 参考信息');
+    expect(prompt?.text).toContain('<ReferenceInfo>');
+    expect(prompt?.text).toContain('你正在执行的Step: step-branch (id: step-branch)');
+    expect(prompt?.text).toContain('work output');
   });
 
   it('degrades to a temp llm.stream session when the source has no events (synthetic session)', async () => {

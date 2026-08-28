@@ -558,69 +558,91 @@ describe('StepRunner agent', () => {
   });
 
   it('injects 当前Step参数 sub-section when agentParamsTemplate is defined', async () => {
-    const { subagents, agents, llm, runner } = harness({
+    const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
       defaultModel: 'm',
     });
-    llm.streamHandler = () => textChunks('{"lintErrorCount": 3}');
-    const child = new FakeAgent('child-1');
+    // v6：fillParams 也走可续接子代理——child-1 是 fillParams 子代理（输出填充结果），
+    // child-2 是主 step 子代理（输出 'done'）。startContinuable 顺序：fillParams → 主 step。
+    const fillChild = new FakeAgent('child-1');
+    fillChild.session.append(assistantMessageEvent([{ type: 'text', text: '{"lintErrorCount": 3}' }]));
+    agents.register(fillChild);
+    const child = new FakeAgent('child-2');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
     agents.register(child);
 
     await runner.run(request(agentStep({ agentParamsTemplate: '审查：${lintErrorCount} 个错误' })));
 
-    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    // fillParams 子代理收到填充提示词（含参数模板原文）。
+    expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).toContain('审查：${lintErrorCount} 个错误');
+    // 主 step 子代理提示词：<Params> 内为 fillParams 输出。
+    const promptText = textOf(subagents.continuableStarts[1]?.request.prompt[0]);
     expect(promptText).toContain('<Params>');
     expect(promptText).toContain('{"lintErrorCount": 3}');
   });
 
-  it('falls back to agentParamsTemplate raw text when fillParams temp session errors', async () => {
-    const { subagents, agents, llm, runner } = harness({
+  it('falls back to agentParamsTemplate raw text when fillParams subagent produces no output', async () => {
+    const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
       defaultModel: 'm',
     });
-    llm.streamHandler = () => textChunks('', { kind: 'error', failure: { message: 'boom', code: 'X' } });
-    const child = new FakeAgent('child-1');
+    // fillParams 子代理（child-1）无 assistant 输出 → 回退模板原文。
+    const fillChild = new FakeAgent('child-1');
+    agents.register(fillChild);
+    const child = new FakeAgent('child-2');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
     agents.register(child);
 
     await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
 
-    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    const promptText = textOf(subagents.continuableStarts[1]?.request.prompt[0]);
     expect(promptText).toContain('<Params>');
     expect(promptText).toContain('TEMPLATE_RAW');
   });
 
-  it('falls back to agentParamsTemplate raw text when fillParams temp session aborts', async () => {
-    const { subagents, agents, llm, runner } = harness({
+  it('falls back to agentParamsTemplate raw text when fillParams subagent settle is not completed', async () => {
+    const ctrl = settleController();
+    const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
       defaultModel: 'm',
+      awaitSubagentSettlement: ctrl.awaitSubagentSettlement,
     });
-    llm.streamHandler = () => textChunks('', { kind: 'aborted', failure: { message: 'cancelled', code: 'X' } });
-    const child = new FakeAgent('child-1');
+    // fillParams 子代理（child-1）settle aborted → 回退模板原文。
+    const fillChild = new FakeAgent('child-1');
+    agents.register(fillChild);
+    const child = new FakeAgent('child-2');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
     agents.register(child);
 
-    await expect(runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })))).resolves.toBeDefined();
+    const runP = runner.run(request(agentStep({ agentParamsTemplate: 'TEMPLATE_RAW' })));
+    ctrl.settle('child-1', 'aborted');
+    ctrl.settle('child-2', 'completed');
+    await expect(runP).resolves.toBeDefined();
 
-    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    const promptText = textOf(subagents.continuableStarts[1]?.request.prompt[0]);
     expect(promptText).toContain('<Params>');
     expect(promptText).toContain('TEMPLATE_RAW');
   });
 
-  it('falls back to agentParamsTemplate raw text when fillParams temp session stream throws', async () => {
-    const { subagents, agents, llm, runner } = harness({
+  it('falls back to agentParamsTemplate raw text when fillParams subagent start throws', async () => {
+    const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
       defaultModel: 'm',
     });
-    llm.streamHandler = () => (async function* () {
-      yield { type: 'block-start', index: 0, blockType: 'text' };
-      throw new Error('stream exploded');
-    })();
+    // fillParams 子代理启动抛错（mock startContinuable 首次调用抛）→ 回退模板原文。
+    const originalStart = subagents.startContinuable.bind(subagents);
+    let first = true;
+    subagents.startContinuable = (spec => {
+      if (first) {
+        first = false;
+        throw new Error('start exploded');
+      }
+      return originalStart(spec);
+    }) as typeof subagents.startContinuable;
     const child = new FakeAgent('child-1');
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
     agents.register(child);

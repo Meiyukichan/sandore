@@ -15,14 +15,15 @@
  * @module @deepseek-ai/dsh-sandore-microflow/src/step-runner
  */
 import type { Context } from '@deepseek-ai/cordis';
-import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
-import type { ContentBlock, GenerateOptions } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 
 import { SandoreError } from './errors.ts';
 import { idMatches, replacePassThroughVars } from './file-utils.ts';
 import {
   buildShellEnv,
   describeError,
+  escapeXml,
+  escapeXmlAttr,
   resolvePassThroughVars,
   resolveProviderModel as resolveModelRoute,
   textSummary,
@@ -179,16 +180,6 @@ function createHostAgentStub(): Agent {
     followup: () => {},
     whenIdle: async () => {},
   };
-}
-
-/** XML 内容转义：`&`（必须最先）→ `&amp;`、`<` → `&lt;`、`>` → `&gt;`。 */
-function escapeXml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/** XML 属性值转义：内容转义 + 双引号 → `&quot;`（title 属性承载 name/id）。 */
-function escapeXmlAttr(text: string): string {
-  return escapeXml(text).replace(/"/g, '&quot;');
 }
 
 /** 多行文本每行前加 N 空格缩进（XML 块内内容对齐）。 */
@@ -693,34 +684,53 @@ export class StepRunner {
     };
   }
 
-  /** 用临时会话按模板填充参数；失败（error/aborted/抛错）回退模板原文。 */
+  /**
+   * 用可续接子代理按模板填充参数（v6 改造：与 step-execute 同机制——DSH preset +
+   * 工具 + settle 收集输出，不再 llm.stream 临时会话）；失败（error/aborted/抛错/
+   * 无输出）回退模板原文。
+   */
   private async fillParams(command: AgentCommand, template: string, request: StepRunRequest): Promise<string> {
     const route = await this.resolveProviderModel(command.value);
     const promptText = buildFillParamsPrompt(request.originalInput, request.previousOutputs, template);
-    const message = createUserMessage({
-      source: { kind: 'user' },
-      content: [{ type: 'text', text: promptText }],
-    });
-    const options: GenerateOptions = {
-      provider: route.provider,
-      model: route.model,
-      messages: [message],
-      ...(request.signal === undefined ? {} : { signal: request.signal }),
-    };
     try {
-      const assembler = new BlockAssembler();
-      for await (const chunk of this.ctx.llm.stream(options)) {
-        assembler.push(chunk);
-      }
-      const finish = assembler.finish;
-      if (finish.kind === 'error' || finish.kind === 'aborted') {
-        this.ctx.logger.warn(`sandore: fillParams temp session ${finish.kind}, falling back to template`);
+      const started = await this.ctx.subagents.startContinuable({
+        provider: this.subagentProvider,
+        label: `fillParams ${request.step.id}`,
+        request: {
+          prompt: [{ type: 'text', text: promptText }],
+          parent: this.resolveParent(),
+          agentOptions: { provider: route.provider, model: route.model },
+        },
+        signal: request.signal ?? new AbortController().signal,
+      });
+      // settle 终态收集（与 collectSubagentOutput 同语义）：completed → 输出；
+      // 其余 stopReason（error/max-tokens/refusal/aborted）回退模板原文。
+      const awaitSettlement = this.config.awaitSubagentSettlement;
+      const collect = async (): Promise<readonly ContentBlock[] | undefined> => {
+        if (awaitSettlement !== undefined) {
+          const settlement = await awaitSettlement(started.childId, request.signal ?? new AbortController().signal);
+          if (settlement.stopReason !== 'completed') {
+            return undefined;
+          }
+          const child = this.ctx.agents.get(started.childId);
+          return settlement.output ?? (child === undefined ? undefined : finalAssistantOutput(child.session.events));
+        }
+        const child = this.ctx.agents.get(started.childId);
+        if (child === undefined) {
+          return undefined;
+        }
+        await child.whenIdle();
+        return finalAssistantOutput(child.session.events);
+      };
+      const output = await collect();
+      if (output === undefined) {
+        this.ctx.logger.warn('sandore: fillParams subagent produced no output, falling back to template');
         return template;
       }
-      const text = textSummary(assembler.blocks());
+      const text = textSummary(output);
       return text === '' ? template : text;
     } catch (error) {
-      this.ctx.logger.warn(`sandore: fillParams temp session failed: ${describeError(error)}`);
+      this.ctx.logger.warn(`sandore: fillParams subagent failed: ${describeError(error)}`);
       return template;
     }
   }
