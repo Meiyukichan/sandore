@@ -1,31 +1,28 @@
-# sandore 静态组合（patch overlay）：插件加载仅经此静态组合，启动即生效。
+# sandore 本地开发 overlay（--patch 方式）
 #
+# 本地测试/开发用：`dsh web --patch D:\project-code\llm\sandore\cordis.yml --port 3090`。
 # 顶层为 YAML list；`- insert:` 块内每一行 `- id: <rowId> + name: '<包名>'`
-# 即插入一个插件行（静态组合挂载），可再带 `config`。格式对齐 DSH
-# `examples/web-cordis/cordis.yml` 的 patch overlay。
+# 即插入一个插件行（静态组合挂载），可再带 `config`。
 #
-# 只挂插件行：microflow / tool 是 workflow 的依赖库（被 workflow import），
-# 不是插件，不能作为独立行挂载（会报 invalid plugin）。
+# 插件行 name = 本包名（'dsh-sandore'）：host 半由 main 提供；client 半经
+# package.json 的 `dsh.client` 声明被 client-modules 扫描发现（exports["./client"]）。
 #
-# 行 id 统一加 `sandore-` 前缀：DSH bundle 的行 id 都是语义前缀（ui-* / tool-* /
-# storage-* / workflow-worker-thread 等），裸 `workflow` / `ui` 过于通用，容易与
-# 后续新增行或其它 overlay 的 id patch 冲突。
-#
-# storage 路由也固化在这里：无论在哪台机器、哪个 profile，只要启动带上本
-# overlay，sandore 存储域就路由到 sqlite（行级读写，避免 json 后端把整个
-# unit 全量重写进 sandore.json 导致膨胀）。`- id: storage-domain` 的 patch
+# storage 路由也固化在这里：sandore 存储域路由到 sqlite（行级读写，避免 json 后端
+# 把整个 unit 全量重写进 sandore.json 导致膨胀）。`- id: storage-domain` 的 patch
 # 会整行替换该行 config，所以必须同时带 `backend: json`（DSH bundle 默认）。
+# storage-sqlite 包随本包 dependencies 安装（^0.1.0-rc.6），profile 可直接解析。
+#
+# 发布形态走 bundle 通道（`dsh plugin --profile web add dsh-sandore` 自动 merge
+# `cordis.patch.yml`），本地开发保持本 overlay，避免双挂载。
 
 - insert:
-    - id: sandore-workflow
-      name: "@deepseek-ai/dsh-sandore-workflow"
+    - id: sandore
+      name: 'dsh-sandore'
       config:
         defaultTimeoutMs: 7200000
         maxConcurrentSteps: 0
-    - id: sandore-ui
-      name: "@deepseek-ai/dsh-client-ui-sandore"
     - id: storage-sqlite
-      name: "@deepseek-ai/dsh-storage-sqlite"
+      name: '@deepseek-ai/dsh-storage-sqlite'
       config:
         path: !!js dshHomePath('storages/sandore.sqlite')
 

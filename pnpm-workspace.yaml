@@ -1,4 +1,3 @@
-packages:
-  - packages/sandore/*
+packages: []
 allowBuilds:
   esbuild: false

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "packages",
+    "outDir": "lib"
+  },
+  "include": [
+    "packages/microflow",
+    "packages/workflow",
+    "packages/tool"
+  ],
+  "exclude": [
+    "packages/**/*.spec.ts",
+    "packages/workflow/typert"
+  ]
+}

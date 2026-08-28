@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "packages",
+    "outDir": "lib",
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "packages/client",
+    "packages/css-modules.d.ts"
+  ],
+  "exclude": ["packages/**/*.spec.ts"],
+  "references": [
+    { "path": "./tsconfig.json" }
+  ]
+}

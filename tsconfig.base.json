@@ -13,8 +13,6 @@
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "declaration": true,
-    "sourceMap": true,
-    "declarationMap": true,
     "composite": true,
     "incremental": true
   }

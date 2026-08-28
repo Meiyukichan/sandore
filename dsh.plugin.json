@@ -1,0 +1,16 @@
+{
+  "id": "dsh-external/dsh-sandore",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "description": "sandore: workflow orchestration engine for DSH — host engine + client UI in one bundle package",
+  "engines": {
+    "dsh": ">=0.0.1"
+  },
+  "contributes": {
+    "tools": [],
+    "skills": []
+  },
+  "client": {
+    "main": "./lib/client.js"
+  }
+}

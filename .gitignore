@@ -24,16 +24,11 @@ docs/engine/MASE.md
 docs/engine/dynamic-workflow-engine.md
 diff/
 
-# Build artifacts — packages rebuild lib/ on demand via `pnpm -r build` (publish pipeline)
-packages/**/lib/*
+# Build artifacts — the single package rebuilds lib/ on demand via `pnpm build` (publish pipeline).
+# Hand-written typert fixed artifacts live under packages/workflow/typert/ (version-controlled,
+# NOT build-generated; tsdown does not regenerate them).
+lib/
 *.tsbuildinfo
-
-# Hand-written typert fixed artifacts — NOT build-generated (tsdown does not regenerate them);
-# must stay under version control even though the rest of lib/ is ignored.
-!packages/sandore/workflow/lib/typert.host.d.ts
-!packages/sandore/workflow/lib/typert.host.js
-!packages/sandore/workflow/lib/typert.remote-client.d.ts
-!packages/sandore/workflow/lib/typert.remote-client.js
 
 # Sandbox scratch files — local-only workflow task dumps / test output, never commit.
 a.json
