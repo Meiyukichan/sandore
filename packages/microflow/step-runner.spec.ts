@@ -2,10 +2,11 @@
  * step-runner.ts（StepRunner）的单元测试：shell 成功/非零退出/超时/中止/stdin
  * 注入，prompt 经可续接子代理成功/终端失败/provider-model 三层回退/透传变量替换，
  * agent/skill/mcp 可续接子代理/fillParams，skill/mcp 名称校验与前缀。双通道 ask
- * 重构（4.4）后不再有 `[[SANDORE_ASK]]` 标记块转接/引导——子代理提问走
- * child-scope ask_user_question 工具（workflow/ask-tool.ts），本 spec 覆盖标记块
- * 按普通输出透传 + 无 toolFilter deny + 无引导注入。
- * @module dsh-sandore/microflow/src/step-runner.spec
+ * 重构（4.4）后不再有 `[[SANDORE_ASK]]` 标记块转接/引导——子代理提问走全局注册的
+ * sandore_ask_user_question 工具（execute 期 gate 仅放行 sandore 子代理，见
+ * workflow/ask-tool.ts），本 spec 覆盖标记块按普通输出透传 + toolFilter deny 全局版
+ * ask_user_question + 无引导注入。
+ * @module @meiyukichan/dsh-sandore/microflow/src/step-runner.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm';
@@ -15,12 +16,12 @@ import type { WorkflowStep } from '../workflow/schema';
 import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { textChunks } from '../tests/mocks/llm.ts';
 import { FakeLlm } from '../tests/mocks/llm.ts';
-import { FakeShell } from '../tests/mocks/shell.ts';
+import { FakeShell, successResult } from '../tests/mocks/shell.ts';
 import { FakeSubagents } from '../tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
 import { StepRunner } from './step-runner.ts';
 import type { StepRunRequest, StepRunnerConfig } from './step-runner.ts';
-import type { SubagentSettlement, SubagentStopReason } from './subagents.ts';
+import type { Agent, SubagentSettlement, SubagentStopReason } from './subagents.ts';
 
 /** 提取文本 ContentBlock 的纯文本（非文本块返回空串）。 */
 function textOf(block: ContentBlock | undefined): string {
@@ -145,6 +146,27 @@ describe('StepRunner shell', () => {
     await expect(runner.run(request(shellStep('echo hello')))).resolves.toEqual({
       output: [{ type: 'text', text: 'hello' }],
     });
+  });
+
+  it('shell step 携带宿主会话的 sandbox 策略（workspace = 会话 cwd）', async () => {
+    // 宿主主代理（session cwd = 项目路径）：shell step 应携带 per-call 策略，
+    // 而非回落 deployment 默认（启动目录——主目录启动会触发 Windows ACL 边界冲突）。
+    const hostAgent = {
+      id: 'host-1',
+      session: { id: 'host-1', header: { cwd: '/project/test' }, events: [] },
+    } as unknown as Agent;
+    const { ctx, shell, runner } = harness({ defaultTimeoutMs: 60000, hostAgent });
+    // FakeSandboxPolicy：workspaceRoot 取传入会话的 cwd（对齐 DSH sandbox-policy 的 resolve）。
+    ctx.provide('sandboxPolicy', {
+      resolve: (request?: { session?: { header?: { cwd?: string } } }) => ({
+        mode: 'workspace-write' as const,
+        workspaceRoot: request?.session?.header?.cwd ?? '(fallback)',
+      }),
+    });
+    shell.runHandler = async spec => successResult(spec, 'ok');
+
+    await runner.run(request(shellStep('echo hi')));
+    expect(shell.requests[0]?.sandboxPolicy).toEqual({ mode: 'workspace-write', workspaceRoot: '/project/test' });
   });
 
   it('throws STEP_EXECUTION with stderr summary on nonzero exit', async () => {
@@ -670,7 +692,7 @@ describe('StepRunner 双通道 ask 重构（4.4：[[SANDORE_ASK]] 机制已删�
 
     const result = await runner.run(request(agentStep()));
 
-    // 标记块机制已删：输出原样透传（子代理提问走 child-scope ask_user_question 工具）。
+    // 标记块机制已删：输出原样透传（子代理提问走全局注册的 sandore_ask_user_question 工具）。
     expect(result.output).toEqual([
       { type: 'text', text: '[[SANDORE_ASK]]{"questions":[{"id":"q1","question":"Q?"}]}[[/SANDORE_ASK]]' },
     ]);
@@ -695,7 +717,7 @@ describe('StepRunner 双通道 ask 重构（4.4：[[SANDORE_ASK]] 机制已删�
     expect(promptText).not.toContain('[[SANDORE_ASK]]');
   });
 
-  it('does not deny ask_user_question via toolFilter (child-scope 同名工具遮蔽全局版)', async () => {
+  it('denies the global ask_user_question via toolFilter (上游适配：ask 工具全局注册 + gate)', async () => {
     const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
@@ -707,12 +729,13 @@ describe('StepRunner 双通道 ask 重构（4.4：[[SANDORE_ASK]] 机制已删�
 
     await runner.run(request(promptStep()));
 
-    // toolFilter deny 已删：子代理提问能力由 workflow 层 registerContinuableSetup 注入的
-    // child-scope ask_user_question 工具提供（child-scope 同名注册天然遮蔽全局版）。
-    expect(subagents.continuableStarts[0]?.request.toolFilter).toBeUndefined();
+    // 上游适配（registerContinuableSetup 已删）：child-scope 遮蔽机制不复存在，改
+    // request.toolFilter deny DSH 全局版 ask_user_question，提问走全局注册的
+    // sandore_ask_user_question（execute 期 gate 仅放行 sandore 子代理）。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
   });
 
-  it('applies the no-toolFilter/no-guidance behavior to agent subagents as well (shared runSubagent path)', async () => {
+  it('applies the deny-toolFilter/no-guidance behavior to agent subagents as well (shared runSubagent path)', async () => {
     const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
@@ -724,8 +747,8 @@ describe('StepRunner 双通道 ask 重构（4.4：[[SANDORE_ASK]] 机制已删�
 
     await runner.run(request(agentStep({ providerId: 'p', modelId: 'm' })));
 
-    // runSubagent 为 prompt/agent/skill/mcp 四路共用：agent 路同样无 deny、无引导。
-    expect(subagents.continuableStarts[0]?.request.toolFilter).toBeUndefined();
+    // runSubagent 为 prompt/agent/skill/mcp 四路共用：agent 路同样 deny 全局版提问工具。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).not.toContain('[[SANDORE_ASK]]');
   });

@@ -4,7 +4,7 @@
  * 暴露 Stage/Step 执行层（`StepRunner` 与 `StageExecutor`）与类型化错误
  * （`SandoreError`）供 workflow 引擎组合使用。运行时依赖方向为 workflow →
  * microflow；microflow 对 workflow 仅 `import type` 结构类型。
- * @module dsh-sandore/microflow
+ * @module @meiyukichan/dsh-sandore/microflow
  */
 export * from './errors.ts';
 export * from './file-utils.ts';

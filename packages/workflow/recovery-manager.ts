@@ -2,12 +2,13 @@
  * 恢复协调器（重试三模式 + 崩溃恢复的纯协调器）。
  *
  * `RecoveryManager` 是「纯协调器」：不持有引擎状态，仅经注入的选项/回调访问宿主
- * 主代理、`subagents.followup`/`agents.create`、`sessions.fork`/`sessions.get`、
+ * 主代理、子代理投递/`agents.create`、`sessions.fork`/`sessions.get`、
  * `readState`/`commitState`（不可变重建 + 持久化）与 `emitStepRetried`（事件双发）。
  * 它负责重试/恢复的「决策与准备」：前置校验、状态清理、`RetryRecord` 历史、子代理
  * 会话准备（continue 同会话 / revert 安全边界 fork / fork 全量 fork），随后把真正的
  * 执行（whenIdle + finalAssistantOutput + finalize + DAG 推进）交给引擎注入的
- * `resumeExecution` 续跑。
+ * `resumeExecution` 续跑。上游适配：`ctx.subagents.followup` 已删，`followup` 注入
+ * 包装改由引擎经 queue 投递通道（subagent-delivery.ts）实现。
  *
  * 重试三模式：`continue` 同会话 `followup`（sessionId 不变）；`revert` 计算最后一个
  * 闭合 turn 的末事件 seq 作安全边界（或用用户传入的 `revertBoundary` 选更早闭合 turn）
@@ -22,12 +23,12 @@
  * 崩溃恢复：`recover()` 按快照 `executedSteps` 分类处理——合成 session（shell）
  * 标 `failed`、仅对第一个 `running`/`interacting` 子代理 Step `followup` 冷恢复（与引擎
  * 单步续跑收口一致）、`paused` 交由引擎从 `pausedChildIds` 重建登记表等待手动 resume。
- * @module dsh-sandore/workflow/src/recovery-manager
+ * @module @meiyukichan/dsh-sandore/workflow/src/recovery-manager
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 
-import type { AgentHandle, CreateAgentOptions } from '../microflow/subagents';
+import type { Agent, AgentHandle, CreateAgentOptions } from '../microflow/subagents';
 import { SandoreError } from './errors.ts';
 import type { RetryRecord, UserMessageRecord, WorkflowTaskState } from './schema.ts';
 
@@ -70,12 +71,21 @@ export interface RecoveryManagerOptions {
   readonly commitState: (next: WorkflowTaskState) => void;
   /** 追加一条用户指令消息（写入 `state.userMessages` 并持久化）。 */
   readonly appendUserMessage: (record: UserMessageRecord) => void;
-  /** `ctx.subagents.followup` 的注入包装（已绑定宿主主代理作 parent）。 */
+  /** 子代理 prompt 投递的注入包装（已绑定宿主主代理作 parent；引擎经 queue 投递通道实现）。 */
   readonly followup: (childId: string, content: ContentBlock[], signal: AbortSignal) => Promise<void> | void;
   /** `ctx.agents.create` 的注入包装（revert/fork 创建带 seed 的新子代理）。 */
   readonly createAgent: (options: CreateAgentOptions) => Promise<AgentHandle>;
   /** `ctx.sessions.get` 的注入包装（安全边界计算读子代理事件流）。 */
   readonly getSession: (id: string) => ForkSourceSession | undefined;
+  /**
+   * 子代理 live 判定（`ctx.agents.get` 的注入包装；可选）。
+   *
+   * 注入时 retryStep 在产生新段前 fail-fast（F1）：failed Step 的子代理 settle 即被
+   * DSH dispose（continuable 状态注销），followup 对已销毁会话会挂起（曾 40min 无
+   * 终态）或抛 NOT_RESUMABLE——目标 live 判定失败直接抛可读错误，不产生虚假重试段。
+   * 未注入（纯依赖单测）时放行，保持旧语义。
+   */
+  readonly getAgent?: (childId: string) => Agent | undefined;
   /**
    * 子代理会话 fork 的注入包装（boundary 省略 = 全量历史）。
    *
@@ -240,6 +250,16 @@ export class RecoveryManager {
     if (!isSubagentStep(step)) {
       throw new SandoreError(`step '${stepId}' is not a resumable subagent step (shell cannot be retried)`, 'INVALID_OPERATION');
     }
+    // F1（rc.1 dispose 语义）：failed Step 的子代理 settle 即被 DSH dispose 并移出
+    // agents registry——continuable 状态注销，followup 会对已销毁会话挂起（曾 40min
+    // 无终态）或抛 NOT_RESUMABLE。注入 getAgent 时预检目标会话 live：已销毁 →
+    // fail-fast（在 commit 任何新段/事件之前），给可读错误而非卡死或误导性失败。
+    if (this.deps.getAgent !== undefined && this.deps.getAgent(childIdOf(step)) === undefined) {
+      throw new SandoreError(
+        `step '${stepId}' 的子代理会话已销毁（DSH 0.1.2-rc.1 对已结算子代理 dispose，无法续跑），不能重试；请重新运行该 Step/实例`,
+        'INVALID_OPERATION',
+      );
+    }
 
     // 1. 以 failed 段为基底追加新段（保留旧 failed 段定格快照）+ RetryRecord 入新段 retryHistory。
     const retryRecord: RetryRecord = { mode, timestamp: now(), userMessage: message, result: 'running' };
@@ -298,9 +318,13 @@ export class RecoveryManager {
         }
         const forked = await this.deps.forkSession(childId, boundary);
         const newChildId = synthesizeChildId(stepIdOf(step));
+        // 上游适配：meta 删 seedLength（会话头校验显式拒绝），改 `isSeeded: true` +
+        // 顶层 `inheritedEventCount`。parentSession 传源 childId（审计语义）；引擎的
+        // createAgent 包装会覆盖为宿主主代理 id（DSH lineage 校验要求）。
         await this.deps.createAgent({
           sessionId: newChildId,
-          meta: { origin: 'subagent', parentSession: childId, seedLength: forked.events.length },
+          meta: { origin: 'subagent', parentSession: childId, isSeeded: true },
+          inheritedEventCount: forked.events.length,
           seed: forked.events,
         });
         // 更新 sessionMeta.childId 为新 session id，parentSessionId 记旧值。

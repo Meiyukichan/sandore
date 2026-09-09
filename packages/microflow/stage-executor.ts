@@ -7,7 +7,7 @@
  * {@link LoopManager} 生成带后缀 id、`loopIteration` 与 `visitCount`；agent/skill/mcp
  * 的真实子代理 `sessionMeta`（`synthetic:false`）透传到 `ExecutedStepDefault`。
  * 每个 Step 完成后经 `onPersist` 钩子通知引擎逐 Step 持久化。
- * @module dsh-sandore/microflow/src/stage-executor
+ * @module @meiyukichan/dsh-sandore/microflow/src/stage-executor
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';

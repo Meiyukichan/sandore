@@ -11,12 +11,12 @@
  * 不再 append 到宿主会话，宿主会话保持工作流级编排身份）；每个 Step 完成后经
  * `onPersist` 钩子立即追加到 `state.executedSteps` 并持久化；`childId = step-{stepId}-{execId 前 8 位}`
  * 合成 sessionMeta。
- * @module dsh-sandore/workflow/src/workflow-engine
+ * @module @meiyukichan/dsh-sandore/workflow/src/workflow-engine
  */
 import { Context, Service } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { Session } from '@deepseek-ai/dsh-session';
-import { SessionId } from '@deepseek-ai/dsh-session';
+import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session';
 // 加载 @deepseek-ai/dsh-session-title 的 Cordis 面声明（使 `ctx.sessionTitle` 类型可用）。
 import type { SessionTitleService } from '@deepseek-ai/dsh-session-title';
 import z from '@deepseek-ai/schemastery';
@@ -44,7 +44,10 @@ import { SandoreError } from './errors.ts';
 import { ReactiveState } from './reactive-state.ts';
 import { createHostAgentSetup } from './host-agent.ts';
 import type { AgentPresetsSeam } from './host-agent.ts';
-import { installSandoreAskTool } from './ask-tool.ts';
+import { registerGlobalAskTool } from './ask-tool.ts';
+import { registerGlobalManagerTool } from './manager-tool.ts';
+import type { SandoreManagerPersistenceSeam } from './manager-tool.ts';
+import { createChildPromptDelivery } from './subagent-delivery.ts';
 import { InteractionManager, buildAnswerText, isRejectedAnswer } from './interaction-manager.ts';
 import { LifecycleManager } from './lifecycle-manager.ts';
 import type { SandorePersistence } from './persistence.ts';
@@ -81,7 +84,8 @@ import { StageExecutor } from '../microflow/stage-executor';
 import type { StageExecutorResume, StageStepHooks } from '../microflow/stage-executor';
 import { StepNavigator } from '../microflow/step-navigator';
 import type { StepRunnerConfig } from '../microflow/step-runner';
-import type { Agent, ContinuableSetupContribution, CreateAgentOptions, SubagentSettlement, SubagentStopReason } from '../microflow/subagents';
+import type { Agent, ChildPromptDelivery, CreateAgentOptions, MessageId, SubagentSettlement, SubagentStopReason } from '../microflow/subagents';
+import { delegatedChildSetup } from '../microflow/fork-session';
 
 /**
  * `agent/pre-step` 事件的最小结构面（sandore 不 import `@deepseek-ai/dsh-agent` 类型，
@@ -263,6 +267,9 @@ function makeInitialState(options: {
     // Round 26：ask/permission 是否上报宿主主代理——复用 hostSessionId（场景 B）为
     // true；overlay 新建（场景 A，hostSessionId 未传）为 false（只走 discussion）。
     reportToHost: request.hostSessionId !== undefined,
+    // F2：复用模式（hostSessionId 传入）把调用方会话 id 落快照——崩溃恢复据此复用
+    // 宿主主代理，而不是对从未创建的 instanceId 会话执行 agents.resume。
+    ...(request.hostSessionId === undefined ? {} : { hostSessionId: request.hostSessionId }),
     createdAt,
     updatedAt: createdAt,
   };
@@ -321,6 +328,29 @@ export default class SandoreEngineRuntime extends SandoreEngine {
    * 重新加入，天然覆盖。
    */
   private readonly frozenHostAgents = new Set<string>();
+  /**
+   * 宿主 → 子代理 prompt 投递通道（`[Service.init]` 期经 `createChildPromptDelivery`
+   * 解析一次；上游 `subagents.followup` 已删，见 subagent-delivery.ts）。
+   */
+  private childDelivery: ChildPromptDelivery | undefined = undefined;
+
+  /**
+   * 向直接子代理投递一条宿主协议消息（queue 投递 = 独立 FIFO 轮次语义，等价旧
+   * `subagents.followup`）。全部投递调用点（sendStepMessage / ask 回答注回 /
+   * LifecycleManager / RecoveryManager 包装）统一走此方法。
+   */
+  private deliverChildPrompt(
+    parent: Agent,
+    childId: string,
+    content: ContentBlock[],
+    signal: AbortSignal | undefined,
+  ): Promise<MessageId> {
+    const delivery = this.childDelivery;
+    if (delivery === undefined) {
+      throw new SandoreError('child prompt delivery is not initialized (Service.init incomplete)', 'INVALID_OPERATION');
+    }
+    return delivery(parent, SessionId(childId), content, { kind: 'user' }, signal);
+  }
 
   constructor(ctx: Context, private readonly config: SandoreConfig) {
     super(ctx);
@@ -330,46 +360,41 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   protected async [Service.init](): Promise<void> {
     this.registerSubagentSettlementAdapter();
     this.registerHostAgentFreezeListener();
-    // 双通道 ask 通道 1：child-scope ask_user_question 工具注入（gate：仅 sandore 子代理）。
-    this.registerSandoreAskToolSetup();
+    // 双通道 ask 通道 1：全局注册 `sandore_ask_user_question` 工具 + execute 期 gate
+    // （上游 `registerContinuableSetup` 已删，child-scope 注入通道不复存在，见 ask-tool.ts）。
+    this.ctx.effect(() => registerGlobalAskTool(this.ctx, this), 'sandore: global sandore_ask_user_question tool');
+    // sandore_workflow 统一管理工具（定义查改/运行/状态/库浏览；全局注册 + execute 期
+    // gate 仅顶层主代理会话，六 action 见 manager-tool.ts）。
+    this.ctx.effect(() => registerGlobalManagerTool(this.ctx, {
+      startInstance: request => this.startInstance(request),
+      getState: instanceId => this.getState(instanceId),
+      getInstanceState: instanceId => this.getInstanceState(instanceId),
+      persistence: () => this.managerPersistenceView(),
+    }), 'sandore: global sandore_workflow manager tool');
+    // 宿主 → 子代理 prompt 投递通道（上游 `subagents.followup` 已删，统一 queue 投递；
+    // 工厂期解析通道，皆无时抛可读错误，见 subagent-delivery.ts）。
+    this.childDelivery = createChildPromptDelivery(this.ctx.subagents);
     // SSE 事件通道：注册 /sandore/events 端点，广播 sandore/* 事件给 client。
     this.ctx.effect(() => registerSandoreSse(this.ctx), 'sandore: SSE event channel');
     await this.recoverOrphanedInstances();
   }
 
   /**
-   * 注册 child-scope `ask_user_question` 工具安装贡献（双通道 ask 通道 1，4.3）。
+   * ask 工具 gate 反查（`SandoreAskToolHost` 契约）：给定调用方子代理的
+   * `session.header.parentSession`，判断其是否命中**当前非终态 sandore 实例**的宿主
+   * 主代理会话（反查 instances 表）。
    *
-   * 经 `ctx.subagents.registerContinuableSetup` 把安装器组合进每个 continuable child
-   * 的 unpublished scope；安装器内做 **gate 校验**：child 的
-   * `session.header.parentSession` 必须命中**当前非终态 sandore 实例**的宿主主代理会话
-   * （反查 instances 表：`instances[].hostAgent.id === parentSession` 且实例状态非终态）
-   * 才注册工具（child-scope 同名注册遮蔽全局 DSH 版），否则返回空 disposer（不安装）。
-   *
-   * **与计划对齐（4.3）**：gate 为「当前有 sandore 实例匹配」，而非「曾创建过 sandore
-   * 宿主主代理」的永久登记——终态实例（completed/failed/aborted）仍留 instances 表
-   * （getState 兜底读快照），故显式排除终态，避免宿主主代理在工作流结束后普通 turn
-   * 委派的子代理误注入（误注入会令其提问路由到已结束实例的交互管理器）。
-   * `subagents` 服务缺失（最小桩部署）时静默跳过。
+   * gate 为「当前有 sandore 实例匹配」，而非「曾创建过 sandore 宿主主代理」的永久
+   * 登记——终态实例（completed/failed/aborted）仍留 instances 表（getState 兜底读
+   * 快照），故显式排除终态，避免宿主主代理在工作流结束后普通 turn 委派的子代理
+   * 误用提问工具（误用会令提问路由到已结束实例的交互管理器）。
    */
-  private registerSandoreAskToolSetup(): void {
-    const contribution: ContinuableSetupContribution = childCtx => {
-      // childCtx.agent 在 setup 期可用（对齐 DSH continuation.ts 的
-      // appendDelegatedPolicyOverrides 用法）；结构访问 header.parentSession。
-      const agent = (childCtx as { agent?: unknown }).agent as
-        | { readonly session: { readonly header: { readonly parentSession?: string } } }
-        | undefined;
-      const parentSession = agent?.session?.header?.parentSession;
-      const isSandoreChild = parentSession !== undefined
-        && [...this.instances.values()].some(instance =>
-          instance.hostAgent.id === parentSession && !TERMINAL_STATUSES.has(instance.state.status));
-      if (!isSandoreChild) {
-        // gate 未命中（非 sandore 子代理 / 终态实例的后续子代理）：不安装。
-        return () => {};
-      }
-      return installSandoreAskTool(childCtx as unknown as { readonly tools: { register(tool: unknown): () => void } }, this);
-    };
-    this.ctx.subagents.registerContinuableSetup(contribution);
+  isSandoreSubagentParentSession(parentSession: string | undefined): boolean {
+    if (parentSession === undefined) {
+      return false;
+    }
+    return [...this.instances.values()].some(instance =>
+      instance.hostAgent.id === parentSession && !TERMINAL_STATUSES.has(instance.state.status));
   }
 
   /**
@@ -711,20 +736,42 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     }
     const definition = parseWorkflowYaml(record.yaml);
     const controller = new AbortController();
-    // 冷恢复宿主主代理（resume 重跑 setup：只挂默认 preset，保持冷恢复后能力一致）。
-    const presets = this.ctx.get('agentPresets') as AgentPresetsSeam | undefined;
-    const handle = await this.ctx.agents.resume({
-      resumeSessionId: SessionId(instanceId),
-      setup: createHostAgentSetup({ instanceId, ...(presets === undefined ? {} : { presets }) }),
-    });
-    const hostAgent = handle.agent;
-    const session = this.ctx.sessions.get(SessionId(instanceId));
-    if (session === undefined) {
-      throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
+    // 宿主主代理恢复（F2）：复用模式（快照携带 hostSessionId = startInstance 复用的
+    // 调用方会话）→ 直接复用仍注册的宿主 agent/会话（不 agents.resume(instanceId)——
+    // 复用分支从未创建 instanceId 会话，resume 必失败）；调用方会话已销毁则抛可读
+    // 错误。overlay 新建模式保持现状：agents.resume 冷恢复宿主主代理 + attach。
+    let hostAgent: Agent;
+    let session: Session;
+    if (snapshot.hostSessionId !== undefined) {
+      const hostSessionId = snapshot.hostSessionId;
+      const existing = this.ctx.agents.get(SessionId(hostSessionId));
+      if (existing === undefined) {
+        throw new SandoreError(`host agent session '${hostSessionId}' not found (recover reuse mode)`, 'NODE_NOT_FOUND');
+      }
+      hostAgent = existing;
+      const existingSession = this.ctx.sessions.get(SessionId(hostSessionId));
+      if (existingSession === undefined) {
+        throw new SandoreError(`host session '${hostSessionId}' was not published (recover reuse mode)`, 'INVALID_OPERATION');
+      }
+      session = existingSession;
+      // 复用分支不重复 attach workspace（对齐 startInstance 复用分支：会话归属由调用方负责）。
+    } else {
+      // 冷恢复宿主主代理（resume 重跑 setup：只挂默认 preset，保持冷恢复后能力一致）。
+      const presets = this.ctx.get('agentPresets') as AgentPresetsSeam | undefined;
+      const handle = await this.ctx.agents.resume({
+        resumeSessionId: SessionId(instanceId),
+        setup: createHostAgentSetup({ instanceId, ...(presets === undefined ? {} : { presets }) }),
+      });
+      hostAgent = handle.agent;
+      const createdSession = this.ctx.sessions.get(SessionId(instanceId));
+      if (createdSession === undefined) {
+        throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
+      }
+      session = createdSession;
+      // 崩溃恢复重建 hostAgent 后重新 attach 到快照 cwd 对应的 web workspace（与
+      // startInstance 新建分支对齐；registry 缺失时静默跳过）。
+      await this.attachHostAgentToWorkspace(hostAgent, snapshot.cwd);
     }
-    // 崩溃恢复重建 hostAgent 后重新 attach 到快照 cwd 对应的 web workspace（与
-    // startInstance 新建分支对齐；registry 缺失时静默跳过）。
-    await this.attachHostAgentToWorkspace(hostAgent, snapshot.cwd);
     const active = this.buildActiveInstance(controller, session, hostAgent, definition, snapshot);
     this.instances.set(instanceId, active);
     // 冻结宿主主代理（崩溃恢复重建 hostAgent 后重新冻结，直到工作流 completed 才解冻；
@@ -963,14 +1010,16 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     if (child === undefined) {
       return [];
     }
-    return listClosedTurnBoundaries(child.events);
+    // 上游 dsh-session 0.1.2：Session.events 直读已删，经 snapshotEvents() 取全量快照。
+    return listClosedTurnBoundaries(child.snapshotEvents());
   }
 
   /**
    * 向运行中实例的指定 Step 子代理追加一条用户 @mention 消息（缺陷 31）。
    *
-   * 复用 DSH 宿主 `ctx.subagents.followup`（已在 ask 回答闭环 L656-664 与
-   * resumeStep/resumeAllSteps 两条链路直接使用）作为「向子代理会话追加消息并取回
+   * 复用宿主 → 子代理 prompt 投递通道（上游 `ctx.subagents.followup` 已删，经
+   * `createChildPromptDelivery` 的 queue 投递——独立 FIFO 轮次语义，已在 ask 回答
+   * 闭环与 resumeStep/resumeAllSteps 链路使用）作为「向子代理会话追加消息并取回
    * 新回复」的现成能力。本方法仅做低成本封装：
    *
    * 1. requireActive（内存未命中抛 NODE_NOT_FOUND——子代理会话绑定内存 session）
@@ -978,7 +1027,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
    * 3. 按 stepId 反查「最后活跃段」（running/interacting 中 attemptIndex 最大者；
    *    无活跃段时回退同 stepId 任意段，再退唯一执行 id——与 LifecycleManager.findStep
    *    同规则）；未找到抛 INVALID_OPERATION
-   * 4. synthetic===false 才 followup（synthetic 步骤——shell 合成 session
+   * 4. synthetic===false 才投递（synthetic 步骤——shell 合成 session
    *    无真实子代理——抛 INVALID_OPERATION，对齐 LifecycleManager.pauseStep 的
    *    非子代理守卫语义）
    * 5. 追加 userMessages `{kind:'message', target:stepId}`——**不复用 'input'**
@@ -1008,12 +1057,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       );
     }
     const childId = sessionMeta.childId;
-    await this.ctx.subagents.followup(
-      active.hostAgent,
-      childId,
-      [{ type: 'text', text: message }],
-      { source: { kind: 'user' }, signal: active.controller.signal },
-    );
+    // queue 投递（独立 FIFO 轮次语义，等价旧 subagents.followup；上游已删 followup）。
+    await this.deliverChildPrompt(active.hostAgent, childId, [{ type: 'text', text: message }], active.controller.signal);
     active.state = {
       ...active.state,
       userMessages: [
@@ -1147,13 +1192,16 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       ...(runnerConfig.awaitSubagentSettlement === undefined ? {} : { awaitSubagentSettlement: runnerConfig.awaitSubagentSettlement }),
       // secondary 门禁 startContinuable 的 DSH subagent provider 注册名（缺省 'fork'）。
       ...(runnerConfig.subagentProvider === undefined ? {} : { subagentProvider: runnerConfig.subagentProvider }),
+      // secondary 门禁纠正重试的宿主投递通道（上游 followup 已删；[Service.init] 期解析）。
+      ...(this.childDelivery === undefined ? {} : { deliverChildPrompt: this.childDelivery }),
       createAgent: options => this.ctx.agents.create(options),
       getStepSessionEvents: async childId => {
         // live → 持久化回退：子代理 settle 后 live store 已移除，从 sessionPersistence
         // inspect 读完整事件（对齐 DSH `inspectApiRemoteSession` 的持久化读路径）。
+        // 上游 dsh-session 0.1.2：Session.events 直读已删，经 snapshotEvents() 取全量。
         const live = this.ctx.sessions.get(SessionId(childId));
         if (live !== undefined) {
-          return [...live.events];
+          return [...live.snapshotEvents()];
         }
         const persistence = this.ctx.get('sessionPersistence');
         if (persistence === undefined) {
@@ -1171,11 +1219,16 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     // 与 FinalizeManager 同一来源（runnerConfig.hostAgent.id + ctx.agents.create）。
     const routingForkConfig = {
       ...(runnerConfig.hostAgent === undefined ? {} : { hostAgentId: runnerConfig.hostAgent.id }),
+      // 与 hostAgentId 成对显式出现（不依赖 spread 隐式保留）：Phase D 路由 fork 子代理
+      // setup 经 `agentPresets.composeFrom` 组合宿主主代理 preset（继承工具集 + prompt
+      // sections，对齐 DSH `applyChildComposition`——scope-local 工具注册不自动继承 parent）。
+      ...(runnerConfig.hostAgent === undefined ? {} : { hostAgent: runnerConfig.hostAgent }),
       createAgent: (options: CreateAgentOptions) => this.ctx.agents.create(options),
       getStepSessionEvents: async (childId: string) => {
+        // 上游 dsh-session 0.1.2：Session.events 直读已删，经 snapshotEvents() 取全量。
         const live = this.ctx.sessions.get(SessionId(childId));
         if (live !== undefined) {
-          return [...live.events];
+          return [...live.snapshotEvents()];
         }
         const persistence = this.ctx.get('sessionPersistence');
         if (persistence === undefined) {
@@ -1365,10 +1418,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           const answerText = buildAnswerText(answer);
           const childId = ask.step.sessionMeta?.childId;
           if (childId !== undefined && ask.step.sessionMeta?.synthetic === false) {
-            await this.ctx.subagents.followup(hostAgent, childId, [{ type: 'text', text: answerText }], {
-              source: { kind: 'user' },
-              signal: controller.signal,
-            });
+            // queue 投递注回（独立 FIFO 轮次语义，等价旧 subagents.followup）。
+            await this.deliverChildPrompt(hostAgent, childId, [{ type: 'text', text: answerText }], controller.signal);
           }
           // 回答已注回子代理（子代理会话内可见）；不追加 userMessages（Round 26 去讨论页污染）。
           active.state = { ...active.state, updatedAt: now() };
@@ -1632,13 +1683,14 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(childId)) {
       return;
     }
+    // 上游 dsh-session 0.1.2：Session.events 直读已删，经 snapshotEvents() 取全量。
     const live = this.ctx.sessions.get(SessionId(childId));
-    if (live !== undefined && live.events.length > 0) {
+    if (live !== undefined && live.snapshotEvents().length > 0) {
       return;
     }
     await new Promise(resolve => setTimeout(resolve, 50));
     const again = this.ctx.sessions.get(SessionId(childId));
-    if (again === undefined || again.events.length === 0) {
+    if (again === undefined || again.snapshotEvents().length === 0) {
       this.ctx.logger.warn(`sandore: child session '${childId}' not live when publishing childId; UI open retry 兜底`);
     }
   }
@@ -1682,11 +1734,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       hostAgent,
       initialPausedChildIds: state.pausedChildIds,
       interrupt: (childId, authority) => this.ctx.subagents.interrupt(childId, authority),
+      // 上游 `subagents.followup` 已删：resume 续跑经 queue 投递（独立 FIFO 轮次语义）。
       followup: async (childId, content, signal) => {
-        await this.ctx.subagents.followup(hostAgent, childId, content, {
-          source: { kind: 'user' },
-          signal,
-        });
+        await this.deliverChildPrompt(hostAgent, childId, content, signal);
       },
       getAgent: (childId) => this.ctx.agents.get(childId) ?? undefined,
       signal: controller.signal,
@@ -1721,11 +1771,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         };
         void this.persistState(active);
       },
+      // 上游 `subagents.followup` 已删：retry 冷恢复/重试驱动经 queue 投递。
       followup: async (childId, content, signal) => {
-        await this.ctx.subagents.followup(hostAgent, childId, content, {
-          source: { kind: 'user' },
-          signal,
-        });
+        await this.deliverChildPrompt(hostAgent, childId, content, signal);
       },
       createAgent: (options) => {
         // 2026-08-25 real-e2e 修复：retryStep fork/revert 模式的 createAgent 传
@@ -1734,16 +1782,23 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         // 已 settle/dispose 时必然不匹配 → UNAUTHORIZED（「belongs to another parent
         // session」）。包装统一为宿主主代理（fork 源记录已由 recovery-manager 的
         // runningStep.parentSessionId 承载，不依赖 meta）。
+        // 上游适配：注入与 forkStepSubagent 同型的 setup（captureDelegatedPolicyOverrides
+        // + applyChildComposition，hostAgent 闭包捕获）——消除 retry fork 子代理零工具
+        // 缺陷（scope-local 工具注册不自动继承 parent，未组合 preset 的 child 工具
+        // registry 为空）；capture 在本包装体内同步执行（首个 await 之前）。
+        const setup = delegatedChildSetup(hostAgent);
         return this.ctx.agents.create({
           ...options,
           ...(options.meta === undefined ? {} : {
             meta: { ...options.meta, parentSession: hostAgent.id },
           }),
+          setup,
         });
       },
       getSession: (id) => {
+        // 上游 dsh-session 0.1.2：Session.events 直读已删，经 snapshotEvents() 取全量。
         const child = this.ctx.sessions.get(SessionId(id));
-        return child === undefined ? undefined : { events: child.events };
+        return child === undefined ? undefined : { events: child.snapshotEvents() };
       },
       // 2026-08-25 real-e2e 修复：fork 源会话 live 已移除（子代理 settle/dispose）时，
       // `ctx.sessions.fork` 抛 SESSION_NOT_FOUND → retryStep fork 模式失败。改为
@@ -1753,8 +1808,10 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       forkSession: async (source, boundary) => {
         const live = this.ctx.sessions.get(SessionId(source));
         if (live !== undefined) {
-          const child = this.ctx.sessions.fork(SessionId(source), boundary);
-          return { events: child.events };
+          // 上游 dsh-session 0.1.2：fork boundary 为 SessionSeq 品牌数；Session.events
+          // 直读已删，经 snapshotEvents() 取全量。
+          const child = this.ctx.sessions.fork(SessionId(source), boundary === undefined ? undefined : SessionSeq(boundary));
+          return { events: child.snapshotEvents() };
         }
         const persistence = this.ctx.get('sessionPersistence');
         if (persistence === undefined || persistence.inspect === undefined) {
@@ -1783,6 +1840,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       },
       emitStepRetried: (stepId, mode, name, loopIteration) => this.emitStepRetried(active, stepId, mode, name, loopIteration),
       resumeExecution: () => this.resumeExecution(active),
+      // F1：retryStep 的 live 判定（rc.1 dispose 语义——已结算子代理不在 registry →
+      // fail-fast 拒绝重试，避免 followup 挂起）。
+      getAgent: (childId) => this.ctx.agents.get(childId) ?? undefined,
     });
     active = {
       controller,
@@ -1948,6 +2008,22 @@ export default class SandoreEngineRuntime extends SandoreEngine {
 
   private persistence(): SandorePersistence | undefined {
     return this.ctx.get('sandorePersistence');
+  }
+
+  /**
+   * sandore_workflow 工具的 persistence 最小面（`ctx.get('sandorePersistence')`
+   * 惰性解析，结构收敛为 `SandoreManagerPersistenceSeam`；见 manager-tool.ts）。
+   */
+  private managerPersistenceView(): SandoreManagerPersistenceSeam | undefined {
+    const persistence = this.persistence();
+    if (persistence === undefined) return undefined;
+    return {
+      definitions: persistence.definitions,
+      steps: persistence.steps,
+      microflows: persistence.microflows,
+      state: persistence.state,
+      writeDefinitionToLibraries: definition => persistence.writeDefinitionToLibraries(definition),
+    };
   }
 
   /** 取内存活跃实例；未命中抛 `NODE_NOT_FOUND`。 */

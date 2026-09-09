@@ -1,7 +1,7 @@
 /**
  * sandore 远程客户端薄封装。
  *
- * 从 `dsh-sandore/remote` 默认导入生成的
+ * 从 `@meiyukichan/dsh-sandore/remote` 默认导入生成的
  * `TypertRemoteContribution`（供 `ctx.remote.$mount` 挂载），并暴露
  * `RemoteResult` 解包薄封装：`ok:true` 取 `value`，`ok:false` 抛
  * `SandoreRemoteError`（`RemoteFailure` 的 `Error` 子类包装，保留 code），
@@ -9,10 +9,10 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/client/remote
  */
 import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import sandoreRemote from 'dsh-sandore/remote'
+import sandoreRemote from '@meiyukichan/dsh-sandore/remote'
 
 export { sandoreRemote }
-export type { PingResponse } from 'dsh-sandore/remote'
+export type { PingResponse } from '@meiyukichan/dsh-sandore/remote'
 
 /**
  * 一次 sandore RPC 调用失败（`RemoteFailure` 的 `Error` 子类包装）。

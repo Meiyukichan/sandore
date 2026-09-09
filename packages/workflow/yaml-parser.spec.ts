@@ -1,11 +1,13 @@
 /**
  * yaml-parser.ts 的 V1/V2 解析、序列化与类型化错误单元测试。
- * @module dsh-sandore/workflow/src/yaml-parser.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/yaml-parser.spec
  */
 import { describe, expect, it } from 'vitest'
 
 import { WorkflowYamlError } from './yaml-error.ts'
-import { parseWorkflowYaml, serializeWorkflowYaml } from './yaml-parser.ts'
+import {
+  parseMicroflowYaml, parseStepYaml, parseWorkflowYaml, serializeMicroflowYaml, serializeStepYaml, serializeWorkflowYaml,
+} from './yaml-parser.ts'
 
 const v2Yaml = `id: wfl-a1b2c3d4-e5f6-7890-abcd-ef1234567890
 name: 全字段代码审查工作流
@@ -753,5 +755,103 @@ steps:
     expect(roundTripped).toEqual(definition)
     const roundStepA = roundTripped.steps?.find(step => step.id === 'step-a')
     expect(roundStepA?.outputTo).toEqual([{ id: 'opt-report', path: 'artifacts/${projectName}/report.md' }])
+  })
+})
+
+describe('库条目 YAML（三级分离：parseStepYaml / parseMicroflowYaml）', () => {
+  const stepRecordYaml = `id: step-build
+name: 构建
+command:
+  type: shell
+  value:
+    command: "pnpm build"
+outputTo:
+  - id: opt-1
+    path: "artifacts/**"
+timeout: 30
+defaultExpectation: 构建成功
+rules:
+  - 禁止提交 node_modules
+gates:
+  maxRetries: 1
+version: "1.0.0"
+createdAt: 2026-01-01T00:00:00.000Z
+updatedAt: 2026-01-01T00:00:00.000Z
+`
+
+  const microflowRecordYaml = `id: stg-build
+name: 构建
+rules:
+  - 规则一
+defaultExpectation: 构建成功
+steps:
+  - id: step-build
+    branches:
+      - next: step-lint
+        label: ok
+    inputFrom:
+      - id: ipt-1
+        path: step-z
+  - id: step-lint
+createdAt: 2026-01-01T00:00:00.000Z
+updatedAt: 2026-01-01T00:00:00.000Z
+`
+
+  it('parses a Step library record and round-trips it deep-equal', () => {
+    const record = parseStepYaml(stepRecordYaml)
+    expect(record.id).toBe('step-build')
+    expect(record.name).toBe('构建')
+    expect(record.command).toEqual({ type: 'shell', value: { command: 'pnpm build' } })
+    expect(parseStepYaml(serializeStepYaml(record))).toEqual(record)
+  })
+
+  it('parses a Microflow library record with inputFrom slots and round-trips it', () => {
+    const record = parseMicroflowYaml(microflowRecordYaml)
+    expect(record.id).toBe('stg-build')
+    expect(record.steps[0]?.inputFrom).toEqual([{ id: 'ipt-1', path: 'step-z' }])
+    expect(record.steps[0]?.branches).toEqual([{ next: 'step-lint', label: 'ok' }])
+    expect(parseMicroflowYaml(serializeMicroflowYaml(record))).toEqual(record)
+  })
+
+  it('rejects a malformed Step library YAML with YAML_PARSE', () => {
+    expect(() => parseStepYaml('command: [ broken')).toThrowError(
+      expect.objectContaining({ code: 'YAML_PARSE' }),
+    )
+  })
+
+  it('rejects a structurally invalid Step library YAML with DEFINITION_INVALID (缺 name)', () => {
+    expect(() => parseStepYaml('id: step-x\ncreatedAt: t\nupdatedAt: t\n')).toThrowError(
+      expect.objectContaining({ code: 'DEFINITION_INVALID' }),
+    )
+  })
+
+  it('rejects a structurally invalid Microflow library YAML with DEFINITION_INVALID (缺 steps)', () => {
+    expect(() => parseMicroflowYaml('id: stg-x\nname: 构建\ncreatedAt: t\nupdatedAt: t\n')).toThrowError(
+      expect.objectContaining({ code: 'DEFINITION_INVALID' }),
+    )
+  })
+
+  it('validates inputFrom references on stage steps (stage.steps[].inputFrom 引用校验)', () => {
+    const yamlWithDanglingInput = `id: wfl-x
+name: 悬空输入
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 分析
+    steps:
+      - id: step-1
+        inputFrom:
+          - id: ipt-1
+            path: step-missing
+steps:
+  - id: step-1
+    command:
+      type: shell
+      value:
+        command: "echo hi"
+`
+    expect(() => parseWorkflowYaml(yamlWithDanglingInput)).toThrowError(
+      expect.objectContaining({ code: 'DEFINITION_INVALID' }),
+    )
   })
 })

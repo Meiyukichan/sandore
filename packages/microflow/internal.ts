@@ -5,7 +5,7 @@
  * `buildShellEnv`/`resolveProviderModel` 仅供本包内部模块（`step-runner.ts`/
  * `branch-evaluator.ts`/`stage-executor.ts`/`file-utils.ts`）复用，不从 `index.ts`
  * re-export，避免泄漏到 microflow 公开 API。
- * @module dsh-sandore/microflow/src/internal
+ * @module @meiyukichan/dsh-sandore/microflow/src/internal
  */
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm';
 

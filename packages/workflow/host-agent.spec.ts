@@ -3,7 +3,7 @@
  * 默认主代理）：setup 唯一动作是挂默认 agent preset（不注册任何 sandore_* 工具、
  * 不注入编排器角色提示词）、presets 服务缺失时跳过 mount、create/resume 共用同一
  * 工厂，以及宿主主代理创建的无自动 prompt 与 setup 抛错回滚语义。
- * @module dsh-sandore/workflow/src/host-agent.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/host-agent.spec
  */
 import { describe, expect, it, vi } from 'vitest';
 
@@ -15,8 +15,13 @@ import { createHostAgentSetup } from './host-agent.ts';
 /** 构造最小 agentCtx（setup 不再注册工具/提示词，只需满足 AgentSetupContext 结构）。 */
 function makeRecordingContext(): { agentCtx: AgentSetupContext } {
   const agentCtx: AgentSetupContext = {
+    agent: { session: { append: () => undefined } },
     tools: { register: () => {} },
-    systemPrompt: { section: () => {} },
+    systemPrompt: {
+      section: () => {},
+      context: () => () => {},
+      getContextOrder: () => 70,
+    },
   };
   return { agentCtx };
 }

@@ -17,7 +17,7 @@
  * - 循环分支（有 `loop`，`next` 为回边）命中后经 `checkLoopBreak` 判定跳出（exitTo）或继续下一
  *   迭代。无分支或无命中时按定义数组顺序线性兜底；跨 Stage 目标不在此路由（交由引擎
  *   `tryAdvanceStage` 跨阶段推进）。`branchMeta` / `loopMeta` 保留评估现场。
- * @module dsh-sandore/microflow/src/step-navigator
+ * @module @meiyukichan/dsh-sandore/microflow/src/step-navigator
  */
 import type { Context } from '@deepseek-ai/cordis';
 

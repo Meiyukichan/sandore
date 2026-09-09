@@ -3,14 +3,20 @@
   "compilerOptions": {
     "rootDir": "packages",
     "outDir": "lib",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "@meiyukichan/dsh-sandore": ["./lib/workflow/index.d.ts"],
+      "@meiyukichan/dsh-sandore/types": ["./lib/workflow/types.d.ts"],
+      "@meiyukichan/dsh-sandore/schema": ["./lib/workflow/schema.d.ts"],
+      "@meiyukichan/dsh-sandore/yaml": ["./lib/workflow/yaml-parser.d.ts"],
+      "@meiyukichan/dsh-sandore/yaml-error": ["./lib/workflow/yaml-error.d.ts"],
+      "@meiyukichan/dsh-sandore/remote": ["./lib/typert.remote-client.d.ts"],
+      "@meiyukichan/dsh-sandore/typert": ["./lib/typert.host.d.ts"]
+    }
   },
   "include": [
     "packages/client",
     "packages/css-modules.d.ts"
   ],
-  "exclude": ["packages/**/*.spec.ts"],
-  "references": [
-    { "path": "./tsconfig.json" }
-  ]
+  "exclude": ["packages/**/*.spec.ts"]
 }

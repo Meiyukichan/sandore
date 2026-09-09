@@ -1,7 +1,7 @@
 /**
  * subagents.ts 接缝（finalAssistantOutput + ctx.subagents/agents 类型）与三个测试桩
  * （subagents/agents/subprocess）的单元测试。
- * @module dsh-sandore/microflow/src/subagents.spec
+ * @module @meiyukichan/dsh-sandore/microflow/src/subagents.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import { describe, expect, it } from 'vitest';

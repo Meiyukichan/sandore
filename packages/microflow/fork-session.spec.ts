@@ -8,14 +8,21 @@
  *   `sessions.create(合成 id, { seed, meta })` 重建 fork 会话 → `deriveMessages()` 全量历史
  * - 降级：inspect 抛错 / persistence 无 inspect / sessions 未注册 / 无闭合 turn /
  *   空事件 / 空串 → undefined（调用方降级临时会话）
- * @module dsh-sandore/microflow/src/fork-session.spec
+ *
+ * 覆盖 `forkStepSubagent`（收尾真 fork）的 setup 注入：
+ * - hostAgent 提供时：createAgent options 含 setup；setup 执行后 `composeFrom` 被调且
+ *   第二参数 === hostAgent.ctx（对齐 DSH `applyChildComposition` 的 parentCtx 透传）
+ * - hostAgent 缺省时：options 不含 setup（向后兼容）
+ * - setup 与 seed/meta/agentOptions 共存不互相覆盖
+ * @module @meiyukichan/dsh-sandore/microflow/src/fork-session.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import { describe, expect, it } from 'vitest';
 
+import { FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeSessionStore } from '../tests/mocks/sessions.ts';
 import type { FakeSessionEvent } from '../tests/mocks/sessions.ts';
-import { forkStepSessionMessages } from './fork-session.ts';
+import { forkStepSessionMessages, forkStepSubagent } from './fork-session.ts';
 
 /** 组装 DSH 形状会话事件（持久化 inspect 的返回：type/seq/time/data 包络）。 */
 function event(type: string, seq: number, data: unknown): FakeSessionEvent {
@@ -110,7 +117,7 @@ describe('forkStepSessionMessages（fork-based 判断的会话机制核心）', 
     expect(fork?.messages[1]?.content).toEqual([{ type: 'text', text: 'closed output' }]);
   });
 
-  it('passes parentSession/seedLength meta when rebuilding the fork session from persistence', async () => {
+  it('passes parentSession/isSeeded meta + inheritedEventCount when rebuilding the fork session from persistence', async () => {
     const ctx = new Context();
     const sessions = new FakeSessionStore();
     ctx.provide('sessions', sessions);
@@ -118,8 +125,12 @@ describe('forkStepSessionMessages（fork-based 判断的会话机制核心）', 
 
     const fork = await forkStepSessionMessages(ctx, 'child-1');
     expect(fork).toBeDefined();
-    // meta：parentSession = 源会话 id（路由/反查），seedLength = 截断后 seed 数。
-    // FakeSessionStore.create 的 seed 回放已验证；meta 由实现保证，此处仅断言会话存在。
+    // 上游适配：meta 删 seedLength 改 isSeeded，前缀长度移到顶层 inheritedEventCount
+    // （= 截断后 seed 数；parentSession = 源会话 id 供路由/反查）。
+    expect(sessions.createCalls).toHaveLength(1);
+    expect(sessions.createCalls[0]?.options?.meta).toEqual({ parentSession: 'child-1', isSeeded: true });
+    expect(sessions.createCalls[0]?.options?.inheritedEventCount).toBe(4);
+    // FakeSessionStore.create 的 seed 回放已验证；此处仅断言会话存在。
     expect(sessions.get(fork!.forkSessionId)?.events).toHaveLength(4);
   });
 
@@ -180,5 +191,86 @@ describe('forkStepSessionMessages（fork-based 判断的会话机制核心）', 
 
     expect(await forkStepSessionMessages(ctx, undefined)).toBeUndefined();
     expect(await forkStepSessionMessages(ctx, '')).toBeUndefined();
+  });
+});
+
+describe('forkStepSubagent（收尾真 fork：hostAgent setup 注入 + preset 组合）', () => {
+  it('passes a setup composing the host preset when hostAgent is provided (composeFrom parentCtx === hostAgent.ctx)', async () => {
+    const registry = new FakeAgentRegistry();
+    // 自定义 ctx 的宿主主代理：断言 composeFrom 第二参数 === hostAgent.ctx（可识别对象）。
+    const hostAgentCtx = { marker: 'host-ctx' };
+    const hostAgent = new FakeAgent('host-1', {}, undefined, hostAgentCtx);
+
+    const result = await forkStepSubagent(new Context(), 'child-1', {
+      hostAgentId: 'host-1',
+      stepId: 'step-a',
+      createAgent: options => registry.create(options),
+      getEvents: async () => closedTurnEvents(),
+      hostAgent,
+    });
+
+    expect(result).toBeDefined();
+    // createAgent 收到的 options 含 setup（hostAgent 提供时必传）。
+    expect(registry.createSetups).toHaveLength(1);
+    expect(typeof registry.createSetups[0]).toBe('function');
+    // setup 已在 create 时执行（对齐 DSH setupAndPublish 时序）——applyChildComposition
+    // 生效：① composeFrom 被调一次，第二参数 === hostAgent.ctx（parentCtx 透传）；
+    // ② delegation 运行时上下文声明已注册（name 'subagent:delegation'，order 经
+    // getContextOrder('SUBAGENT_DELEGATION') 解析）。
+    expect(registry.composeFromCalls).toHaveLength(1);
+    expect(registry.composeFromCalls[0]?.parentCtx).toBe(hostAgentCtx);
+    expect(registry.composeFromCalls[0]?.agentCtx).toBeDefined();
+    expect(registry.systemPromptContexts).toHaveLength(1);
+    expect(registry.systemPromptContexts[0]?.agentCtx).toBeDefined();
+    expect(registry.systemPromptContexts[0]?.declaration).toEqual({
+      name: 'subagent:delegation',
+      order: 70,
+      text: expect.stringContaining('You are a delegated subagent'),
+    });
+  });
+
+  it('omits setup when hostAgent is not provided (backward compatible)', async () => {
+    const registry = new FakeAgentRegistry();
+
+    const result = await forkStepSubagent(new Context(), 'child-1', {
+      hostAgentId: 'host-1',
+      stepId: 'step-a',
+      createAgent: options => registry.create(options),
+      getEvents: async () => closedTurnEvents(),
+    });
+
+    // hostAgent 缺省：options 不含 setup（createSetups 记录 undefined），composeFrom 不被调。
+    expect(result).toBeDefined();
+    expect(registry.createSetups).toEqual([undefined]);
+    expect(registry.composeFromCalls).toHaveLength(0);
+  });
+
+  it('keeps setup coexisting with seed/meta/agentOptions (no mutual overwrite)', async () => {
+    const registry = new FakeAgentRegistry();
+    const hostAgent = new FakeAgent('host-1');
+
+    const result = await forkStepSubagent(new Context(), 'child-1', {
+      hostAgentId: 'host-1',
+      stepId: 'step-a',
+      cwd: '/srv/app',
+      createAgent: options => registry.create(options),
+      // 含未闭合尾部的事件流：seed 截断到最后一个闭合 turn/end（seq 0-3）。
+      getEvents: async () => unclosedTailEvents(),
+      agentOptions: { provider: 'p', model: 'm' },
+      hostAgent,
+    });
+
+    expect(result).toBeDefined();
+    // setup 与 seed/meta/agentOptions 并存：seed 截断、meta、agentOptions 均不受 setup 注入影响。
+    // 上游适配：meta 经上游 childSessionMeta 同语义实现生成（cwd/parentSession 显式覆盖、
+    // isSeeded、origin、delegationDepth=宿主深度+1；无 preset 部署无 agentPreset）。
+    expect(registry.createSeeds[0]).toHaveLength(4);
+    expect(registry.createMetas[0]).toEqual({ cwd: '/srv/app', parentSession: 'host-1', isSeeded: true, origin: 'subagent', delegationDepth: 1 });
+    expect(registry.createInheritedEventCounts[0]).toBe(4);
+    expect(registry.createdAgents[0]?.options).toEqual({ provider: 'p', model: 'm' });
+    // setup 同样就位并执行（composeFrom + delegation 上下文各记录 1 次）。
+    expect(registry.createSetups[0]).toBeDefined();
+    expect(registry.composeFromCalls).toHaveLength(1);
+    expect(registry.systemPromptContexts).toHaveLength(1);
   });
 });

@@ -71,6 +71,15 @@ export type {
   ListRevertBoundariesInput,
   RecoverInstanceInput,
   RecoverOrphanedInstancesResult,
+  // 三级分离：Step / Microflow 库 RPC wire 类型
+  LibraryEntrySummary,
+  GetStepInput,
+  UpsertStepInput,
+  DeleteStepInput,
+  GetMicroflowInput,
+  UpsertMicroflowInput,
+  DeleteMicroflowInput,
+  DeleteEntryResult,
 } from './wire.ts'
 
 /** 用户问答选项（对齐 DSH `AskUserQuestionOption`）。 */

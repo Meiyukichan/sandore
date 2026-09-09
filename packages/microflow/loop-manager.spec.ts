@@ -4,7 +4,7 @@
  * 覆盖 4 位 hex ID 后缀与 strip 还原、活跃循环/迭代栈、嵌套 loopIteration 路径、
  * checkLoopBreak（maxIterations 硬上限 + breakCondition 两阶段评估 + loopMeta 写入）
  * 与循环迭代上下文注入（in-loop-turn/all-loop-turn env）。
- * @module dsh-sandore/microflow/src/loop-manager.spec
+ * @module @meiyukichan/dsh-sandore/microflow/src/loop-manager.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';

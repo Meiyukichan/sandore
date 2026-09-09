@@ -3,23 +3,30 @@
  *
  * 模式切换与选中态走模块级 `workflow-store`（跨 overlay 开合保留）；内容区复用
  * `InstanceList`（默认态实例，3s 轮询）与 `DefinitionList`（编排态定义）。
+ * 三级分离（plan §6.1）：编排态下内容区按「工作流 / Microflow 库 / Agent 库」
+ * 三分区切换——后两个分区渲染 `LibraryList`（库条目列表），条目点击打开
+ * `LibraryEditModal`（YAML 编辑弹窗），「+」按钮直接新建库条目。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/WorkflowList
  */
 import { useState, useSyncExternalStore } from 'react'
 import {
-  Button, IconPlusOutline16, IconSearchOutline16, Input,
+  Button, IconPlayOutline16, IconPlusOutline16, IconSearchOutline16, Input,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
 
 import { InstanceList } from './InstanceList.tsx'
 import { DefinitionList } from './DefinitionList.tsx'
+import { LibraryList } from './LibraryList.tsx'
+import { LibraryEditModal, type LibraryKind } from './LibraryEditModal.tsx'
 import { NewInstanceDialog } from './NewInstanceDialog.tsx'
 import type { WorkflowOverlayFace } from './workflow-face.ts'
 import {
-  getWorkflowState, newDefinition, selectDefinition, selectInstance, setWorkflowState, subscribeWorkflowState, toggleListCollapse,
+  getWorkflowState, newDefinition, selectDefinition, selectInstance, setLibrarySubMode, setWorkflowState,
+  subscribeWorkflowState, toggleListCollapse,
 } from './workflow-store.ts'
 import css from './WorkflowOverlay.module.css'
+import panelCss from './WorkflowPanel.module.css'
 
 /** WorkflowList 接收的 props。 */
 export interface WorkflowListProps {
@@ -35,9 +42,17 @@ export interface WorkflowListProps {
   width: number
 }
 
+/** 编排态三分区 tab 定义（key → store 子模式 + 文案键）。 */
+const SUB_MODE_TABS: readonly { key: 'workflow' | 'microflow' | 'agent'; labelKey: 'library.tab.workflow' | 'library.tab.microflow' | 'library.tab.agent' }[] = [
+  { key: 'workflow', labelKey: 'library.tab.workflow' },
+  { key: 'microflow', labelKey: 'library.tab.microflow' },
+  { key: 'agent', labelKey: 'library.tab.agent' },
+]
+
 /** 渲染工作流 overlay 左栏列表。 */
 export function WorkflowList({ t, workspaces, face, refreshKey, width }: WorkflowListProps) {
   const listMode = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().listMode)
+  const subMode = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().librarySubMode)
   const selectedInstanceId = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId)
   const selectedDefinitionId = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedDefinition?.id)
   const [query, setQuery] = useState('')
@@ -46,6 +61,15 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
   /** 实例列表即时刷新计数：新建/删除实例后 +1，重挂载 InstanceList 立即拉取
       （不等 3s 轮询周期，新建后列表立即可见）。 */
   const [instanceTick, setInstanceTick] = useState(0)
+  /** 库编辑弹窗目标（kind + entryId；entryId undefined = 新建库条目）。 */
+  const [editingEntry, setEditingEntry] = useState<{ kind: LibraryKind; entryId: string | undefined } | undefined>(undefined)
+  /** 库编辑保存后的列表刷新计数（重挂载 LibraryList 立即回读）。 */
+  const [libraryTick, setLibraryTick] = useState(0)
+
+  /** 库条目删除/保存后的本地刷新：重挂载对应 LibraryList。 */
+  const libraryKind = subMode === 'agent' ? 'agent' : 'microflow'
+  const listEntries = libraryKind === 'agent' ? face.listSteps : face.listMicroflows
+  const deleteEntry = libraryKind === 'agent' ? face.deleteStep : face.deleteMicroflow
 
   return (
     <section className={css.list} style={{ width }} data-sandore-wf-list>
@@ -104,28 +128,67 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
           <Button
             size="sm"
             variant="primary"
-            icon={<IconPlusOutline16 />}
-            title={t('panel.add.instance.hint')}
+            // 实例模式 = 运行工作流（播放图标）；编排/库分区保持「新增」（加号）。
+            icon={listMode === 'instance' ? <IconPlayOutline16 /> : <IconPlusOutline16 />}
+            title={listMode === 'instance'
+              ? t('panel.add.instance.hint')
+              : subMode === 'workflow' ? t('library.add.workflow')
+                : subMode === 'agent' ? t('library.add.agent') : t('library.add.microflow')}
             onClick={() => {
               if (listMode === 'instance') setCreatingInstance(true)
-              else newDefinition()
+              else if (subMode === 'workflow') newDefinition()
+              else setEditingEntry({ kind: libraryKind, entryId: undefined })
             }}
           >
-            {listMode === 'definition' ? t('panel.add.definition') : t('panel.add.instance')}
+            {listMode === 'instance'
+              ? t('panel.add.instance')
+              : subMode === 'workflow' ? t('library.add.workflow')
+                : subMode === 'agent' ? t('library.add.agent') : t('library.add.microflow')}
           </Button>
         </div>
+        {/* 编排态三分区（三级分离 plan §6.1）：工作流 / Microflow 库 / Agent 库。 */}
+        {listMode === 'definition' && (
+          <div className={css.subModeTabs} role="tablist" aria-label={t('library.submode.switch')}>
+            {SUB_MODE_TABS.map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={subMode === tab.key}
+                className={subMode === tab.key ? css.subModeTabActive : css.subModeTab}
+                onClick={() => { setLibrarySubMode(tab.key) }}
+              >
+                {t(tab.labelKey)}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
       <div className={css.listBody}>
         {listMode === 'definition' ? (
-          <DefinitionList
-            key={`def-${refreshKey}`}
-            t={t}
-            query={query}
-            activeId={selectedDefinitionId}
-            listDefinitions={face.listDefinitions}
-            deleteDefinition={face.deleteDefinition}
-            onOpen={selectDefinition}
-          />
+          subMode === 'workflow' ? (
+            <DefinitionList
+              key={`def-${refreshKey}`}
+              t={t}
+              query={query}
+              activeId={selectedDefinitionId}
+              listDefinitions={face.listDefinitions}
+              deleteDefinition={face.deleteDefinition}
+              onOpen={selectDefinition}
+            />
+          ) : (
+            <div className={panelCss.body}>
+              <LibraryList
+                key={`lib-${libraryKind}-${refreshKey}-${libraryTick}`}
+                t={t}
+                kind={libraryKind}
+                query={query}
+                listEntries={listEntries}
+                deleteEntry={deleteEntry}
+                onOpen={entryId => { setEditingEntry({ kind: libraryKind, entryId }) }}
+              />
+            </div>
+          )
         ) : (
           <InstanceList
             key={`inst-${refreshKey}-${instanceTick}`}
@@ -150,6 +213,19 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
             selectInstance(instanceId)
             // 立即重挂载实例列表，让新实例马上可见（不必等轮询周期）。
             setInstanceTick(tick => tick + 1)
+          }}
+        />
+      )}
+      {editingEntry !== undefined && (
+        <LibraryEditModal
+          t={t}
+          kind={editingEntry.kind}
+          entryId={editingEntry.entryId}
+          face={face}
+          onClose={() => { setEditingEntry(undefined) }}
+          onSaved={() => {
+            setEditingEntry(undefined)
+            setLibraryTick(tick => tick + 1)
           }}
         />
       )}

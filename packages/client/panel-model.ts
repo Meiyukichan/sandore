@@ -8,7 +8,7 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/panel-model
  */
 import type { WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
-import type { InstanceSummary, WorkflowDefinitionEntry } from 'dsh-sandore/remote'
+import type { InstanceSummary, WorkflowDefinitionEntry } from '@meiyukichan/dsh-sandore/remote'
 
 /** 未分组桶的稳定键（空串，对齐 DSH 的 UNGROUPED_KEY 惯例）。 */
 export const UNGROUPED_KEY = ''

@@ -9,7 +9,7 @@
  * - 命令节点段携带 `createdAt` 与 `attemptIndex: 0`（时间轴排序键）
  * - pause 续跑（resumePendingPaused）基于旧段**新建段对象**：新 id + attemptIndex+1
  *   + createdAt，旧 paused 段保持定格快照
- * @module dsh-sandore/microflow/src/stage-executor.spec
+ * @module @meiyukichan/dsh-sandore/microflow/src/stage-executor.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm';
@@ -1023,6 +1023,9 @@ describe('StageExecutor 收尾真 fork（5 阶段收尾重构）', () => {
       {
         defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm',
         hostAgentId: 'host-1',
+        // 引擎真实链路注入 hostAgent（Agent 对象）→ fork-session 经 childSessionMeta
+        // 产出 delegationDepth/agentPreset 的 meta + setup（policy/composition）。
+        hostAgent: new FakeAgent('host-1'),
         createAgent: options => agents.create(options),
         getStepSessionEvents: async childId => (childId === 'child-1' ? childEvents() : undefined),
       },
@@ -1031,10 +1034,12 @@ describe('StageExecutor 收尾真 fork（5 阶段收尾重构）', () => {
 
     expect(result.status).toBe('completed');
     // Phase B 真 fork：agents.create 收到 seed = 完整事件 + meta（parentSession=宿主主代理、
-    // origin='subagent'、seedLength=4、cwd=/tmp）。
+    // origin='subagent'、isSeeded=true、delegationDepth=1、cwd=/tmp；上游适配：seedLength
+    // 已删，前缀长度移到顶层 inheritedEventCount=4）。
     expect(agents.createSeeds).toHaveLength(1);
     expect(agents.createSeeds[0]).toEqual(childEvents());
-    expect(agents.createMetas[0]).toEqual({ cwd: '/tmp', parentSession: 'host-1', seedLength: 4, origin: 'subagent' });
+    expect(agents.createMetas[0]).toEqual({ cwd: '/tmp', parentSession: 'host-1', isSeeded: true, origin: 'subagent', delegationDepth: 1 });
+    expect(agents.createInheritedEventCounts[0]).toBe(4);
     // 合成 fork 会话 id：纯 UUID（globalThis.crypto.randomUUID()）。
     const segment = result.executedSteps.find(s => s.stepId === 'step-a')!;
     // Round 17：顶层 assessSessionId 已删除，sessionId 从 assessResult.forkSessionId 内读

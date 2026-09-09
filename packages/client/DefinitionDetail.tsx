@@ -9,11 +9,12 @@
  * 不含 header 与保存按钮。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/DefinitionDetail
  */
-import { Button, IconPlusOutline16, IconTrashOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconPlusOutline16, IconTrashOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { WorkflowDefinition } from 'dsh-sandore/schema'
+import type { WorkflowDefinition } from '@meiyukichan/dsh-sandore/schema'
 
 import { parseOptionalNumber, trimToUndefined } from './dag-editor-model.ts'
+import { ImeSafeInput } from './ime-safe-input.tsx'
 import css from './DefinitionDetail.module.css'
 
 /** WorkflowDetailFields 接收的 props。 */
@@ -35,17 +36,18 @@ export function WorkflowDetailFields({ t, definition, onChange }: WorkflowDetail
       <div className={css.sectionTitle}>{t('detail.title')}</div>
       <label className={css.field}>
         <span className={css.label}>{t('detail.name')}</span>
-        <Input value={definition.name} onChange={event => { onChange({ ...definition, name: event.target.value }) }} placeholder={t('detail.name')} />
+        <ImeSafeInput className={css.detailInput ?? ''} value={definition.name} onCommit={value => { onChange({ ...definition, name: value }) }} placeholder={t('detail.name')} />
       </label>
       <label className={css.field}>
         <span className={css.label}>{t('detail.version')}</span>
-        <Input value={definition.version} onChange={event => { onChange({ ...definition, version: event.target.value }) }} placeholder={t('detail.version')} />
+        <ImeSafeInput className={css.detailInput ?? ''} value={definition.version} onCommit={value => { onChange({ ...definition, version: value }) }} placeholder={t('detail.version')} />
       </label>
       <label className={css.field}>
         <span className={css.label}>{t('detail.description')}</span>
-        <Input
+        <ImeSafeInput
+          className={css.detailInput ?? ''}
           value={definition.description ?? ''}
-          onChange={event => { onChange({ ...definition, description: trimToUndefined(event.target.value) }) }}
+          onCommit={value => { onChange({ ...definition, description: trimToUndefined(value) }) }}
           placeholder={t('detail.description')}
         />
       </label>
@@ -53,7 +55,8 @@ export function WorkflowDetailFields({ t, definition, onChange }: WorkflowDetail
       <div className={css.sectionTitle}>{t('detail.settings')}</div>
       <label className={css.field}>
         <span className={css.label}>{t('detail.defaultTimeout')}</span>
-        <Input
+        <input
+          className={css.numberInput}
           type="number"
           value={String(definition.settings.defaultTimeout)}
           onChange={event => { onChange({ ...definition, settings: { ...definition.settings, defaultTimeout: parseOptionalNumber(event.target.value) ?? 120 } }) }}
@@ -61,7 +64,8 @@ export function WorkflowDetailFields({ t, definition, onChange }: WorkflowDetail
       </label>
       <label className={css.field}>
         <span className={css.label}>{t('detail.maxConcurrentAgents')}</span>
-        <Input
+        <input
+          className={css.numberInput}
           type="number"
           value={String(definition.settings.maxConcurrentAgents)}
           onChange={event => { onChange({ ...definition, settings: { ...definition.settings, maxConcurrentAgents: parseOptionalNumber(event.target.value) ?? 4 } }) }}
@@ -89,11 +93,11 @@ export function WorkflowDetailFields({ t, definition, onChange }: WorkflowDetail
       <span className={css.label}>{t('detail.rules.hint')}</span>
       {ruleEntries.map(([key, value], index) => (
         <div key={index} className={css.rulesKvRow}>
-          <Input
+          <ImeSafeInput
             className={css.rulesKeyInput ?? ''}
             value={key}
-            onChange={event => {
-              const nextKey = trimToUndefined(event.target.value)
+            onCommit={nextValue => {
+              const nextKey = trimToUndefined(nextValue)
               const rest = ruleEntries.filter((_, i) => i !== index)
               const next = rest.reduce<Record<string, string>>((acc, [k, v]) => { acc[k] = v; return acc }, {})
               if (nextKey !== undefined) { next[nextKey] = value }
@@ -102,10 +106,11 @@ export function WorkflowDetailFields({ t, definition, onChange }: WorkflowDetail
             placeholder={t('editor.field.ruleKey')}
             aria-label={t('editor.field.ruleKey')}
           />
-          <Input
+          <ImeSafeInput
+            className={css.rulesValueInput ?? ''}
             value={value}
-            onChange={event => {
-              const next = { ...rules, [key]: event.target.value }
+            onCommit={nextValue => {
+              const next = { ...rules, [key]: nextValue }
               onChange({ ...definition, rules: next })
             }}
             placeholder={t('editor.field.ruleContent')}

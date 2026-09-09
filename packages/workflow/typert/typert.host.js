@@ -17,7 +17,7 @@
 import { TYPERT_REMOTE } from './typert.remote-client.js'
 
 export const TYPERT = {
-  package: 'dsh-sandore',
+  package: '@meiyukichan/dsh-sandore',
   face: 'host',
   schemas: [],
   invocations: TYPERT_REMOTE.descriptors,

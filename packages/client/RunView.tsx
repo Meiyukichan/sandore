@@ -13,12 +13,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { ArtifactEntry } from 'dsh-sandore/remote'
-import type { RevertBoundaryOption } from 'dsh-sandore/types'
-import type { PendingPermissionEntry, PendingQuestionEntry, WorkflowTaskState } from 'dsh-sandore/schema'
+import type { ArtifactEntry } from '@meiyukichan/dsh-sandore/remote'
+import type { RevertBoundaryOption } from '@meiyukichan/dsh-sandore/types'
+import type { PendingPermissionEntry, PendingQuestionEntry, WorkflowTaskState } from '@meiyukichan/dsh-sandore/schema'
 
 import { unwrap } from './remote.ts'
 import { describeError } from './describe-error.ts'
+import { FOLLOW_THRESHOLD } from './timeline-window.ts'
 import {
   buildTimeline, buildRunTree, isRunningStatus, lastActiveSegmentsOf, partitionInteractions,
   type AnswerItem, type DagRunStatus, type RetryMode,
@@ -197,6 +198,33 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
     ? { questions: [], permissions: [] }
     : partitionInteractions(state.pendingInteractions)
 
+  // 贴底跟随（对齐 DSH ChatView 的 pinned-scroll）：滚动时记录是否贴底，贴底态下
+  // 新消息到达自动跟随到底，上滚即停止。「加载更早」prepend 保位后 scrollTop 远离
+  // 底部 → atBottom 自然转 false，不会误触发跟随（逻辑自洽）。
+  const feedScrollRef = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
+  const handleFeedScroll = useCallback(() => {
+    const el = feedScrollRef.current
+    if (el === null) return
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_THRESHOLD
+  }, [])
+
+  // timeline 引用变化（新一批派生数据到达）且处于贴底态 → 下一帧滚到底（等 DOM
+  // 提交后再量 scrollHeight）。
+  useEffect(() => {
+    const el = feedScrollRef.current
+    if (el === null || !atBottomRef.current) return
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+  }, [timeline])
+
+  // 首次 ready 后也滚到底一次（进入执行详情默认看最新消息）。
+  useEffect(() => {
+    if (loadState.kind !== 'ready') return
+    const el = feedScrollRef.current
+    if (el === null || !atBottomRef.current) return
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+  }, [loadState.kind])
+
   // 「N 个正在工作」：已开始且未结束的 Step（running/interacting/paused）。
   const workingCount = state === undefined
     ? 0
@@ -257,15 +285,16 @@ export function RunView({ t, instanceId, openSession, remote, modelDirectory, pe
         </div>
 
         <div className={css.feedCol}>
-          {/* 消息滚动区（独立滚动）。 */}
-          <div className={css.feedScroll}>
+          {/* 消息滚动区（独立滚动）：ref + onScroll 供贴底跟随；ref 下传 UnifiedTimeline
+              供「加载更早」扩窗 prepend 保位。 */}
+          <div ref={feedScrollRef} className={css.feedScroll} onScroll={handleFeedScroll}>
             <div className={css.column}>
               {loadState.kind === 'loading' && <p className={css.loading}>{t('run.loading')}</p>}
               {loadState.kind === 'error' && <p className={css.error} role="alert">{t('run.error', { message: loadState.message })}</p>}
               {actionState.kind === 'error' && <p className={css.error} role="alert">{actionState.message}</p>}
 
               {loadState.kind === 'ready' && state !== undefined && (
-                <UnifiedTimeline t={t} items={timeline} openSession={openSession} />
+                <UnifiedTimeline t={t} items={timeline} openSession={openSession} scrollContainerRef={feedScrollRef} />
               )}
             </div>
           </div>

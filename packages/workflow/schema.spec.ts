@@ -1,6 +1,6 @@
 /**
  * schema.ts 三层 Zod Schema 的单元测试。
- * @module dsh-sandore/workflow/src/schema.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/schema.spec
  */
 import { HarnessError } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it } from 'vitest'
@@ -11,6 +11,9 @@ import { sandoreDomainSpec } from './domain.ts'
 import {
   CommandConfigSchema,
   FinalizeMetaSchema,
+  MicroflowRecordSchema,
+  StageStepSchema,
+  StepRecordSchema,
   StepSessionMetaSchema,
   WorkflowDefinitionRecordSchema,
   WorkflowDefinitionSchema,
@@ -223,7 +226,8 @@ describe('storage layer', () => {
   it('defines a sandore domain with valid names', () => {
     expect(sandoreDomainSpec.name).toBe('sandore')
     expect(sandoreDomainSpec.version).toBe(1)
-    expect(Object.keys(sandoreDomainSpec.tables)).toEqual(['definitions', 'state'])
+    // 三级分离：新增 steps/microflows 两库表（version 保持 1，旧介质零迁移）。
+    expect(Object.keys(sandoreDomainSpec.tables)).toEqual(['definitions', 'state', 'steps', 'microflows'])
     for (const name of [sandoreDomainSpec.name, ...Object.keys(sandoreDomainSpec.tables)]) {
       expect(name).toMatch(/^[a-z][a-z0-9_]*$/)
     }
@@ -299,5 +303,83 @@ describe('FinalizeMetaSchema（收尾四阶段 currentPhase + previousPhase + as
       askResult: { hasAsk: true, passThroughVars: {}, forkSessionId: '0618d2fc-7503-48fa-a1c4-42ddb5c5a8cc', assessmentRaw: 'raw' },
     })
     expect(parsed.askResult?.compressedOutput).toBeUndefined()
+  })
+})
+
+describe('StageStepSchema / StepRecordSchema / MicroflowRecordSchema（三级分离 plan §3）', () => {
+  it('accepts an inputFrom slot on StageStepSchema (Microflow 库条目流程字段)', () => {
+    const parsed = StageStepSchema.parse({
+      id: 'step-1',
+      inputFrom: [{ id: 'ipt-1', path: 'step-0' }],
+    })
+    expect(parsed.inputFrom).toEqual([{ id: 'ipt-1', path: 'step-0' }])
+  })
+
+  it('keeps StageStepSchema branches/inputFrom optional (旧 yaml 兼容)', () => {
+    expect(StageStepSchema.parse({ id: 'step-1' })).toEqual({ id: 'step-1' })
+  })
+
+  it('parses a Step library record (纯定义, plan §3.1)', () => {
+    const parsed = StepRecordSchema.parse({
+      id: 'step-9f8e',
+      name: '构建',
+      command: { type: 'shell', value: { command: 'pnpm build' } },
+      outputTo: [{ id: 'opt-1', path: 'artifacts/**' }],
+      passThroughVars: [{ name: 'artifactDir', value: 'artifacts', description: '产物目录' }],
+      timeout: 30,
+      defaultExpectation: '构建成功',
+      rules: ['禁止提交 node_modules'],
+      gates: { maxRetries: 1 },
+      version: '1.0.0',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    expect(parsed.id).toBe('step-9f8e')
+    expect(parsed.command?.type).toBe('shell')
+    expect(parsed.version).toBe('1.0.0')
+  })
+
+  it('rejects a Step library record without a name (库条目必须有名称)', () => {
+    expect(() => StepRecordSchema.parse({ id: 'step-x', createdAt: 't', updatedAt: 't' })).toThrow(z.ZodError)
+    expect(() => StepRecordSchema.parse({ id: 'step-x', name: '', createdAt: 't', updatedAt: 't' })).toThrow(z.ZodError)
+  })
+
+  it('strips flow fields from a Step library record (schema 不开 strict，branches 剥离)', () => {
+    const parsed = StepRecordSchema.parse({
+      id: 'step-x',
+      name: '构建',
+      branches: [{ next: 'step-y' }],
+      createdAt: 't',
+      updatedAt: 't',
+    })
+    // 仓库 schema 惯例不加 .strict()：未知字段（branches）被静默剥离而非拒绝，
+    // 库条目上误写的流程字段不会入库。
+    expect(parsed).not.toHaveProperty('branches')
+  })
+
+  it('parses a Microflow library record (Step 引用 + inputFrom, plan §3.2)', () => {
+    const parsed = MicroflowRecordSchema.parse({
+      id: 'stg-1234',
+      name: '构建',
+      rules: ['规则一'],
+      gates: { maxRetries: 2 },
+      defaultExpectation: '构建成功',
+      steps: [
+        { id: 'step-a', branches: [{ next: 'step-b', label: 'ok' }], inputFrom: [{ id: 'ipt-1', path: 'step-z' }] },
+        { id: 'step-b' },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    expect(parsed.steps[0]?.inputFrom).toEqual([{ id: 'ipt-1', path: 'step-z' }])
+    expect(parsed.steps[1]?.branches).toBeUndefined()
+  })
+
+  it('rejects a Microflow library record with an empty steps array (Stage 必填 steps)', () => {
+    expect(() => MicroflowRecordSchema.parse({ id: 'stg-x', name: '构建', createdAt: 't', updatedAt: 't' })).toThrow(z.ZodError)
+  })
+
+  it('rejects a Microflow library record without a name', () => {
+    expect(() => MicroflowRecordSchema.parse({ id: 'stg-x', steps: [], createdAt: 't', updatedAt: 't' })).toThrow(z.ZodError)
   })
 })

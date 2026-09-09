@@ -6,7 +6,7 @@
  * 一次批量调用返回 branchId 数组）、无命中数组顺序兜底、无 condition 默认分支、
  * StageContract 注入评估 context、shell 匹配 label、未完成/末位 Stage 边界。Step 级
  * 路由已迁 microflow（本导航器只持 Stage 图）。
- * @module dsh-sandore/workflow/src/dag-navigator.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/dag-navigator.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm';
@@ -75,9 +75,12 @@ function firstPromptText(llm: FakeLlm): string {
 }
 
 /** 新建导航器并把 currentStage 标记完成（setStageContract）。 */
-function makeNavigator(ctx: Context, stages: WorkflowStage[], currentStageId: string, contract?: StageContract): WorkflowDagNavigator {
+function makeNavigator(ctx: Context, stages: WorkflowStage[], currentStageId: string, contract?: StageContract, hostAgent?: unknown): WorkflowDagNavigator {
   const def = makeDef(stages);
-  const nav = new WorkflowDagNavigator(def, ctx, { defaultTimeoutMs: 60000 }, '/tmp', {
+  const nav = new WorkflowDagNavigator(def, ctx, {
+    defaultTimeoutMs: 60000,
+    ...(hostAgent === undefined ? {} : { hostAgent }),
+  }, '/tmp', {
     currentStageId,
     ...(contract === undefined ? {} : { stageContracts: { [currentStageId]: contract } }),
   });
@@ -171,6 +174,29 @@ describe('WorkflowDagNavigator Stage 级条件分支评估', () => {
     expect(promptText).toContain('产物: 报告');
     expect(promptText).toContain('<ReferenceInfo>');
     expect(promptText).toContain('<Reference title="当前 Stage 完成契约">');
+  });
+
+  it('shell 条件携带宿主会话的 sandbox 策略（workspace = 会话 cwd）', async () => {
+    const { ctx, shell } = makeCtx();
+    // FakeSandboxPolicy：workspaceRoot 取传入会话的 cwd（对齐 DSH sandbox-policy 的 resolve）。
+    ctx.provide('sandboxPolicy', {
+      resolve: (request?: { session?: { header?: { cwd?: string } } }) => ({
+        mode: 'workspace-write' as const,
+        workspaceRoot: request?.session?.header?.cwd ?? '(fallback)',
+      }),
+    });
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    // 宿主主代理（session cwd = 项目路径）：shell 条件应携带 per-call 策略而非回落部署默认。
+    const hostAgent = { id: 'host-1', session: { id: 'host-1', header: { cwd: '/project/stage' }, events: [] } };
+    const stages = [
+      stage('stg-entry', '入口', [{ condition: { type: 'shell', value: { command: 'echo ok' } }, label: 'ok', next: 'stg-a' }]),
+      stage('stg-a', 'A'),
+    ];
+    const nav = makeNavigator(ctx, stages, 'stg-entry', doneContract('stg-entry', '入口'), hostAgent);
+    const advanced = await nav.tryAdvanceStage();
+    expect(advanced).toBe(true);
+    expect(nav.currentNodeId).toBe('stg-a');
+    expect(shell.requests[0]?.sandboxPolicy).toEqual({ mode: 'workspace-write', workspaceRoot: '/project/stage' });
   });
 
   it('shell condition stdout 匹配 label → 命中该分支', async () => {

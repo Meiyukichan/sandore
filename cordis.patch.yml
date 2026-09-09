@@ -2,7 +2,7 @@
 #
 # 本文件是 `dsh.bundle.patch` 层：通过官方 CLI 安装时——
 #
-#   dsh plugin --profile <name> add dsh-sandore
+#   dsh plugin --profile <name> add @meiyukichan/dsh-sandore
 #
 # 命令会把 `dsh-sandore` 追加进 profile 的 `dsh.profile.bundles` 层栈；启动时
 # profile boot 合并本 patch（单条 `insert` 插件行 + storage 路由），无需手改任何
@@ -11,17 +11,17 @@
 # 行 id 用语义前缀 `sandore`：DSH bundle 的行 id 都是语义前缀（ui-* / tool-* /
 # storage-* 等），`sandore` 唯一且不易与其它 overlay 的 id patch 冲突。
 #
-# 插件行 name = 本包名（'dsh-sandore'）：host 半由 main 提供；client 半经
+# 插件行 name = 本包名（'@meiyukichan/dsh-sandore'）：host 半由 main 提供；client 半经
 # package.json 的 `dsh.client` 声明被 client-modules 扫描发现（exports["./client"]）。
 #
 # storage 路由固化在此：sandore 存储域路由到 sqlite（行级读写，避免 json 后端把
 # 整个 unit 全量重写进 sandore.json 导致膨胀）。`- id: storage-domain` 的 patch
 # 会整行替换该行 config，所以必须同时带 `backend: json`（DSH bundle 默认）。
-# storage-sqlite 包随本包 dependencies 安装（^0.1.0-rc.6），profile 可直接解析。
+# storage-sqlite 包随本包 dependencies 安装（^0.1.2-rc.1，与宿主 rc.1 对齐），profile 可直接解析。
 
 - insert:
     - id: sandore
-      name: 'dsh-sandore'
+      name: '@meiyukichan/dsh-sandore'
       config:
         defaultTimeoutMs: 7200000
         maxConcurrentSteps: 0

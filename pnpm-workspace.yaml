@@ -1,3 +1,35 @@
 packages: []
+# 新版 DSH 依赖（0.1.2-rc.1）声明大量 peerDependencies（dsh-invariants / dsh-tools /
+# dsh-system-prompt 等），其中部分版本只发布在 dist-tag `next`；pnpm 自动安装 peer 会把
+# `^0.1.2-rc.1` 规范化为不含预发布比较子的范围而解析失败（ERR_PNPM_NO_MATCHING_VERSION）。
+# sandore 构建只直接消费清单内声明的直接依赖，peer 由宿主 harness 运行时供给，故关闭
+# peer 自动安装；同时关闭 exec/test 前的依赖状态自动安装（同因，避免隐式 install 失败）。
+autoInstallPeers: false
+verifyDepsBeforeRun: false
 allowBuilds:
   esbuild: false
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-agent@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-api-remotes@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-brand@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-client-locale@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-client-ui-conversation@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-client-ui-layout@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-client-ui-primitives@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-client-ui-sidebar@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-client-ui-slots@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-deque@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-llm@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-session-title@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-session@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-storage-domain@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-storage-sqlite@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-storage@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-subagent@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-subprocess@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-timeout@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-typert-protocol@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-util-crypto@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-util-values@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-invariants@0.1.2-rc.1'
+  - '@deepseek-ai/dsh-scope@0.1.2-rc.1'

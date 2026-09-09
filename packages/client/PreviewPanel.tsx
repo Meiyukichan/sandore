@@ -7,6 +7,7 @@
  */
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { markdownLabels } from './tool/primitive-labels.ts'
 
 import type { PreviewTarget } from './workflow-store.ts'
 import css from './preview.module.css'
@@ -46,7 +47,7 @@ export function PreviewPanel({ t, target, onClose }: PreviewPanelProps) {
         </div>
         {target.text !== undefined && (
           target.kind === 'result'
-            ? <div className={css.text}><MarkdownText text={target.text} /></div>
+            ? <div className={css.text}><MarkdownText text={target.text} labels={markdownLabels(t)} /></div>
             : <pre className={css.file}>{target.text}</pre>
         )}
       </div>

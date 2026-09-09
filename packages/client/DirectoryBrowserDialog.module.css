@@ -1,0 +1,312 @@
+/* 目录浏览弹窗（对齐 DSH「添加项目」的 browse 目录选择，简化双栏版）。 */
+
+.dialog {
+  width: min(680px, 90vw);
+  height: min(500px, 78vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.editorScope {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.crumbBar {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+.crumbTrail {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  min-width: 0;
+  flex: 1;
+}
+
+.crumbSeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.crumbChevron {
+  color: var(--dsw-alias-label-tertiary);
+  flex: none;
+}
+
+.crumb {
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.crumb:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.crumb:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── 路径编辑器（照 DSH crumbEditZone 铅笔入口 + Input 输入框） ──────────── */
+
+/* 铅笔按钮：DSH 图标按钮规格（28px、radius 8、transparent → interactive-bg-hover）。 */
+.crumbEditBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.crumbEditBtn:hover:not(:disabled),
+.crumbEditBtn:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.crumbEditBtn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* 路径输入框：本体复用 DSH Input 样式（ImeSafeInput，32px 高、border-l2、
+ * radius 8、bg-layer-1、focus-within 品牌色 var(--dsw-alias-brand-primary)），
+ * 这里只负责撑满面包屑条。 */
+.pathInput {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px;
+}
+
+.millerRow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+}
+
+.column {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.divider {
+  flex: none;
+  width: 1px;
+  background: var(--dsw-alias-border-l2);
+  margin: 4px 10px;
+}
+
+.rowSeat {
+  display: block;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.rowSelected {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.rowIcon,
+.rowIconSelected {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.rowSelected .rowIconSelected {
+  color: var(--dsw-alias-accent);
+}
+
+.rowName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.status {
+  flex: none;
+  font-size: 12px;
+  color: var(--dsw-alias-label-caption);
+  padding: 4px 0;
+}
+
+.error {
+  flex: none;
+  font-size: 12px;
+  color: var(--dsw-alias-fg-danger);
+  padding: 4px 0;
+}
+
+.footerBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 14px;
+}
+
+.showHiddenToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.showHiddenToggle:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.showHiddenToggleActive {
+  color: var(--dsw-alias-accent);
+}
+
+.showHiddenToggle:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.footerGap {
+  flex: 1;
+}
+
+.footerAction {
+  min-width: 72px;
+}
+
+/* 嵌套新建文件夹弹窗。 */
+
+.createDialog {
+  width: min(360px, 84vw);
+}
+
+.createBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.createTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.createIn {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.createInput {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.createInput:focus {
+  border-color: var(--dsw-alias-accent);
+}
+
+.createActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

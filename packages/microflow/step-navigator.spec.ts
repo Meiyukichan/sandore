@@ -5,7 +5,7 @@
  * 与迁移前完全一致——并行/条件（批量 shouldExecute 分支 id 数组）/shell 匹配/循环
  * （首入·回边·maxIter 硬上限·breakCondition 跳出·嵌套作用域归零）/无命中线性
  * 兜底/跨 Stage 目标不路由（nodeIndex 拆分：microflow 只持当前 Stage Step 图）。
- * @module dsh-sandore/microflow/src/step-navigator.spec
+ * @module @meiyukichan/dsh-sandore/microflow/src/step-navigator.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm';

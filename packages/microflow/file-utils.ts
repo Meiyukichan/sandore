@@ -13,7 +13,7 @@
  * `fs` 结构类型作为入参，不硬绑 `ctx`。`@deepseek-ai/dsh-fs` 未作为 sandore 运行
  * 时依赖安装，本文件按 `shell.ts`/`subagents.ts` 范式复刻最小结构类型并声明
  * `ctx.fs` 上下文键，宿主运行时注入的真实服务结构兼容即可。
- * @module dsh-sandore/microflow/src/file-utils
+ * @module @meiyukichan/dsh-sandore/microflow/src/file-utils
  */
 import type { ExecutedStepDefault, InputFromItem } from '../workflow/types';
 import { textSummary } from './internal.ts';

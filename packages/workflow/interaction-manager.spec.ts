@@ -6,7 +6,7 @@
  * 双通道 ask 重构（4.4）后不再测试 `[[SANDORE_ASK]]` 标记块解析/转接——该机制已随
  * delegateSubagentAsk/parseDelegatedAsk 删除（子代理提问走 child-scope
  * ask_user_question 工具 → 引擎 askFromSubagent → 本管理器 ask 主通道）。
- * @module dsh-sandore/workflow/src/interaction-manager.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/interaction-manager.spec
  */
 import { describe, expect, it, vi } from 'vitest';
 

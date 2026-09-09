@@ -20,7 +20,7 @@
  *
  * setup 只组合、不驱动（DSH「setup composes, never drives」），因此主代理创建后不会
  * 自动发送首轮 prompt，编排仍由引擎 `runInstance` 主循环驱动。
- * @module dsh-sandore/workflow/src/host-agent
+ * @module @meiyukichan/dsh-sandore/workflow/src/host-agent
  */
 import type { AgentSetup } from '../microflow/subagents';
 

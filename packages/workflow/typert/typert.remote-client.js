@@ -73,14 +73,49 @@ const recoverOrphanedInstancesResult = z.object({
   recovered: z.array(z.string()),
   errors: z.array(z.object({ instanceId: z.string(), error: z.string() })),
 })
+const libraryEntrySummary = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.string().optional(),
+  referencedBy: z.number(),
+  updatedAt: z.string(),
+})
+const stepRecord = z.object({
+  id: z.string(),
+  name: z.string(),
+  command: z.unknown().optional(),
+  outputTo: z.array(z.unknown()).optional(),
+  passThroughVars: z.array(z.unknown()).optional(),
+  timeout: z.number().optional(),
+  defaultExpectation: z.string().optional(),
+  rules: z.array(z.string()).optional(),
+  gates: z.unknown().optional(),
+  version: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+const microflowRecord = z.object({
+  id: z.string(),
+  name: z.string(),
+  rules: z.array(z.string()).optional(),
+  gates: z.unknown().optional(),
+  defaultExpectation: z.string().optional(),
+  steps: z.array(z.unknown()),
+  version: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+const deleteEntryResult = z.object({
+  deleted: z.boolean(),
+})
 
 const json = (schema, typeSymbol) => ({ mode: 'strict', typeSymbol, schema })
 
 export const TYPERT_REMOTE = {
-  package: 'dsh-sandore/workflow',
+  package: '@meiyukichan/dsh-sandore/workflow',
   descriptors: [
     {
-      id: 'dsh-sandore/workflow#sandore/ping',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/ping',
       service: 'sandore',
       namespace: 'sandore',
       method: 'ping',
@@ -89,7 +124,7 @@ export const TYPERT_REMOTE = {
       result: json(pingResponse, '../../src/workflow/types#PingResponse'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/listDefinitions',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/listDefinitions',
       service: 'sandore',
       namespace: 'sandore',
       method: 'listDefinitions',
@@ -98,7 +133,7 @@ export const TYPERT_REMOTE = {
       result: json(z.array(definitionEntry), '../../src/workflow/types#WorkflowDefinitionEntry'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/createDefinition',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/createDefinition',
       service: 'sandore',
       namespace: 'sandore',
       method: 'createDefinition',
@@ -109,53 +144,53 @@ export const TYPERT_REMOTE = {
       result: json(definitionEntry, '../../src/workflow/types#WorkflowDefinitionEntry'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/updateDefinition',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/updateDefinition',
       service: 'sandore',
       namespace: 'sandore',
       method: 'updateDefinition',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/updateDefinition:id') },
+        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/updateDefinition:id') },
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ name: z.string().optional(), version: z.string().optional(), description: z.string().optional() }), '../../src/workflow/types#UpdateDefinitionInput') },
       ],
       result: json(definitionEntry, '../../src/workflow/types#WorkflowDefinitionEntry'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/deleteDefinition',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/deleteDefinition',
       service: 'sandore',
       namespace: 'sandore',
       method: 'deleteDefinition',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/deleteDefinition:id') },
+        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/deleteDefinition:id') },
       ],
-      result: json(z.boolean(), 'dsh-sandore/workflow#sandore/deleteDefinition:result'),
+      result: json(z.boolean(), '@meiyukichan/dsh-sandore/workflow#sandore/deleteDefinition:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/getYaml',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/getYaml',
       service: 'sandore',
       namespace: 'sandore',
       method: 'getYaml',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/getYaml:id') },
+        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/getYaml:id') },
       ],
-      result: json(z.string(), 'dsh-sandore/workflow#sandore/getYaml:result'),
+      result: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/getYaml:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/updateYaml',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/updateYaml',
       service: 'sandore',
       namespace: 'sandore',
       method: 'updateYaml',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/updateYaml:id') },
-        { name: 'yaml', wire: 'yaml', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/updateYaml:yaml') },
+        { name: 'id', wire: 'id', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/updateYaml:id') },
+        { name: 'yaml', wire: 'yaml', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/updateYaml:yaml') },
       ],
       result: json(definitionEntry, '../../src/workflow/types#WorkflowDefinitionEntry'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/importDefinitionFromYaml',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/importDefinitionFromYaml',
       service: 'sandore',
       namespace: 'sandore',
       method: 'importDefinitionFromYaml',
@@ -166,7 +201,7 @@ export const TYPERT_REMOTE = {
       result: json(importDefinitionResult, '../../src/workflow/types#ImportDefinitionResult'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/listInstances',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/listInstances',
       service: 'sandore',
       namespace: 'sandore',
       method: 'listInstances',
@@ -176,7 +211,7 @@ export const TYPERT_REMOTE = {
       result: json(z.array(instanceSummary), '../../src/workflow/types#InstanceSummary'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/startInstance',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/startInstance',
       service: 'sandore',
       namespace: 'sandore',
       method: 'startInstance',
@@ -187,40 +222,40 @@ export const TYPERT_REMOTE = {
       result: json(dagRun, '../../src/workflow/types#DagRun'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/deleteInstance',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/deleteInstance',
       service: 'sandore',
       namespace: 'sandore',
       method: 'deleteInstance',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/deleteInstance:instanceId') },
+        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/deleteInstance:instanceId') },
       ],
-      result: json(z.boolean(), 'dsh-sandore/workflow#sandore/deleteInstance:result'),
+      result: json(z.boolean(), '@meiyukichan/dsh-sandore/workflow#sandore/deleteInstance:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/getInstanceState',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/getInstanceState',
       service: 'sandore',
       namespace: 'sandore',
       method: 'getInstanceState',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/getInstanceState:instanceId') },
+        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/getInstanceState:instanceId') },
       ],
       result: json(z.unknown(), '../../src/workflow/types#WorkflowTaskState'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/abortInstance',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/abortInstance',
       service: 'sandore',
       namespace: 'sandore',
       method: 'abortInstance',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/abortInstance:instanceId') },
+        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/abortInstance:instanceId') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/abortInstance:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/abortInstance:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/recoverInstance',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/recoverInstance',
       service: 'sandore',
       namespace: 'sandore',
       method: 'recoverInstance',
@@ -231,7 +266,7 @@ export const TYPERT_REMOTE = {
       result: json(dagRun, '../../src/workflow/types#DagRun'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/recoverOrphanedInstances',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/recoverOrphanedInstances',
       service: 'sandore',
       namespace: 'sandore',
       method: 'recoverOrphanedInstances',
@@ -240,7 +275,7 @@ export const TYPERT_REMOTE = {
       result: json(recoverOrphanedInstancesResult, '../../src/workflow/types#RecoverOrphanedInstancesResult'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/replyQuestion',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/replyQuestion',
       service: 'sandore',
       namespace: 'sandore',
       method: 'replyQuestion',
@@ -248,10 +283,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), requestId: z.string(), answers: askUserQuestionAnswer }), '../../src/workflow/types#ReplyQuestionInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/replyQuestion:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/replyQuestion:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/rejectQuestion',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/rejectQuestion',
       service: 'sandore',
       namespace: 'sandore',
       method: 'rejectQuestion',
@@ -259,10 +294,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), requestId: z.string() }), '../../src/workflow/types#RejectQuestionInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/rejectQuestion:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/rejectQuestion:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/replyPermission',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/replyPermission',
       service: 'sandore',
       namespace: 'sandore',
       method: 'replyPermission',
@@ -270,10 +305,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), requestId: z.string(), reply: z.enum(['once', 'always', 'reject']) }), '../../src/workflow/types#ReplyPermissionInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/replyPermission:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/replyPermission:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/pauseStep',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/pauseStep',
       service: 'sandore',
       namespace: 'sandore',
       method: 'pauseStep',
@@ -281,10 +316,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), stepId: z.string() }), '../../src/workflow/types#PauseStepInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/pauseStep:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/pauseStep:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/resumeStep',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/resumeStep',
       service: 'sandore',
       namespace: 'sandore',
       method: 'resumeStep',
@@ -292,10 +327,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), stepId: z.string(), resumePrompt: z.string().optional() }), '../../src/workflow/types#ResumeStepInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/resumeStep:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/resumeStep:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/pauseAll',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/pauseAll',
       service: 'sandore',
       namespace: 'sandore',
       method: 'pauseAll',
@@ -303,10 +338,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string() }), '../../src/workflow/types#PauseAllInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/pauseAll:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/pauseAll:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/resumeAll',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/resumeAll',
       service: 'sandore',
       namespace: 'sandore',
       method: 'resumeAll',
@@ -314,10 +349,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), resumePrompt: z.string().optional() }), '../../src/workflow/types#ResumeAllInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/resumeAll:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/resumeAll:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/retryStep',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/retryStep',
       service: 'sandore',
       namespace: 'sandore',
       method: 'retryStep',
@@ -325,10 +360,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), stepId: z.string(), mode: z.enum(['continue', 'revert', 'fork']), message: z.string() }), '../../src/workflow/types#RetryStepInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/retryStep:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/retryStep:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/listRevertBoundaries',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/listRevertBoundaries',
       service: 'sandore',
       namespace: 'sandore',
       method: 'listRevertBoundaries',
@@ -339,7 +374,7 @@ export const TYPERT_REMOTE = {
       result: json(z.array(revertBoundaryOption), '../../src/workflow/types#RevertBoundaryOption'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/sendStepMessage',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/sendStepMessage',
       service: 'sandore',
       namespace: 'sandore',
       method: 'sendStepMessage',
@@ -347,10 +382,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), stepId: z.string(), message: z.string().min(1) }), '../../src/workflow/types#SendStepMessageInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/sendStepMessage:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/sendStepMessage:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/updateInstancePermissionMode',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/updateInstancePermissionMode',
       service: 'sandore',
       namespace: 'sandore',
       method: 'updateInstancePermissionMode',
@@ -358,10 +393,10 @@ export const TYPERT_REMOTE = {
       parameters: [
         { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ instanceId: z.string(), mode: z.enum(['read-only', 'workspace-write', 'danger-full-access']) }), '../../src/workflow/types#UpdateInstancePermissionModeInput') },
       ],
-      result: json(z.void(), 'dsh-sandore/workflow#sandore/updateInstancePermissionMode:result'),
+      result: json(z.void(), '@meiyukichan/dsh-sandore/workflow#sandore/updateInstancePermissionMode:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/getArtifacts',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/getArtifacts',
       service: 'sandore',
       namespace: 'sandore',
       method: 'getArtifacts',
@@ -369,29 +404,113 @@ export const TYPERT_REMOTE = {
       // `stageId?` 为可选过滤条件，Typert 客户端不支持可选参数；UI 只传必填 instanceId，
       // stageId 由 Host SRC 宽松校验允许缺失（undefined → 全部 Stage 产物）。
       parameters: [
-        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/getArtifacts:instanceId') },
+        { name: 'instanceId', wire: 'instanceId', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/getArtifacts:instanceId') },
       ],
       result: json(z.array(artifactEntry), '../../src/workflow/types#ArtifactEntry'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/listProviders',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/listSteps',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'listSteps',
+      invocation: { kind: 'direct' },
+      parameters: [],
+      result: json(z.array(libraryEntrySummary), '../../src/workflow/types#LibraryEntrySummary'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/getStep',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'getStep',
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ id: z.string() }), '../../src/workflow/types#GetStepInput') },
+      ],
+      result: json(stepRecord, '../../src/workflow/types#StepRecord'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/upsertStep',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'upsertStep',
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ yaml: z.string() }), '../../src/workflow/types#UpsertStepInput') },
+      ],
+      result: json(stepRecord, '../../src/workflow/types#StepRecord'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/deleteStep',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'deleteStep',
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ id: z.string() }), '../../src/workflow/types#DeleteStepInput') },
+      ],
+      result: json(deleteEntryResult, '../../src/workflow/types#DeleteEntryResult'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/listMicroflows',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'listMicroflows',
+      invocation: { kind: 'direct' },
+      parameters: [],
+      result: json(z.array(libraryEntrySummary), '../../src/workflow/types#LibraryEntrySummary'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/getMicroflow',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'getMicroflow',
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ id: z.string() }), '../../src/workflow/types#GetMicroflowInput') },
+      ],
+      result: json(microflowRecord, '../../src/workflow/types#MicroflowRecord'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/upsertMicroflow',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'upsertMicroflow',
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ yaml: z.string() }), '../../src/workflow/types#UpsertMicroflowInput') },
+      ],
+      result: json(microflowRecord, '../../src/workflow/types#MicroflowRecord'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/deleteMicroflow',
+      service: 'sandore',
+      namespace: 'sandore',
+      method: 'deleteMicroflow',
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'input', wire: 'input', source: 'json', codec: json(z.object({ id: z.string() }), '../../src/workflow/types#DeleteMicroflowInput') },
+      ],
+      result: json(deleteEntryResult, '../../src/workflow/types#DeleteEntryResult'),
+    },
+    {
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/listProviders',
       service: 'sandore',
       namespace: 'sandore',
       method: 'listProviders',
       invocation: { kind: 'direct' },
       parameters: [],
-      result: json(z.array(providerInfo), 'dsh-sandore/workflow#sandore/listProviders:result'),
+      result: json(z.array(providerInfo), '@meiyukichan/dsh-sandore/workflow#sandore/listProviders:result'),
     },
     {
-      id: 'dsh-sandore/workflow#sandore/listModels',
+      id: '@meiyukichan/dsh-sandore/workflow#sandore/listModels',
       service: 'sandore',
       namespace: 'sandore',
       method: 'listModels',
       invocation: { kind: 'direct' },
       parameters: [
-        { name: 'provider', wire: 'provider', source: 'json', codec: json(z.string(), 'dsh-sandore/workflow#sandore/listModels:provider') },
+        { name: 'provider', wire: 'provider', source: 'json', codec: json(z.string(), '@meiyukichan/dsh-sandore/workflow#sandore/listModels:provider') },
       ],
-      result: json(z.array(modelInfo), 'dsh-sandore/workflow#sandore/listModels:result'),
+      result: json(z.array(modelInfo), '@meiyukichan/dsh-sandore/workflow#sandore/listModels:result'),
     },
   ],
 }

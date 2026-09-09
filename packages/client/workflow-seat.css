@@ -1,0 +1,55 @@
+/*
+ * dsh-sandore 席位全局样式（workflow-seat）：针对 DSH shell DOM 的全局选择器，
+ * 经 tsdown 的 cssModulesPlugin 以普通 .css 原样注入 <style>（类名保持全局，
+ * 不做 CSS-Module 哈希）。前缀 `dsh-sandore-seat-*` / attr `data-sandore-*`，
+ * 与 taskboard 的 `dsh-atb-*` 不冲突。颜色走 shell 的 --dsw-alias-* token，
+ * 跟随主题；缺 token 时给中性回退。
+ *
+ * 几何沿用 dsh-taskboard 入口行调好的观感（8px margin / 8px radius）。
+ */
+
+/* ── 侧栏导航区入口行（宽态） ─────────────────────────────────────────────── */
+.dsh-sandore-seat-entry {
+  display: flex; align-items: center; gap: 8px; position: relative;
+  flex: none; width: calc(100% - 8px); margin: 2px 4px; padding: 6px 10px;
+  border: none; border-radius: 8px; background: transparent;
+  /* 与 DSH 导航行（设置行 / taskboard 入口）同色：继承列前景色，不用次要灰 token */
+  color: inherit;
+  font: inherit; font-size: 13px; line-height: 18px; cursor: pointer; text-align: left;
+}
+.dsh-sandore-seat-entry:hover {
+  background: var(--dsw-alias-interactive-bg-hover-solid, rgba(128, 128, 128, .12));
+  color: inherit;
+}
+/* 打开工作流视图时行高亮（沿用原 footer 按钮的 accent 语义）。 */
+.dsh-sandore-seat-entry[data-active="true"] {
+  background: var(--dsw-alias-accent-bg, rgba(128, 128, 128, .18));
+  color: var(--dsw-alias-accent-primary, inherit); font-weight: 500;
+}
+.dsh-sandore-seat-entry svg { flex: none; }
+
+/* ── 窄 rail（折叠态）：DSH frame 的 data-sidebar-collapsed 与侧栏
+      CSS-Module *_collapsed 双信号；入口退化为 36×36 圆形图标钮 ──────────── */
+[data-sidebar-collapsed] .dsh-sandore-seat-entry,
+[class*="_collapsed"] .dsh-sandore-seat-entry {
+  width: 36px; height: 36px; min-width: 36px; margin: 0 0 12px; padding: 0;
+  justify-content: center; text-align: center; border-radius: 50%;
+}
+[data-sidebar-collapsed] .dsh-sandore-seat-label,
+[class*="_collapsed"] .dsh-sandore-seat-label { display: none; }
+
+/* ── 视图容器：默认隐藏；宿主中心列带 data-sandore-open 时显示为列内全高 flex ── */
+[data-sandore-seat-view] { display: none; }
+[data-sandore-open] [data-sandore-seat-view] {
+  display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden;
+}
+
+/* 打开时隐藏中心列里除本视图外的所有兄弟（会话内容保持挂载，仅 display 隐藏，
+   关闭后原地恢复、聊天状态零丢失）。
+   三世代列选择器与 view-seat.tsx 的 conversationColumn() 一一对应：
+   dev 壳 data-pane / 官方 layout 的 centerCol / DSH Desktop 扩展壳 surface。 */
+[data-pane="conversation"][data-sandore-open] > *:not([data-sandore-seat-view]),
+[class*="centerCol"][data-sandore-open] > *:not([data-sandore-seat-view]),
+.dshDesktopConversationSurface[data-sandore-open] > *:not([data-sandore-seat-view]) {
+  display: none !important;
+}

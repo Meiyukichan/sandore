@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import type { PendingPermissionEntry, PendingQuestionEntry } from 'dsh-sandore/schema'
+import type { PendingPermissionEntry, PendingQuestionEntry } from '@meiyukichan/dsh-sandore/schema'
 
 import {
   buildRunTree, buildTimeline, isBlank, isRunningStatus, isSubagentStep, isTerminalStatus,
@@ -637,5 +637,92 @@ describe('buildRunTree（Round 26：完全按 executedSteps 渲染导航树）',
     const stg1b = root2.children?.[0]
     expect(stg1b?.children?.[0]?.children?.filter(leaf => leaf.type === 'artifact').map(leaf => leaf.name))
       .toEqual(['counts.json'])
+  })
+})
+
+describe('buildTimeline 引用稳定缓存（轮询期 memo 保活）', () => {
+  /** 构造最小实例状态（executedSteps/userMessages 可覆盖；stepId 固定避免跨用例缓存串扰）。 */
+  function refState(overrides: {
+    executedSteps?: Array<Partial<ExecutedStep> & Pick<ExecutedStep, 'id' | 'name' | 'status'>>
+    userMessages?: Array<{ kind: string; content: string; createdAt: string; target?: string }>
+    status?: string
+  } = {}): Parameters<typeof buildTimeline>[0] {
+    const base = {
+      taskId: 'inst-ref',
+      workflowId: 'wfl-ref',
+      status: 'running',
+      originalInput: 'do it',
+      currentStageId: 'stg-ref',
+      executedSteps: [],
+      stageInfos: [],
+      pendingQueue: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    }
+    return {
+      ...base,
+      executedSteps: overrides.executedSteps?.map(s => step({ stageId: 'stg-ref', ...s })) ?? [],
+    } as Parameters<typeof buildTimeline>[0]
+  }
+
+  it('相同输入二次派生返回同引用 item（模拟轮询：新 state 对象、同字段）', () => {
+    const state = refState({
+      executedSteps: [{ id: 'exec-ref-1', name: 'ref-step', status: 'running' }],
+      userMessages: [{ kind: 'input', content: 'hello', createdAt: '2026-01-01T00:00:01.000Z', target: '' }],
+    })
+    const first = buildTimeline(state)
+
+    // 模拟下一轮轮询：引擎返回重新反序列化的全新 state（字段相同、引用全新）。
+    const reparsed = JSON.parse(JSON.stringify(state)) as Parameters<typeof buildTimeline>[0]
+    const second = buildTimeline(reparsed)
+
+    expect(second).toHaveLength(first.length)
+    for (let i = 0; i < first.length; i++) {
+      expect(second[i]).toBe(first[i])
+    }
+  })
+
+  it('字段变化（status 流转）→ 返回新对象（缓存替换，不吞更新）', () => {
+    const running = refState({
+      executedSteps: [{ id: 'exec-ref-2', name: 'ref-step', status: 'running' }],
+    })
+    const before = buildTimeline(running)
+    expect(before[0]?.kind).toBe('step')
+
+    const completed = refState({
+      executedSteps: [{ id: 'exec-ref-2', name: 'ref-step', status: 'completed' }],
+    })
+    const after = buildTimeline(completed)
+    const stepItem = after[0]
+    expect(stepItem).not.toBe(before[0])
+    if (stepItem?.kind !== 'step') return
+    expect(stepItem.status).toBe('completed')
+
+    // 同一轮内再次派生（status 未再变）→ 复用上一轮替换后的新引用。
+    const again = buildTimeline(refState({
+      executedSteps: [{ id: 'exec-ref-2', name: 'ref-step', status: 'completed' }],
+    }))
+    expect(again[0]).toBe(after[0])
+  })
+
+  it('新 attempt 段（attemptIndex 变化）→ 独立 key，各自引用稳定', () => {
+    const attempt0 = buildTimeline(refState({
+      executedSteps: [{ id: 'exec-ref-3', name: 'ref-step', status: 'failed', attemptIndex: 0 }],
+    }))
+    // 重试产生第 2 个执行段（attemptIndex=1）。
+    const attempt1 = buildTimeline(refState({
+      executedSteps: [
+        { id: 'exec-ref-3', name: 'ref-step', status: 'failed', attemptIndex: 0 },
+        { id: 'exec-ref-3', name: 'ref-step', status: 'running', attemptIndex: 1 },
+      ],
+    }))
+    expect(attempt1).toHaveLength(2)
+    // attemptIndex=0 的段展示等价 → 复用旧引用；attemptIndex=1 是新段 → 新对象。
+    expect(attempt1[0]).toBe(attempt0[0])
+    expect(attempt1[1]).not.toBe(attempt0[0])
+    expect(attempt1[1]?.kind).toBe('step')
+    if (attempt1[1]?.kind !== 'step') return
+    expect(attempt1[1].attemptIndex).toBe(1)
   })
 })

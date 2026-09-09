@@ -28,19 +28,21 @@
  *
  * `finalizeStep()` 保留为编排兼容入口（跳过检查 → assessOnly → ask? → commit
  * 'finalizing' → evaluateGates → commitFinalize），供既有调用方/测试使用。
- * @module dsh-sandore/microflow/src/finalize-manager
+ * @module @meiyukichan/dsh-sandore/microflow/src/finalize-manager
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
-import type { GenerateOptions } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, GenerateOptions, MessageSource } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
+import { SessionId } from '@deepseek-ai/dsh-session';
 
 import { SandoreError } from './errors.ts';
 import { fileExists, findFilesByGlob, findFilesByRegex, hasUnresolvedVars, isGlobPattern, resolveOutputToVars } from './file-utils.ts';
 import { describeError, escapeXml, resolveProviderModel, textSummary } from './internal.ts';
 import { driveAgentRound, forkStepSubagent } from './fork-session.ts';
 import { finalAssistantOutput } from './subagents.ts';
-import type { Agent, AgentHandle, AgentOptions, CreateAgentOptions, SubagentSettlement } from './subagents.ts';
+import { sessionEventList } from './session-events.ts';
+import type { Agent, AgentHandle, AgentOptions, ChildPromptDelivery, CreateAgentOptions, MessageId, SubagentSettlement } from './subagents.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
 
 import type { ExecutedStepDefault, FinalizeOutcome } from '../workflow/types';
@@ -82,8 +84,11 @@ export interface FinalizeManagerConfig {
   readonly getStepSessionEvents?: (childId: string) => Promise<readonly DshSessionEvent[] | undefined>;
   /**
    * 宿主主代理（secondary 门禁 `subagents.startContinuable` 的 `request.parent`；
-   * 引擎注入 `runnerConfig.hostAgent`）。`undefined` = 未配置 → secondary 门禁降级
-   * 临时会话（记 errorDetail，不失败）。
+   * 引擎注入 `runnerConfig.hostAgent`）。Phase B `assessForked` 亦透传给
+   * `forkStepSubagent`：fork 子代理 setup 经 `agentPresets.composeFrom` 组合宿主主代理
+   * preset（继承工具集 + prompt sections，对齐 DSH `applyChildComposition`）。
+   * `undefined` = 未配置 → secondary 门禁降级临时会话（记 errorDetail，不失败）；
+   * Phase B fork 子代理无工具集（仅 seed 历史注入，不降级）。
    */
   readonly hostAgent?: Agent;
   /**
@@ -98,6 +103,14 @@ export interface FinalizeManagerConfig {
    * 承载（`resolveForkAgentOptions`），不要把模型 provider id 填到这里。
    */
   readonly subagentProvider?: string;
+  /**
+   * 宿主 → 子代理 prompt 投递通道（上游 `subagents.followup` 已删；引擎注入
+   * `createChildPromptDelivery(ctx.subagents)` 产物，见 workflow/subagent-delivery.ts）。
+   * secondary 门禁解析失败的纠正重试经它向同一子代理 queue 投递纠正提示；未注入时
+   * 结构探测 `ctx.subagents.followup`（旧宿主/测试 mock 降级），皆无则纠正重试抛错
+   * （进降级路径，不失败）。
+   */
+  readonly deliverChildPrompt?: ChildPromptDelivery;
 }
 
 /** Step 收尾评估上下文（`<stepContext>` 的 input/output/artifacts 块）。 */
@@ -908,6 +921,9 @@ export class FinalizeAssessor {
         ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
         createAgent,
         ...(agentOptions === undefined ? {} : { agentOptions }),
+        // hostAgent 透传：fork 子代理 setup 经 `agentPresets.composeFrom` 组合宿主主代理
+        // preset（继承工具集 + prompt sections，对齐 DSH `applyChildComposition`）。
+        ...(this.config.hostAgent === undefined ? {} : { hostAgent: this.config.hostAgent }),
       });
       if (forked === undefined) {
         return this.degradeFinalize(
@@ -1130,22 +1146,23 @@ export class GateEvaluator {
           prompt: [{ type: 'text', text: promptText }],
           parent: this.config.hostAgent,
           ...(agentOptions === undefined ? {} : { agentOptions }),
+          // ask 工具全局注册 + gate（上游适配）：屏蔽 DSH 全局版 ask_user_question，
+          // 门禁子代理不提供向用户提问通道（判断子代理无需提问）。
+          toolFilter: { deny: ['ask_user_question'] },
         },
         signal: input.signal ?? new AbortController().signal,
       });
-      // 2026-08-25：解析失败（非合法 done/error）给**同一个子代理** followup 纠正重试
+      // 2026-08-25：解析失败（非合法 done/error）给**同一个子代理**纠正重试
       // （上限 MAX_SECONDARY_GATE_RETRIES，纠正提示携带失败原因，对齐 batch/loop-break）；
-      // 合法 `error`（不通过）不算解析失败、不重试。
+      // 合法 `error`（不通过）不算解析失败、不重试。上游 `subagents.followup` 已删，
+      // 经投递通道 queue 注回（独立 FIFO 轮次语义）。
       let raw = await this.awaitGateOutput(started.childId, input.signal);
       let retries = 0;
       while (explainSecondaryGateParse(raw) !== undefined && retries < MAX_SECONDARY_GATE_RETRIES) {
         retries += 1;
-        await this.ctx.subagents.followup(this.config.hostAgent, started.childId, [
+        await this.deliverToChild(this.config.hostAgent, started.childId, [
           { type: 'text', text: buildSecondaryGateCorrectionHint(raw) },
-        ], {
-          source: { kind: 'user' },
-          signal: input.signal ?? new AbortController().signal,
-        });
+        ], input.signal ?? new AbortController().signal);
         raw = await this.awaitGateOutput(started.childId, input.signal);
       }
       return this.secondaryFromRaw(raw, started.childId);
@@ -1169,6 +1186,8 @@ export class GateEvaluator {
    * `SandoreError`（进降级）。
    */
   private async awaitGateOutput(childId: string, signal?: AbortSignal): Promise<string> {
+    // 子代理注册先于 startContinuable 返回；registry 缺失视为真错误（GATE_FAILED 进
+    // 降级）。settle 早于 awaiter 注册的竞态由引擎 settlementBuffer 覆盖。
     const child = this.ctx.agents.get(childId);
     if (child === undefined) {
       throw new SandoreError(`gate subagent '${childId}' not found in registry`, 'GATE_FAILED');
@@ -1177,19 +1196,43 @@ export class GateEvaluator {
     const blocks = awaitSettlement === undefined
       ? await (async () => {
           await child.whenIdle();
-          return finalAssistantOutput(child.session.events);
+          return finalAssistantOutput(sessionEventList(child.session));
         })()
       : await (async () => {
           const settlement: SubagentSettlement = await awaitSettlement(childId, signal ?? new AbortController().signal);
           if (settlement.stopReason !== 'completed') {
             throw new SandoreError(`gate subagent '${childId}' settle ${settlement.stopReason}`, 'GATE_FAILED');
           }
-          return settlement.output ?? finalAssistantOutput(child.session.events);
+          return settlement.output ?? finalAssistantOutput(sessionEventList(child.session));
         })();
     if (blocks === undefined) {
       throw new SandoreError('gate subagent produced no assistant output', 'GATE_FAILED');
     }
     return textSummary(blocks);
+  }
+
+  /**
+   * 向 gate 子代理投递一条宿主协议消息（queue 投递，等价旧 `subagents.followup`）。
+   *
+   * 优先用引擎注入的 `config.deliverChildPrompt`；未注入时结构探测
+   * `ctx.subagents.followup`（旧宿主/测试 mock 降级）；皆无抛 `GATE_FAILED`
+   * （进降级路径，不失败）。
+   */
+  private async deliverToChild(parent: Agent, childId: string, content: ContentBlock[], signal: AbortSignal): Promise<MessageId> {
+    const injected = this.config.deliverChildPrompt;
+    if (injected !== undefined) {
+      return injected(parent, SessionId(childId), content, { kind: 'user' }, signal);
+    }
+    const followup = (this.ctx.subagents as {
+      followup?(parent: Agent, childId: SessionId, content: ContentBlock[], options: {
+        readonly source: MessageSource;
+        readonly signal: AbortSignal;
+      }): Promise<MessageId>;
+    }).followup;
+    if (followup === undefined) {
+      throw new SandoreError('no child prompt delivery channel (deliverChildPrompt/followup unavailable)', 'GATE_FAILED');
+    }
+    return followup.call(this.ctx.subagents, parent, SessionId(childId), content, { source: { kind: 'user' }, signal });
   }
 
   /** 归一 secondary 门禁子代理/临时会话输出为 `SecondaryGateEval`。 */

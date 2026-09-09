@@ -9,7 +9,7 @@
  * agent/prompt/skill/mcp 走 `extractBreakResult === 'true'`、shell 走
  * `matchesExpectation`），同时写入 `loopMeta`（evaluating → completed）。迭代上下文
  * （`in-loop-turn`/`all-loop-turn`）经 `getLoopIterationContext` 供 env 注入与变量替换。
- * @module dsh-sandore/microflow/src/loop-manager
+ * @module @meiyukichan/dsh-sandore/microflow/src/loop-manager
  */
 import type { Context } from '@deepseek-ai/cordis';
 

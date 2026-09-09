@@ -6,12 +6,21 @@
  * 并自动 `convertLegacyToV2()` 转两级 `stages[].steps[]`，再走 `WorkflowDefinitionSchema`
  * 验证（失败抛 `WorkflowYamlError('DEFINITION_INVALID', { cause })`），最后做 `next`
  * 引用完整性校验。`serializeWorkflowYaml` 序列化结果可被再次解析且深层相等。
- * @module dsh-sandore/workflow/src/yaml-parser
+ * @module @meiyukichan/dsh-sandore/workflow/src/yaml-parser
  */
-import { parseDocument, stringify, type YAMLError } from 'yaml'
+import { parseDocument, stringify, parse, type YAMLError } from 'yaml'
 
 import { WorkflowYamlError } from './yaml-error.ts'
-import { WorkflowDefinitionSchema, type DagBranch, type DagLoop, type WorkflowDefinition } from './schema.ts'
+import {
+  MicroflowRecordSchema,
+  StepRecordSchema,
+  WorkflowDefinitionSchema,
+  type DagBranch,
+  type DagLoop,
+  type MicroflowRecord,
+  type StepRecord,
+  type WorkflowDefinition,
+} from './schema.ts'
 
 /** V1 旧 `PromptConfig` 类型名 → V2 `CommandConfig` 类型名的映射。 */
 const PROMPT_TYPE_TO_COMMAND_TYPE: Record<string, string> = {
@@ -220,17 +229,23 @@ function validateReferences(definition: WorkflowDefinition): void {
   }
   for (const step of definition.steps ?? []) checkNode(step, 'step')
 
-  // inputFrom 校验：完整定义在顶层 steps[]（分离式；stage.steps 仅流控无 inputFrom）。
-  for (const step of definition.steps ?? []) {
-    for (const input of step.inputFrom ?? []) {
+  // inputFrom 校验：完整定义在顶层 steps[]（分离式）+ stage.steps 的流程 inputFrom
+  //（三级分离扩展：StageStepSchema 现含 inputFrom?，Microflow 库条目承载；同样校验
+  // path 引用的 step id 存在，保持顶层/流控位两处输入绑定的一致语义）。
+  const checkInputFrom = (ownerId: string, inputs: readonly { path?: string | undefined }[] | undefined): void => {
+    for (const input of inputs ?? []) {
       const path = input.path
       // 契约引用（`${stage.xxx.artifact}`）与缺失的 path 不参与节点校验。
       if (path === undefined || path.startsWith('${')) continue
       // 简化格式：path 直接为引用的 step id（单段），不再支持 stageId.stepId 两段。
       if (!stepIds.has(path)) {
-        throw new WorkflowYamlError(`step '${step.id}'.inputFrom references missing step '${path}'`, 'DEFINITION_INVALID')
+        throw new WorkflowYamlError(`step '${ownerId}'.inputFrom references missing step '${path}'`, 'DEFINITION_INVALID')
       }
     }
+  }
+  for (const step of definition.steps ?? []) checkInputFrom(step.id, step.inputFrom)
+  for (const stage of definition.stages) {
+    for (const step of stage.steps) checkInputFrom(step.id, step.inputFrom)
   }
 }
 
@@ -284,4 +299,50 @@ export function parseWorkflowYaml(text: string): WorkflowDefinition {
  */
 export function serializeWorkflowYaml(definition: WorkflowDefinition): string {
   return stringify(definition)
+}
+
+// ── 库条目 YAML（三级分离：Step / Microflow 库） ─────────────────────────────
+
+/** 解析库条目 YAML 的共享流程：语法解析（`YAML_PARSE`）→ zod 校验（`DEFINITION_INVALID`）。 */
+function parseLibraryYaml<T>(text: string, schema: { parse(data: unknown): T }): T {
+  let data: unknown
+  try {
+    data = parse(text)
+  } catch (error) {
+    throw new WorkflowYamlError(`invalid YAML: ${describeError(error)}`, 'YAML_PARSE')
+  }
+  try {
+    return schema.parse(data)
+  } catch (error) {
+    throw new WorkflowYamlError(`invalid library entry: ${describeError(error)}`, 'DEFINITION_INVALID', { cause: error })
+  }
+}
+
+/**
+ * 解析 Step 库条目 YAML 文本为 `StepRecord`（纯定义；错误码与 `parseWorkflowYaml`
+ * 一致：`YAML_PARSE` 语法 / `DEFINITION_INVALID` 结构）。
+ * @param text - Step 库条目 YAML。
+ * @returns 校验通过的 `StepRecord`。
+ */
+export function parseStepYaml(text: string): StepRecord {
+  return parseLibraryYaml(text, StepRecordSchema)
+}
+
+/** 序列化 `StepRecord` 为 YAML 文本（可被 {@link parseStepYaml} 再次解析且深层相等）。 */
+export function serializeStepYaml(record: StepRecord): string {
+  return stringify(record)
+}
+
+/**
+ * 解析 Microflow 库条目 YAML 文本为 `MicroflowRecord`（Step 引用 + Step 级流程字段）。
+ * @param text - Microflow 库条目 YAML。
+ * @returns 校验通过的 `MicroflowRecord`。
+ */
+export function parseMicroflowYaml(text: string): MicroflowRecord {
+  return parseLibraryYaml(text, MicroflowRecordSchema)
+}
+
+/** 序列化 `MicroflowRecord` 为 YAML 文本（可被 {@link parseMicroflowYaml} 再次解析且深层相等）。 */
+export function serializeMicroflowYaml(record: MicroflowRecord): string {
+  return stringify(record)
 }

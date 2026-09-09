@@ -10,12 +10,13 @@
  * 其余逐字保留。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/chat/AssistantMarkdown
  */
-import { Fragment, memo, useMemo } from 'react'
+import { Fragment, memo } from 'react'
 import type { ReactNode } from 'react'
 import type { AssistantBlock } from '@deepseek-ai/dsh-client-runtime/client'
 import { JsonBlock, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { markdownLabels } from '../tool/primitive-labels.ts'
 import type { SandoreRenderMessageImages } from './attachment/MessageImage.tsx'
 import { ReasoningRow } from './ReasoningRow.tsx'
 import css from './AssistantMarkdown.module.css'
@@ -42,8 +43,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   blocks, streaming, interrupted, renderMessageImages, mentions, t,
 }: AssistantMarkdownProps) {
   // Stable per locale revision (t identity changes on switch): a fresh object
-  // per render would rebuild MarkdownText's component table every chunk.
-  const codeLabels = useMemo(() => ({ copyLabel: t('copy'), copiedLabel: t('copied') }), [t])
+  // 复制/折叠等 chrome 文案（labels）每渲染构造一次即可：MarkdownText 的组件表
+  // 依赖 text/mentions，labels 变化仅影响 chrome 文案，不重建组件表。
   const last = blocks.length - 1
   // Tool-call heads render as tool rows in the chat view's grouping pass, so
   // a node that is only those heads (or empty) would paint an empty root
@@ -63,7 +64,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             key={i}
             text={block.text}
             streaming={streaming}
-            codeLabels={codeLabels}
+            labels={markdownLabels(t)}
             fileMentions={mentions}
           />,
         )

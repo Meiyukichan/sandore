@@ -2,7 +2,7 @@
  * `createSandoreTools` 的单元测试：8 个工具名与转调映射、per-instance 闭包捕获、
  * completed/终态实例的结构化 no-op、`getState` 只读可用、`SandoreError` 摘要透传
  * 与 defineTool 形状（parameters/output）。
- * @module dsh-sandore/tool/src/index.spec
+ * @module @meiyukichan/dsh-sandore/tool/src/index.spec
  */
 import { describe, expect, it, vi } from 'vitest';
 

@@ -1,36 +1,15 @@
-/* WorkflowOverlay：shell.overlay 全局工作流 UI（覆盖 conversation/details 列，sidebar 可见）。 */
+/* WorkflowOverlay：中心列内嵌工作流视图（非遮罩浮层；容器显隐由全局
+   workflow-seat.css 按列级 data-sandore-open attr 接管）。 */
 
-.layer {
-  position: absolute;
-  inset: 0;
-  z-index: 30;
-  pointer-events: none;
-}
-
-.overlay {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: var(--wf-left, 248px);
+/* 视图根：填满中心列尾子容器（列内全高 flex）。 */
+.viewRoot {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  min-width: 0;
   background: var(--dsw-alias-bg-base);
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.08);
-  pointer-events: auto;
-  animation: overlay-in 0.18s ease;
-}
-
-@keyframes overlay-in {
-  from {
-    transform: translateX(16px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
+  overflow: hidden;
 }
 
 .header {
@@ -222,6 +201,57 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ── 编排态三分区 tab（三级分离 plan §6.1：工作流 / Microflow 库 / Agent 库） ──
+   照 DSH ConversationRoot .tabs/.tab/.tabActive（figma Tab_Group 34:11441）：
+   底部对齐 + 2px 下划线指示器（business-primary 蓝），无轨道背景。 */
+
+.subModeTabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.subModeTab {
+  flex: 1;
+  position: relative;
+  padding: 6px 4px 7px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease;
+}
+
+.subModeTab::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.subModeTab:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.subModeTabActive {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.subModeTabActive::after {
+  background: var(--dsw-alias-state-business-primary);
 }
 
 /* 搜索框与新增按钮（Button sm，28px）等高：覆盖 Input 原子默认 32px 高。 */

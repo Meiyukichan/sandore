@@ -4,13 +4,22 @@ import type {
   TypertRemoteContribution,
 } from '@deepseek-ai/dsh-typert-protocol'
 import type { LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
+// StepRecord/MicroflowRecord 为记录层 schema 类型（schema.ts 导出）；index 根子路径
+// 已 `export * from './schema'`，此处从 `/schema` 子路径引用避免 types 重导出歧义。
+import type { MicroflowRecord, StepRecord } from '@meiyukichan/dsh-sandore/schema'
 import type {
   ArtifactEntry,
   CreateDefinitionInput,
   DagRun,
+  DeleteEntryResult,
+  DeleteMicroflowInput,
+  DeleteStepInput,
+  GetMicroflowInput,
+  GetStepInput,
   ImportDefinitionInput,
   ImportDefinitionResult,
   InstanceSummary,
+  LibraryEntrySummary,
   ListRevertBoundariesInput,
   PauseAllInput,
   PauseStepInput,
@@ -28,19 +37,23 @@ import type {
   StartInstanceInput,
   UpdateDefinitionInput,
   UpdateInstancePermissionModeInput,
+  UpsertMicroflowInput,
+  UpsertStepInput,
   WorkflowDefinitionEntry,
   WorkflowTaskState,
-} from 'dsh-sandore/types'
+} from '@meiyukichan/dsh-sandore/types'
 
 export type {
   ArtifactEntry,
   DagRun,
   ImportDefinitionResult,
   InstanceSummary,
+  LibraryEntrySummary,
   PingResponse,
   RecoverOrphanedInstancesResult,
   WorkflowDefinitionEntry,
-} from 'dsh-sandore/types'
+} from '@meiyukichan/dsh-sandore/types'
+export type { MicroflowRecord, StepRecord } from '@meiyukichan/dsh-sandore/schema'
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$73616e646f7265 {
@@ -71,6 +84,14 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     sendStepMessage: (input: SendStepMessageInput) => Promise<RemoteResult<void>>
     updateInstancePermissionMode: (input: UpdateInstancePermissionModeInput) => Promise<RemoteResult<void>>
     getArtifacts: (instanceId: string, stageId?: string) => Promise<RemoteResult<ArtifactEntry[]>>
+    listSteps: () => Promise<RemoteResult<LibraryEntrySummary[]>>
+    getStep: (input: GetStepInput) => Promise<RemoteResult<StepRecord>>
+    upsertStep: (input: UpsertStepInput) => Promise<RemoteResult<StepRecord>>
+    deleteStep: (input: DeleteStepInput) => Promise<RemoteResult<DeleteEntryResult>>
+    listMicroflows: () => Promise<RemoteResult<LibraryEntrySummary[]>>
+    getMicroflow: (input: GetMicroflowInput) => Promise<RemoteResult<MicroflowRecord>>
+    upsertMicroflow: (input: UpsertMicroflowInput) => Promise<RemoteResult<MicroflowRecord>>
+    deleteMicroflow: (input: DeleteMicroflowInput) => Promise<RemoteResult<DeleteEntryResult>>
     listProviders: () => Promise<RemoteResult<LlmProviderInfo[]>>
     listModels: (provider: string) => Promise<RemoteResult<LlmModelInfo[]>>
   }
@@ -102,6 +123,14 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'sandore/sendStepMessage': (input: SendStepMessageInput) => Promise<RemoteResult<void>>
     'sandore/updateInstancePermissionMode': (input: UpdateInstancePermissionModeInput) => Promise<RemoteResult<void>>
     'sandore/getArtifacts': (instanceId: string, stageId?: string) => Promise<RemoteResult<ArtifactEntry[]>>
+    'sandore/listSteps': () => Promise<RemoteResult<LibraryEntrySummary[]>>
+    'sandore/getStep': (input: GetStepInput) => Promise<RemoteResult<StepRecord>>
+    'sandore/upsertStep': (input: UpsertStepInput) => Promise<RemoteResult<StepRecord>>
+    'sandore/deleteStep': (input: DeleteStepInput) => Promise<RemoteResult<DeleteEntryResult>>
+    'sandore/listMicroflows': () => Promise<RemoteResult<LibraryEntrySummary[]>>
+    'sandore/getMicroflow': (input: GetMicroflowInput) => Promise<RemoteResult<MicroflowRecord>>
+    'sandore/upsertMicroflow': (input: UpsertMicroflowInput) => Promise<RemoteResult<MicroflowRecord>>
+    'sandore/deleteMicroflow': (input: DeleteMicroflowInput) => Promise<RemoteResult<DeleteEntryResult>>
     'sandore/listProviders': () => Promise<RemoteResult<LlmProviderInfo[]>>
     'sandore/listModels': (provider: string) => Promise<RemoteResult<LlmModelInfo[]>>
   }

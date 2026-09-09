@@ -15,6 +15,28 @@
   color: var(--sd-muted-foreground);
 }
 
+/* 「加载更早」（窗口化渲染：顶部扩窗按钮，照 DSH ChatView .older 观感——
+    居中小胶囊、ghost 小字；hover 背景略加深提示可点）。 */
+.older {
+  display: flex;
+  justify-content: center;
+}
+
+.older button {
+  border: none;
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--sd-muted-foreground);
+  background: var(--sd-surface-hover);
+  cursor: pointer;
+}
+
+.older button:hover {
+  background: color-mix(in srgb, var(--sd-foreground) 10%, transparent);
+}
+
 /* 用户消息：右侧气泡（DSH UserStyleBubble） */
 .userMsg {
   display: flex;
@@ -460,6 +482,15 @@
   color: var(--sd-muted-foreground);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+/* rc.1 占位：运行状态提示 + 「查看会话」按钮（无内嵌消息流时的引导）。 */
+.stepChatHint {
+  margin-top: 4px;
+}
+
+.stepChatEmptyActions {
+  margin-top: 10px;
 }
 
 /* ── Round 13：统一内容卡片（与 badge 颜色体系对齐，复制自 DagStepNodeView.module.css） ── */

@@ -7,7 +7,7 @@
  *
  * 依赖方向统一为 workflow → microflow：workflow 包通过 re-export 保持对外 API 不变，
  * microflow 不再跨包导入 workflow 的运行时值。
- * @module dsh-sandore/microflow/src/errors
+ * @module @meiyukichan/dsh-sandore/microflow/src/errors
  */
 import { HarnessError } from '@deepseek-ai/dsh-llm';
 
@@ -29,6 +29,9 @@ export type SandoreErrorCode =
   | 'STEP_PAUSED'
   | 'INVALID_OPERATION'
   | 'CANCELLED'
+  // 库管理错误（三级分离：Step/Microflow 库 upsert 查重与删除引用保护，fatal）
+  | 'DUPLICATE_NAME'
+  | 'REFERENCED'
   // 收尾/门禁/会话错误（fatal）
   | 'FINALIZE_FAILED'
   | 'GATE_FAILED'

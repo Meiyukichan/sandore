@@ -12,7 +12,7 @@
  */
 import { Button, IconPlusOutline16, IconTrashOutline16, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CommandConfig, DagBranch } from 'dsh-sandore/schema'
+import type { CommandConfig, DagBranch } from '@meiyukichan/dsh-sandore/schema'
 
 import { CommandEditor } from './CommandEditor.tsx'
 import { createCommand, isConditionalBranch, parseOptionalNumber, trimToUndefined, type CommandType, type MergedStep } from './dag-editor-model.ts'

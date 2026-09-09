@@ -21,7 +21,7 @@
  * shouldExecute 分支 id 数组三层解析，public）、`extractBreakResult`（循环跳出
  * shouldBreak 三级解析，public，供 LoopManager 复用；分场景字段互不复用）与
  * `matchesExpectation`（大小写不敏感+包含匹配；显式 `/.../ ` 定界时走正则）。
- * @module dsh-sandore/microflow/src/branch-evaluator
+ * @module @meiyukichan/dsh-sandore/microflow/src/branch-evaluator
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { BlockAssembler, createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm';
@@ -39,9 +39,10 @@ import {
   resolveProviderModel as resolveModelRoute,
   textSummary,
 } from './internal.ts';
-import type { AgentHandle, AgentOptions, CreateAgentOptions, SessionEvent } from './subagents.ts';
+import type { Agent, AgentHandle, AgentOptions, CreateAgentOptions, SessionEvent } from './subagents.ts';
 import { finalAssistantOutput } from './subagents.ts';
 import type { CommandConfig, DagBranch } from '../workflow/schema';
+import { resolveHostSandboxPolicy } from '../workflow/shell';
 import type { ShellExecRequest, ShellRunResult } from '../workflow/shell';
 
 /** shell 命令变体。 */
@@ -72,6 +73,15 @@ export interface BranchEvaluatorConfig {
    * 引擎注入 `runnerConfig.hostAgent.id`）。
    */
   readonly hostAgentId?: string;
+  /**
+   * 宿主主代理对象（引擎注入 `runnerConfig.hostAgent`）：shell 条件评估经
+   * `resolveHostSandboxPolicy` 携带宿主会话解析 per-call sandbox 策略
+   * （workspace = 会话 cwd，而非启动目录兜底）；Phase D 路由 fork 子代理（runRoutingAi
+   * / dispatchAi）经 `forkStepSubagent` 的 setup + `agentPresets.composeFrom` 组合宿主
+   * 主代理 preset（继承工具集 + prompt sections，对齐 DSH `applyChildComposition`）。
+   * 缺省时 fork 子代理无工具集（仅 seed 历史注入）。
+   */
+  readonly hostAgent?: Agent;
   /**
    * `ctx.agents.create` 的注入包装（引擎注入 `(o) => ctx.agents.create(o)`）。
    *
@@ -809,6 +819,9 @@ export class BranchEvaluator {
           ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
           createAgent,
           ...(agentOptions === undefined ? {} : { agentOptions }),
+          // hostAgent 透传：fork 子代理 setup 经 `agentPresets.composeFrom` 组合宿主主代理
+          // preset（继承工具集 + prompt sections，对齐 DSH `applyChildComposition`）。
+          ...(this.config.hostAgent === undefined ? {} : { hostAgent: this.config.hostAgent }),
         });
         if (forked !== undefined) {
           const { handle } = forked;
@@ -916,6 +929,9 @@ export class BranchEvaluator {
           ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
           createAgent,
           ...(agentOptions === undefined ? {} : { agentOptions }),
+          // hostAgent 透传：fork 子代理 setup 经 `agentPresets.composeFrom` 组合宿主主代理
+          // preset（继承工具集 + prompt sections，对齐 DSH `applyChildComposition`）。
+          ...(this.config.hostAgent === undefined ? {} : { hostAgent: this.config.hostAgent }),
         });
         if (forked !== undefined) {
           const { handle } = forked;
@@ -996,6 +1012,9 @@ export class BranchEvaluator {
     // 统一经 `ctx.shell`（平台 shell 解释器）执行：env/stdin 由 ShellExecRequest
     // 携带。不要用 `ctx.subprocess.spawn` 直接执行——subprocess 不做 shell 解释，
     // PowerShell cmdlet 等内建命令不是可执行文件，条件命令会失败。
+    // 携带宿主会话的 per-call sandbox 策略（workspace = 会话 cwd）：直接调用
+    // 不传策略时执行器回落 deployment 默认（启动目录）。
+    const sandboxPolicy = resolveHostSandboxPolicy(this.ctx, this.config.hostAgent?.session);
     const request: ShellExecRequest = {
       command,
       timeoutMs: this.config.defaultTimeoutMs,
@@ -1003,6 +1022,7 @@ export class BranchEvaluator {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
       ...(env === undefined ? {} : { env }),
+      ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
     };
     const spec = this.ctx.shell.resolve(request);
     const result = await this.ctx.shell.run(spec);

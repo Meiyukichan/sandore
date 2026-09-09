@@ -2,7 +2,7 @@
  * remote.ts（SandoreRemote）的单元测试：定义/实例 CRUD、产物查询、
  * Provider/Model 转发与 ping。测试用内存 mock storageDomain + mock llm +
  * mock sandoreEngine。
- * @module dsh-sandore/workflow/src/remote.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/remote.spec
  */
 import { Context } from '@deepseek-ai/cordis'
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm'
@@ -1041,5 +1041,212 @@ describe('SandoreRemote artifacts and llm forwarding', () => {
     expect(pong.pong).toBe(true)
     expect(pong.service).toBe('sandore')
     expect(pong.time).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+})
+
+// ── 三级分离：Step / Microflow 库 RPC ────────────────────────────────────────
+
+/** 构造 Step 库条目 YAML（upsert 入参体）。 */
+function stepYaml(overrides: { id?: string; name?: string; command?: string } = {}): string {
+  const { id = 'step-build', name = '构建', command = 'pnpm build' } = overrides
+  return `id: ${id}
+name: ${name}
+command:
+  type: shell
+  value:
+    command: "${command}"
+version: "1.0.0"
+createdAt: 2026-01-01T00:00:00.000Z
+updatedAt: 2026-01-01T00:00:00.000Z
+`
+}
+
+/** 构造 Microflow 库条目 YAML（upsert 入参体）。 */
+function microflowYaml(overrides: { id?: string; name?: string; stepId?: string } = {}): string {
+  const { id = 'stg-build', name = '构建', stepId = 'step-build' } = overrides
+  return `id: ${id}
+name: ${name}
+steps:
+  - id: ${stepId}
+createdAt: 2026-01-01T00:00:00.000Z
+updatedAt: 2026-01-01T00:00:00.000Z
+`
+}
+
+describe('SandoreRemote 库管理 RPC（三级分离）', () => {
+  it('upsertStep parses yaml into a step record and preserves createdAt on overwrite', async () => {
+    const { remote } = await harness()
+
+    const first = await remote.upsertStep({ yaml: stepYaml() })
+    expect(first.id).toBe('step-build')
+    expect(first.name).toBe('构建')
+    expect(first.command).toEqual({ type: 'shell', value: { command: 'pnpm build' } })
+    // 首次写入：createdAt 由 Host 生成（传入 YAML 的时间戳不采纳）。
+    const firstCreatedAt = first.createdAt
+    expect(firstCreatedAt).toBeTruthy()
+
+    // 覆盖写：保留首次 createdAt，刷新 updatedAt。
+    const second = await remote.upsertStep({ yaml: stepYaml({ command: 'pnpm test' }) })
+    expect(second.command).toEqual({ type: 'shell', value: { command: 'pnpm test' } })
+    expect(second.createdAt).toBe(firstCreatedAt)
+    expect(second.updatedAt >= first.updatedAt).toBe(true)
+  })
+
+  it('upsertStep rejects a duplicate name with a different id (DUPLICATE_NAME)', async () => {
+    const { remote } = await harness()
+    await remote.upsertStep({ yaml: stepYaml({ id: 'step-a', name: '构建' }) })
+
+    await expect(remote.upsertStep({ yaml: stepYaml({ id: 'step-b', name: '构建' }) })).rejects.toMatchObject({
+      code: 'DUPLICATE_NAME',
+    })
+  })
+
+  it('upsertStep rejects invalid yaml (YAML_PARSE / DEFINITION_INVALID)', async () => {
+    const { remote } = await harness()
+
+    await expect(remote.upsertStep({ yaml: 'command: [ broken' })).rejects.toMatchObject({ code: 'YAML_PARSE' })
+    // 缺 name（zod min(1)）→ 结构校验失败。
+    await expect(remote.upsertStep({ yaml: 'id: step-x\ncreatedAt: t\nupdatedAt: t\n' })).rejects.toMatchObject({
+      code: 'DEFINITION_INVALID',
+    })
+  })
+
+  it('getStep returns the record and throws NODE_NOT_FOUND when absent', async () => {
+    const { remote } = await harness()
+    const created = await remote.upsertStep({ yaml: stepYaml() })
+
+    expect(remote.getStep({ id: created.id }).name).toBe('构建')
+    expect(catchCode(() => remote.getStep({ id: 'step-nope' }))).toBe('NODE_NOT_FOUND')
+  })
+
+  it('listSteps reports referencedBy counts from the definitions table', async () => {
+    const { remote } = await harness()
+    await remote.upsertStep({ yaml: stepYaml({ id: 'step-build', name: '构建' }) })
+    await remote.upsertStep({ yaml: stepYaml({ id: 'step-unused', name: '闲置' }) })
+    // step-build 被 validV2Yaml 的 step-1？不——validV2Yaml 的 step id 是 step-1。
+    // 建一个引用 step-build 的定义（内联 stage slot + 顶层定义）。
+    const referencingYaml = `id: wfl-ref
+name: 引用工作流
+version: "1.0.0"
+stages:
+  - id: stg-r1
+    name: 构建
+    steps:
+      - id: step-build
+steps:
+  - id: step-build
+    name: 构建
+    command:
+      type: shell
+      value:
+        command: "echo hi"
+`
+    await remote.createDefinition({ yaml: referencingYaml })
+
+    const summaries = remote.listSteps()
+    const build = summaries.find(entry => entry.id === 'step-build')
+    const unused = summaries.find(entry => entry.id === 'step-unused')
+    expect(build?.referencedBy).toBe(1)
+    expect(unused?.referencedBy).toBe(0)
+  })
+
+  it('deleteStep rejects a referenced entry with REFERENCED + referencing workflow ids', async () => {
+    const { remote } = await harness()
+    const referencingYaml = `id: wfl-ref
+name: 引用工作流
+version: "1.0.0"
+stages:
+  - id: stg-r1
+    name: 构建
+    steps:
+      - id: step-build
+steps:
+  - id: step-build
+    name: 构建
+    command:
+      type: shell
+      value:
+        command: "echo hi"
+`
+    // createDefinition 生成新 wfl-{uuid} 记录键（哨兵 id wfl-ref 被改写）。
+    const created = await remote.createDefinition({ yaml: referencingYaml })
+
+    // step-build 被引用 → REFERENCED，消息携带引用方 workflow id。
+    await expect(remote.deleteStep({ id: 'step-build' })).rejects.toMatchObject({ code: 'REFERENCED' })
+    try {
+      await remote.deleteStep({ id: 'step-build' })
+    } catch (error) {
+      expect(error instanceof SandoreError && error.message.includes(created.id)).toBe(true)
+    }
+  })
+
+  it('deleteStep removes an unreferenced entry and is idempotent', async () => {
+    const { remote } = await harness()
+    await remote.upsertStep({ yaml: stepYaml() })
+
+    await expect(remote.deleteStep({ id: 'step-build' })).resolves.toEqual({ deleted: true })
+    await expect(remote.deleteStep({ id: 'step-build' })).resolves.toEqual({ deleted: false })
+    expect(remote.listSteps()).toHaveLength(0)
+  })
+
+  it('mirrors the full step-library lifecycle over microflows (upsert/get/list/delete)', async () => {
+    const { remote } = await harness()
+
+    const created = await remote.upsertMicroflow({ yaml: microflowYaml() })
+    expect(created.id).toBe('stg-build')
+    expect(created.steps).toEqual([{ id: 'step-build' }])
+
+    expect(remote.getMicroflow({ id: 'stg-build' }).name).toBe('构建')
+    expect(catchCode(() => remote.getMicroflow({ id: 'stg-nope' }))).toBe('NODE_NOT_FOUND')
+
+    await expect(remote.upsertMicroflow({ yaml: microflowYaml({ id: 'stg-other', name: '构建' }) })).rejects.toMatchObject({
+      code: 'DUPLICATE_NAME',
+    })
+
+    // stg-build 被 definitions 引用（stg-build 即定义里的 stage id）→ REFERENCED。
+    const referencingYaml = `id: wfl-ref
+name: 引用工作流
+version: "1.0.0"
+stages:
+  - id: stg-build
+    name: 构建
+    steps:
+      - id: step-build
+steps:
+  - id: step-build
+    name: 构建
+    command:
+      type: shell
+      value:
+        command: "echo hi"
+`
+    const referencing = await remote.createDefinition({ yaml: referencingYaml })
+    await expect(remote.deleteMicroflow({ id: 'stg-build' })).rejects.toMatchObject({ code: 'REFERENCED' })
+
+    // 解除引用（删除工作流）后可删除。
+    await remote.deleteDefinition(referencing.id)
+    await expect(remote.deleteMicroflow({ id: 'stg-build' })).resolves.toEqual({ deleted: true })
+  })
+
+  it('auto-registers named stages/steps into libraries on createDefinition (putIfAbsent)', async () => {
+    const { remote } = await harness()
+    // validV2Yaml 内联 stg-1（name 分析）+ step-1（name lint）。
+    const created = await remote.createDefinition({ yaml: validV2Yaml })
+
+    expect(remote.listMicroflows().find(entry => entry.id === 'stg-1')?.name).toBe('分析')
+    expect(remote.listSteps().find(entry => entry.id === 'step-1')?.name).toBe('lint')
+    // 自动入库的条目立即视为被该定义引用。
+    expect(remote.listMicroflows().find(entry => entry.id === 'stg-1')?.referencedBy).toBe(1)
+
+    // 后续修改保存（stage 改名）→ 库已有 id → 不覆盖（自动入库仅一次）。
+    const renamedYaml = validV2Yaml.replace('name: 分析', 'name: 分析已改名')
+    await remote.updateYaml(created.id, renamedYaml)
+    expect(remote.getMicroflow({ id: 'stg-1' }).name).toBe('分析')
+
+    // 【同步到库】路径：upsertMicroflow 强制覆盖。
+    await remote.upsertMicroflow({ yaml: microflowYaml({ id: 'stg-1', name: '分析已改名', stepId: 'step-1' }) })
+    expect(remote.getMicroflow({ id: 'stg-1' }).name).toBe('分析已改名')
+    // upsert 保留库记录的 createdAt（传入 YAML 的固定时间戳不被采纳）。
+    expect(remote.getMicroflow({ id: 'stg-1' }).createdAt).not.toBe('2026-01-01T00:00:00.000Z')
   })
 })

@@ -1,7 +1,7 @@
 /**
  * RunView 的可测纯逻辑（无 React 依赖）。
  *
- * 从 `dsh-sandore/schema`（浏览器安全子路径）导入
+ * 从 `@meiyukichan/dsh-sandore/schema`（浏览器安全子路径）导入
  * `WorkflowTaskState` 等 wire 类型，并以其派生 `DagRunStatus`/`StepStatus`/
  * `ExecutedStep`/`StageInfo`（避免从包根 `types.ts` 导入带出 `dsh-llm` 依赖）。
  * 此处提供：7 态 → StateDotState 穷尽映射、运行中/终态判定（驱动 5s 轮询）、
@@ -11,8 +11,10 @@
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   PendingPermissionEntry, PendingQuestionEntry, WorkflowTaskState,
-} from 'dsh-sandore/schema'
-import type { RevertBoundaryOption } from 'dsh-sandore/types'
+} from '@meiyukichan/dsh-sandore/schema'
+import type { RevertBoundaryOption } from '@meiyukichan/dsh-sandore/types'
+
+import { timelineValueEqual } from './timeline-window.ts'
 
 /** 实例生命周期状态（从 `WorkflowTaskState` 派生，避免 dsh-llm 依赖）。 */
 export type DagRunStatus = WorkflowTaskState['status']
@@ -528,6 +530,40 @@ export function lastActiveSegmentsOf(steps: readonly ExecutedStep[]): ExecutedSt
 }
 
 /**
+ * 时间线 item 引用稳定缓存（key → 上次派生对象）。
+ *
+ * RunView 轮询 → buildTimeline 每次全量重建 item 对象 → UnifiedTimeline 行组件的
+ * memo 浅比较全部失效（整列表反复重渲染）。此缓存按稳定 key（Step 段 = stepId +
+ * attemptIndex；用户消息 = time + kind + target + content）复用「展示等价」的旧
+ * item 引用：相同输入二次派生返回同引用，memo 行组件即可跳过重渲染。时间线数组
+ * 本身每轮重建（引用变化驱动 UnifiedTimeline 重渲染），但行级 memo 因 item 引用
+ * 稳定而生效。缓存规模在派生末尾收敛为当前实例条目数（陈旧 key 清理）。
+ */
+const timelineItemCache = new Map<string, TimelineItem>()
+
+/** 用户消息 item 的稳定缓存 key：time + kind + target + content 唯一标识一条展示消息。 */
+function userItemKey(item: TimelineUserItem): string {
+  return `user:${item.time}:${item.messageKind ?? ''}:${item.target ?? ''}:${item.content}`
+}
+
+/** Step 段 item 的稳定缓存 key：同 stepId 多次执行段（暂停续跑/重试）以 attemptIndex 区分。 */
+function stepItemKey(item: TimelineStepItem): string {
+  return `step:${item.stepId}:${item.attemptIndex ?? 0}`
+}
+
+/**
+ * 引用稳定化：缓存命中且与本次派生「展示等价」（timelineValueEqual）→ 复用旧引用；
+ * 否则以新对象替换缓存。跨实例 key 冲突（同 stepId 的不同实例）只会造成缓存替换、
+ * 引用稳定暂时失效，无正确性问题。
+ */
+function stabilizeTimelineItem(item: TimelineItem, key: string): TimelineItem {
+  const cached = timelineItemCache.get(key)
+  if (cached !== undefined && timelineValueEqual(cached, item)) return cached
+  timelineItemCache.set(key, item)
+  return item
+}
+
+/**
  * 从 `WorkflowTaskState` 构建统一时间线（段模型 + 用户消息统一排序）。
  *
  * 三路来源严格按 `createdAt` 排序合并：
@@ -544,21 +580,27 @@ export function lastActiveSegmentsOf(steps: readonly ExecutedStep[]): ExecutedSt
  */
 export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
   const items: TimelineItem[] = []
+  // 本次派生存活的缓存 key（末尾据此清理陈旧 key，防跨实例/旧 attempt 段泄漏）。
+  const liveKeys = new Set<string>()
 
   for (const message of state.userMessages ?? []) {
     // Round 26：回答不进讨论页（Phase A ask 回答已 followup 注回子代理）。
     if (message.kind === 'answer') continue
-    items.push({
+    const item: TimelineUserItem = {
       kind: 'user',
       content: message.content,
       time: message.createdAt,
       messageKind: message.kind,
       target: message.target,
-    })
+    }
+    // 引用稳定化：展示等价则复用旧 item 引用（行组件 memo 保活）。
+    const key = userItemKey(item)
+    liveKeys.add(key)
+    items.push(stabilizeTimelineItem(item, key))
   }
 
   for (const step of state.executedSteps) {
-    items.push({
+    const item: TimelineStepItem = {
       kind: 'step',
       stepId: stepIdOf(step),
       name: step.name,
@@ -623,7 +665,11 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
       visitCount: step.visitCount,
       attemptIndex: step.attemptIndex,
       pausedAt: step.pausedAt,
-    })
+    }
+    // 引用稳定化：同 Step 段展示等价则复用旧 item 引用（行组件 memo 保活）。
+    const key = stepItemKey(item)
+    liveKeys.add(key)
+    items.push(stabilizeTimelineItem(item, key))
   }
 
   // 统一时间轴：严格按 createdAt 排序（旧实例缺 createdAt 的段排最后）。
@@ -632,5 +678,12 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
     const tb = b.time === undefined ? '' : b.time
     return ta < tb ? -1 : ta > tb ? 1 : 0
   })
+
+  // 清理不在本次结果中的陈旧缓存 key（跨实例切换 / 已消失的旧 attempt 段），
+  // 缓存规模收敛为当前实例条目数。
+  for (const key of timelineItemCache.keys()) {
+    if (!liveKeys.has(key)) timelineItemCache.delete(key)
+  }
+
   return items
 }

@@ -1,11 +1,15 @@
 /**
- * 工作流 overlay 的业务 face（shell.overlay 条目注入；RPC 已在 index.ts 解包）。
+ * 工作流视图的业务 face（index.ts 装配后经 seat-bridge 注入；RPC 已解包）。
  *
  * 覆盖左列表（实例/定义）、编辑区（DagEditor 编排 / RunView 执行）与测试运行
  * 所需的全部 `ctx.remote.sandore` 访问面。`remote` 为 RunView 控件所需的最小 RPC 面。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/workflow-face
  */
-import type { DagRun, InstanceSummary, WorkflowDefinitionEntry } from 'dsh-sandore/remote'
+import type { DirectoryListing } from '@deepseek-ai/dsh-client-runtime/client'
+import type {
+  DagRun, ImportDefinitionResult, InstanceSummary, LibraryEntrySummary, MicroflowRecord, StepRecord,
+  WorkflowDefinitionEntry,
+} from '@meiyukichan/dsh-sandore/remote'
 
 import type { SaveDefinition } from './sandore-save.ts'
 import type { RunViewRemote } from './RunView.tsx'
@@ -47,14 +51,40 @@ export interface WorkflowOverlayFace {
   startInstance(input: StartInstanceParams): Promise<DagRun>
   /** 模型目录（弹窗模型下拉数据源；RPC 已解包）。 */
   listModelDirectory(): Promise<ModelDirectoryEntry[]>
-  /** 打开 DSH 原生目录选择器（新增实例的工作目录）。 */
+  /** 打开 DSH 原生目录选择器（新增实例的工作目录；无原生能力的环境会抛错）。 */
   pickDirectory(): Promise<string | undefined>
+  /** 经 Host `browse` 能力列出一个目录层级（缺省 = 宿主主目录；与 DSH 添加项目同一后端）。 */
+  listDirectory(path?: string, signal?: AbortSignal): Promise<DirectoryListing>
+  /** 经 Host `browse` 能力在指定父目录下新建一个子目录。 */
+  createDirectory(path: string, name: string): Promise<string>
   /** 删除定义（RPC 已解包）。 */
   deleteDefinition(id: string): Promise<boolean>
+  /**
+   * 从 YAML 导入一条工作流定义（RPC 已解包：`importDefinitionFromYaml`）。
+   * 按 name 匹配：不存在则新建，版本不同则更新，同版本跳过。
+   */
+  importDefinition(yaml: string): Promise<ImportDefinitionResult>
   /** 删除实例（RPC 已解包；state 表行级删除）。 */
   deleteInstance(instanceId: string): Promise<boolean>
   /** 读取定义原始 YAML（RPC 已解包）。 */
   getYaml(id: string): Promise<string>
+  // ── 三级分离：Step / Microflow 库（RPC 已解包） ──────────────────────────
+  /** 列出 Step 库条目摘要（含被引用数；UI 名「Agent 库」）。 */
+  listSteps(): Promise<LibraryEntrySummary[]>
+  /** 读取 Step 库条目。 */
+  getStep(id: string): Promise<StepRecord>
+  /** 写入/覆盖 Step 库条目（传 YAML 文本；Host 端查重 + 解析）。 */
+  upsertStep(yaml: string): Promise<StepRecord>
+  /** 删除 Step 库条目（被引用时 Host 抛 REFERENCED）。 */
+  deleteStep(id: string): Promise<boolean>
+  /** 列出 Microflow 库条目摘要（含被引用数）。 */
+  listMicroflows(): Promise<LibraryEntrySummary[]>
+  /** 读取 Microflow 库条目。 */
+  getMicroflow(id: string): Promise<MicroflowRecord>
+  /** 写入/覆盖 Microflow 库条目（传 YAML 文本；Host 端查重 + 解析）。 */
+  upsertMicroflow(yaml: string): Promise<MicroflowRecord>
+  /** 删除 Microflow 库条目（被引用时 Host 抛 REFERENCED）。 */
+  deleteMicroflow(id: string): Promise<boolean>
   /** DagEditor 保存回调（createSandoreSave 接线）。 */
   save: SaveDefinition
   /** RunView 所需的最小 `ctx.remote.sandore` 访问面。 */

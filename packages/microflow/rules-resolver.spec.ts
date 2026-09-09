@@ -6,7 +6,7 @@
  * - step.rules 与 stage.rules 都空时继承 workflow.rules 全部键
  * - step.rules ∪ stage.rules 去重
  * - 未知键（不在 workflow.rules 中）忽略
- * @module dsh-sandore/microflow/src/rules-resolver.spec
+ * @module @meiyukichan/dsh-sandore/microflow/src/rules-resolver.spec
  */
 import { describe, expect, it } from 'vitest';
 

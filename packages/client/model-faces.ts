@@ -79,114 +79,115 @@ export interface ModelDirectoryFace {
   dispose(): void
 }
 
-/** `connection.api.sessions` 的最小模型 RPC 面（对齐 harness apiproxy sessions.ts）。 */
-export interface SessionModelsWire {
-  current: ModelSelection
-  routable: boolean
-  groups: ModelProviderGroup[]
-  failures: ModelCatalogFailure[]
+// ── 会话权限投影（对齐 dsh-permission-presets 的 `PermissionSelect`） ───────
+
+/**
+ * 宿主 `ctx.modelDirectories` 目录（ui-model-selection `ModelDirectory`）的最小
+ * 运行时面（编译期不依赖该包，结构 cast）。
+ */
+interface HostModelDirectoryLike {
+  store: ObservableFace<ModelDirectoryState>
+  load(): Promise<unknown>
+  select(selection: ModelSelection): Promise<unknown>
+  dispose(): void
 }
 
-/** `connection.api.sessions.models/selectModel` 的最小面。 */
-export interface SessionModelsApi {
-  models(input: { sessionId: string }): Promise<{
-    result: { ok: boolean; value: SessionModelsWire; error?: { code: string; message: string } }
-  }>
-  selectModel(input: {
-    sessionId: string
-    provider: string
-    model: string
-    reasoningEffort?: string
-  }): Promise<{
-    result: { ok: boolean; value: { selected: ModelSelection }; error?: { code: string; message: string } }
-  }>
+/** 模型目录不可用时的占位目录（不崩渲染；load/select 报可读错误）。
+ *  快照必须是**引用稳定**的闭包单例：`useSyncExternalStore` 要求 `getSnapshot`
+ *  返回缓存值，否则 React 判定 store 每次都在变 → 「Maximum update depth exceeded」
+ *  （React #185，seat 崩溃会关掉整个 conversation column）。`routable: false`
+ *  让 ModelSelectSandore 直接渲染 null（隐藏选择器），而不是渲染一个错误触发器。 */
+function unavailableModelDirectory(reason: string): ModelDirectoryFace {
+  const snapshot: ModelDirectoryState = {
+    current: null, routable: false, groups: [], failures: [],
+    status: 'error', error: reason,
+  }
+  return {
+    store: {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+    },
+    async load(): Promise<never> { throw new Error(reason) },
+    async select(): Promise<never> { throw new Error(reason) },
+    dispose(): void {},
+  }
 }
 
 /**
- * 轻量每会话模型目录（对齐 DSH ui-model-selection 的 `ModelDirectory`）：
- * 直接走 `connection.api.sessions.models/selectModel`（同一 RPC、同一行为），
- * 不依赖 DSH 会话 scope（sandore 实例会话未必被 DSH 会话列表 staged）。
+ * 把宿主 `ctx.modelDirectories.directoryFor(sessionId)` 的目录桥接为沙盒
+ * `ModelDirectoryFace`（运行时结构 cast，无编译期依赖）。
+ *
+ * 自愈语义（client B）：宿主服务/会话可晚于组件挂载出现（scope 未就绪时
+ * `directoryFor` 抛错）——`hostResolver` 支持函数形式（每次现取服务）；解析失败期间
+ * `getSnapshot()` 返回**引用稳定**的占位快照（routable:false 隐藏选择器，防 React
+ * #185），并在每次读取时重试解析（成功后固定 host 目录、转发其 store/操作）。
+ *
+ * @param hostResolver - 含 `modelDirectories` 的对象，或每次现取该对象的函数
+ *   （函数形式支持服务晚到自愈）。
+ * @param sessionId - 目标会话 id。
  */
-export class SandoreModelDirectory implements ModelDirectoryFace {
-  readonly store: ObservableFace<ModelDirectoryState> = {
-    getSnapshot: () => this.state,
-    subscribe: fn => {
-      this.listeners.add(fn)
-      return () => { this.listeners.delete(fn) }
+export function bridgeModelDirectory(
+  hostResolver: unknown | (() => unknown),
+  sessionId: string,
+): ModelDirectoryFace {
+  // cordis 服务属性守卫：未注入声明时属性访问会抛「cannot get … without inject」，
+  // 需 try/catch 防御（宿主未加载 ui-model-selection 时同样落占位目录）。
+  const readHost = (): { modelDirectories?: { directoryFor(sid: string): unknown } } | undefined => {
+    try {
+      const value = typeof hostResolver === 'function' ? (hostResolver as () => unknown)() : hostResolver
+      return value as { modelDirectories?: { directoryFor(sid: string): unknown } } | undefined
+    } catch {
+      return undefined
+    }
+  }
+  let directory: HostModelDirectoryLike | undefined
+  const tryResolve = (): void => {
+    if (directory !== undefined) return
+    try {
+      const resolver = readHost()
+      const raw = resolver?.modelDirectories?.directoryFor(sessionId)
+      directory = raw === undefined ? undefined : raw as HostModelDirectoryLike
+    } catch {
+      directory = undefined
+    }
+  }
+  const resolved = (): ModelDirectoryFace | undefined => {
+    tryResolve()
+    if (directory === undefined) return undefined
+    return {
+      store: directory.store,
+      load: () => directory!.load().then(() => undefined),
+      select: selection => directory!.select(selection).then(() => undefined),
+      dispose: () => directory!.dispose(),
+    }
+  }
+  // 宿主立即可用：直通 host 目录（store 引用不变，旧调用方/测试语义保持）。
+  const immediate = resolved()
+  if (immediate !== undefined) return immediate
+  // 宿主未就绪：返回自愈占位——getSnapshot 每次重试解析（会话/服务晚出现后自动恢复），
+  // 未就绪期间快照引用稳定（unavailableModelDirectory 缓存单例）。
+  const unavailable = unavailableModelDirectory('model selection is unavailable (ui-model-selection not loaded)')
+  return {
+    store: {
+      getSnapshot: () => resolved()?.store.getSnapshot() ?? unavailable.store.getSnapshot(),
+      subscribe: (fn) => {
+        const live = resolved()
+        return live === undefined ? () => {} : live.store.subscribe(fn)
+      },
+    },
+    load: async () => {
+      const live = resolved()
+      return live === undefined ? unavailable.load() : live.load()
+    },
+    select: async (selection) => {
+      const live = resolved()
+      return live === undefined ? unavailable.select(selection) : live.select(selection)
+    },
+    dispose: () => {
+      resolved()?.dispose()
     },
   }
-  private state: ModelDirectoryState = {
-    current: null, routable: null, groups: [], failures: [], status: 'idle', error: null,
-  }
-  private readonly listeners = new Set<() => void>()
-  private generation = 0
-  private disposed = false
-
-  constructor(
-    private readonly api: SessionModelsApi,
-    private readonly sessionId: string,
-  ) {}
-
-  /** 刷新目录（失败保留上次好数据；打开菜单时调用，行为同 DSH）。 */
-  async load(): Promise<unknown> {
-    const generation = ++this.generation
-    this.update({ status: 'loading', error: null })
-    const { result } = await this.api.models({ sessionId: this.sessionId })
-    if (this.disposed || generation !== this.generation) {
-      if (!result.ok) throw new Error(`${result.error?.code}: ${result.error?.message}`)
-      return result.value
-    }
-    if (!result.ok) {
-      this.update({ status: 'error', error: `${result.error?.code}: ${result.error?.message}` })
-      throw new Error(`session.models failed: ${result.error?.code}: ${result.error?.message}`)
-    }
-    this.update({
-      current: result.value.current,
-      routable: result.value.routable,
-      groups: result.value.groups,
-      failures: result.value.failures,
-      status: 'ready',
-      error: null,
-    })
-    return result.value
-  }
-
-  /** 选择完整 provider/model/推理等级（提交 `selectModel` 绑定会话）。 */
-  async select(selection: ModelSelection): Promise<void> {
-    const generation = ++this.generation
-    this.update({ status: 'selecting', error: null })
-    const { result } = await this.api.selectModel({
-      sessionId: this.sessionId,
-      provider: selection.provider,
-      model: selection.model,
-      ...selection.reasoningEffort === undefined
-        ? {}
-        : { reasoningEffort: selection.reasoningEffort },
-    })
-    if (this.disposed || generation !== this.generation) {
-      if (!result.ok) throw new Error(`${result.error?.code}: ${result.error?.message}`)
-      return
-    }
-    if (!result.ok) {
-      this.update({ status: 'error', error: `${result.error?.code}: ${result.error?.message}` })
-      throw new Error(`session.selectModel failed: ${result.error?.code}: ${result.error?.message}`)
-    }
-    this.update({ current: result.value.selected, routable: true, status: 'ready', error: null })
-  }
-
-  /** 会话 scope 拆除时调用（沙盒目录随组件卸载回收）。 */
-  dispose(): void {
-    this.disposed = true
-    this.listeners.clear()
-  }
-
-  private update(patch: Partial<ModelDirectoryState>): void {
-    this.state = { ...this.state, ...patch }
-    for (const listener of this.listeners) listener()
-  }
 }
-
-// ── 会话权限投影（对齐 dsh-permission-presets 的 `PermissionSelect`） ───────
 
 /** 权限模式选项。 */
 export interface PermissionOption {

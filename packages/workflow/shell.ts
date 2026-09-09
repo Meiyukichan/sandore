@@ -5,8 +5,9 @@
  * API 复刻 Step 执行所需的最小结构类型（`resolve`/`run`/`start` + 请求/规格/
  * 结果），并声明 `ctx.shell` 上下文键。宿主运行时注入的真实 `ShellExecutor`
  * 结构兼容即可，无需包级依赖。
- * @module dsh-sandore/workflow/src/shell
+ * @module @meiyukichan/dsh-sandore/workflow/src/shell
  */
+import type { Context } from '@deepseek-ai/cordis';
 
 /** 捕获输出（stdout/stderr）：截断时 `text` 保留尾部。 */
 export interface CollectedOutput {
@@ -24,6 +25,40 @@ export interface ShellExecRequest {
   signal?: AbortSignal;
   stdin?: string;
   env?: Record<string, string>;
+  /**
+   * 本次调用的 sandbox 执行策略（DSH `SandboxExecutionPolicy` 结构）：由宿主会话
+   * 解析（workspace = 会话 cwd；mode = 会话 override ?? 部署默认）。不传时执行器
+   * 按 deployment 默认落沙箱（直接调用无会话上下文 → 启动目录兜底）。
+   */
+  sandboxPolicy?: SandboxExecutionPolicy;
+}
+
+/** sandbox 执行策略（对齐 DSH `@deepseek-ai/dsh-sandbox` 的 `SandboxExecutionPolicy`）。 */
+export interface SandboxExecutionPolicy {
+  mode: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** `workspace-write` 模式的写边界根（绝对路径）。 */
+  workspaceRoot: string;
+}
+
+/** `ctx.sandboxPolicy` 能力接缝（对齐 DSH `@deepseek-ai/dsh-sandbox-policy` 的 `SandboxPolicyService`）。 */
+export interface SandboxPolicySeam {
+  resolve(request?: { readonly session?: unknown }): SandboxExecutionPolicy;
+}
+
+/**
+ * 解析宿主会话的 sandbox 策略（workspace = 会话 cwd；mode = 会话 override ?? 部署默认）。
+ *
+ * sandore 的 shell 是「无会话上下文的直接调用」（`ctx.shell.resolve`），不带策略时
+ * 执行器回落 deployment 默认（`process.cwd()`——启动目录），导致沙箱工作区与实例
+ * 项目路径脱节（主目录启动 → 沙箱根 = 主目录 → Windows ACL 临时目录边界冲突）。
+ * 服务缺失（测试/headless 无 sandbox-policy 行）返回 undefined（调用方不注入，保持原行为）。
+ */
+export function resolveHostSandboxPolicy(ctx: Context, session: unknown): SandboxExecutionPolicy | undefined {
+  const service = ctx.get('sandboxPolicy') as SandboxPolicySeam | undefined;
+  if (service === undefined) {
+    return undefined;
+  }
+  return service.resolve({ session });
 }
 
 /** shell 执行规格（`resolve` 补全必填字段后的产物）。 */

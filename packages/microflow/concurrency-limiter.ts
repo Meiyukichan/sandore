@@ -12,7 +12,7 @@
  * acquire/release 采用 hand-off 信号量模式：release 时若有等待者，直接把槽位移交给下一个
  * 等待者（active 不变），避免 release→decrement + waiter→increment 之间的竞态窗口。
  *
- * @module dsh-sandore/microflow/src/concurrency-limiter
+ * @module @meiyukichan/dsh-sandore/microflow/src/concurrency-limiter
  */
 
 /** 并发上限器接口（acquire 获取槽位 / release 释放槽位）。 */

@@ -10,7 +10,7 @@
  * 本模块仅依赖 `zod`（浏览器安全），存储域声明 `sandoreDomainSpec`（依赖 Node 侧
  * `@deepseek-ai/dsh-storage-domain`）已拆至 `./domain.ts`，故可作为 `./schema`
  * 子路径在浏览器侧安全导入。
- * @module dsh-sandore/workflow/src/schema
+ * @module @meiyukichan/dsh-sandore/workflow/src/schema
  */
 import { z } from 'zod'
 
@@ -155,12 +155,17 @@ export const WorkflowStepSchema = z.object({
 })
 
 /**
- * Stage 内 Step 位置（V2 分离式：仅 id + 流控 branches；完整定义在顶层 `steps[]`
- * 按 id 交叉引用）。
+ * Stage 内 Step 位置（V2 分离式：仅 id + 流控 branches + 流程 inputFrom；完整定义在
+ * 顶层 `steps[]` 按 id 交叉引用）。
+ *
+ * 三级分离扩展：`inputFrom?` 属 Step 级流程字段（plan §3.2）——存于 Microflow 库条目
+ * 的 `steps[]`（绑定展开时合并进工作流顶层 step 定义）；旧工作流 yaml 无此字段，
+ * `.optional()` 保持逐字节兼容。
  */
 export const StageStepSchema = z.object({
   id: z.string(),
   branches: z.array(DagBranchSchema).optional(),
+  inputFrom: z.array(InputFromItemSchema).optional(),
 })
 
 /** 单个 Stage 定义：内部 Step 流控（轻量）+ Stage 级 DAG 字段（出边统一进 branches）。 */
@@ -505,6 +510,9 @@ export const WorkflowTaskStateSchema = z.object({
   /** 用户指令消息（恢复/重试；统一时间轴渲染，初始需求由 originalInput 承载）。 */
   userMessages: z.array(UserMessageRecordSchema).optional(),
   stageContracts: z.record(z.string(), StageContractSchema),
+  /** 复用宿主会话模式的调用方会话 id（startInstance hostSessionId；恢复时据此复用
+   *  宿主主代理——recover 不再无条件 resume(instanceId)；旧快照缺省 undefined 走新建语义）。 */
+  hostSessionId: z.string().optional(),
   /** Round 26：是否把 ask/permission 上报宿主主代理（复用 hostSessionId 时 true；
    *  overlay 新建 false——只走 discussion composer）。缺省（旧快照）true 兼容。 */
   reportToHost: z.boolean().optional(),
@@ -524,6 +532,49 @@ export const WorkflowDefinitionRecordSchema = z.object({
   updatedAt: z.string(),
 })
 
+/**
+ * Step 库条目（`steps` 表 value，UI 名「Agent」；三级分离 plan §3.1）。
+ *
+ * 纯定义：字段 = `WorkflowStepSchema` 子集（id/name/command/outputTo/passThroughVars/
+ * timeout/defaultExpectation/rules/gates），**不含** `inputFrom` 与 `branches`
+ * （流程字段归 Microflow 库条目）。`name` 必填非空（库中名称不可重复，列表展示键）；
+ * `version?` 与时间戳对齐 `WorkflowDefinitionRecord` 模式。
+ */
+export const StepRecordSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  command: CommandConfigSchema.optional(),
+  outputTo: z.array(OutputToItemSchema).optional(),
+  passThroughVars: z.array(PassThroughVarSchema).optional(),
+  timeout: z.number().optional(),
+  defaultExpectation: z.string().optional(),
+  rules: z.array(z.string()).optional(),
+  gates: GatesSchema.optional(),
+  version: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
+/**
+ * Microflow 库条目（`microflows` 表 value，UI 名「微流程」；三级分离 plan §3.2）。
+ *
+ * Step 引用 + Step 级流程字段：字段 = `WorkflowStageSchema` 的
+ * id/name/rules/gates/defaultExpectation/steps[]（steps[] = {@link StageStepSchema}，
+ * 含 `inputFrom?`），**不含** Stage 级 `branches`（Stage 流控归 Workflow yaml）。
+ * `name` 必填非空；`version?` 与时间戳对齐 `WorkflowDefinitionRecord` 模式。
+ */
+export const MicroflowRecordSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1),
+  rules: z.array(z.string()).optional(),
+  gates: GatesSchema.optional(),
+  defaultExpectation: z.string().optional(),
+  steps: z.array(StageStepSchema),
+  version: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
 // ── 派生 TS 类型 ───────────────────────────────────────────────────────────
 
 export type CommandConfig = z.infer<typeof CommandConfigSchema>
@@ -536,6 +587,8 @@ export type Gates = z.infer<typeof GatesSchema>
 export type WorkflowSettings = z.infer<typeof WorkflowSettingsSchema>
 export type WorkflowStep = z.infer<typeof WorkflowStepSchema>
 export type WorkflowStage = z.infer<typeof WorkflowStageSchema>
+/** Stage 内 Step 流控位（分离式：`{ id, branches?, inputFrom? }`）。 */
+export type StageStep = z.infer<typeof StageStepSchema>
 export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>
 export type StepSessionMeta = z.infer<typeof StepSessionMetaSchema>
 export type FinalizeMeta = z.infer<typeof FinalizeMetaSchema>
@@ -560,3 +613,7 @@ export type RetryRecord = z.infer<typeof RetryRecordSchema>
 export type UserMessageRecord = z.infer<typeof UserMessageRecordSchema>
 export type WorkflowTaskState = z.infer<typeof WorkflowTaskStateSchema>
 export type WorkflowDefinitionRecord = z.infer<typeof WorkflowDefinitionRecordSchema>
+/** Step 库条目（`steps` 表 value；纯定义，无 inputFrom/branches）。 */
+export type StepRecord = z.infer<typeof StepRecordSchema>
+/** Microflow 库条目（`microflows` 表 value；Step 引用 + Step 级流程字段）。 */
+export type MicroflowRecord = z.infer<typeof MicroflowRecordSchema>

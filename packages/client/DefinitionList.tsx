@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, IconTrashOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { WorkflowDefinitionEntry } from 'dsh-sandore/remote'
+import type { WorkflowDefinitionEntry } from '@meiyukichan/dsh-sandore/remote'
 
 import { formatTimestamp, matchesDefinitionQuery } from './panel-model.ts'
 import { describeError } from './describe-error.ts'

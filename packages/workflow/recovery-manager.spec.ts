@@ -1,7 +1,7 @@
 /**
  * recovery-manager.ts（RecoveryManager）的单元测试：重试三模式（continue/revert/fork）、
  * 前置校验、状态清理与历史记录、step-retried 事件、崩溃恢复 Step 分类。
- * @module dsh-sandore/workflow/src/recovery-manager.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/recovery-manager.spec
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { SessionEvent as DshSessionEvent } from '@deepseek-ai/dsh-session';
@@ -114,6 +114,8 @@ function makeHarness(options?: {
   onResume?: (state: WorkflowTaskState) => void;
   /** 若为 true，forkSession 在 boundary 省略且源会话尾部未闭合时模拟 DSH OPEN_TURN 抛错。 */
   enforceOpenTurn?: boolean;
+  /** F1 dispose 语义：live 子代理 id 集合（注入 getAgent；缺省 undefined = 不注入、放行）。 */
+  liveAgents?: Set<string>;
 }) {
   let state = makeState(options?.step ?? makeFailedStep(), options?.status ?? 'failed');
   const followups: Array<{ childId: string; content: ContentBlock[] }> = [];
@@ -145,6 +147,10 @@ function makeHarness(options?: {
       return { agent: makeAgent(createOptions.sessionId), dispose: async () => {} };
     },
     getSession: (id) => sessions.get(id),
+    // F1：注入 getAgent（live 判定）时 retryStep 先 fail-fast 已 dispose 的目标会话。
+    getAgent: options?.liveAgents === undefined
+      ? undefined
+      : (childId) => (options.liveAgents!.has(childId) ? makeAgent(childId) : undefined),
     forkSession: (source, boundary) => {
       // 模拟 DSH sessions.fork 的 OPEN_TURN 校验：boundary 省略（= 末事件 seq）
       // 且末事件落在未闭合 turn 内时抛 OPEN_TURN；defense 应保证 boundary 被显式传入。
@@ -187,6 +193,26 @@ function makeHarness(options?: {
     },
   };
 }
+
+describe('retryStep dispose fail-fast（F1：rc.1 对已结算子代理 dispose 的语义）', () => {
+  it('refuses to retry when the target subagent was disposed: no new segment, no retry event, no followup', async () => {
+    const { manager, getState, followups, retried } = makeHarness({ liveAgents: new Set() });
+    await expect(manager.retryStep('step-1', 'continue', 'again'))
+      .rejects.toMatchObject({ code: 'INVALID_OPERATION' });
+    expect(retried).toHaveLength(0);
+    expect(followups).toHaveLength(0);
+    // 无新段：executedSteps 仍只有原 failed 段（attemptIndex 0）。
+    expect(getState().executedSteps).toHaveLength(1);
+    expect(getState().executedSteps[0]?.status).toBe('failed');
+  });
+
+  it('proceeds when the injected live check hits (session still live)', async () => {
+    const { manager, followups, retried } = makeHarness({ liveAgents: new Set(['child-1']) });
+    await expect(manager.retryStep('step-1', 'continue', 'again')).resolves.toBeUndefined();
+    expect(followups).toHaveLength(1);
+    expect(retried).toHaveLength(1);
+  });
+});
 
 describe('computeSafeRevertBoundary', () => {
   it('returns the seq of the last closed turn', () => {
@@ -372,8 +398,9 @@ describe('RecoveryManager.retryStep revert mode', () => {
     expect(harness.forks).toEqual([{ source: 'child-1', boundary: 3 }]);
     expect(harness.creates).toHaveLength(1);
     expect(harness.creates[0]?.seed).toEqual(forked.events);
-    expect(harness.creates[0]?.meta?.parentSession).toBe('child-1');
-    expect(harness.creates[0]?.meta?.seedLength).toBe(2);
+    // 上游适配：meta 删 seedLength 改 isSeeded，前缀长度移到顶层 inheritedEventCount。
+    expect(harness.creates[0]?.meta).toMatchObject({ origin: 'subagent', parentSession: 'child-1', isSeeded: true });
+    expect(harness.creates[0]?.inheritedEventCount).toBe(2);
 
     const newChildId = harness.creates[0]?.sessionId;
     expect(newChildId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
@@ -418,7 +445,9 @@ describe('RecoveryManager.retryStep revert mode', () => {
     // 用户传入的更早 boundary（seq 2）直接透传给 forkSession，而非默认的最后一个闭合 turn（seq 5）。
     expect(harness.forks).toEqual([{ source: 'child-1', boundary: 2 }]);
     expect(harness.creates[0]?.seed).toEqual(forked.events);
-    expect(harness.creates[0]?.meta?.seedLength).toBe(3);
+    // 上游适配：isSeeded + 顶层 inheritedEventCount（= 3 条事件的闭合 turn 前缀）。
+    expect(harness.creates[0]?.meta?.isSeeded).toBe(true);
+    expect(harness.creates[0]?.inheritedEventCount).toBe(3);
     const step = newSegmentOf(harness.getState());
     expect(step?.retryHistory?.[0]?.mode).toBe('revert');
     expect(harness.followups[0]?.childId).toBe(harness.creates[0]?.sessionId);

@@ -21,6 +21,7 @@ import {
   MarkdownText,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { markdownLabels } from '../tool/primitive-labels.ts'
 import css from './MessageItem.module.css'
 
 interface CompactionItemProps {
@@ -79,7 +80,7 @@ export const CompactionItem = memo(function CompactionItem({
         <span className={css.compactionSummary}>{summary}</span>
       </button>
       {open && node.summary !== null
-        && <div className={css.compactionBody}><MarkdownText text={node.summary} /></div>}
+        && <div className={css.compactionBody}><MarkdownText text={node.summary} labels={markdownLabels(t)} /></div>}
     </div>
   )
 })

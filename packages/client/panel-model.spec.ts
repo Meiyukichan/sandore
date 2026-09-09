@@ -5,7 +5,7 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/panel-model.spec
  */
 import type { SessionId, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
-import type { InstanceSummary, WorkflowDefinitionEntry } from 'dsh-sandore/remote'
+import type { InstanceSummary, WorkflowDefinitionEntry } from '@meiyukichan/dsh-sandore/remote'
 import { describe, expect, it } from 'vitest'
 
 import {

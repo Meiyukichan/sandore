@@ -32,12 +32,13 @@ import { useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'r
 import {
   CodeBlock, DiffBlock, DisclosureRow, IconInspectOutline12, ReadBlock, SearchBlock, StateDot, TerminalBlock, WebBlock,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { WebBlockProps } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { CHAT_DIFF_MAX_LINES, type DiffCardModel } from './diff-card-model.ts'
 import { CHAT_READ_MAX_LINES, type ReadCardModel } from './read-card-model.ts'
 import { CHAT_SEARCH_MAX_LINES, type SearchCardModel } from './search-card-model.ts'
 import { terminalBlockLabels, type TerminalCardModel } from './terminal-card-model.ts'
+import { diffBlockLabels, readBlockLabels, searchBlockLabels, webBlockLabels } from './primitive-labels.ts'
+import type { WebCardModelProps } from './web-card-model.ts'
 import type { ToolRowState, ToolRowVariant } from './tool-call-model.ts'
 import css from './ToolRow.module.css'
 
@@ -100,7 +101,7 @@ export interface ToolRowProps {
    * `webCardModel`); it replaces the text body with the retrieval's citation
    * list or fetched-source card when present.
    */
-  web?: WebBlockProps | null | undefined
+  web?: WebCardModelProps | null | undefined
   state: ToolRowState
   /**
    * Filesystem path from tool args; when set with onOpenFile, the summary
@@ -265,13 +266,13 @@ export function ToolRow({
               />
             )
             : diffBody !== null
-              ? <DiffBlock {...diffBody.card} maxLines={CHAT_DIFF_MAX_LINES} className={css.diffBody} />
+              ? <DiffBlock {...diffBody.card} maxLines={CHAT_DIFF_MAX_LINES} labels={diffBlockLabels(t)} className={css.diffBody} />
               : readBody !== null
-                ? <ReadBlock {...readBody} maxLines={CHAT_READ_MAX_LINES} className={css.readBody} />
+                ? <ReadBlock {...readBody} maxLines={CHAT_READ_MAX_LINES} labels={readBlockLabels(t)} className={css.readBody} />
                 : searchBody !== null
                   ? (
                     <>
-                      <SearchBlock {...searchBody.card} maxLines={CHAT_SEARCH_MAX_LINES} className={css.searchBody} />
+                      <SearchBlock {...searchBody.card} maxLines={CHAT_SEARCH_MAX_LINES} labels={searchBlockLabels(t)} className={css.searchBody} />
                       {/* A capped search's recovery locator lives only in the result
                           text; show it below the card so the dropped rows survive. */}
                       {searchBody.recovery !== undefined && (
@@ -280,7 +281,7 @@ export function ToolRow({
                     </>
                   )
                   : webBody !== null
-                    ? <WebBlock {...webBody} className={css.webBody} />
+                    ? <WebBlock {...webBody} labels={webBlockLabels(t)} className={css.webBody} />
                     : (
                       <>
                         {variant === 'code' && body !== null && (

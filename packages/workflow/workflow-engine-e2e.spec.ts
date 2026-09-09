@@ -1,7 +1,7 @@
 /**
  * workflow-engine.ts（SandoreEngineRuntime）的端到端集成测试：
  * 完整收尾阶段流转（finalizing → gating → routing → completed）+ 门禁失败分支。
- * @module dsh-sandore/workflow/src/workflow-engine-e2e
+ * @module @meiyukichan/dsh-sandore/workflow/src/workflow-engine-e2e
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';

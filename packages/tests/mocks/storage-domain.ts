@@ -5,7 +5,7 @@
  * `update` 缺 key 抛 `missing-key`），并提供 `open(spec)`/`get(name)` 的
  * `DomainFacility` 形状，供 `persistence.spec.ts` / `remote.spec.ts` 以
  * `ctx.provide('storageDomain', …)` 注入，避免在单元测试中拉起真实后端。
- * @module dsh-sandore/workflow/tests/mocks/storage-domain
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/storage-domain
  */
 import { DomainError, type Domain, type DomainSpec, type KvTable } from '@deepseek-ai/dsh-storage-domain'
 

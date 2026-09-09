@@ -1,23 +1,24 @@
 /**
- * dsh-sandore 单包构建（合并原 workflow/ui 两个 tsdown 配置）。
+ * @meiyukichan/dsh-sandore 单包构建。
  *
- * 产出三个 bundle：
+ * 产出两个 bundle：
  * - `index`（Node 半主入口）：`packages/workflow/index.ts` 打包为 `lib/index.js`；
  *   `remote.ts` 的 `SandoreRemote` 使用 `@Remote` 标准装饰器，tsdown 默认不会
  *   降级，故经 `standardDecoratorPlugin`（`ts.transpileModule`，对齐 DSH typertPlugin
  *   的 transform 钩子）降级为 ES2024 的 `__esDecorate` 辅助代码。
- * - `schema`/`yaml`：浏览器安全子路径（`./schema`、`./yaml`），仅依赖 `zod`/`yaml`
- *   （`platform: 'neutral'`，不注入 Node 假面），供 Client 半 DagEditor 导入定义
- *    schema 与 `parseWorkflowYaml`/`serializeWorkflowYaml`。
  * - `client`：浏览器闭包工厂产物，落地 `lib/client.js`，经
- *   `window.__ModuleLoader__.load({ id: 'dsh-sandore', ... })` 闭包工厂产出，
+ *   `window.__ModuleLoader__.load({ id: '@meiyukichan/dsh-sandore', ... })` 闭包工厂产出，
  *   外部依赖（react / primitives 等平台模块）经注入的 `require` 模块表解析；
  *   本地 TS/TSX 与 CSS Modules 全部内联。
  *
+ * `./schema`/`./yaml`/`./yaml-error`/`./types` 子路径直接消费 tsc 产物
+ * （`lib/workflow/*.js`，exports default 指向），不再单独出 neutral bundle。
+ *
  * `./typert`/`./remote` 子路径的手写生成物（`packages/workflow/typert/typert.host.*` 与
  * `packages/workflow/typert/typert.remote-client.*`）为静态固化产物，不在本次 tsdown 中
- * 重新生成（`clean: false` 保留手写文件，不被删除或覆盖）。
- * @module dsh-sandore/tsdown.config
+ * 重新生成（`clean: false` 保留手写文件，不被删除或覆盖；由
+ * `scripts/copy-typert-artifacts.mjs` 拷贝到 `lib/` 与 `lib/workflow/typert/`）。
+ * @module @meiyukichan/dsh-sandore/tsdown.config
  */
 import { readFile } from 'node:fs/promises'
 import { existsSync, readdirSync } from 'node:fs'
@@ -26,7 +27,7 @@ import { defineConfig, type UserConfig } from 'tsdown'
 import ts from 'typescript'
 
 /** 插件 id（包名）：打进 `__ModuleLoader__.load` 交接与注入样式标签。 */
-const PLUGIN_ID = 'dsh-sandore'
+const PLUGIN_ID = '@meiyukichan/dsh-sandore'
 
 /** 匹配行首的类/方法装饰器语法（`@Remote('ping')` 等）。 */
 const DECORATOR_SYNTAX = /^\s*@[A-Za-z_$][\w$]*/m
@@ -152,6 +153,47 @@ function sourceAssetPath(source: string, importer: string | undefined): string {
 }
 
 /**
+ * 包自引用映射插件：把 client tsc 产物里的 `@meiyukichan/dsh-sandore/*` 包名子路径 import
+ * 解析到本包 lib 产物（rolldown 不解析 package.json exports 的包名自引用，
+ * 不映射会以 UNRESOLVED_IMPORT 形式残留为 external，运行时模块表缺失即炸）。
+ */
+function sandoreSelfReferencePlugin(): NonNullable<UserConfig['plugins']>[number] {
+  const SELF_REFERENCE_MAP: Readonly<Record<string, string>> = {
+    '@meiyukichan/dsh-sandore': 'lib/workflow/index.js',
+    '@meiyukichan/dsh-sandore/types': 'lib/workflow/types.js',
+    '@meiyukichan/dsh-sandore/schema': 'lib/workflow/schema.js',
+    '@meiyukichan/dsh-sandore/yaml': 'lib/workflow/yaml-parser.js',
+    '@meiyukichan/dsh-sandore/yaml-error': 'lib/workflow/yaml-error.js',
+    '@meiyukichan/dsh-sandore/remote': 'lib/typert.remote-client.js',
+    '@meiyukichan/dsh-sandore/typert': 'lib/typert.host.js',
+  }
+  return {
+    name: 'sandore-self-reference',
+    resolveId(source: string) {
+      const target = SELF_REFERENCE_MAP[source]
+      if (target === undefined) return null
+      return resolvePath(target)
+    },
+  }
+}
+
+/**
+ * import.meta.env shim：内联依赖（zustand 的 ESM）里的 `import.meta.env?.MODE`
+ * 在 cjs 输出下触发 rolldown 的 EMPTY_IMPORT_META 告警（自动替换为空对象）。
+ * 在 transform 阶段显式改写为 `({}).env`（等价语义），消除告警且不依赖
+ * rolldown 对 import.meta 的 define 支持。
+ */
+function importMetaEnvShimPlugin(): NonNullable<UserConfig['plugins']>[number] {
+  return {
+    name: 'sandore-import-meta-env-shim',
+    transform(code: string) {
+      if (!code.includes('import.meta.env')) return undefined
+      return code.replaceAll('import.meta.env', '({}).env')
+    },
+  }
+}
+
+/**
  * CSS Modules 内联插件：读原始 `.module.css`，注入样式标签并导出类名映射。
  *
  * 类名以「文件名短 hash 前缀 + 原名」改写（`css.foo` → `sXyzw_foo`），CSS 文本中
@@ -268,22 +310,6 @@ export default defineConfig([
     plugins: [standardDecoratorPlugin()],
   },
   {
-    // 浏览器安全子路径（./schema、./yaml、./yaml-error）：仅依赖 zod/yaml（neutral 平台）。
-    entry: {
-      schema: 'packages/workflow/schema.ts',
-      yaml: 'packages/workflow/yaml-parser.ts',
-      'yaml-error': 'packages/workflow/yaml-error.ts',
-    },
-    outDir: 'lib',
-    format: ['esm'],
-    platform: 'neutral',
-    target: 'es2024',
-    fixedExtension: false,
-    dts: false,
-    clean: false,
-    plugins: [standardDecoratorPlugin()],
-  },
-  {
     // Client 半：浏览器闭包工厂产物，落地 lib/client.js。
     name: `${PLUGIN_ID}/client`,
     entry: { client: 'lib/client/index.js' },
@@ -293,9 +319,20 @@ export default defineConfig([
     target: 'es2024',
     dts: false,
     clean: false,
-    external: [...CLIENT_EXTERNALS],
-    noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id as (typeof CLIENT_EXTERNALS)[number]) ? undefined : true),
-    plugins: [nodeBuiltinsShimPlugin(), cssModulesPlugin()],
+    // deps：CLIENT_EXTERNALS 走平台模块表（neverBundle，等价旧 external）；
+    // 其余全部内联（alwaysBundle: ['**']，等价旧 noExternal 恒真）；onlyBundle: false
+    // 关掉「考虑只打包白名单」提示（本 bundle 设计为自包含）。
+    deps: {
+      neverBundle: [...CLIENT_EXTERNALS],
+      alwaysBundle: ['**'],
+      onlyBundle: false,
+    },
+    plugins: [nodeBuiltinsShimPlugin(), cssModulesPlugin(), sandoreSelfReferencePlugin(), importMetaEnvShimPlugin()],
+    transform: {
+      // zustand ESM 里的 `import.meta.env?.MODE`：cjs 输出下替换为空对象
+      // （`({}).env` → undefined），消除 EMPTY_IMPORT_META 告警。
+      define: { 'import.meta': '{}' },
+    },
     outputOptions: {
       entryFileNames: 'client.js',
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PLUGIN_ID)}, factory: (require) => {`,

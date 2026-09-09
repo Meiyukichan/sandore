@@ -10,7 +10,7 @@
  *
  * 本包对 workflow 仅 `import type`（依赖方向 tool → workflow 单向 type-only），
  * 无任何运行时 import。
- * @module dsh-sandore/tool/src/index
+ * @module @meiyukichan/dsh-sandore/tool/src/index
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 

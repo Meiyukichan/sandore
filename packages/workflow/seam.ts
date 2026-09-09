@@ -4,7 +4,7 @@
  * 定义 `ctx.sandoreEngine` 抽象接口（`SandoreEngine extends Service`）、
  * 14 个 `sandore/*` 事件双声明（Cordis `Events` + Session `SessionEventMap`）
  * 与空 Provider 桩（`SandoreEngineStub`）。真实执行逻辑见 `workflow-engine.ts`。
- * @module dsh-sandore/workflow/src/seam
+ * @module @meiyukichan/dsh-sandore/workflow/src/seam
  */
 import { Context, Service } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';

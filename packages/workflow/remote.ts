@@ -6,18 +6,28 @@
  * 的三表上，实例生命周期（start/abort/reply/pause/resume/retry）转发
  * `ctx.sandoreEngine`，Provider/Model 转发 `ctx.llm`。RPC 层只做 zod 参数校验
  * + 转发/存储，无引擎业务逻辑。
- * @module dsh-sandore/workflow/src/remote
+ * @module @meiyukichan/dsh-sandore/workflow/src/remote
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 
 import { SandoreError } from './errors.ts'
+import { collectLibraryReferences, toLibrarySummary } from './library-views.ts'
 import type { AskUserQuestionAnswer, DagRun, DagStartRequest } from './types.ts'
-import { parseWorkflowYaml, serializeWorkflowYaml } from './yaml-parser.ts'
-import type { WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
+import {
+  parseMicroflowYaml,
+  parseStepYaml,
+  parseWorkflowYaml,
+  serializeWorkflowYaml,
+} from './yaml-parser.ts'
+import type { MicroflowRecord, StepRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
 import {
   CreateDefinitionInputSchema,
+  DeleteMicroflowInputSchema,
+  DeleteStepInputSchema,
+  GetMicroflowInputSchema,
+  GetStepInputSchema,
   ImportDefinitionInputSchema,
   ListRevertBoundariesInputSchema,
   PauseAllInputSchema,
@@ -33,13 +43,21 @@ import {
   StartInstanceInputSchema,
   UpdateDefinitionInputSchema,
   UpdateInstancePermissionModeInputSchema,
+  UpsertMicroflowInputSchema,
+  UpsertStepInputSchema,
 } from './wire.ts'
 import type {
   ArtifactEntry,
   CreateDefinitionInput,
+  DeleteEntryResult,
+  DeleteMicroflowInput,
+  DeleteStepInput,
+  GetMicroflowInput,
+  GetStepInput,
   ImportDefinitionInput,
   ImportDefinitionResult,
   InstanceSummary,
+  LibraryEntrySummary,
   ListRevertBoundariesInput,
   PauseAllInput,
   PauseStepInput,
@@ -57,6 +75,8 @@ import type {
   StartInstanceInput,
   UpdateDefinitionInput,
   UpdateInstancePermissionModeInput,
+  UpsertMicroflowInput,
+  UpsertStepInput,
   WorkflowDefinitionEntry,
 } from './wire.ts'
 
@@ -114,6 +134,9 @@ export class SandoreRemote extends TypertRemoteService {
       updatedAt: now,
     }
     await this.ctx.sandorePersistence.definitions.put(id, record)
+    // 三级分离：新建首次自动入库——内联 stages/steps putIfAbsent 写库表（best-effort，
+    // 库已有 id / 名称冲突 / step 无名称时静默跳过，不阻断保存）。
+    await this.ctx.sandorePersistence.writeDefinitionToLibraries({ ...definition, id })
     return { id, ...record }
   }
 
@@ -164,6 +187,9 @@ export class SandoreRemote extends TypertRemoteService {
       updatedAt: now,
     }
     await this.ctx.sandorePersistence.definitions.put(id, next)
+    // 三级分离：保存路径自动补写库表（putIfAbsent——库已有 id 跳过，保持「自动入库
+    // 仅一次」语义；旧定义首次保存自动补写）。
+    await this.ctx.sandorePersistence.writeDefinitionToLibraries(parsed)
     return { id, ...next }
   }
 
@@ -223,6 +249,101 @@ export class SandoreRemote extends TypertRemoteService {
     }
     await this.updateYaml(matched.id, yaml)
     return { status: 'updated', id: matched.id, name: definition.name, matchedCount: matches.length }
+  }
+
+  // ── 库管理（三级分离：Step / Microflow 库） ────────────────────────────────
+
+  /** 列出 Step 库条目摘要（含被引用数；UI 名「Agent 库」）。 */
+  @Remote('listSteps')
+  listSteps(): LibraryEntrySummary[] {
+    const { stepRefs } = collectLibraryReferences(this.ctx.sandorePersistence.definitions)
+    const summaries: LibraryEntrySummary[] = []
+    for (const [id, record] of this.ctx.sandorePersistence.steps.entries()) {
+      summaries.push(toLibrarySummary(id, record, stepRefs))
+    }
+    return summaries
+  }
+
+  /** 读取单个 Step 库条目；不存在抛 `NODE_NOT_FOUND`。 */
+  @Remote('getStep')
+  getStep(input: GetStepInput): StepRecord {
+    const parsed = GetStepInputSchema.parse(input)
+    return this.requireStep(parsed.id)
+  }
+
+  /**
+   * 写入/覆盖 Step 库条目（覆盖模式）：解析 YAML → 名称查重（同 name 不同 id 抛
+   * `DUPLICATE_NAME`）→ 全量覆盖。已有条目保留 `createdAt`，刷新 `updatedAt`。
+   */
+  @Remote('upsertStep')
+  async upsertStep(input: UpsertStepInput): Promise<StepRecord> {
+    const parsed = UpsertStepInputSchema.parse(input)
+    const record = parseStepYaml(parsed.yaml)
+    const now = new Date().toISOString()
+    const existing = this.ctx.sandorePersistence.steps.get(record.id)
+    const next: StepRecord = { ...record, createdAt: existing?.createdAt ?? now, updatedAt: now }
+    await this.ctx.sandorePersistence.upsertStep(next)
+    return next
+  }
+
+  /**
+   * 删除 Step 库条目：被任一工作流定义引用（id 命中）时抛 `REFERENCED`（消息携带
+   * 引用方 workflowId 列表）；否则删除并返回 `{ deleted: true }`（重复删除幂等 false）。
+   */
+  @Remote('deleteStep')
+  async deleteStep(input: DeleteStepInput): Promise<DeleteEntryResult> {
+    const parsed = DeleteStepInputSchema.parse(input)
+    const { stepRefs } = collectLibraryReferences(this.ctx.sandorePersistence.definitions)
+    const owners = stepRefs.get(parsed.id)
+    if (owners !== undefined && owners.size > 0) {
+      throw new SandoreError(`step '${parsed.id}' is referenced by: ${[...owners].sort().join(', ')}`, 'REFERENCED')
+    }
+    return { deleted: await this.ctx.sandorePersistence.steps.delete(parsed.id) }
+  }
+
+  /** 列出 Microflow 库条目摘要（含被引用数；UI 名「Microflow 库」）。 */
+  @Remote('listMicroflows')
+  listMicroflows(): LibraryEntrySummary[] {
+    const { microflowRefs } = collectLibraryReferences(this.ctx.sandorePersistence.definitions)
+    const summaries: LibraryEntrySummary[] = []
+    for (const [id, record] of this.ctx.sandorePersistence.microflows.entries()) {
+      summaries.push(toLibrarySummary(id, record, microflowRefs))
+    }
+    return summaries
+  }
+
+  /** 读取单个 Microflow 库条目；不存在抛 `NODE_NOT_FOUND`。 */
+  @Remote('getMicroflow')
+  getMicroflow(input: GetMicroflowInput): MicroflowRecord {
+    const parsed = GetMicroflowInputSchema.parse(input)
+    return this.requireMicroflow(parsed.id)
+  }
+
+  /** 写入/覆盖 Microflow 库条目（覆盖模式，语义同 {@link upsertStep}）。 */
+  @Remote('upsertMicroflow')
+  async upsertMicroflow(input: UpsertMicroflowInput): Promise<MicroflowRecord> {
+    const parsed = UpsertMicroflowInputSchema.parse(input)
+    const record = parseMicroflowYaml(parsed.yaml)
+    const now = new Date().toISOString()
+    const existing = this.ctx.sandorePersistence.microflows.get(record.id)
+    const next: MicroflowRecord = { ...record, createdAt: existing?.createdAt ?? now, updatedAt: now }
+    await this.ctx.sandorePersistence.upsertMicroflow(next)
+    return next
+  }
+
+  /**
+   * 删除 Microflow 库条目：被引用 → `REFERENCED` + 引用方列表；否则删除
+   * （重复删除幂等 false）。语义同 {@link deleteStep}。
+   */
+  @Remote('deleteMicroflow')
+  async deleteMicroflow(input: DeleteMicroflowInput): Promise<DeleteEntryResult> {
+    const parsed = DeleteMicroflowInputSchema.parse(input)
+    const { microflowRefs } = collectLibraryReferences(this.ctx.sandorePersistence.definitions)
+    const owners = microflowRefs.get(parsed.id)
+    if (owners !== undefined && owners.size > 0) {
+      throw new SandoreError(`microflow '${parsed.id}' is referenced by: ${[...owners].sort().join(', ')}`, 'REFERENCED')
+    }
+    return { deleted: await this.ctx.sandorePersistence.microflows.delete(parsed.id) }
   }
 
   // ── 实例生命周期 ─────────────────────────────────────────────────────────
@@ -465,6 +586,24 @@ export class SandoreRemote extends TypertRemoteService {
       throw new SandoreError(`definition '${id}' not found`, 'NODE_NOT_FOUND')
     }
     return { id, ...record }
+  }
+
+  /** 读取 Step 库条目；不存在抛 `NODE_NOT_FOUND`。 */
+  private requireStep(id: string): StepRecord {
+    const record = this.ctx.sandorePersistence.steps.get(id)
+    if (record === undefined) {
+      throw new SandoreError(`step library entry '${id}' not found`, 'NODE_NOT_FOUND')
+    }
+    return record
+  }
+
+  /** 读取 Microflow 库条目；不存在抛 `NODE_NOT_FOUND`。 */
+  private requireMicroflow(id: string): MicroflowRecord {
+    const record = this.ctx.sandorePersistence.microflows.get(id)
+    if (record === undefined) {
+      throw new SandoreError(`microflow library entry '${id}' not found`, 'NODE_NOT_FOUND')
+    }
+    return record
   }
 
   private requireInstanceState(instanceId: string): WorkflowTaskState {

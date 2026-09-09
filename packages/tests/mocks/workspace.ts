@@ -8,7 +8,7 @@
  * 真实实体职责），FakeWorkspace 只记录 attach 的会话 id（不做 header cwd
  * 校验——校验是 DSH 真实实体职责，mock 只验证引擎的 attach 调用面）。以
  * `ctx.provide('workspaceRegistry', …)` 注入。
- * @module dsh-sandore/workflow/tests/mocks/workspace
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/workspace
  */
 import type { SessionId } from '@deepseek-ai/dsh-session';
 

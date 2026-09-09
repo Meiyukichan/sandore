@@ -20,7 +20,7 @@
  * （始终走，按位置参与竞争）；无命中按定义数组顺序兜底。Stage 级条件评估是 workflow
  * 级、基于 StageContract——Stage 无单一 step 会话可 fork（fork 是 Step 级），Stage
  * 条件基于聚合 StageContract 判断。
- * @module dsh-sandore/workflow/src/dag-navigator
+ * @module @meiyukichan/dsh-sandore/workflow/src/dag-navigator
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
@@ -31,6 +31,7 @@ import type { BranchEvaluatorConfig } from '../microflow/branch-evaluator';
 import { describeError, escapeXml, resolveProviderModel, textSummary } from '../microflow/internal';
 
 import type { CommandConfig, DagBranch, WorkflowDefinition, WorkflowStage, WorkflowTaskState } from './schema.ts';
+import { resolveHostSandboxPolicy } from './shell.ts';
 import type { ShellExecRequest, ShellRunResult } from './shell.ts';
 import type { StageContract } from './types.ts';
 
@@ -273,12 +274,16 @@ export class WorkflowDagNavigator {
     contractSummary: string,
     signal: AbortSignal | undefined,
   ): Promise<string> {
+    // 携带宿主会话的 per-call sandbox 策略（workspace = 会话 cwd）：直接调用
+    // 不传策略时执行器回落 deployment 默认（启动目录）。
+    const sandboxPolicy = resolveHostSandboxPolicy(this.ctx, this.config.hostAgent?.session);
     const request: ShellExecRequest = {
       command: condition.value.command,
       timeoutMs: this.config.defaultTimeoutMs,
       workdir: this.cwd,
       stdin: contractSummary,
       ...(signal === undefined ? {} : { signal }),
+      ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
     };
     const spec = this.ctx.shell.resolve(request);
     const result = await this.ctx.shell.run(spec);

@@ -4,7 +4,7 @@
  * 覆盖 glob→regex 转换、glob/regex 自动区分、透传变量替换、递归文件搜索、
  * `{uuid}_output.json` 读写、InputFrom 就近匹配（三种 path + 回退 + regex 模式）。
  * 文件系统依赖经自建 `FakeFs`（内存实现 target 导向两段式协议）注入。
- * @module dsh-sandore/microflow/src/file-utils.spec
+ * @module @meiyukichan/dsh-sandore/microflow/src/file-utils.spec
  */
 import { describe, expect, it } from 'vitest';
 

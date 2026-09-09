@@ -1,13 +1,18 @@
 /**
  * CommandEditor：五类型命令（shell/prompt/agent/skill/mcp）编辑，供 Step command 与
  * 分支 condition / 循环 breakCondition 复用。
+ *
+ * 三级分离 plan §6.5 修复项 3：prompt/agent/skill/mcp 的提示词输入框从单行改为
+ * 多行 textarea（`ImeSafeTextarea`，可大段输入）；其余短字段用 `ImeSafeInput`
+ * （composition 守卫，中文可输入）。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/CommandEditor
  */
-import { Input, Pill } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CommandConfig } from 'dsh-sandore/schema'
+import type { CommandConfig } from '@meiyukichan/dsh-sandore/schema'
 
 import { COMMAND_TYPES, createCommand, updateCommandText, type CommandTextField, type CommandType } from './dag-editor-model.ts'
+import { ImeSafeInput, ImeSafeTextarea } from './ime-safe-input.tsx'
 import type { SandoreKey } from './locales.ts'
 import css from './DagEditor.module.css'
 
@@ -41,31 +46,31 @@ export function CommandEditor({ command, onChange, t, types }: {
       </div>
       <div className={css.commandValue}>
         {command.type === 'shell' && (
-          <Input value={command.value.command} onChange={event => { update('command')(event.target.value) }} placeholder={t('editor.field.command')} />
+          <ImeSafeInput className={css.compactInput ?? ''} value={command.value.command} onCommit={update('command')} placeholder={t('editor.field.command')} />
         )}
         {command.type === 'prompt' && (
           <>
-            <Input value={command.value.promptText} onChange={event => { update('promptText')(event.target.value) }} placeholder={t('editor.field.promptText')} />
-            <Input value={command.value.providerId ?? ''} onChange={event => { update('providerId')(event.target.value) }} placeholder={t('editor.field.providerId')} />
-            <Input value={command.value.modelId ?? ''} onChange={event => { update('modelId')(event.target.value) }} placeholder={t('editor.field.modelId')} />
+            <ImeSafeTextarea value={command.value.promptText} onCommit={update('promptText')} placeholder={t('editor.field.promptText')} aria-label={t('editor.field.promptText')} />
+            <ImeSafeInput className={css.compactInput ?? ''} value={command.value.providerId ?? ''} onCommit={update('providerId')} placeholder={t('editor.field.providerId')} />
+            <ImeSafeInput className={css.compactInput ?? ''} value={command.value.modelId ?? ''} onCommit={update('modelId')} placeholder={t('editor.field.modelId')} />
           </>
         )}
         {command.type === 'agent' && (
           <>
-            <Input value={command.value.promptText} onChange={event => { update('promptText')(event.target.value) }} placeholder={t('editor.field.promptText')} />
-            <Input value={command.value.agentParamsTemplate ?? ''} onChange={event => { update('agentParamsTemplate')(event.target.value) }} placeholder={t('editor.field.agentParamsTemplate')} />
-            <Input value={command.value.providerId ?? ''} onChange={event => { update('providerId')(event.target.value) }} placeholder={t('editor.field.providerId')} />
-            <Input value={command.value.modelId ?? ''} onChange={event => { update('modelId')(event.target.value) }} placeholder={t('editor.field.modelId')} />
+            <ImeSafeTextarea value={command.value.promptText} onCommit={update('promptText')} placeholder={t('editor.field.promptText')} aria-label={t('editor.field.promptText')} />
+            <ImeSafeInput className={css.compactInput ?? ''} value={command.value.agentParamsTemplate ?? ''} onCommit={update('agentParamsTemplate')} placeholder={t('editor.field.agentParamsTemplate')} />
+            <ImeSafeInput className={css.compactInput ?? ''} value={command.value.providerId ?? ''} onCommit={update('providerId')} placeholder={t('editor.field.providerId')} />
+            <ImeSafeInput className={css.compactInput ?? ''} value={command.value.modelId ?? ''} onCommit={update('modelId')} placeholder={t('editor.field.modelId')} />
           </>
         )}
         {command.type === 'skill' && (
           <>
-            <Input value={command.value.promptText} onChange={event => { update('promptText')(event.target.value) }} placeholder={t('editor.field.promptText')} />
-            <Input value={command.value.providerId ?? ''} onChange={event => { update('providerId')(event.target.value) }} placeholder={t('editor.field.providerId')} />
+            <ImeSafeTextarea value={command.value.promptText} onCommit={update('promptText')} placeholder={t('editor.field.promptText')} aria-label={t('editor.field.promptText')} />
+            <ImeSafeInput className={css.compactInput ?? ''} value={command.value.providerId ?? ''} onCommit={update('providerId')} placeholder={t('editor.field.providerId')} />
           </>
         )}
         {command.type === 'mcp' && (
-          <Input value={command.value.promptText} onChange={event => { update('promptText')(event.target.value) }} placeholder={t('editor.field.promptText')} />
+          <ImeSafeTextarea value={command.value.promptText} onCommit={update('promptText')} placeholder={t('editor.field.promptText')} aria-label={t('editor.field.promptText')} />
         )}
       </div>
     </div>

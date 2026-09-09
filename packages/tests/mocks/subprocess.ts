@@ -4,7 +4,7 @@
  * 提供 `resolveExecutable`/`spawn` 等价语义：`resolveExecutable` 记录命令并返回规范
  * 路径，`spawn` 记录规格并返回可注入行为的内存句柄。以 `ctx.provide('subprocess', …)`
  * 注入。
- * @module dsh-sandore/workflow/tests/mocks/subprocess
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/subprocess
  */
 import type {
   SubprocessHandle,

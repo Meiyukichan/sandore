@@ -13,6 +13,9 @@ export type EditorMode = 'dag' | 'run'
 /** 左列表模式：实例列表 | 定义列表（编排）。 */
 export type ListMode = 'instance' | 'definition'
 
+/** 编排态左列表分区（三级分离：工作流 / Microflow 库 / Agent 库）。 */
+export type LibrarySubMode = 'workflow' | 'microflow' | 'agent'
+
 /** 右栏预览目标（树形导航叶子点击后出现）。 */
 export interface PreviewTarget {
   /** 叶子节点 id（供树形导航高亮匹配）。 */
@@ -36,6 +39,8 @@ export interface WorkflowUiState {
   readonly mode: EditorMode
   /** 左列表模式（实例/定义）。 */
   readonly listMode: ListMode
+  /** 编排态左列表分区（工作流 / Microflow 库 / Agent 库；跨开合保留）。 */
+  readonly librarySubMode: LibrarySubMode
   /** 当前选中实例（执行态）。 */
   readonly selectedInstanceId: string | undefined
   /** 当前选中定义（编排态）。 */
@@ -58,6 +63,7 @@ const INITIAL: WorkflowUiState = {
   open: false,
   mode: 'dag',
   listMode: 'instance',
+  librarySubMode: 'workflow',
   selectedInstanceId: undefined,
   selectedDefinition: undefined,
   creatingNew: false,
@@ -134,6 +140,11 @@ export function newDefinition(): void {
     selectedInstanceId: undefined,
     preview: null,
   })
+}
+
+/** 切换编排态左列表分区（工作流 / Microflow 库 / Agent 库）。 */
+export function setLibrarySubMode(subMode: LibrarySubMode): void {
+  setWorkflowState({ librarySubMode: subMode })
 }
 
 /** 切换左列表收起/展开（收起时仅保留窄条 rail；跨 overlay 开合保留）。 */

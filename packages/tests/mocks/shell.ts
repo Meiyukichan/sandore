@@ -3,7 +3,7 @@
  *
  * 提供 `resolve`/`run` 等价语义：`resolve` 记录请求并委托 `resolveHandler`，
  * `run` 记录规格并委托 `runHandler`。以 `ctx.provide('shell', …)` 注入。
- * @module dsh-sandore/workflow/tests/mocks/shell
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/shell
  */
 import type {
   ShellExecRequest,

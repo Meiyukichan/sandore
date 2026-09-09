@@ -38,7 +38,7 @@ import type { ToolCallBlock } from './tool-call-model.ts'
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
 
 /** The {@link SearchBlockProps} union minus each render site's own fields. */
-type SearchBlockModelProps = DistributiveOmit<SearchBlockProps, 'maxLines' | 'className'>
+type SearchBlockModelProps = DistributiveOmit<SearchBlockProps, 'labels' | 'maxLines' | 'className'>
 
 /**
  * Result rows the chat row's resident search body shows before collapsing the
@@ -161,6 +161,6 @@ export function searchCardModel(block: ToolCallBlock): SearchCardModel | null {
   if (result.shape !== 'paths') return null
   // `paths` is likewise unchecked by the wire schema; a known shape with a
   // missing/malformed array would crash the paths card at `.map`.
-  if (!Array.isArray(result.paths) || !result.paths.every((path): path is string => typeof path === 'string')) return null
+  if (!Array.isArray(result.paths) || !result.paths.every((path: unknown): path is string => typeof path === 'string')) return null
   return { title: result.title, recovery, card: { kind: 'paths', paths: result.paths, ...common } }
 }

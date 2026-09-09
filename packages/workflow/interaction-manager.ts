@@ -12,7 +12,7 @@
  * 双通道 ask 重构后**不再承载子代理 ask 转接**（`[[SANDORE_ASK]]` 标记块机制已删）：
  * 子代理提问走 child-scope `ask_user_question` 工具（引擎 `askFromSubagent` → 本管理
  * 器 `ask` 主通道，见 workflow-engine.ts / ask-tool.ts）。
- * @module dsh-sandore/workflow/src/interaction-manager
+ * @module @meiyukichan/dsh-sandore/workflow/src/interaction-manager
  */
 import type { Agent } from '../microflow/subagents';
 import { SandoreError } from './errors.ts';

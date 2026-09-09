@@ -14,7 +14,7 @@
  * 3. 内容为空字符串的键视为无内容，跳过（与基准 `if (workflowRules[key])` 一致）。
  *
  * 纯函数：无副作用、无 IO，可直接单测。
- * @module dsh-sandore/microflow/src/rules-resolver
+ * @module @meiyukichan/dsh-sandore/microflow/src/rules-resolver
  */
 import type { WorkflowDefinition, WorkflowStage, WorkflowStep } from '../workflow/schema';
 

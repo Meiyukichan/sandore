@@ -12,6 +12,7 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/DagEditor
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   Background, ConnectionLineType, getSmoothStepPath, Handle, MarkerType, MiniMap, Panel, Position, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow,
   type Connection, type ConnectionLineComponentProps, type Edge, type Node, type NodeProps, type NodeTypes,
@@ -19,25 +20,34 @@ import {
 import '@xyflow/react/dist/style.css'
 import './reactflow-theme.css'
 import {
-  Button, CodeBlock, IconCheckOutline16, IconDownloadOutline16, IconPlayOutline16, IconPlusOutline16,
-  IconSparkle16, IconTrashOutline16, Input, Modal, Toast,
+  Button, CodeBlock, IconCheckOutline16, IconCopyOutline16, IconDownloadOutline16, IconPlayOutline16, IconPlusOutline16,
+  IconSparkle16, IconTrashOutline16, Modal, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
-  DagBranch, Gates, InputFromItem, OutputToItem, WorkflowDefinition, WorkflowStage, WorkflowStep,
-} from 'dsh-sandore/schema'
-import { parseWorkflowYaml, serializeWorkflowYaml } from '../workflow/yaml-parser'
+  DagBranch, Gates, InputFromItem, MicroflowRecord, OutputToItem, StepRecord, WorkflowDefinition, WorkflowStage, WorkflowStep,
+} from '@meiyukichan/dsh-sandore/schema'
+import type { ImportDefinitionResult } from '@meiyukichan/dsh-sandore/remote'
+import {
+  parseWorkflowYaml, serializeMicroflowYaml, serializeStepYaml, serializeWorkflowYaml,
+} from '@meiyukichan/dsh-sandore/yaml'
 
 import {
   createBlankDefinition, createCommand, createInputFromItem, createOutputToItem, createPassThroughVar,
-  createStage, dagreLayout, mergedStepsOf, newId, parseOptionalNumber, stageFlowEdges, stepFlowEdges,
-  trimToUndefined, withDefinitionId, wouldCreateStageCycle, type FlowEdgeKind, type MergedStep,
+  createStage, dagreLayout, expandMicroflowBinding, expandStepBinding, extractMicroflowRecord, extractStepRecord,
+  mergedStepsOf, newId, parseOptionalNumber, stageFlowEdges, stepFlowEdges,
+  trimToUndefined, validateImportYaml, withDefinitionId, wouldCreateStageCycle, type FlowEdgeKind, type MergedStep,
 } from './dag-editor-model.ts'
 import { CommandEditor } from './CommandEditor.tsx'
 import { WorkflowDetailFields } from './DefinitionDetail.tsx'
 import { FlowEditor, type FlowFields, type FlowTarget } from './FlowEditor.tsx'
 import { describeSaveError, type SaveDefinition } from './sandore-save.ts'
+import { describeError } from './describe-error.ts'
 import { NewInstanceDialog } from './NewInstanceDialog.tsx'
+import { AddNodeDialog, type AddNodeChoice } from './AddNodeDialog.tsx'
+import { LibraryPickerModal } from './LibraryPickerModal.tsx'
+import { ImeSafeInput } from './ime-safe-input.tsx'
+import type { SandoreKey } from './locales.ts'
 import type { WorkflowOverlayFace } from './workflow-face.ts'
 import { selectInstance } from './workflow-store.ts'
 import css from './DagEditor.module.css'
@@ -404,6 +414,48 @@ function DagCanvas({ definition, drillStageId, selectedStageId, selectedStepId, 
 
 // ── 字段编辑（Step 完整字段表单，沿用既有实现） ────────────────────────────
 
+/** 详情面板名称行的来源模式（plan §6.3）：新建（名称可编辑）| 绑定（名称只读）。
+ *  绑定标记是纯 UI 态（不落 yaml——「不识别来源」），重开默认「新建」。 */
+type BindingMode = 'new' | 'bound'
+
+/** 名称行（三段式）共用 props：左下拉「绑定/新建」+ 中间名称框 + 右【同步到库】。 */
+interface NameRowProps {
+  readonly bindingMode: BindingMode
+  /** 请求绑定：打开库选择弹窗。 */
+  onBindingRequest(): void
+  /** 切回新建（解除只读；内容/id 保留）。 */
+  onBindingClear(): void
+  /** 请求同步到库：打开覆盖确认弹窗。 */
+  onSyncToLibrary(): void
+  /** 移除当前节点。 */
+  onRemove(): void
+  readonly t: TranslateNS<'sandore'>
+}
+
+/** 三段式名称行（Stage/Step 详情共用，plan §6.3 核心交互）：
+ *  `[绑定▾] [名称输入框(children)] [同步到库] [删除]`——同步按钮两模式都有。 */
+function DetailNameRow({ bindingMode, onBindingRequest, onBindingClear, onSyncToLibrary, onRemove, t, children }: NameRowProps & { readonly children: ReactNode }) {
+  return (
+    <div className={css.stepHead}>
+      <select
+        className={css.bindingSelect}
+        value={bindingMode}
+        aria-label={t('editor.binding.select')}
+        onChange={event => {
+          if (event.target.value === 'bound') onBindingRequest()
+          else onBindingClear()
+        }}
+      >
+        <option value="new">{t('editor.binding.new')}</option>
+        <option value="bound">{t('editor.binding.bound')}</option>
+      </select>
+      {children}
+      <Button variant="outline" size="sm" onClick={onSyncToLibrary}>{t('editor.sync.library')}</Button>
+      <Button variant="ghost" size="sm" icon={<IconTrashOutline16 />} onClick={onRemove} aria-label={t('editor.remove.item')} />
+    </div>
+  )
+}
+
 /** 眼睛图标（预览按钮用；primitives 无眼睛图标，内联 SVG 16×16）。 */
 function EyeIcon() {
   return (
@@ -452,7 +504,7 @@ function InputRow({ item, stepOptions, onChange, onRemove, t }: {
       </select>
       {mode === 'path' ? (
         <select
-          className={css.branchTarget}
+          className={`${css.branchTarget} ${css.branchTargetSelect}`}
           value={item.path ?? ''}
           onChange={event => { onChange({ ...item, path: event.target.value === '' ? undefined : event.target.value }) }}
         >
@@ -462,10 +514,10 @@ function InputRow({ item, stepOptions, onChange, onRemove, t }: {
           ))}
         </select>
       ) : (
-        <Input
+        <ImeSafeInput
           className={css.branchTarget ?? ''}
           value={item.regex ?? ''}
-          onChange={event => { onChange({ ...item, regex: trimToUndefined(event.target.value) }) }}
+          onCommit={value => { onChange({ ...item, regex: trimToUndefined(value) }) }}
           placeholder={t('editor.field.regex')}
         />
       )}
@@ -498,13 +550,13 @@ function OutputRow({ item, onChange, onRemove, t }: {
         <option value="path">{t('editor.field.relativePath')}</option>
         <option value="regex">{t('editor.field.regex')}</option>
       </select>
-      <Input
+      <ImeSafeInput
         className={css.branchTarget ?? ''}
         value={mode === 'path' ? (item.path ?? '') : (item.regex ?? '')}
-        onChange={event => {
-          const value = trimToUndefined(event.target.value)
-          if (mode === 'path') onChange({ ...item, path: value })
-          else onChange({ ...item, regex: value })
+        onCommit={value => {
+          const trimmed = trimToUndefined(value)
+          if (mode === 'path') onChange({ ...item, path: trimmed })
+          else onChange({ ...item, regex: trimmed })
         }}
         placeholder={mode === 'path' ? t('editor.field.relativePath') : t('editor.field.regex')}
       />
@@ -513,14 +565,18 @@ function OutputRow({ item, onChange, onRemove, t }: {
   )
 }
 
-/** Step 完整字段编辑器（名称 + 执行 command + 流控 FlowEditor + 映射 + gates）。 */
-function StepEditor({ step, stageSteps, targets, ruleKeys, onChange, onRemove, t }: {
+/** Step 完整字段编辑器（标题 + 三段式名称行 + 执行 command + 流控 FlowEditor + 映射 + gates）。 */
+function StepEditor({ step, stageSteps, targets, ruleKeys, bindingMode, onBindingRequest, onBindingClear, onSyncToLibrary, onChange, onRemove, t }: {
   readonly step: MergedStep
   /** 当前 Stage 内全部合并 step（含 branches），用于计算回环环上节点。 */
   readonly stageSteps: readonly MergedStep[]
   readonly targets: readonly FlowTarget[]
   /** 工作流级 rules 内容表的键集合（供 step.rules 键引用编辑的勾选项）。 */
   readonly ruleKeys: readonly string[]
+  readonly bindingMode: BindingMode
+  onBindingRequest(): void
+  onBindingClear(): void
+  onSyncToLibrary(): void
   readonly onChange: (step: MergedStep) => void
   readonly onRemove: () => void
   readonly t: TranslateNS<'sandore'>
@@ -532,16 +588,26 @@ function StepEditor({ step, stageSteps, targets, ruleKeys, onChange, onRemove, t
 
   return (
     <div className={css.step}>
-      <div className={css.stepHead}>
-        <Input
+      {/* plan §6.5 修复项 1：Step 详情顶部标题「Agent 详情」。 */}
+      <div className={css.panelHeading}>{t('detail.step.title')}</div>
+      <DetailNameRow
+        bindingMode={bindingMode}
+        onBindingRequest={onBindingRequest}
+        onBindingClear={onBindingClear}
+        onSyncToLibrary={onSyncToLibrary}
+        onRemove={onRemove}
+        t={t}
+      >
+        <ImeSafeInput
           className={css.titleInput ?? ''}
           value={step.name ?? ''}
-          onChange={event => { onChange({ ...step, name: trimToUndefined(event.target.value) }) }}
+          onCommit={value => { onChange({ ...step, name: trimToUndefined(value) }) }}
           placeholder={t('editor.step.placeholder')}
           aria-label={t('editor.step.name')}
+          readOnly={bindingMode === 'bound'}
+          title={bindingMode === 'bound' ? t('editor.binding.readonly') : undefined}
         />
-        <Button variant="ghost" size="sm" icon={<IconTrashOutline16 />} onClick={onRemove} aria-label={t('editor.remove.item')} />
-      </div>
+      </DetailNameRow>
 
       <SectionLabel>{t('editor.step.command')}</SectionLabel>
       {/* 命令必填：默认直接创建 shell 命令并显示编辑器（五类型 + 输入框），不做「+命令」占位。 */}
@@ -592,7 +658,7 @@ function StepEditor({ step, stageSteps, targets, ruleKeys, onChange, onRemove, t
       {passThroughVars.map((variable, index) => (
         <div key={index} className={css.varRow}>
           <div className={css.varRowHead}>
-            <Input className={css.varNameInput ?? ''} value={variable.name} onChange={event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, name: event.target.value } : v)) }) }} placeholder={t('editor.field.name')} />
+            <ImeSafeInput className={css.varNameInput ?? ''} value={variable.name} onCommit={value => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, name: value } : v)) }) }} placeholder={t('editor.field.name')} />
             <Button
               size="sm"
               variant={variable.refresh === true ? 'primary' : 'outline'}
@@ -602,8 +668,8 @@ function StepEditor({ step, stageSteps, targets, ruleKeys, onChange, onRemove, t
             </Button>
             <Button variant="ghost" size="sm" icon={<IconTrashOutline16 />} onClick={() => { onChange({ ...step, passThroughVars: passThroughVars.filter((_, i) => i !== index) }) }} aria-label={t('editor.remove.item')} />
           </div>
-          <Input value={variable.value} onChange={event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, value: event.target.value } : v)) }) }} placeholder={t('editor.field.value')} />
-          <Input value={variable.description} onChange={event => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, description: event.target.value } : v)) }) }} placeholder={t('editor.field.description')} />
+          <ImeSafeInput className={css.compactInput ?? ''} value={variable.value} onCommit={value => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, value } : v)) }) }} placeholder={t('editor.field.value')} />
+          <ImeSafeInput className={css.compactInput ?? ''} value={variable.description} onCommit={value => { onChange({ ...step, passThroughVars: passThroughVars.map((v, i) => (i === index ? { ...v, description: value } : v)) }) }} placeholder={t('editor.field.description')} />
         </div>
       ))}
       <Button variant="ghost" size="sm" icon={<IconPlusOutline16 />} onClick={() => { onChange({ ...step, passThroughVars: [...passThroughVars, createPassThroughVar()] }) }}>
@@ -624,12 +690,16 @@ function StepEditor({ step, stageSteps, targets, ruleKeys, onChange, onRemove, t
   )
 }
 
-/** Stage 编辑器（名称 + 连接节点流控；Stage 层不展示 Step 简表，下钻走画布双击）。 */
-function StageEditor({ stage, targets, ruleKeys, onChange, onRemove, t }: {
+/** Stage 编辑器（标题 + 三段式名称行 + 连接节点流控；Stage 层不展示 Step 简表，下钻走画布双击）。 */
+function StageEditor({ stage, targets, ruleKeys, bindingMode, onBindingRequest, onBindingClear, onSyncToLibrary, onChange, onRemove, t }: {
   readonly stage: WorkflowStage
   readonly targets: readonly FlowTarget[]
   /** 工作流级 rules 内容表的键集合（供 stage.rules 键引用编辑的勾选项）。 */
   readonly ruleKeys: readonly string[]
+  readonly bindingMode: BindingMode
+  onBindingRequest(): void
+  onBindingClear(): void
+  onSyncToLibrary(): void
   readonly onChange: (stage: WorkflowStage) => void
   readonly onRemove: () => void
   readonly t: TranslateNS<'sandore'>
@@ -637,16 +707,26 @@ function StageEditor({ stage, targets, ruleKeys, onChange, onRemove, t }: {
   const selectedRules = stage.rules ?? []
   return (
     <div className={css.step}>
-      <div className={css.stepHead}>
-        <Input
+      {/* plan §6.5 修复项 1：Stage 详情顶部标题「微流程详情」。 */}
+      <div className={css.panelHeading}>{t('detail.stage.title')}</div>
+      <DetailNameRow
+        bindingMode={bindingMode}
+        onBindingRequest={onBindingRequest}
+        onBindingClear={onBindingClear}
+        onSyncToLibrary={onSyncToLibrary}
+        onRemove={onRemove}
+        t={t}
+      >
+        <ImeSafeInput
           className={css.titleInput ?? ''}
           value={stage.name}
-          onChange={event => { onChange({ ...stage, name: event.target.value }) }}
+          onCommit={value => { onChange({ ...stage, name: value }) }}
           placeholder={t('editor.stage.placeholder')}
           aria-label={t('editor.stage.placeholder')}
+          readOnly={bindingMode === 'bound'}
+          title={bindingMode === 'bound' ? t('editor.binding.readonly') : undefined}
         />
-        <Button variant="ghost" size="sm" icon={<IconTrashOutline16 />} onClick={onRemove} aria-label={t('editor.remove.item')} />
-      </div>
+      </DetailNameRow>
 
       <FlowEditor
         t={t}
@@ -695,9 +775,10 @@ function GatesEditor({ gates, onChange, t }: {
         <span>{t('editor.field.secondaryGate')}</span>
       </label>
       {secondary?.enabled === true && (
-        <Input
+        <ImeSafeInput
+          className={css.compactInput ?? ''}
           value={secondary.prompt ?? ''}
-          onChange={event => { onChange({ ...current, secondary: { ...secondary, prompt: trimToUndefined(event.target.value) } }) }}
+          onCommit={value => { onChange({ ...current, secondary: { ...secondary, prompt: trimToUndefined(value) } }) }}
           placeholder={t('editor.field.secondaryPrompt')}
         />
       )}
@@ -755,6 +836,11 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' })
   /** 保存成功轻提示（Toast，顶部居中临时横幅）；seq 递增供 Toast 按 key 重启动画。 */
   const [toast, setToast] = useState<{ seq: number, message: string } | undefined>(undefined)
+  /** 「导入 YAML」弹窗状态：开关 + 粘贴内容 + 提交中 + 校验/导入错误。 */
+  const [importOpen, setImportOpen] = useState(false)
+  const [importYaml, setImportYaml] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
+  const [importError, setImportError] = useState<string | undefined>(undefined)
   const [drillStageId, setDrillStageId] = useState<string | undefined>(undefined)
   // 初始不选中任何 Stage：右侧面板默认展示工作流详情（WorkflowDetailFields），
   // 点击 Stage 节点后才切换为该 Stage 的配置。
@@ -763,6 +849,19 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
   const [previewOpen, setPreviewOpen] = useState(false)
   /** ▶ 测试运行弹窗开关：复用 NewInstanceDialog 选工作目录后启动实例。 */
   const [testRunOpen, setTestRunOpen] = useState(false)
+  // ── 三级分离（plan §6.3/§6.4）：绑定 / 同步到库 / 添加节点 ─────────────────
+  /** 绑定态集合（纯 UI 态，不落 yaml——「不识别来源」）：id 命中 = 名称只读 + 下拉显示「绑定」。 */
+  const [boundIds, setBoundIds] = useState<ReadonlySet<string>>(new Set())
+  /** 库绑定选择弹窗目标：stageId/stepId 为 undefined = 追加新节点（非替换）。 */
+  const [bindingTarget, setBindingTarget] = useState<
+    | { readonly kind: 'microflow'; readonly stageId: string | undefined }
+    | { readonly kind: 'step'; readonly stageId: string; readonly stepId: string | undefined }
+    | undefined
+  >(undefined)
+  /** 【同步到库】确认弹窗目标（kind + 节点 id + 当前名称，供确认文案）。 */
+  const [syncTarget, setSyncTarget] = useState<{ readonly kind: 'microflow' | 'step'; readonly nodeId: string; readonly name: string } | undefined>(undefined)
+  /** 「+ 添加 Stage/Step」弹窗目标。 */
+  const [addTarget, setAddTarget] = useState<{ readonly kind: 'stage' } | { readonly kind: 'step'; readonly stageId: string } | undefined>(undefined)
 
   const preview = useMemo(() => serializeWorkflowYaml(definition), [definition])
 
@@ -846,6 +945,82 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
     patchStages(stages => [...stages, stage])
     setSelectedStageId(stage.id)
     setDrillStageId(undefined)
+  }
+
+  // ── 三级分离：绑定展开 / 同步到库 / 添加节点（plan §6.3 / §6.4） ────────────
+
+  /** 顶部轻提示（复用 Toast；seq 递增重启动画）。 */
+  const showToast = (message: string): void => {
+    setToast(current => ({ seq: (current?.seq ?? 0) + 1, message }))
+  }
+
+  /** 库选择弹窗选中 → 绑定展开（快照导入，plan §3.3）：Microflow 替换/追加 Stage；
+   *  Step 补顶层定义 + Stage 流控位。绑定后标记 bound（名称只读）。 */
+  const handleLibraryPick = (record: StepRecord | MicroflowRecord): void => {
+    const target = bindingTarget
+    if (target === undefined) return
+    setBindingTarget(undefined)
+    if (target.kind === 'microflow') {
+      const microflow = record as MicroflowRecord
+      setDefinition(current => expandMicroflowBinding(microflow, current, target.stageId))
+      setSelectedStageId(microflow.id)
+      setSelectedStepId(undefined)
+    } else {
+      const stepRecord = record as StepRecord
+      setDefinition(current => expandStepBinding(stepRecord, current, target.stageId, target.stepId))
+      setSelectedStepId(stepRecord.id)
+    }
+    setBoundIds(current => new Set(current).add(record.id))
+  }
+
+  /** 切回「新建」：仅解除只读与绑定标记（内容/id 保留——不识别来源）。 */
+  const clearBinding = (nodeId: string): void => {
+    setBoundIds(current => {
+      const next = new Set(current)
+      next.delete(nodeId)
+      return next
+    })
+  }
+
+  /** 确认同步：抽取当前详情为库条目 YAML → upsert 强制覆盖（成功/失败轻提示）。 */
+  const runSyncToLibrary = async (): Promise<void> => {
+    const target = syncTarget
+    if (target === undefined) return
+    setSyncTarget(undefined)
+    try {
+      if (target.kind === 'microflow') {
+        const record = extractMicroflowRecord(definition, target.nodeId)
+        if (record === undefined) {
+          showToast(t('editor.sync.missing'))
+          return
+        }
+        await face.upsertMicroflow(serializeMicroflowYaml(record))
+      } else {
+        const record = extractStepRecord(definition, target.nodeId)
+        if (record === undefined) {
+          showToast(t('editor.sync.missing'))
+          return
+        }
+        await face.upsertStep(serializeStepYaml(record))
+      }
+      showToast(t('editor.sync.success', { name: target.name }))
+    } catch (error) {
+      showToast(t('editor.sync.failed', { message: describeError(error) }))
+    }
+  }
+
+  /** 「+ 添加 Stage/Step」确认：新建空白（现状行为）或打开库选择弹窗（从库绑定）。 */
+  const handleAddConfirm = (choice: AddNodeChoice): void => {
+    const target = addTarget
+    setAddTarget(undefined)
+    if (target === undefined) return
+    if (choice === 'blank') {
+      if (target.kind === 'stage') addStage()
+      else addStep(target.stageId)
+      return
+    }
+    if (target.kind === 'stage') setBindingTarget({ kind: 'microflow', stageId: undefined })
+    else setBindingTarget({ kind: 'step', stageId: target.stageId, stepId: undefined })
   }
 
   /** 删除 Stage（面板移除按钮 / 画布键盘删除共用）：清理其余 Stage 指向它的流控引用。 */
@@ -981,7 +1156,7 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
       setDefinition(current => withDefinitionId(current, savedId))
       setSaveState({ kind: 'ok' })
       // 保存成功用顶部轻提示（Toast），不占用画布上方空间。
-      setToast(current => ({ seq: (current?.seq ?? 0) + 1, message: t('editor.save.success') }))
+      showToast(t('editor.save.success'))
     } catch (error) {
       const { message, details } = describeSaveError(error)
       setSaveState({ kind: 'error', message, details })
@@ -1019,6 +1194,47 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
     URL.revokeObjectURL(url)
   }
 
+  /** 导入状态 → 本地化键（导入结果 status 文案）。 */
+  const IMPORT_STATUS_KEYS: Record<ImportDefinitionResult['status'], SandoreKey> = {
+    created: 'editor.import.status.created',
+    updated: 'editor.import.status.updated',
+    skipped: 'editor.import.status.skipped',
+  }
+
+  /** 导入 YAML：本地预校验（可解析）→ importDefinition RPC → 刷新列表 + 轻提示。 */
+  const runImport = async (): Promise<void> => {
+    const validated = validateImportYaml(importYaml)
+    if (!validated.ok) {
+      setImportError(validated.error)
+      return
+    }
+    setImportBusy(true)
+    setImportError(undefined)
+    try {
+      const result = await face.importDefinition(importYaml)
+      setImportOpen(false)
+      setImportYaml('')
+      setImportBusy(false)
+      setToast(current => ({
+        seq: (current?.seq ?? 0) + 1,
+        message: t('editor.import.success', { name: result.name, status: t(IMPORT_STATUS_KEYS[result.status]) }),
+      }))
+      // 刷新定义列表（导入后新定义/更新对列表可见）。
+      onSaved?.(result.id)
+    } catch (error) {
+      setImportBusy(false)
+      setImportError(t('editor.import.failed', { message: describeError(error) }))
+    }
+  }
+
+  /** 关闭导入弹窗（提交中不响应）。 */
+  const closeImport = (): void => {
+    if (importBusy) return
+    setImportOpen(false)
+    setImportYaml('')
+    setImportError(undefined)
+  }
+
   /** ▶ 测试运行：打开 NewInstanceDialog（预绑定当前定义 + 预填测试需求文本），
    *  用户选择工作目录（cwd 必填）后经弹窗创建实例，成功后切执行态并选中新实例。
    *  复用弹窗而非直接 RPC——DagEditor 无 cwd 状态，工作目录必须由用户选择。 */
@@ -1039,6 +1255,10 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
           </Button>
           <Button size="sm" variant="ghost" icon={<IconDownloadOutline16 />} onClick={exportYaml}>
             {t('editor.export')}
+          </Button>
+          {/* 导入 YAML：弹窗粘贴 → 本地校验 → importDefinition（导出旁，与导出成对）。 */}
+          <Button size="sm" variant="ghost" icon={<IconCopyOutline16 />} onClick={() => { setImportOpen(true) }}>
+            {t('editor.import')}
           </Button>
           {/* 对话生成：静态按钮（测试左边，样式同测试/保存），待接入 AI 生成。 */}
           <Button
@@ -1083,11 +1303,11 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
               {drillStageId === undefined ? t('editor.stageDag') : (drilledStage?.name ?? drillStageId)}
             </span>
             {drillStageId === undefined ? (
-              <Button size="sm" variant="outline" icon={<IconPlusOutline16 />} onClick={addStage}>
+              <Button size="sm" variant="outline" icon={<IconPlusOutline16 />} onClick={() => { setAddTarget({ kind: 'stage' }) }}>
                 {t('editor.stage.add')}
               </Button>
             ) : drilledStage !== undefined ? (
-              <Button size="sm" variant="outline" icon={<IconPlusOutline16 />} onClick={() => { addStep(drilledStage.id) }}>
+              <Button size="sm" variant="outline" icon={<IconPlusOutline16 />} onClick={() => { setAddTarget({ kind: 'step', stageId: drilledStage.id }) }}>
                 {t('editor.step.add')}
               </Button>
             ) : null}
@@ -1133,6 +1353,10 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
                     .filter(stage => !wouldCreateStageCycle(definition.stages, selectedStage.id, stage.id))
                     .map(stage => ({ id: stage.id, name: stage.name }))}
                   ruleKeys={Object.keys(definition.rules ?? {})}
+                  bindingMode={boundIds.has(selectedStage.id) ? 'bound' : 'new'}
+                  onBindingRequest={() => { setBindingTarget({ kind: 'microflow', stageId: selectedStage.id }) }}
+                  onBindingClear={() => { clearBinding(selectedStage.id) }}
+                  onSyncToLibrary={() => { setSyncTarget({ kind: 'microflow', nodeId: selectedStage.id, name: selectedStage.name }) }}
                   onChange={next => { updateStage(selectedStage.id, next) }}
                   onRemove={() => { removeStage(selectedStage.id) }}
                   t={t}
@@ -1154,6 +1378,10 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
                       stageSteps={mergedSteps}
                       targets={mergedSteps.filter(candidate => candidate.id !== step.id).map(candidate => ({ id: candidate.id, name: candidate.name ?? candidate.id }))}
                       ruleKeys={Object.keys(definition.rules ?? {})}
+                      bindingMode={boundIds.has(step.id) ? 'bound' : 'new'}
+                      onBindingRequest={() => { setBindingTarget({ kind: 'step', stageId: drilledStage.id, stepId: step.id }) }}
+                      onBindingClear={() => { clearBinding(step.id) }}
+                      onSyncToLibrary={() => { setSyncTarget({ kind: 'step', nodeId: step.id, name: step.name ?? step.id }) }}
                       onChange={next => { updateStep(drilledStage.id, step.id, next) }}
                       onRemove={() => { removeStep(drilledStage.id, step.id) }}
                       t={t}
@@ -1175,7 +1403,37 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
         className={css.previewModal ?? ''}
         contentClassName={css.previewModalBody ?? ''}
       >
-        <CodeBlock code={preview} lang="yaml" copyLabel={t('editor.preview')} />
+        <CodeBlock code={preview} lang="yaml" copyLabel={t('copy')} copiedLabel={t('copied')} />
+      </Modal>
+
+      {/* 导入 YAML 弹窗：粘贴 → 本地校验（可解析）→ importDefinition → 刷新列表。 */}
+      <Modal open={importOpen} onClose={closeImport} title={t('editor.import.title')} closeLabel={t('overlay.close')} className={css.importModal ?? ''}>
+        <div className={css.importDialog}>
+          <textarea
+            className={css.importTextarea}
+            value={importYaml}
+            onChange={event => { setImportYaml(event.target.value) }}
+            placeholder={t('editor.import.placeholder')}
+            spellCheck={false}
+            disabled={importBusy}
+          />
+          {importError !== undefined && (
+            <p className={css.error} role="alert">{importError}</p>
+          )}
+          <div className={css.importFooter}>
+            <Button variant="ghost" size="sm" disabled={importBusy} onClick={closeImport}>
+              {t('editor.import.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={importBusy || importYaml.trim() === ''}
+              onClick={() => { void runImport() }}
+            >
+              {importBusy ? t('editor.import.importing') : t('editor.import.confirm')}
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* 保存成功轻提示：顶部居中临时横幅，4s 自动淡出；key=seq 使重复保存重启动画。 */}
@@ -1197,6 +1455,45 @@ export function DagEditor({ t, initialYaml, initialId, save, onSaved, face }: Da
             selectInstance(instanceId)
           }}
         />
+      )}
+
+      {/* 三级分离：「+ 添加 Stage/Step」弹窗（新建空白 / 从库绑定，plan §6.4）。 */}
+      {addTarget !== undefined && (
+        <AddNodeDialog
+          t={t}
+          kind={addTarget.kind}
+          onClose={() => { setAddTarget(undefined) }}
+          onConfirm={handleAddConfirm}
+        />
+      )}
+
+      {/* 三级分离：库绑定选择弹窗（详情绑定 / 添加节点共用；选中即展开嵌入）。 */}
+      {bindingTarget !== undefined && (
+        <LibraryPickerModal
+          t={t}
+          kind={bindingTarget.kind === 'microflow' ? 'microflow' : 'agent'}
+          face={face}
+          onClose={() => { setBindingTarget(undefined) }}
+          onPick={handleLibraryPick}
+        />
+      )}
+
+      {/* 三级分离：【同步到库】覆盖确认（plan §6.3：确认后当前详情 upsert 回库）。 */}
+      {syncTarget !== undefined && (
+        <Modal
+          open
+          onClose={() => { setSyncTarget(undefined) }}
+          title={t('editor.sync.confirm.title')}
+          closeLabel={t('editor.sync.confirm.cancel')}
+          footer={(
+            <>
+              <Button variant="ghost" size="sm" onClick={() => { setSyncTarget(undefined) }}>{t('editor.sync.confirm.cancel')}</Button>
+              <Button variant="primary" size="sm" onClick={() => { void runSyncToLibrary() }}>{t('editor.sync.confirm.submit')}</Button>
+            </>
+          )}
+        >
+          <p className={css.syncConfirmBody}>{t('editor.sync.confirm.body', { name: syncTarget.name })}</p>
+        </Modal>
       )}
     </section>
   )

@@ -13,7 +13,7 @@ import { Button, IconTrashOutline16, Modal, StateDot } from '@deepseek-ai/dsh-cl
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
-import type { InstanceSummary } from 'dsh-sandore/remote'
+import type { InstanceSummary } from '@meiyukichan/dsh-sandore/remote'
 
 import { deriveGroups, formatTimestamp, matchesInstanceQuery } from './panel-model.ts'
 import { describeError } from './describe-error.ts'

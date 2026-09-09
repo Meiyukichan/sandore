@@ -6,11 +6,11 @@
  * 声明在 `seam.ts`）。将 wire 类型从 `remote.ts` 拆出，使 `./types` 子路径
  * 可被 microflow/ui 等下游包以 `import type` 消费，而不把 `remote.ts` 的运行时
  * `SandoreRemote` 类一并卷入其编译程序。
- * @module dsh-sandore/workflow/src/wire
+ * @module @meiyukichan/dsh-sandore/workflow/src/wire
  */
 import { z } from 'zod'
 
-import type { WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
+import type { MicroflowRecord, StepRecord, WorkflowDefinitionRecord, WorkflowTaskState } from './schema.ts'
 
 // ── wire 接口 ────────────────────────────────────────────────────────────────
 
@@ -63,6 +63,42 @@ export interface ImportDefinitionResult {
 export const CreateDefinitionInputSchema = z.object({
   yaml: z.string(),
 })
+
+// ── 库管理（三级分离：Step / Microflow 库） ──────────────────────────────────
+
+/**
+ * 库条目摘要（`listSteps`/`listMicroflows` 列表行）。
+ *
+ * 含被引用数：`referencedBy` = definitions 表中引用该 id 的工作流记录数
+ * （Step = 顶层 `steps[].id` 或任一 `stages[].steps[].id` 命中；Microflow =
+ * 任一 `stages[].id` 命中）。删除被引用条目被 `REFERENCED` 拒绝。
+ */
+export interface LibraryEntrySummary {
+  id: string
+  name: string
+  version?: string
+  referencedBy: number
+  updatedAt: string
+}
+
+/** `getStep` 入参。 */
+export const GetStepInputSchema = z.object({ id: z.string() })
+/** `upsertStep` 入参：仅承载 YAML 文本（覆盖模式，Host 端查重后解析入库）。 */
+export const UpsertStepInputSchema = z.object({ yaml: z.string() })
+/** `deleteStep` 入参。 */
+export const DeleteStepInputSchema = z.object({ id: z.string() })
+
+/** `getMicroflow` 入参。 */
+export const GetMicroflowInputSchema = z.object({ id: z.string() })
+/** `upsertMicroflow` 入参：仅承载 YAML 文本（覆盖模式，Host 端查重后解析入库）。 */
+export const UpsertMicroflowInputSchema = z.object({ yaml: z.string() })
+/** `deleteMicroflow` 入参。 */
+export const DeleteMicroflowInputSchema = z.object({ id: z.string() })
+
+/** `deleteStep`/`deleteMicroflow` 结果（重复删除幂等返回 false）。 */
+export interface DeleteEntryResult {
+  deleted: boolean
+}
 
 /**
  * `importDefinitionFromYaml` 入参（缺陷 30）：幂等导入 YAML 文本。
@@ -238,6 +274,12 @@ export interface RecoverOrphanedInstancesResult {
 export type CreateDefinitionInput = z.infer<typeof CreateDefinitionInputSchema>
 export type ImportDefinitionInput = z.infer<typeof ImportDefinitionInputSchema>
 export type UpdateDefinitionInput = z.infer<typeof UpdateDefinitionInputSchema>
+export type GetStepInput = z.infer<typeof GetStepInputSchema>
+export type UpsertStepInput = z.infer<typeof UpsertStepInputSchema>
+export type DeleteStepInput = z.infer<typeof DeleteStepInputSchema>
+export type GetMicroflowInput = z.infer<typeof GetMicroflowInputSchema>
+export type UpsertMicroflowInput = z.infer<typeof UpsertMicroflowInputSchema>
+export type DeleteMicroflowInput = z.infer<typeof DeleteMicroflowInputSchema>
 export type StartModelSelectionInput = z.infer<typeof StartModelSelectionSchema>
 export type StartInstanceInput = z.infer<typeof StartInstanceInputSchema>
 export type ReplyQuestionInput = z.infer<typeof ReplyQuestionInputSchema>

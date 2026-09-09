@@ -38,7 +38,7 @@ import {
   type ConversationTimelineSnapshot, type ISessions, type SessionFace, type SessionId,
 } from '@deepseek-ai/dsh-client-runtime/client'
 
-import { buildStepChatFlow, type StepChatFlowRow, type StepChatTailData } from './chat-flow.ts'
+import { buildStepChatFlow, type StepChatFlowInput, type StepChatFlowRow, type StepChatTailData } from './chat-flow.ts'
 import { resolveWorkspacePath } from './workspace-path.ts'
 import { formatOpenError, stepChatRebindDelayMs, stepChatRetryDelayMs } from './step-chat-retry.ts'
 import { AssistantMarkdown } from './chat/AssistantMarkdown.tsx'
@@ -84,10 +84,11 @@ export function installStepChatSessions(sessions: ISessions): () => void {
 
 /**
  * 安装 workspaces 服务到模块级单例（插件 apply 时经 ctx.effect 调用；文件路径打开用）。
- * @param workspaces - `ctx.workspaces`（openPath 面）。
+ * @param workspaces - `ctx.workspaces` 的 openPath 面（宿主缺省该能力时传 undefined，
+ *   面板 fileLink 静默降级，见 getStepChatWorkspaces）。
  * @returns disposer：插件卸载时清除。
  */
-export function installStepChatWorkspaces(workspaces: StepChatWorkspacesLike): () => void {
+export function installStepChatWorkspaces(workspaces: StepChatWorkspacesLike | undefined): () => void {
   workspacesService = workspaces
   return () => {
     if (workspacesService === workspaces) workspacesService = undefined
@@ -199,11 +200,22 @@ export function StepChatPanel({ sessionId, t }: {
 
   const binding = sessions?.binding(sessionId as SessionId)
 
-  // 挂载 / binding 变为可用时开窗：拉历史 + 消费 mux 帧，保证 cold 会话能出消息。
+  // rc.1（0.1.2-rc.1）宿主会话快照不含 conversation view 数据（nodes）→ 内嵌聊天
+  // 不可用：此时禁止自动 open 子代理会话——普通 open 会被 host 以
+  // `session/agent-busy`（subagent Sessions require their durable parent address）
+  // 拒绝，面板落在错误态。探测一次快照即可（rc.1 恒无 nodes、rc.2 恒有 []）。
+  const [inlineChatSupported, setInlineChatSupported] = useState(false)
   useEffect(() => {
-    if (binding === undefined) return
-    openSessionWindow(binding)
+    const snapshot = binding?.session.getSnapshot() as { nodes?: unknown } | undefined
+    setInlineChatSupported(Array.isArray(snapshot?.nodes))
   }, [binding])
+
+  // 挂载 / binding 变为可用时开窗：拉历史 + 消费 mux 帧，保证 cold 会话能出消息。
+  // 仅内嵌数据源可用（rc.2+）时自动 open；rc.1 走占位，不触发 host 的 subagent gate。
+  useEffect(() => {
+    if (binding === undefined || !inlineChatSupported) return
+    openSessionWindow(binding)
+  }, [binding, inlineChatSupported])
 
   // Round 25：binding 缺失时按退避序列重拉 host 会话列表（有界）。成功恢复绑定或
   // 列表重新包含该 child 后计数清零；child 确已删除则停在 loading 占位。
@@ -239,7 +251,37 @@ export function StepChatPanel({ sessionId, t }: {
     )
   }
 
-  return <StepChatBody session={binding.session} sessionId={sessionId} t={t} />
+  // rc.1 占位的「打开会话」：优先走 DSH 原生子代理地址（openSubagent 把宿主会话视图
+  // 切到该子代理会话，可查看完整消息流）；无地址时回退 sessions.open（同步抛已兜底）。
+  const openInHost = (): void => {
+    const sessions = getStepChatSessions()
+    if (sessions === undefined) return
+    const typed = sessions as unknown as {
+      subagentAddress?(id: SessionId): { kind: string; parentSessionId: string; childSessionId: string; mode: string } | undefined
+      openSubagent?(address: unknown): void
+      open(id: SessionId): void
+    }
+    const address = typed.subagentAddress?.(sessionId as SessionId)
+    if (address !== undefined && typeof typed.openSubagent === 'function') {
+      typed.openSubagent(address)
+      return
+    }
+    try {
+      typed.open(sessionId as SessionId)
+    } catch (error) {
+      console.error('ui-sandore: open step session failed (session may be disposed)', error)
+    }
+  }
+
+  return (
+    <StepChatBody
+      session={binding.session}
+      sessionId={sessionId}
+      t={t}
+      supported={inlineChatSupported}
+      onOpenSession={openInHost}
+    />
+  )
 }
 
 /** 单条展示行 → DSH 渲染组件（flowItem 包裹，key 稳定）。 */
@@ -294,10 +336,14 @@ function FlowRow({ row, t, renderMessageImages, cwd, onOpenFile, onFork }: {
 }
 
 /** 面板主体：订阅会话快照（ObservableSnapshot 的 uSES 两侧），渲染最新 10 条节点。 */
-function StepChatBody({ session, sessionId, t }: {
+function StepChatBody({ session, sessionId, t, supported, onOpenSession }: {
   readonly session: SessionFace
   readonly sessionId: string
   readonly t: TranslateNS<'sandore'>
+  /** rc.2+ 内嵌 conversation view 数据源是否可用（rc.1 宿主不可用，渲染占位）。 */
+  readonly supported: boolean
+  /** rc.1 占位：打开宿主会话视图查看该子代理会话（openSubagent/兜底 open）。 */
+  readonly onOpenSession: () => void
 }) {
   // Session.subscribe/getSnapshot 是原型方法（依赖 this），须经箭头包装再交给
   // uSES（DSH 消费侧同样 `fn => session.subscribe(fn)`）。
@@ -305,7 +351,15 @@ function StepChatBody({ session, sessionId, t }: {
     (onStoreChange) => session.subscribe(onStoreChange),
     () => session.getSnapshot(),
   )
-  const rows = useMemo(() => buildStepChatFlow(snapshot), [snapshot])
+  // rc.1（0.1.2-rc.1）宿主会话快照不携带 conversation view 数据：nodes/chat 属
+  // client-runtime 0.1.1-rc.2 的折叠契约，rc.1 已重构为 conversation view builder。
+  // 探测 nodes 数组：缺失时跳过节点/chat 渲染（稳定降级占位），避免
+  // buildStepChatFlow 对 undefined.nodes 调 slice 再次触发 seat 崩溃。
+  const hasChatViewData = Array.isArray((snapshot as { nodes?: unknown }).nodes)
+  const rows = useMemo(
+    () => (hasChatViewData ? buildStepChatFlow(snapshot as unknown as StepChatFlowInput) : []),
+    [snapshot, hasChatViewData],
+  )
 
   // Round 25：open 失败粘滞自愈——openState='error' 时有界退避重试 open()。
   // Session.open() 对 'error' 会重跑 doOpen（瞬时失败——短 turn 子代理
@@ -400,6 +454,27 @@ function StepChatBody({ session, sessionId, t }: {
     ),
     [imageLoader, t],
   )
+
+  if (!supported) {
+    // rc.1（0.1.2-rc.1）：宿主会话快照不携带 conversation view 数据（内嵌消息流在
+    // rc.1 无公开组装 API），子代理会话也不可被普通 open（host 以 session/agent-busy
+    // 拒绝）——渲染运行状态 + 引导占位，不触发 open/loading/error 分支（所有 hooks
+    // 均在此之上，条件渲染合法）。
+    const runningNow = snapshot.running === true
+    return (
+      <div className={css.stepChatPanel} data-step-chat>
+        <div className={css.stepChatEmpty}>
+          {runningNow && <div className={chatCss.turnStatus} role="status" aria-live="polite">Deep diving...</div>}
+          <div className={css.stepChatHint}>
+            {runningNow ? t('run.step.chat.runningUnavailable') : t('run.step.chat.unavailable')}
+          </div>
+          <div className={css.stepChatEmptyActions}>
+            <Button variant="outline" onClick={onOpenSession}>{t('run.step.chat.openSession')}</Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (snapshot.openState === 'cold' || snapshot.openState === 'loading') {
     return (

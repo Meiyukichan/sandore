@@ -8,7 +8,7 @@
  * 从 `sessionPersistence.inspect` 读事件重建 fork 会话）；`FakeSession.deriveMessages`
  * 把事件归一为 LLM `Message[]`（user/assistant 两类；其余事件忽略），供
  * `forkStepSessionMessages` 的持久化回退断言全量历史。
- * @module dsh-sandore/workflow/tests/mocks/sessions
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/sessions
  */
 import type { ContentBlock, Message } from '@deepseek-ai/dsh-llm';
 
@@ -20,10 +20,15 @@ export interface FakeSessionEvent {
   data: unknown;
 }
 
-/** `sessions.create` 的 seed/meta 选项（对齐 DSH `CreateSessionOptions` 最小面）。 */
+/**
+ * `sessions.create` 的 seed/meta 选项（对齐 DSH `CreateSessionOptions` 最小面；
+ * 上游适配：meta 删 `seedLength`（会话头校验拒绝），改 `isSeeded` + 顶层
+ * `inheritedEventCount`）。
+ */
 export interface FakeCreateSessionOptions {
   readonly seed?: readonly FakeSessionEvent[];
-  readonly meta?: { readonly parentSession?: string; readonly seedLength?: number; readonly cwd?: string };
+  readonly inheritedEventCount?: number;
+  readonly meta?: { readonly parentSession?: string; readonly cwd?: string; readonly isSeeded?: boolean };
 }
 
 /** 记录 append 事件的最小 Session 形状。 */
@@ -36,6 +41,14 @@ export class FakeSession {
     const event: FakeSessionEvent = { type, seq: this.events.length, time: Date.now(), data };
     this.events.push(event);
     return event;
+  }
+
+  /**
+   * 上游 dsh-session 0.1.2 的 Session API（`events` 直读已删，读方经 snapshotEvents()）：
+   * 返回全量事件只读快照（mock 直接返回内部数组，调用方不得改写）。
+   */
+  snapshotEvents(): readonly FakeSessionEvent[] {
+    return this.events;
   }
 
   /** 事件日志 → LLM Message[]（user/message、assistant/message 两类；其余事件忽略）。 */
@@ -69,11 +82,14 @@ export class FakeSession {
 export class FakeSessionStore {
   private readonly sessions = new Map<string, FakeSession>();
   private counter = 0;
+  /** 每次 `create` 的调用记录（id + options；fork 重建 meta/isSeeded/inheritedEventCount 断言用）。 */
+  readonly createCalls: Array<{ id: string; options?: FakeCreateSessionOptions }> = [];
 
   create(id?: string, options?: FakeCreateSessionOptions): FakeSession {
     const session = new FakeSession();
     const key = id ?? `session-${++this.counter}`;
     session.id = key;
+    this.createCalls.push({ id: key, ...(options === undefined ? {} : { options }) });
     // seed 回放（fork-session 持久化回退：从 inspect 事件重建 fork 会话）。
     for (const event of options?.seed ?? []) {
       session.events.push({ ...event });

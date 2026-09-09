@@ -3,7 +3,7 @@
  *
  * 提供 `rename` 等价语义：记录每次调用（session + title），支持「可编程抛错」
  * 模拟服务异常/标题被拒。以 `ctx.provide('sessionTitle', …)` 注入。
- * @module dsh-sandore/workflow/tests/mocks/session-title
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/session-title
  */
 import type { Session } from '@deepseek-ai/dsh-session';
 import type { SessionTitleSnapshot } from '@deepseek-ai/dsh-session-title';

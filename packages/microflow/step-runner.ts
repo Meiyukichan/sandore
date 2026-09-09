@@ -8,11 +8,12 @@
  * `ctx.subagents.startContinuable` → `ctx.agents.get(childId)` → settle
  * （`awaitSubagentSettlement` 对齐 DSH `subagent/end`）→ final output）——prompt
  * 与 agent/skill/mcp 行为对齐（真实子代理会话：可暂停/恢复/重试/会话可点；提问经
- * workflow 层注入的 child-scope `ask_user_question` 工具，见 workflow/ask-tool.ts）。
+ * 全局注册的 `sandore_ask_user_question` 工具（execute 期 gate 仅放行 sandore
+ * 子代理），见 workflow/ask-tool.ts）。
  * agent 定义 `agentParamsTemplate` 时先 `fillParams` 临时会话填充
  * 「### 当前Step参数」子节。所有提示词/命令构建前先 `replacePassThroughVars`
  * 替换 `${xxx}` 透传变量（含循环上下文变量）。
- * @module dsh-sandore/microflow/src/step-runner
+ * @module @meiyukichan/dsh-sandore/microflow/src/step-runner
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
@@ -29,8 +30,10 @@ import {
   textSummary,
 } from './internal.ts';
 import { finalAssistantOutput, collectSessionMessages } from './subagents.ts';
+import { sessionEventList } from './session-events.ts';
 import type { Agent, SubagentSettlement } from './subagents.ts';
 import type { CommandConfig, SessionMessage, WorkflowStep } from '../workflow/schema';
+import { resolveHostSandboxPolicy } from '../workflow/shell';
 import type { ShellExecRequest, ShellRunResult } from '../workflow/shell';
 
 type ShellCommand = Extract<CommandConfig, { type: 'shell' }>;
@@ -251,8 +254,9 @@ function buildTaskText(
  * `<Params>`）+ 整体目标块 + 前置输出和产物块）。
  *
  * 双通道 ask 重构后不再注入「向用户提问」引导节（`[[SANDORE_ASK]]` 标记块机制已删）：
- * 子代理提问走 child-scope `ask_user_question` 工具（registerContinuableSetup 注入，
- * 见 workflow/ask-tool.ts），prompt/agent/skill/mcp 四路 AI 提示词共用本函数。
+ * 子代理提问走全局注册的 `sandore_ask_user_question` 工具（execute 期 gate 仅放行
+ * sandore 子代理，见 workflow/ask-tool.ts），prompt/agent/skill/mcp 四路 AI 提示词
+ * 共用本函数。
  *
  * `## 任务规则` 节置于参考信息**之前**（与头部三点顺序一致：用户指令 → 任务规则 →
  * 参考信息）；仅当 `resolvedRules` 非空时渲染，逐键输出 `- **{key}**: {content}`。
@@ -503,6 +507,10 @@ export class StepRunner {
     stdin: string | undefined = undefined,
     env: Record<string, string> | undefined = undefined,
   ): Promise<StepRunResult> {
+    // 携带宿主会话的 per-call sandbox 策略（workspace = 会话 cwd）：直接调用
+    // 不传策略时执行器回落 deployment 默认（启动目录，主目录启动会触发 Windows
+    // ACL 临时目录边界冲突）。
+    const sandboxPolicy = resolveHostSandboxPolicy(this.ctx, this.config.hostAgent?.session);
     const shellRequest: ShellExecRequest = {
       command,
       timeoutMs: this.stepTimeoutMs(request.step),
@@ -510,6 +518,7 @@ export class StepRunner {
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(stdin === undefined ? {} : { stdin }),
       ...(env === undefined ? {} : { env }),
+      ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
     };
     const spec = this.ctx.shell.resolve(shellRequest);
     const result = await this.ctx.shell.run(spec);
@@ -544,11 +553,12 @@ export class StepRunner {
    * 「### 当前Step参数」；prompt 无参数模板（paramsText 恒 undefined）。随后三层
    * provider/model 回退 → 构建结构化提示词 → `startContinuable`（parent=宿主主代理；
    * subagent provider 名与模型路由解耦——provider 参数用 DSH 注册的 `fork`，模型
-   * 路由经 `request.agentOptions`）。子代理提问能力由 workflow 层经
-   * `subagents.registerContinuableSetup` 注入 child-scope `ask_user_question` 工具
-   * （双通道 ask 通道 1，见 workflow/ask-tool.ts；不再 toolFilter deny 全局工具——
-   * child-scope 同名注册天然遮蔽全局版）→ `onChildStarted` 上抛真实 childId →
-   * `collectSubagentOutput` 等 settle 终态（completed/aborted/error 路由）+ final output。
+   * 路由经 `request.agentOptions`）。子代理提问能力由全局注册的
+   * `sandore_ask_user_question` 工具提供（execute 期 gate 仅放行 sandore 子代理，
+   * 见 workflow/ask-tool.ts `registerGlobalAskTool`；`request.toolFilter` deny DSH
+   * 全局版 `ask_user_question` 引导模型用 sandore 通道）→ `onChildStarted` 上抛真实
+   * childId → `collectSubagentOutput` 等 settle 终态（completed/aborted/error 路由）
+   * + final output。
    */
   private async runSubagent(command: SubagentCommand | PromptCommand, request: StepRunRequest): Promise<StepRunResult> {
     // v6：按 step.inputFrom 过滤前置输出（未配置依赖 → 全量；配置后只注入声明的依赖，
@@ -589,6 +599,10 @@ export class StepRunner {
         prompt: [{ type: 'text', text: promptText }],
         parent: this.resolveParent(),
         agentOptions: { provider: route.provider, model: route.model },
+        // ask 工具全局注册 + gate（上游适配）：屏蔽 DSH 全局版 ask_user_question，
+        // 引导模型使用全局注册的 `sandore_ask_user_question`（gate 仅放行 sandore
+        // 子代理，见 workflow/ask-tool.ts registerGlobalAskTool）。
+        toolFilter: { deny: ['ask_user_question'] },
       },
       signal: request.signal ?? new AbortController().signal,
     });
@@ -627,8 +641,8 @@ export class StepRunner {
    * 场景；此回退无法区分 abort，不适用于暂停语义——暂停路径必经注入的 settle）。
    *
    * 双通道 ask 重构后**不再有 ask 转接循环**（`[[SANDORE_ASK]]` 标记块机制已删）：子代理
-   * 提问经 child-scope `ask_user_question` 工具在执行 turn 内同步完成（工具调用阻塞等待
-   * 引擎级 ask 答案），final output 即最终输出，无标记块解析。
+   * 提问经全局注册的 `sandore_ask_user_question` 工具在执行 turn 内同步完成（工具调用
+   * 阻塞等待引擎级 ask 答案），final output 即最终输出，无标记块解析。
    */
   private async collectSubagentOutput(
     commandType: SubagentCommandType,
@@ -637,6 +651,9 @@ export class StepRunner {
     stageId: string,
     signal?: AbortSignal,
   ): Promise<StepRunResult> {
+    // 子代理注册先于 startContinuable 返回（rc.1 与 mock 同语义），此处同步 get 恒命中；
+    // settle 即 dispose 的竞态由引擎 settlementBuffer（settle 早于 awaiter 注册）覆盖，
+    // 故 registry 缺失视为真错误（STEP_EXECUTION），不进入 settle 等待造成挂起。
     const child = this.ctx.agents.get(childId);
     if (child === undefined) {
       throw new SandoreError(`subagent '${childId}' not found in registry`, 'STEP_EXECUTION');
@@ -647,7 +664,7 @@ export class StepRunner {
     const settle = async (): Promise<ContentBlock[]> => {
       if (awaitSettlement === undefined) {
         await child.whenIdle();
-        const fallback = finalAssistantOutput(child.session.events);
+        const fallback = finalAssistantOutput(sessionEventList(child.session));
         if (fallback === undefined) {
           throw new SandoreError('subagent produced no assistant output', 'STEP_EXECUTION');
         }
@@ -656,7 +673,7 @@ export class StepRunner {
       const settlement: SubagentSettlement = await awaitSettlement(childId, signal ?? new AbortController().signal);
       if (settlement.stopReason === 'completed') {
         // settle 载荷 output 为只读视图（对齐 DSH lastAssistantMessage 借用语义），拷贝为可变数组。
-        const out = settlement.output ?? finalAssistantOutput(child.session.events);
+        const out = settlement.output ?? finalAssistantOutput(sessionEventList(child.session));
         if (out === undefined) {
           throw new SandoreError('subagent produced no assistant output', 'STEP_EXECUTION');
         }
@@ -680,7 +697,7 @@ export class StepRunner {
     return {
       output,
       sessionMeta: { childId, synthetic: false, command: commandType },
-      sessionMessages: collectSessionMessages(liveChild.session.events).slice(-10),
+      sessionMessages: collectSessionMessages(sessionEventList(liveChild?.session)).slice(-10),
     };
   }
 
@@ -700,6 +717,9 @@ export class StepRunner {
           prompt: [{ type: 'text', text: promptText }],
           parent: this.resolveParent(),
           agentOptions: { provider: route.provider, model: route.model },
+          // 与 runSubagent 同型：屏蔽 DSH 全局版 ask_user_question（参数填充子代理
+          // 无提问通道需求）。
+          toolFilter: { deny: ['ask_user_question'] },
         },
         signal: request.signal ?? new AbortController().signal,
       });
@@ -713,14 +733,14 @@ export class StepRunner {
             return undefined;
           }
           const child = this.ctx.agents.get(started.childId);
-          return settlement.output ?? (child === undefined ? undefined : finalAssistantOutput(child.session.events));
+          return settlement.output ?? (child === undefined ? undefined : finalAssistantOutput(sessionEventList(child.session)));
         }
         const child = this.ctx.agents.get(started.childId);
         if (child === undefined) {
           return undefined;
         }
         await child.whenIdle();
-        return finalAssistantOutput(child.session.events);
+        return finalAssistantOutput(sessionEventList(child.session));
       };
       const output = await collect();
       if (output === undefined) {

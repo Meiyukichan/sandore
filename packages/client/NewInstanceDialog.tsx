@@ -7,7 +7,8 @@
  * 3. 绑定工作流 —— 下拉选择已保存的定义（`face.listDefinitions`）。
  * 4. 模型 —— 照对话输入框的模型下拉（provider 分组 + 模型项，`face.listModelDirectory`）。
  * 5. 权限策略 —— 照对话输入框的权限下拉（read-only / workspace-write / danger-full-access
- *    三个预设，本地选中；`danger-full-access` 需风险确认）。
+ *    三个预设，默认 `danger-full-access`（DEFAULT_PERMISSION），打开弹窗不弹风险确认卡；
+ *    仅当用户在菜单里重新选择 `danger-full-access` 时才走 RiskConfirmation）。
  * 确定 → `face.startInstance({ workflowId, originalInput, cwd?, model?, permission? })`，
  * 成功后 `onCreated(run.instanceId)`（宿主切执行态并选中）。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/NewInstanceDialog
@@ -15,12 +16,14 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Button, IconBrowseOutline16, IconCheckOutline16, IconChevronDownOutline14, IconCloseOutline16,
-  IconFolderOpenOutline16, Input, Modal,
+  IconFolderOpenOutline16, Input, Modal, RiskConfirmation,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 
 import type { ModelDirectoryEntry, StartInstanceParams, WorkflowOverlayFace } from './workflow-face.ts'
 import { describeError } from './describe-error.ts'
+import { DirectoryBrowserDialog } from './DirectoryBrowserDialog.tsx'
+import { DEFAULT_PERMISSION, dialogCloseAllowed } from './new-instance-dialog-model.ts'
 import css from './NewInstanceDialog.module.css'
 import selectCss from './composer-selects.module.css'
 
@@ -88,11 +91,14 @@ function permissionGlyph(value: string) {
 export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequirement, onClose, onCreated }: NewInstanceDialogProps) {
   // 表单字段：工作目录 / 作业需求 / 绑定工作流 / 模型 / 权限。
   const [cwd, setCwd] = useState<string | undefined>(undefined)
+  /** 目录浏览弹窗（browse 能力）开关：原生 picker 不可用时降级打开。 */
+  const [browserOpen, setBrowserOpen] = useState(false)
   const [requirement, setRequirement] = useState(initialRequirement ?? '')
   const [workflowId, setWorkflowId] = useState<string | undefined>(initialWorkflowId)
   const [model, setModel] = useState<StartInstanceParams['model']>(undefined)
-  // 权限默认 workspace-write（与触发器显示一致；提交时始终携带，引擎据此应用沙箱/审批）。
-  const [permission, setPermission] = useState<string>('workspace-write')
+  // 权限默认 full access（用户指定；提交时始终携带，引擎据此应用沙箱/审批。
+  // 打开弹窗不触发风险确认——只有用户在菜单里重新选择 full access 才走 RiskConfirmation）。
+  const [permission, setPermission] = useState<string>(DEFAULT_PERMISSION)
 
   // 数据源：定义下拉 + 模型目录 + 提交状态。
   const [definitions, setDefinitions] = useState<{ id: string; name: string }[] | undefined>(undefined)
@@ -156,13 +162,18 @@ export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequireme
     && cwd !== undefined
     && cwd.trim() !== ''
 
-  /** 打开 DSH 原生目录选择器，选中后回填（取消保持原值）。 */
+  /** 打开 DSH 原生目录选择器，选中后回填（取消保持原值）。
+   *  无原生能力的环境（如 Linux web：host.pickDirectory 需 native capability）会
+   *  抛 directory-picker-unavailable——降级为目录浏览弹窗（browse 能力，与 DSH
+   *  「添加项目」弹窗同一后端）。 */
   const browse = async (): Promise<void> => {
     try {
       const picked = await face.pickDirectory()
-      if (picked !== undefined) setCwd(picked)
-    } catch (error) {
-      setErrorMessage(describeError(error))
+      if (picked !== undefined) {
+        setCwd(picked)
+      }
+    } catch {
+      setBrowserOpen(true)
     }
   }
 
@@ -209,9 +220,11 @@ export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequireme
     <Modal
       open
       className={`${css.dialog}`}
-      onClose={() => { if (!submitting) onClose() }}
+      // 关闭守卫（dialogCloseAllowed）：提交中不打断；完全访问确认卡开着时
+      // Escape 只关确认卡（它是独立 Modal，自带 document Escape 监听），
+      // 不能把底层弹窗一起带走。
+      onClose={() => { if (dialogCloseAllowed(submitting, fullAccessConfirm)) onClose() }}
       title={t('instance.create.title')}
-      closeLabel={t('instance.create.cancel')}
       headless
     >
       {/* 自持头部：标题 + 关闭按钮（Modal headless 只留 mask/卡片/Escape；
@@ -224,15 +237,17 @@ export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequireme
           </button>
         </div>
         <div className={css.form} ref={rootRef}>
-        {/* 1. 工作目录：DSH 原生目录选择器（只读路径 + 浏览按钮）。 */}
+        {/* 1. 工作目录：优先 DSH 原生目录选择器；无原生能力（Linux web 等）时
+            降级为目录浏览弹窗（browse 能力）。 */}
         <label className={css.field}>
           <span className={css.label}>{t('instance.create.cwd')}</span>
           <div className={css.cwdRow}>
             <Input
               className={`${css.cwdInput}`}
               icon={<IconFolderOpenOutline16 />}
-              value={cwd ?? t('instance.create.cwd.placeholder')}
+              value={cwd ?? ''}
               readOnly
+              placeholder={t('instance.create.cwd.placeholder')}
               title={cwd}
             />
             <Button size="sm" variant="outline" className={`${css.browseBtn}`} icon={<IconBrowseOutline16 />} onClick={() => { void browse() }}>
@@ -387,8 +402,11 @@ export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequireme
               disabled={submitting}
               onClick={() => { setPermissionOpen(current => !current) }}
             >
-              <span className={css.selectTriggerIcon} aria-hidden>{permissionGlyph(permission ?? 'workspace-write')}</span>
+              {/* ?? 兜底统一取 DEFAULT_PERMISSION：默认即 full access（触发器 glyph）。 */}
+              <span className={css.selectTriggerIcon} aria-hidden>{permissionGlyph(permission ?? DEFAULT_PERMISSION)}</span>
               <span className={css.selectTriggerLabel}>
+                {/* permission 初始即 DEFAULT_PERMISSION、不再是 undefined：本分支
+                    纯兜底保留（默认即 full access，勿改回 workspace-write）。 */}
                 {permission === undefined
                   ? t('instance.create.permission.default')
                   : permission === 'danger-full-access'
@@ -402,7 +420,8 @@ export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequireme
             {permissionOpen && (
               <div className={css.dialogMenu} role="menu" aria-label={t('instance.create.permission')}>
                 {PERMISSION_OPTIONS.map(option => {
-                  const selected = (permission ?? 'workspace-write') === option.value
+                  // ?? 兜底统一取 DEFAULT_PERMISSION：默认即 full access（菜单选中态）。
+                  const selected = (permission ?? DEFAULT_PERMISSION) === option.value
                   return (
                     <button
                       type="button"
@@ -439,40 +458,34 @@ export function NewInstanceDialog({ t, face, initialWorkflowId, initialRequireme
         </div>
       </div>
 
-      {/* 完全访问风险确认（照 DSH RiskConfirmation 卡片）。 */}
-      {fullAccessConfirm && (
-        <div className={selectCss.riskMask}>
-          <div className={selectCss.riskCard} role="alertdialog" aria-modal="true">
-            <div className={selectCss.riskTitle}>{t('composer.permission.confirmTitle')}</div>
-            <div className={selectCss.riskDesc}>{t('composer.permission.confirmDesc')}</div>
-            <label className={selectCss.riskAck}>
-              <input
-                type="checkbox"
-                checked={acknowledged}
-                onChange={event => { setAcknowledged(event.target.checked) }}
-              />
-              <span>{t('composer.permission.acknowledge')}</span>
-            </label>
-            <div className={selectCss.riskActions}>
-              <button
-                type="button"
-                className={selectCss.riskCancel}
-                onClick={() => { setFullAccessConfirm(false); setAcknowledged(false) }}
-              >
-                {t('composer.permission.cancel')}
-              </button>
-              <button
-                type="button"
-                className={selectCss.riskConfirm}
-                disabled={!acknowledged}
-                onClick={confirmFullAccess}
-              >
-                {t('composer.permission.enable')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 完全访问风险确认：复用 DSH RiskConfirmation（原手写卡片用了 DSH 不存在的
+          token 导致背景/文字色失效，且 Escape 会连底层弹窗一起关掉——守卫见上）。 */}
+      <RiskConfirmation
+        open={fullAccessConfirm}
+        title={t('composer.permission.confirmTitle')}
+        description={t('composer.permission.confirmDesc')}
+        acknowledgeLabel={t('composer.permission.acknowledge')}
+        cancelLabel={t('composer.permission.cancel')}
+        closeLabel={t('composer.permission.cancel')}
+        confirmLabel={t('composer.permission.enable')}
+        acknowledged={acknowledged}
+        onAcknowledgedChange={setAcknowledged}
+        onCancel={() => { setFullAccessConfirm(false); setAcknowledged(false) }}
+        onConfirm={confirmFullAccess}
+      />
+
+      {/* 目录浏览弹窗（browse 能力）：原生 picker 不可用时降级打开，
+          与 DSH「添加项目」弹窗同一后端（listDirectory/createDirectory）。 */}
+      <DirectoryBrowserDialog
+        t={t}
+        open={browserOpen}
+        browse={{ listDirectory: face.listDirectory, createDirectory: face.createDirectory }}
+        onOpen={path => {
+          setCwd(path)
+          setBrowserOpen(false)
+        }}
+        onClose={() => { setBrowserOpen(false) }}
+      />
     </Modal>
   )
 }

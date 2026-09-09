@@ -9,8 +9,8 @@
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/sandore-save
  */
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
-import type { WorkflowDefinitionEntry } from 'dsh-sandore/remote'
-import { WorkflowYamlError } from '../workflow/yaml-error'
+import type { WorkflowDefinitionEntry } from '@meiyukichan/dsh-sandore/remote'
+import { WorkflowYamlError } from '@meiyukichan/dsh-sandore/yaml-error'
 
 import { SandoreRemoteError, unwrap } from './remote.ts'
 import { describeError } from './describe-error.ts'

@@ -372,6 +372,11 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
   const [fallback, setFallback] = useState<PermissionSelectValue | undefined>(undefined)
   const [fallbackFailed, setFallbackFailed] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  // queryValue 经 ref 读取：宿主 prop 常为内联箭头（每次渲染新引用），若进 effect
+  // 依赖会「渲染 → 查询 → setFallback(新对象) → 渲染」风暴（React #185）。ref 让
+  // effect 只随投影值（value）变化而重查。
+  const queryValueRef = useRef(queryValue)
+  queryValueRef.current = queryValue
 
   // 投影缺失 → 命令查询回退（会话未被 DSH 打开过时投影为空）；查询失败（如
   // 旧日志实例无法 resume）降级为占位并锁定，保证选择器不消失。
@@ -382,13 +387,13 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
       return
     }
     let alive = true
-    void queryValue().then(next => {
+    void queryValueRef.current().then(next => {
       if (!alive) return
       if (next === undefined) setFallbackFailed(true)
       else setFallback(next)
     })
     return () => { alive = false }
-  }, [value, queryValue])
+  }, [value])
 
   useEffect(() => {
     if (!locked && (value ?? fallback) !== undefined) return

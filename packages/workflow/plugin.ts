@@ -15,7 +15,7 @@
  * 宿主可用；自身不 `inject` 任何子服务（它们各自声明依赖），Config 透传
  * `SandoreEngineRuntime.Config`。
  *
- * @module dsh-sandore/workflow/plugin
+ * @module @meiyukichan/dsh-sandore/workflow/plugin
  */
 import { Context, Service } from '@deepseek-ai/cordis';
 

@@ -128,6 +128,7 @@
   font-size: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 0.12s ease;
 }
 
 .rowAction:hover {
@@ -187,10 +188,12 @@
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 
 .deleteButton:hover {
   color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
 }
 
 .empty {

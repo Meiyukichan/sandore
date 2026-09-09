@@ -5,14 +5,15 @@
  * 覆盖两阶段 start/collect/evaluate（agent 临时会话 + shell 直接执行）、shell 三注入
  * （透传替换/env/stdin）、条件分支 shouldExecute 两层解析、批量分支 shouldExecute 分支
  * id 数组三层解析、break 结果解析、分支匹配与条件分支 AI 路径批量解析失败重试
- * （首轮 + follow-up 纠正，上限 MAX_BRANCH_EVAL_RETRIES）。
- * @module dsh-sandore/microflow/src/branch-evaluator.spec
+ * （首轮 + follow-up 纠正，上限 MAX_BRANCH_EVAL_RETRIES）、Phase D 路由 fork 子代理的
+ * config.hostAgent 透传（setup + `agentPresets.composeFrom` 组合宿主主代理 preset）。
+ * @module @meiyukichan/dsh-sandore/microflow/src/branch-evaluator.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';
 import { describe, expect, it } from 'vitest';
 
-import { FakeAgentRegistry } from '../tests/mocks/agents.ts';
+import { FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../tests/mocks/llm.ts';
 import { FakeShell, successResult } from '../tests/mocks/shell.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
@@ -603,10 +604,14 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
       { stepSessionId: 'child-1', stepId: 'step-branch' },
     );
 
-    // Phase D：agents.create 收到 seed = 完整事件 + meta（parentSession=宿主主代理、origin='subagent'）。
+    // Phase D：agents.create 收到 seed = 完整事件 + meta（parentSession=宿主主代理、
+    // origin='subagent'；上游适配：isSeeded 替代已删的 seedLength，前缀长度在顶层
+    // inheritedEventCount；hostAgent 缺省 → cwd 缺省 '/'、无 delegationDepth 覆盖问题——
+    // 降级 meta 分支不生成 delegationDepth）。
     expect(agents.createSeeds).toHaveLength(1);
     expect(agents.createSeeds[0]).toEqual(childEvents());
-    expect(agents.createMetas[0]).toMatchObject({ parentSession: 'host-1', origin: 'subagent', seedLength: 4 });
+    expect(agents.createMetas[0]).toEqual({ cwd: '/', parentSession: 'host-1', isSeeded: true, origin: 'subagent' });
+    expect(agents.createInheritedEventCounts[0]).toBe(4);
     // sessionHandle = 路由子代理 id（纯 UUID）。
     expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(result.output).toBe('{"shouldExecute": ["step-branch"]}');
@@ -727,6 +732,76 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
     expect(agents.createSeeds).toHaveLength(0);
     expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(llm.calls).toHaveLength(1);
+  });
+
+  it('passes config.hostAgent to forkStepSubagent on condition routing (setup + composeFrom parentCtx)', async () => {
+    // 自定义 ctx 的宿主主代理：composeFrom 的 parentCtx 断言可识别对象。
+    const hostAgentCtx = { marker: 'host-ctx' };
+    const hostAgent = new FakeAgent('host-1', {}, undefined, hostAgentCtx);
+    const { agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      hostAgent,
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": ["step-branch"]}' }];
+
+    const { result } = await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
+      { stepSessionId: 'child-1', stepId: 'step-branch' },
+    );
+
+    // runRoutingAi：agents.create 收到 setup（hostAgent → preset 组合）且执行
+    // （composeFrom 第二参数 === hostAgent.ctx）。
+    expect(agents.createSetups).toHaveLength(1);
+    expect(typeof agents.createSetups[0]).toBe('function');
+    expect(agents.composeFromCalls).toHaveLength(1);
+    expect(agents.composeFromCalls[0]?.parentCtx).toBe(hostAgentCtx);
+    expect(result.output).toBe('{"shouldExecute": ["step-branch"]}');
+  });
+
+  it('passes config.hostAgent to forkStepSubagent on loop-break routing (dispatchAi)', async () => {
+    const hostAgentCtx = { marker: 'host-ctx-break' };
+    const hostAgent = new FakeAgent('host-1', {}, undefined, hostAgentCtx);
+    const { agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      hostAgent,
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldBreak": true}' }];
+
+    const result = await evaluator.evaluateBreak(
+      { type: 'prompt', value: { promptText: '判断跳出' } },
+      { stepSessionId: 'child-1', stepId: 'loop-node' },
+    );
+
+    // dispatchAi（循环跳出）：同样透传 hostAgent → setup 注入 + composeFrom 执行。
+    expect(agents.createSetups).toHaveLength(1);
+    expect(typeof agents.createSetups[0]).toBe('function');
+    expect(agents.composeFromCalls).toHaveLength(1);
+    expect(agents.composeFromCalls[0]?.parentCtx).toBe(hostAgentCtx);
+    expect(result.output).toBe('{"shouldBreak": true}');
+  });
+
+  it('omits the setup when config.hostAgent is absent (backward compatible fork path)', async () => {
+    const { agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": ["step-branch"]}' }];
+
+    const { result } = await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
+      { stepSessionId: 'child-1', stepId: 'step-branch' },
+    );
+
+    // hostAgent 缺省：不传 setup（createSetups 记录 undefined）、composeFrom 不被调，fork 路径行为不变。
+    expect(agents.createSeeds).toHaveLength(1);
+    expect(agents.createSetups).toEqual([undefined]);
+    expect(agents.composeFromCalls).toHaveLength(0);
+    expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
   /** 带 FakeAgentRegistry 的 harness（Phase D 路由 fork 配置：hostAgentId/createAgent/getStepSessionEvents）。 */

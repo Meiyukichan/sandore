@@ -1,7 +1,7 @@
 /**
  * workflow-engine.ts（SandoreEngineRuntime）的集成测试：线性执行到 completed、
  * 事件序、双发可观测、childId/sessionMeta、失败/中止终态与持久化快照。
- * @module dsh-sandore/workflow/src/workflow-engine.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/workflow-engine.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime, TextBlock } from '@deepseek-ai/dsh-llm';
@@ -21,6 +21,7 @@ import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
 import { FakeWorkspace, FakeWorkspaceRegistry } from '../tests/mocks/workspace.ts';
 import { SandoreError } from './errors.ts';
 import { SandoreEngineRuntime, SandoreEngineStub } from './index.ts';
+import { registerGlobalAskTool } from './ask-tool.ts';
 import type { SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
 import { SandorePersistence } from './persistence.ts';
 import type { ShellExecutor } from './shell.ts';
@@ -1018,6 +1019,8 @@ async function harness(config: SandoreConfig = {}): Promise<{
   agents: FakeAgentRegistry;
   userQuestions: FakeUserQuestions;
   sessionTitle: FakeSessionTitle;
+  /** 全局 `tools.register` 注册的工具定义（registerGlobalAskTool 注册断言用）。 */
+  toolsRegistrations: unknown[];
 }> {
   const ctx = new Context();
   const storageDomain = new MemoryStorageDomain();
@@ -1033,6 +1036,18 @@ async function harness(config: SandoreConfig = {}): Promise<{
   const subprocess = new FakeSubprocess();
   const userQuestions = new FakeUserQuestions();
   const sessionTitle = new FakeSessionTitle();
+  // 全局工具注册表 fake（对齐 DSH `ctx.tools.register`；引擎 init 全局注册
+  // sandore_ask_user_question，上游适配后注册发生在引擎 ctx 全局层）。
+  const toolsRegistrations: unknown[] = [];
+  const tools = {
+    register: (tool: unknown) => {
+      toolsRegistrations.push(tool);
+      return () => {
+        const index = toolsRegistrations.indexOf(tool);
+        if (index >= 0) toolsRegistrations.splice(index, 1);
+      };
+    },
+  };
   ctx.provide('llm', llm as unknown as LlmRuntime);
   ctx.provide('shell', shell as unknown as ShellExecutor);
   ctx.provide('sessions', sessions as unknown as SessionStore);
@@ -1043,10 +1058,11 @@ async function harness(config: SandoreConfig = {}): Promise<{
   ctx.provide('userQuestions', userQuestions);
   ctx.provide('sessionTitle', sessionTitle);
   ctx.provide('fs', {});
+  ctx.provide('tools', tools);
 
   await ctx.plugin(SandoreEngineRuntime, config);
   const engine = ctx.sandoreEngine;
-  return { ctx, engine, persistence, llm, shell, sessions, subagents, agents, userQuestions, sessionTitle };
+  return { ctx, engine, persistence, llm, shell, sessions, subagents, agents, userQuestions, sessionTitle, toolsRegistrations };
 }
 
 /** 注册全部 sandore/* 监听器并记录事件（名称 + 参数）。 */
@@ -1827,6 +1843,40 @@ describe('SandoreEngineRuntime hostAgent freeze', () => {
     expect(next).not.toHaveBeenCalled();
 
     await engine.abortInstance('inst-rec');
+  });
+});
+
+describe('SandoreEngineRuntime recoverInstance hostSessionId reuse mode（F2：复用宿主会话实例的崩溃恢复）', () => {
+  it('reuses the caller host agent when the snapshot carries hostSessionId (no agents.resume(instanceId))', async () => {
+    const { ctx, engine, persistence, sessions, agents, shell } = await harness();
+    await putDefinition(persistence, 'wfl-shell-only', shellOnlyYaml);
+    shell.runHandler = async spec => successResult(spec, 'hello');
+    // 复用模式快照：hostSessionId = host-1（startInstance 复用分支从不创建 instanceId 会话）。
+    await persistence.state.put('inst-reuse', {
+      ...runningSnapshot('inst-reuse', 'wfl-shell-only'),
+      hostSessionId: 'host-1',
+    });
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
+    // 注意：不 sessions.create('inst-reuse')——resume 路径会因 instanceId 会话未发布而
+    // 失败；恢复成功即证明走了复用分支（复用 host-1）。
+    const ended = waitForEnd(ctx);
+    const result = await engine.recoverInstance('inst-reuse');
+    expect(result.status).toBe('running');
+    await ended;
+    expect(persistence.state.get('inst-reuse')?.status).toBe('completed');
+  });
+
+  it('fails fast with a readable error when the reused host agent is gone', async () => {
+    const { engine, persistence } = await harness();
+    await putDefinition(persistence, 'wfl-shell-only', shellOnlyYaml);
+    await persistence.state.put('inst-reuse-ghost', {
+      ...runningSnapshot('inst-reuse-ghost', 'wfl-shell-only'),
+      hostSessionId: 'ghost-host',
+    });
+    await expect(engine.recoverInstance('inst-reuse-ghost'))
+      .rejects.toMatchObject({ code: 'NODE_NOT_FOUND' });
   });
 });
 
@@ -3139,55 +3189,80 @@ describe('SandoreEngineRuntime askFromSubagent（双通道 ask 通道 1）', () 
   });
 });
 
-describe('SandoreEngineRuntime registerContinuableSetup gate（4.3：仅当前非终态 sandore 实例的子代理）', () => {
-  it('registers a contribution and installs the child-scope ask tool only for non-terminal sandore instances', async () => {
-    const { ctx, engine, subagents, persistence, llm, agents } = await harness();
+describe('SandoreEngineRuntime registerGlobalAskTool gate（上游适配：全局注册 + execute 期 gate，仅当前非终态 sandore 实例的子代理）', () => {
+  it('registers the global sandore ask tool once; execute gates on non-sandore callers and active sandore subagents', async () => {
+    const { ctx, engine, persistence, llm, subagents, agents, sessions, userQuestions, toolsRegistrations } = await harness();
     await putDefinition(persistence, 'wfl-prompt-only', promptOnlyYaml);
     provideLlmDirectory(llm);
     // prompt Step 挂起：child status='running' 不自动 settle → 实例保持 running（非终态）。
     const child = new FakeAgent('child-1');
     child.status = 'running';
     agents.register(child);
+    // Round 26（场景 B）：复用宿主会话 → reportToHost=true → gate 命中时 ask 上报宿主并返回。
+    const existingHost = new FakeAgent('host-1');
+    agents.register(existingHost);
+    sessions.create('host-1');
 
     const stepStarted = waitForStepStart(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-prompt-only', originalInput: 'do it', cwd: '/tmp' });
+    const run = await engine.startInstance({ workflowId: 'wfl-prompt-only', originalInput: 'do it', cwd: '/tmp', hostSessionId: 'host-1' });
     await stepStarted;
 
-    // 引擎启动时注册了 1 个贡献（Service.init → registerSandoreAskToolSetup）。
-    expect(subagents.continuableSetups).toHaveLength(1);
-    const contribution = subagents.continuableSetups[0]!;
+    // 引擎启动时全局注册 2 个工具（Service.init → registerGlobalAskTool +
+    // registerGlobalManagerTool）；此处按名取 sandore_ask_user_question，描述说明
+    // 它是 sandore 工作流子代理的提问通道。
+    expect(toolsRegistrations).toHaveLength(2);
+    expect(toolsRegistrations.map(entry => (entry as { name: string }).name).sort())
+      .toEqual(['sandore_ask_user_question', 'sandore_workflow']);
+    const tool = toolsRegistrations.find(entry => (entry as { name: string }).name === 'sandore_ask_user_question') as {
+      name: string;
+      description: string;
+      execute(args: { questions: Array<{ id: string; question: string }> }, exec: { agent?: FakeAgent; signal?: AbortSignal }): Promise<unknown>;
+    };
+    expect(tool.name).toBe('sandore_ask_user_question');
+    expect(tool.description).toContain('Sandore workflow step subagent');
 
-    // gate 未命中（parent 非任何 sandore 实例的宿主主代理）：不注册工具。
-    const toolsA = { register: vi.fn(() => () => {}) };
-    const disposeA = contribution({
-      tools: toolsA,
-      agent: { session: { header: { parentSession: 'some-other-session' } } },
-    } as unknown as Context);
-    expect(toolsA.register).not.toHaveBeenCalled();
-    disposeA();
+    // Step 子代理委派请求携带 toolFilter deny 全局版 ask_user_question（引导模型用
+    // sandore 通道；上游适配后 child-scope 遮蔽机制不复存在）。step-start 事件先于
+    // startContinuable 发出，经 waitFor 等委派请求登记。
+    await vi.waitFor(() => {
+      expect(subagents.continuableStarts.length).toBeGreaterThan(0);
+      expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
+    });
 
-    // gate 命中（parent = 当前非终态 sandore 实例的宿主主代理会话 = instanceId）：
-    // 注册 child-scope ask_user_question。
-    const toolsB = { register: vi.fn(() => () => {}) };
-    const disposeB = contribution({
-      tools: toolsB,
-      agent: { session: { header: { parentSession: run.instanceId } } },
-    } as unknown as Context);
-    expect(toolsB.register).toHaveBeenCalledTimes(1);
-    expect(toolsB.register).toHaveBeenCalledWith(expect.objectContaining({ name: 'ask_user_question' }));
-    disposeB();
+    // gate 未命中（exec.agent 缺失）：抛清晰说明的错误。
+    await expect(tool.execute({ questions: [{ id: 'q1', question: 'Q?' }] }, {}))
+      .rejects.toThrow('sandore_ask_user_question is only available to sandore workflow step subagents');
+    // gate 未命中（parent 非任何活跃 sandore 实例的宿主主代理会话）：同样拒绝。
+    const outsider = new FakeAgent('outsider');
+    outsider.session.header = { parentSession: 'some-other-session' };
+    await expect(tool.execute({ questions: [{ id: 'q1', question: 'Q?' }] }, { agent: outsider }))
+      .rejects.toThrow('sandore_ask_user_question is only available to sandore workflow step subagents');
 
-    // 实例终态（completed）后：同一宿主主代理的后续子代理不再注入（避免误注入）。
+    // gate 命中（parent = 当前非终态实例的宿主主代理会话 = host-1，且 childId 命中
+    // Step 段）：路由到引擎 askFromSubagent 并返回 DSH 答案形状。
+    child.session.header = { parentSession: 'host-1' };
+    userQuestions.resolveNext = async () => ({ answers: [{ id: 'q1', selected: ['A'] }] });
+    await expect(tool.execute({ questions: [{ id: 'q1', question: 'Q?' }] }, { agent: child }))
+      .resolves.toEqual({ answers: [{ id: 'q1', selected: ['A'] }] });
+
+    // 实例终态（completed）后：同一宿主主代理的后续子代理不再放行（避免提问路由到
+    // 已结束实例的交互管理器）。
     child.session.append(assistantMessageEvent([{ type: 'text', text: 'done' }]));
     subagents.settleChild('child-1', 'completed');
     await waitForEnd(ctx);
-    const toolsC = { register: vi.fn(() => () => {}) };
-    const disposeC = contribution({
-      tools: toolsC,
-      agent: { session: { header: { parentSession: run.instanceId } } },
-    } as unknown as Context);
-    expect(toolsC.register).not.toHaveBeenCalled();
-    disposeC();
+    await expect(tool.execute({ questions: [{ id: 'q1', question: 'Q?' }] }, { agent: child }))
+      .rejects.toThrow('sandore_ask_user_question is only available to sandore workflow step subagents');
+  });
+
+  it('skips registration when the tools service is absent (minimal stub deployment)', () => {
+    // registerGlobalAskTool 对 tools 服务缺失静默跳过（返回空 disposer，不阻塞引擎
+    // 启动）——与旧 contribution 对 subagents 缺省的降级一致。
+    const bareCtx = new Context();
+    const disposer = registerGlobalAskTool(bareCtx, {
+      isSandoreSubagentParentSession: () => false,
+      askFromSubagent: async () => ({ answers: [] }),
+    });
+    expect(disposer).toBeTypeOf('function');
   });
 });
 
@@ -3421,6 +3496,21 @@ describe('SandoreEngineRuntime recovery', () => {
     expect(step?.retryHistory?.[0]?.mode).toBe('revert');
     expect(step?.retryHistory?.[0]?.result).toBe('completed');
     expect(subagents.followups.some(item => item.childId === step?.sessionMeta?.childId)).toBe(true);
+
+    // 上游适配：retry revert/fork 的 createAgent 包装注入与 forkStepSubagent 同型的
+    // setup（delegation 策略 + applyChildComposition），消除 retry fork 子代理零工具
+    // 缺陷——create 记录序 = [宿主主代理, retry 子代理, ...]。
+    const retryCreateMeta = agents.createMetas[1];
+    expect(retryCreateMeta).toMatchObject({ origin: 'subagent', parentSession: run.instanceId, isSeeded: true });
+    // 顶层 inheritedEventCount = seed 长度（闭合 turn：turn/start + assistant + turn/end）。
+    expect(agents.createInheritedEventCounts[1]).toBe(3);
+    // setup 已在 create 时执行：preset 组合（parentCtx === 宿主主代理 ctx）+ delegation
+    // 运行时上下文注册均生效（后续 finalize fork 同型 setup ≥1 次，故取最末记录断言）。
+    expect(agents.createSetups[1]).toBeDefined();
+    expect(agents.composeFromCalls.length).toBeGreaterThanOrEqual(1);
+    expect(agents.composeFromCalls[0]?.parentCtx).toBe(agents.createdAgents[0]?.ctx);
+    expect(agents.systemPromptContexts.length).toBeGreaterThanOrEqual(1);
+    expect(agents.systemPromptContexts[0]?.declaration.name).toBe('subagent:delegation');
   });
 
   it('retries a failed agent step with revert mode to a user-selected earlier turn boundary', async () => {
@@ -4328,6 +4418,39 @@ steps:
         description: "项目名"
 `;
 
+/** prompt Step → 虚拟条件路由节点（无透传变量/门禁）——Phase D 路由 fork 的 routingForkConfig
+ * （hostAgentId + hostAgent 成对注入）引擎级集成。branchMeta 落在虚拟路由节点条目上。 */
+const routingForkYaml = `id: wfl-routing-fork
+name: routing-fork
+version: "1.0.0"
+stages:
+  - id: stg-1
+    name: 路由fork
+    steps:
+      - id: step-p
+      - id: step-route
+        branches:
+          - condition:
+              type: prompt
+              value:
+                promptText: "route"
+            next: step-matched
+      - id: step-matched
+        branches: []
+steps:
+  - id: step-p
+    command:
+      type: prompt
+      value:
+        promptText: "do it"
+  - id: step-route
+  - id: step-matched
+    command:
+      type: shell
+      value:
+        command: "echo matched"
+`;
+
 describe('SandoreEngineRuntime 收尾真 fork（Phase B agents.create 重建宿主子代理）', () => {
   it('Phase B 真 fork：agents.create 收到 seed=完整事件 + meta.parentSession=宿主主代理 + origin=subagent；透传变量在 Phase B 回写', async () => {
     const { ctx, engine, persistence, llm, shell, sessions, agents } = await harness();
@@ -4359,10 +4482,12 @@ describe('SandoreEngineRuntime 收尾真 fork（Phase B agents.create 重建宿�
     expect(state?.status).toBe('completed');
 
     // Phase B 真 fork：agents.create 收到 seed = 完整事件 + meta（parentSession=宿主主代理、
-    // origin='subagent'、seedLength=4、cwd=/tmp）。create 记录序 = [宿主主代理, fork 子代理]。
+    // origin='subagent'、isSeeded=true、delegationDepth=1；上游适配：seedLength 已删，
+    // 前缀长度移到顶层 inheritedEventCount=4）。create 记录序 = [宿主主代理, fork 子代理]。
     const forkMeta = agents.createMetas[agents.createMetas.length - 1];
     expect(agents.createSeeds[agents.createSeeds.length - 1]).toEqual(childSession.events);
-    expect(forkMeta).toMatchObject({ cwd: '/tmp', parentSession: run.instanceId, seedLength: 4, origin: 'subagent' });
+    expect(forkMeta).toMatchObject({ cwd: '/tmp', parentSession: run.instanceId, isSeeded: true, origin: 'subagent', delegationDepth: 1 });
+    expect(agents.createInheritedEventCounts[agents.createInheritedEventCounts.length - 1]).toBe(childSession.events.length);
     // 驱动一轮：followup 收到收尾处理提示词（含 compressedOutput 格式）、whenIdle 被 await。
     const forkedAgent = agents.createdAgents[agents.createdAgents.length - 1]!;
     expect(forkedAgent.followups).toHaveLength(1);
@@ -4385,5 +4510,54 @@ describe('SandoreEngineRuntime 收尾真 fork（Phase B agents.create 重建宿�
     // llm.stream**（模型调用走 followup 驱动轮）；compressStepOutput 已删除（Phase B JSON
     // 的 compressedOutput 即压缩摘要）→ 无 compress 调用。
     expect(llm.calls).toHaveLength(1);
+  });
+});
+
+describe('SandoreEngineRuntime Phase D 路由 fork（routingForkConfig：hostAgentId + hostAgent 成对注入）', () => {
+  it('routing fork 的 agents.create 同时收到 meta.parentSession（hostAgentId）与 setup（hostAgent → preset 组合）', async () => {
+    const { ctx, engine, persistence, llm, shell, sessions, agents } = await harness();
+    await putDefinition(persistence, 'wfl-routing-fork', routingForkYaml);
+    provideLlmDirectory(llm);
+    shell.runHandler = async spec => successResult(spec, 'done');
+    // step-p（prompt）走可续接子代理：注册真实 childId 并回填最终输出。
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'work output' }]));
+    agents.register(child);
+    // 源子代理完整事件（live store 仍可读）→ Phase D 路由 fork 的 seed（闭合 turn：4 条事件）。
+    const childSession = sessions.create('child-1');
+    childSession.append('turn/start', { turn: 0 });
+    childSession.append('user/message', { id: 'u1', content: [{ type: 'text', text: 'do it' }] });
+    childSession.append('assistant/message', assistantMessageEvent([{ type: 'text', text: 'work output' }]).data);
+    childSession.append('turn/end', { turn: 0, reason: { kind: 'completed' } });
+    // 路由 fork 子代理的评估回复（shouldExecute 分支 id 数组，命中 step-matched）。
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": ["step-matched"]}' }];
+    // 兜底（不应被消费）：路由判断走 fork 子代理 followup，不走 llm.stream 降级。
+    llm.streamHandler = () => textChunks('{"shouldExecute": ["step-matched"]}');
+
+    const ended = waitForEnd(ctx);
+    const run = await engine.startInstance({ workflowId: 'wfl-routing-fork', originalInput: 'do it', cwd: '/tmp' });
+    await ended;
+
+    const state = persistence.state.get(run.instanceId);
+    expect(state?.status).toBe('completed');
+    // 条件命中 step-matched（路由 fork 子代理判定）：step-p → 虚拟路由节点 step-route → step-matched。
+    expect(state?.executedSteps.map(step => step.stepId)).toEqual(['step-p', 'step-route', 'step-matched']);
+
+    // routingForkConfig 成对注入的可观测面：路由 fork 的 agents.create（meta.origin='subagent'）
+    // 同时携带 meta.parentSession = 宿主主代理 id（hostAgentId）与 setup（hostAgent →
+    // `agentPresets.composeFrom` 组合，继承工具集 + prompt sections）。
+    const forkIndex = agents.createMetas.findIndex(meta => meta?.origin === 'subagent');
+    expect(forkIndex).toBeGreaterThanOrEqual(0);
+    expect(agents.createMetas[forkIndex]).toMatchObject({ parentSession: run.instanceId, origin: 'subagent' });
+    expect(typeof agents.createSetups[forkIndex]).toBe('function');
+    // setup 在 create 时执行：composeFrom 被调恰 1 次（宿主主代理 setup 走闭包 presets、
+    // 不经 agentCtx.get，不计入）。
+    expect(agents.composeFromCalls).toHaveLength(1);
+    // 路由判断不消费 llm.stream（fork 子代理 followup 驱动一轮）；branchMeta 保留在
+    // 虚拟路由节点条目上（sessionId = 路由子代理 UUID）。
+    expect(llm.calls).toHaveLength(0);
+    const branchEntry = state?.executedSteps.find(step => step.stepId === 'step-route');
+    expect(branchEntry?.branchMeta?.result).toBe('{"shouldExecute": ["step-matched"]}');
+    expect(branchEntry?.branchMeta?.sessionId).toMatch(UUID_RE);
   });
 });

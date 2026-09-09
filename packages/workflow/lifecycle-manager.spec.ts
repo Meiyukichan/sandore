@@ -1,7 +1,7 @@
 /**
  * lifecycle-manager.ts（LifecycleManager）与引擎接线的集成/单元测试：单步/全局
  * 暂停与恢复、暂停登记表、幂等 no-op、非法操作与中止传播。
- * @module dsh-sandore/workflow/src/lifecycle-manager.spec
+ * @module @meiyukichan/dsh-sandore/workflow/src/lifecycle-manager.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { LlmRuntime } from '@deepseek-ai/dsh-llm';

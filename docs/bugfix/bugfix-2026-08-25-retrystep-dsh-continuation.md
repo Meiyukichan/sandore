@@ -1,8 +1,8 @@
 # retryStep 与真实 DSH continuation 生命周期不兼容（后续修复计划）
 
-> **日期**：2026-08-25
+> **日期**：2026-08-25（方向 B 兜底落地：另见文末「更新」）
 > **来源**：真实 e2e 多轮运行诊断（第 5/8/9/10/11/12/13 次）
-> **状态**：**已定位根因，修复另立任务**（e2e 已去掉自动重试，见 bugfix-2026-08-25-round23-midstage-completed-ask-gate.md）
+> **状态**：**方向 B（fail-fast）已落地（rc.1 兼容修复批次）**；方向 A（DSH 原生 continuation 重建）依赖宿主能力，仍留待上游支持 seed/restart 后实施
 > **优先级**：中高（真实用户「重试失败 step」功能受影响）
 
 ---
@@ -85,6 +85,28 @@ subagents.startContinuable（provider 'fork'/'spawn'）
 1. 单测：用**真实 continuation mock**（模拟 settle→dispose→cold-resume 语义）覆盖三种模式
 2. 真实 e2e 恢复自动重试（re-enable），门禁误判/模型波动场景重试后应能完成
 3. `pnpm typecheck` + `pnpm build` + 全量 test
+
+---
+
+## 更新（rc.1 兼容修复批次，2026 审计落地）
+
+**方向 B（fail-fast）已实现**：RecoveryManager 新增可选依赖 `getAgent`（live 判定，
+引擎注入 `ctx.agents.get`）；`retryStep` 在**产生任何新段/事件之前**预检目标子代理会话——
+注入 live 判定且目标已 dispose（rc.1 对已结算子代理执行 dispose、continuable 状态注销）
+→ 抛可读 `INVALID_OPERATION`（「子代理会话已销毁…不能重试；请重新运行该 Step/实例」），
+消除两类真实症状：continue 对已销毁会话 followup **挂起（40min 无终态）**、fork/revert
+裸建子代理 followup **NOT_RESUMABLE 噪音**。未注入 live 判定（纯依赖单测）时放行，
+保持旧语义。
+
+- rc.1 语义结论：已 settle/dispose 的子代理会话无法进程内续跑（无 seed/restart API），
+  三模式（continue/revert/fork）对已销毁会话一律 fail-fast；`retryStep` 的可用场景收窄为
+  「目标子代理仍 live」（如 paused/running 中断后的恢复续跑）。
+- 新增单测：`recovery-manager.spec.ts`「retryStep dispose fail-fast（F1）」两组用例
+  （已销毁拒绝且零副作用 / live 命中放行），engine 侧现有 fork/revert/continue 重试用例
+  在注入 getAgent 后全量保持通过（mock registry 中 child live）。
+- 方向 A（`startContinuable`/cold-resume seed 重建、provider prepareContinuable）在
+  rc.1 无对应能力，留待上游支持后实施；届时同步恢复「重试=上下文续跑」语义并 re-enable
+  真实 e2e 自动重试。
 
 ## 四、关联
 

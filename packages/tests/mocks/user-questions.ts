@@ -4,7 +4,7 @@
  * 提供 `ask` 等价语义：记录每次调用，支持「可编程 handler」与「答案队列」两种
  * 回复注入；无 handler 且队列空时挂起（等待引擎 `replyQuestion` 兼容路径或测试
  * 手动 resolve）。以 `ctx.provide('userQuestions', …)` 注入。
- * @module dsh-sandore/workflow/tests/mocks/user-questions
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/user-questions
  */
 import type { AskUserQuestionAnswer } from '../../workflow/types.ts';
 import type { UserQuestions, UserQuestionsRequest } from '../../workflow/seam.ts';

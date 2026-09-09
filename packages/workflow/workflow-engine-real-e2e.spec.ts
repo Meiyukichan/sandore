@@ -27,7 +27,7 @@
  * $env:SANDBORE_E2E_REAL='1'
  * pnpm exec vitest run packages/sandore/workflow/src/workflow-engine-real-e2e.spec.ts --no-file-parallelism
  * ```
- * @module dsh-sandore/workflow/src/workflow-engine-real-e2e
+ * @module @meiyukichan/dsh-sandore/workflow/src/workflow-engine-real-e2e
  */
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, stat as statFile, writeFile } from 'node:fs/promises';

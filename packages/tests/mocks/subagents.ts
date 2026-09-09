@@ -5,6 +5,10 @@
  * 记录委派请求并 resolve 为 `{ childId, messageId }`（inbox 接受即 resolve）。以
  * `ctx.provide('subagents', …)` 注入。
  *
+ * `followup` 为**降级通道保留**（上游 `subagents.followup` 已删，接缝不再声明该方法；
+ * 引擎经 subagent-delivery.ts 的 queue 符号通道投递，mock 无 queue 符号 → 结构探测
+ * 降级到本方法，保住既有 followups 断言语义）。
+ *
  * **settle 仿真**（对齐 DSH `SubagentContinuationManager`）：continuable 子代理「完成 =
  * settle」。本 mock 不后台驱动 settle——由测试经 `settleChild(childId, stopReason)`
  * 显式触发（模拟子代理自然完成/出错）；`interrupt` 自动 settle(`aborted`)（模拟 DSH
@@ -13,19 +17,17 @@
  * 路由到对应 childId 的等待者——与真实 DSH `subagent/end`→`sandore/subagent-settled`
  * 转译同一通道。`followup`（settle 后）模拟 cold-resume：状态回 `running`，等待测试
  * 再次 `settleChild`（续跑产出）。
- * @module dsh-sandore/workflow/tests/mocks/subagents
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/subagents
  */
 import type { Context } from '@deepseek-ai/cordis';
-import type { ContentBlock } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm';
 
 import type {
   Agent,
-  ContinuableSetupContribution,
   ContinuableStart,
   ContinuableStartSpec,
   MessageId,
   SessionId,
-  SubagentFollowupOptions,
   SubagentInterruptAuthority,
   SubagentListEntry,
   SubagentResult,
@@ -36,12 +38,12 @@ import type {
   SubagentStopReason,
 } from '../../microflow/subagents';
 
-/** 一次 `followup` 调用的记录。 */
+/** 一次 `followup`（降级投递通道）调用的记录。 */
 export interface FakeFollowup {
   parent: Agent;
   childId: SessionId;
   content: ContentBlock[];
-  options: SubagentFollowupOptions;
+  options: { readonly source: MessageSource; readonly signal: AbortSignal };
 }
 
 /** 可续接子代理状态机状态：`running` 活跃、`interrupted` 被 interrupt（已 settle aborted）。 */
@@ -54,8 +56,6 @@ export class FakeSubagents implements SubagentRuntime {
   readonly interrupts: Array<{ targetSessionId: SessionId; authority: SubagentInterruptAuthority }> = [];
   readonly startCalls: Array<{ name: string; request: SubagentStartRequest }> = [];
   readonly listChildrenCalls: Array<{ parentSessionId: SessionId; signal?: AbortSignal }> = [];
-  /** 已注册的 continuable setup 贡献（registerContinuableSetup 记录，供 gate 断言）。 */
-  readonly continuableSetups: ContinuableSetupContribution[] = [];
   /** 已发射的 settle 事件载荷（按发射顺序，供断言）。 */
   readonly settlements: Array<SubagentSettlement> = [];
   /** 可选：followup 抛错注入（缺陷 11 测试：recover() followup 失败落 failed）。 */
@@ -89,7 +89,7 @@ export class FakeSubagents implements SubagentRuntime {
     return { childId, messageId: `msg-${index}` };
   }
 
-  async followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId> {
+  async followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: { readonly source: MessageSource; readonly signal: AbortSignal }): Promise<MessageId> {
     if (this.followupError !== undefined) {
       throw this.followupError;
     }
@@ -125,12 +125,6 @@ export class FakeSubagents implements SubagentRuntime {
       });
     }
     return entries;
-  }
-
-  /** 记录注册的 continuable setup 贡献（不实际安装；测试可手动调用贡献模拟 child 安装）。 */
-  registerContinuableSetup(contribution: ContinuableSetupContribution): () => void {
-    this.continuableSetups.push(contribution);
-    return () => {};
   }
 
   /** 查询某可续接子代理当前状态（`startContinuable` 后为 running，interrupt 后为 interrupted）。 */

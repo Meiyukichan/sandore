@@ -8,18 +8,29 @@
  * failed/paused（真实子代理会话）→ 内嵌 DSH 对话流（StepChatPanel，最新 10 条，
  * 无边框平铺，风格与运行中完全一致）；failed/paused 无真实会话（shell 等合成
  * 会话）→ 最近 5 条消息列表兜底（末条按失败/暂停色）。旧实例无时间戳时头部省略时间。
+ *
+ * 窗口化渲染（对齐 DSH ChatView「尾部一窗 + 加载更早」分页）：默认只渲染时间线
+ * 尾部 TIMELINE_WINDOW 条，顶部「加载更早」按钮逐次扩窗，扩窗 prepend 后按
+ * scrollHeight 锚点补偿 scrollTop（不跳动）；行组件 memo 化 + buildTimeline 引用
+ * 稳定缓存，轮询期未变化的行跳过重渲染。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/UnifiedTimeline
  */
 import { IconSparkle16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import { useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 
+import { markdownLabels } from './tool/primitive-labels.ts'
 import type { SandoreKey } from './locales.ts'
+import { TIMELINE_MAX_STEPS, TIMELINE_STEPS_PAGE, visibleTimelineWindow } from './timeline-window.ts'
 import {
   relativeTimeOf, type ChatLine, type RelativeTime, type StepStatus, type TimelineItem, type TimelineStepItem,
 } from './run-view-model.ts'
 import { StepChatPanel } from './StepChatPanel.tsx'
 import css from './timeline.module.css'
+
+/** 相对时间「现在」的刷新间隔（ms）：分钟粒度文案（N 分钟前）60s 刷新足够。 */
+const NOW_REFRESH_MS = 60000
 
 /** Step 执行状态 → 本地化标签键（7 态）。 */
 const STEP_STATUS_KEYS: Record<StepStatus, SandoreKey> = {
@@ -307,8 +318,13 @@ function PhaseBadge({ item, t, openSession }: {
   )
 }
 
-/** 单条 agent 消息（一个 executedStep）。 */
-function AgentMsg({ item, t, nowIso, openSession }: {
+/**
+ * 单条 agent 消息（一个 executedStep）。
+ *
+ * memo 化：item 引用由 buildTimeline 的引用稳定缓存保证（未变化的行跨轮询轮次
+ * 保持同引用），MarkdownText / StepChatPanel 等重组件在轮询期跳过重渲染。
+ */
+const AgentMsg = memo(function AgentMsg({ item, t, nowIso, openSession }: {
   readonly item: TimelineStepItem
   readonly t: TranslateNS<'sandore'>
   readonly nowIso: string
@@ -367,14 +383,14 @@ function AgentMsg({ item, t, nowIso, openSession }: {
             // 非 shell 优先 compressedOutput，降级（assessResult.errorDetail 非 undefined）
             // 时回退原始 output。
             item.commandType === 'shell' && item.outputText !== undefined
-              ? <div className={css.md}><MarkdownText text={item.outputText} /></div>
+              ? <div className={css.md}><MarkdownText text={item.outputText} labels={markdownLabels(t)} /></div>
               // 非 shell：优先 compressedOutput，降级（有 errorDetail）时回退 output
               : item.commandType !== 'shell' && (
                 item.finalizeAssessErrorDetail === undefined
                   && item.finalizeAssessResult?.compressedOutput !== undefined
-                  ? <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} /></div>
+                  ? <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} labels={markdownLabels(t)} /></div>
                   : item.outputText !== undefined
-                    ? <div className={css.md}><MarkdownText text={item.outputText} /></div>
+                    ? <div className={css.md}><MarkdownText text={item.outputText} labels={markdownLabels(t)} /></div>
                     : null
               )
           )}
@@ -413,7 +429,7 @@ function AgentMsg({ item, t, nowIso, openSession }: {
                   )}
                   {/* compressedOutput：平铺 .md（与运行中消息同风格） */}
                   {item.finalizeAssessResult?.compressedOutput !== undefined && (
-                    <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} /></div>
+                    <div className={css.md}><MarkdownText text={item.finalizeAssessResult.compressedOutput} labels={markdownLabels(t)} /></div>
                   )}
                 </>
               )}
@@ -431,10 +447,10 @@ function AgentMsg({ item, t, nowIso, openSession }: {
       )}
     </div>
   )
-}
+})
 
-/** 用户消息：右侧气泡 + kind 徽标 + meta。 */
-function UserMsg({ item, t, nowIso }: {
+/** 用户消息：右侧气泡 + kind 徽标 + meta（memo 化，理由同 AgentMsg）。 */
+const UserMsg = memo(function UserMsg({ item, t, nowIso }: {
   readonly item: Extract<TimelineItem, { readonly kind: 'user' }>
   readonly t: TranslateNS<'sandore'>
   readonly nowIso: string
@@ -458,27 +474,72 @@ function UserMsg({ item, t, nowIso }: {
       </div>
     </div>
   )
-}
+})
 
 /** 渲染执行详情对话流。 */
-export function UnifiedTimeline({ t, items, openSession }: {
+export function UnifiedTimeline({ t, items, openSession, scrollContainerRef }: {
   /** 类型化翻译函数。 */
   t: TranslateNS<'sandore'>
   /** 时间线条目（buildTimeline 派生）。 */
   items: readonly TimelineItem[]
   /** 跳子代理会话（agent 标题点击）。 */
   openSession: (id: string) => void
+  /** 滚动容器（RunView feedScroll）ref：「加载更早」扩窗 prepend 保位用；缺省不补偿。 */
+  scrollContainerRef?: RefObject<HTMLDivElement>
 }) {
-  // 每次渲染取「现在」，运行中轮询会带动重渲染，保持相对时间新鲜。
-  const nowIso = new Date().toISOString()
+  // 「现在」时间戳：state 低频刷新（60s）而非每次渲染取值——nowIso 若每次渲染都变，
+  // 字符串变化会击穿上方 memo 行组件的浅比较，重渲染治理失效；60s 刷新保持相对时间新鲜。
+  const [nowIso, setNowIso] = useState(() => new Date().toISOString())
+  useEffect(() => {
+    const timer = setInterval(() => { setNowIso(new Date().toISOString()) }, NOW_REFRESH_MS)
+    return () => { clearInterval(timer) }
+  }, [])
+
+  // 尾部窗口（step agent 粒度）：默认最多渲染最近 TIMELINE_MAX_STEPS 个 step agent
+  // （含夹在中间的 user 消息——user 气泡轻量不限窗；step 内部消息本就只渲染最近几条），
+  // 顶部「加载更早」逐次多放 TIMELINE_STEPS_PAGE 个 step；step 总数不足时全量渲染。
+  const [visibleSteps, setVisibleSteps] = useState(TIMELINE_MAX_STEPS)
+  // prepend 保位锚点：点击「加载更早」时记录滚动容器 scrollHeight，扩窗 commit 后补偿。
+  const pendingAnchorRef = useRef<number | null>(null)
+  const { start, hidden } = visibleTimelineWindow(
+    items,
+    item => item.kind !== 'user',
+    visibleSteps,
+  )
+  const visible = items.slice(start)
+
+  /** 「加载更早」：记录当前 scrollHeight 作为保位锚点，再向历史方向扩一页 step。 */
+  const loadOlder = (): void => {
+    const el = scrollContainerRef?.current ?? null
+    if (el !== null) pendingAnchorRef.current = el.scrollHeight
+    setVisibleSteps(count => count + TIMELINE_STEPS_PAGE)
+  }
+
+  // 扩窗 commit 后补偿 scrollTop：新增内容高度 = scrollHeight - 锚点，加到 scrollTop 上，
+  // 用户视角停在原首条消息处（经典 prepend 保位，效果对齐 DSH ChatView 的 pagingAnchor）。
+  useLayoutEffect(() => {
+    const el = scrollContainerRef?.current ?? null
+    if (pendingAnchorRef.current === null || el === null) return
+    el.scrollTop += el.scrollHeight - pendingAnchorRef.current
+    pendingAnchorRef.current = null
+  }, [visibleSteps, scrollContainerRef])
+
   return (
     <div className={css.flow} data-sandore-timeline>
       {items.length === 0 && <p className={css.empty}>{t('run.trajectory.empty')}</p>}
-      {items.map((item, index) => (
-        item.kind === 'user'
+      {hidden > 0 && (
+        // 「加载更早」（DSH ChatView .older 观感：居中小胶囊 + 剩余条数）。
+        <div className={css.older}>
+          <button type="button" onClick={loadOlder}>{t('run.loadOlder')} · {hidden}</button>
+        </div>
+      )}
+      {visible.map((item, offset) => {
+        // key 基于绝对索引（start+offset）：窗口扩展时既有条目的 key 稳定，不触发重建。
+        const index = start + offset
+        return item.kind === 'user'
           ? <UserMsg key={`user-${index}`} item={item} t={t} nowIso={nowIso} />
           : <AgentMsg key={`${item.stepId}-${index}`} item={item} t={t} nowIso={nowIso} openSession={openSession} />
-      ))}
+      })}
     </div>
   )
 }

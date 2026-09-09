@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import ts from 'typescript'
 import { defineConfig } from 'vitest/config'
 
@@ -28,8 +29,27 @@ function standardDecoratorPlugin() {
   }
 }
 
+/**
+ * 包自引用别名：client 源码/测试里的 `@meiyukichan/dsh-sandore/*` import 直接映射到本仓库
+ * 源码（vitest 的 resolver 不解析 package.json exports 的包名自引用，且测试
+ * 应针对源码而非构建产物）。类型子路径（schema/types）运行时被擦除，映射到
+ * 源码文件仅作兜底；remote/typert 映射到手写固化 .js 产物。
+ */
+const SELF_REFERENCE_ALIASES = [
+  { find: /^@meiyukichan\/dsh-sandore$/, replacement: resolve('packages/workflow/index.ts') },
+  { find: /^@meiyukichan\/dsh-sandore\/types$/, replacement: resolve('packages/workflow/types.ts') },
+  { find: /^@meiyukichan\/dsh-sandore\/schema$/, replacement: resolve('packages/workflow/schema.ts') },
+  { find: /^@meiyukichan\/dsh-sandore\/yaml$/, replacement: resolve('packages/workflow/yaml-parser.ts') },
+  { find: /^@meiyukichan\/dsh-sandore\/yaml-error$/, replacement: resolve('packages/workflow/yaml-error.ts') },
+  { find: /^@meiyukichan\/dsh-sandore\/remote$/, replacement: resolve('packages/workflow/typert/typert.remote-client.js') },
+  { find: /^@meiyukichan\/dsh-sandore\/typert$/, replacement: resolve('packages/workflow/typert/typert.host.js') },
+]
+
 export default defineConfig({
   plugins: [standardDecoratorPlugin()],
+  resolve: {
+    alias: SELF_REFERENCE_ALIASES,
+  },
   test: {
     include: ['packages/**/*.spec.ts'],
     environment: 'node',

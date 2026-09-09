@@ -127,10 +127,16 @@
   font-family: inherit;
   color: var(--dsw-alias-label-caption);
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .canvasTabs button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
+}
+
+.canvasTabs button:active {
+  background: var(--dsw-alias-interactive-bg-active);
 }
 
 .canvasTabs button.tabActive {
@@ -148,11 +154,16 @@
   font-family: inherit;
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .backBtn:hover {
-  background: var(--dsw-alias-bg-hover);
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-accent-primary);
+}
+
+.backBtn:active {
+  background: var(--dsw-alias-interactive-bg-active);
 }
 
 .crumb {
@@ -189,16 +200,21 @@
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   font-size: 14px;
   color: var(--dsw-alias-label-caption);
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .iconBtn:hover {
-  background: var(--dsw-alias-bg-hover);
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-secondary);
+}
+
+.iconBtn:active {
+  background: var(--dsw-alias-interactive-bg-active);
 }
 
 /* ── 节点卡（官方默认节点风格：白底由 wrapper 提供，内部只做居中内容布局） ── */
@@ -463,7 +479,7 @@
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--dsw-alias-bg-sunken);
 }
 
@@ -474,42 +490,92 @@
   gap: 6px;
 }
 
+/* ── 统一下拉样式（照 DSH ui-settings-models .selectInput）：appearance none +
+   12px chevron（data-URI 无法解析 CSS 变量，用双主题共用的 caption 灰 #81858C）、
+   l2 边框 + 8px 圆角 + layer-1 底 + 28px 高（与 Button sm / 紧凑输入框同行对齐）。 */
+.select,
+.branchKindSelect,
+.bindingSelect,
+.branchTargetSelect {
+  appearance: none;
+  height: 28px;
+  padding: 0 26px 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background-color: var(--dsw-alias-bg-layer-1);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px 12px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.select:hover,
+.branchKindSelect:hover,
+.bindingSelect:hover,
+.branchTargetSelect:hover {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.select:focus,
+.branchKindSelect:focus,
+.bindingSelect:focus,
+.branchTargetSelect:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
 /* 分支类型下拉（并行分支 / 条件分支）。 */
 .branchKindSelect {
   flex: none;
   width: 108px;
-  padding: 5px 8px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-  font-family: inherit;
-  outline: none;
-  box-sizing: border-box;
 }
 
-.branchKindSelect:focus {
-  border-color: var(--dsw-alias-accent-primary);
+.select {
+  width: 100%;
 }
 
-/* 目标节点只读框（视觉与下拉一致：同边框/圆角/高度，弹性占满剩余宽度）。 */
+.bindingSelect {
+  flex: none;
+}
+
+/* 目标节点下拉（InputRow 的目标 step 选择；与只读框 .branchTarget 同尺寸）。 */
+.branchTargetSelect {
+  flex: 1;
+  min-width: 0;
+  display: block;
+}
+
+/* 目标节点只读框 / 行内输入（视觉与下拉一致：同边框/圆角/高度，弹性占满剩余宽度）。 */
 .branchTarget {
   flex: 1;
   min-width: 0;
-  height: 30px;
-  padding: 5px 8px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  font-size: 13px;
+  line-height: 20px;
   font-weight: 500;
   color: var(--dsw-alias-label-primary);
-  line-height: 18px;
   box-sizing: border-box;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.branchTarget input {
+  font-size: 13px;
+  line-height: 20px;
 }
 
 /* 分支类型说明小字。 */
@@ -528,23 +594,6 @@
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 10px;
   background: var(--dsw-alias-bg-sunken);
-}
-
-.select {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-  font-family: inherit;
-  outline: none;
-  box-sizing: border-box;
-}
-
-.select:focus {
-  border-color: var(--dsw-alias-accent-primary);
 }
 
 /* ── YAML 预览折叠 ───────────────────────────────────────────────────────── */
@@ -581,6 +630,70 @@
   background: var(--dsw-alias-bg-base);
 }
 
+/* ── 导入 YAML 弹窗（粘贴 → 校验 → 导入） ─────────────────────────────── */
+
+/* 弹窗容器宽度（对齐预览弹窗：Modal 默认宽度偏小，必须显式放宽，
+   否则内容（textarea/底部按钮）被容器裁剪或溢出）。 */
+.importModal {
+  width: min(600px, 86vw);
+}
+
+.importDialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 0;
+}
+
+.importHeader {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.importTitle {
+  flex: 1;
+  min-width: 0;
+}
+
+.importTextarea {
+  width: 100%;
+  min-height: 260px;
+  max-height: 50vh;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+
+.importTextarea:hover {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.importTextarea:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.importTextarea::placeholder {
+  color: var(--dsw-alias-label-caption);
+}
+
+.importFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ── Step 字段编辑（沿用既有表单样式） ───────────────────────────────────── */
 
 .stageHeader {
@@ -605,17 +718,7 @@
   gap: 6px;
 }
 
-/* 标题输入框：占满 stepHead 剩余宽度（删除按钮固定，输入框 flex 撑开）。 */
-.titleInput {
-  flex: 1;
-  min-width: 0;
-}
-
-.titleInput input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
+/* 命令区：类型 Pill 行 + 对应 value 字段。 */
 .command {
   display: flex;
   flex-direction: column;
@@ -657,7 +760,7 @@
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--dsw-alias-bg-sunken);
 }
 
@@ -667,18 +770,20 @@
   gap: 6px;
 }
 
-/* 名称输入框 wrapper 占满剩余宽度（删除按钮固定）：wrapper 去左右 padding 保证三元素等距，
-   内部 input 补回与 DSH 默认一致的 8px 左右 padding，使文字缩进与其他输入框相同。 */
-.varNameInput {
+/* 详情面板紧凑输入框（照 DSH composer 紧凑控件 28px）：与 Button sm / 下拉同行对齐。 */
+.titleInput,
+.varNameInput,
+.compactInput {
   flex: 1;
   min-width: 0;
-  padding: 0;
+  height: 28px;
 }
 
-.varNameInput input {
+.titleInput input,
+.varNameInput input,
+.compactInput input {
   width: 100%;
   box-sizing: border-box;
-  padding: 1px 8px;
 }
 
 .gates {
@@ -707,5 +812,201 @@
 .hint {
   font-size: 12px;
   line-height: 18px;
+  color: var(--dsw-alias-label-caption);
+}
+
+/* ── 三级分离：详情三段式名称行 / 标题 / 提示词 textarea ─────────────────── */
+
+/* 详情面板顶部标题（「微流程详情」/「Agent 详情」，plan §6.5 修复项 1）。 */
+.panelHeading {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 提示词多行 textarea（ImeSafeTextarea；plan §6.5 修复项 3：大段输入）。 */
+.promptTextarea {
+  width: 100%;
+  min-height: 96px;
+  max-height: 40vh;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.12s ease;
+}
+
+.promptTextarea:hover {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.promptTextarea:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.promptTextarea::placeholder {
+  color: var(--dsw-alias-label-caption);
+}
+
+/* 只读名称（绑定模式）：弱化为普通文本观感。 */
+.titleInput input[readonly] {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-sunken);
+}
+
+/* ── 三级分离：同步到库确认弹窗 ──────────────────────────────────────────── */
+
+.syncConfirmBody {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── 三级分离：库绑定选择弹窗（LibraryPickerModal） ──────────────────────── */
+
+.pickerModal {
+  width: min(460px, 86vw);
+}
+
+.pickerDialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 0;
+}
+
+.pickerList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.pickerRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.pickerRow:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.pickerRow:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pickerRowName {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.pickerRowMeta {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.pickerEmpty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.pickerError {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+/* ── 三级分离：「+ 添加 Stage/Step」弹窗（AddNodeDialog） ────────────────── */
+
+.addNodeDialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.addNodeOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.addNodeOption:hover {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.addNodeOptionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.addNodeOptionTitle {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.addNodeOptionHint {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-caption);
+}
+
+/* ── 三级分离：库编辑弹窗元数据行（LibraryEditModal） ────────────────────── */
+
+.libraryMetaRow {
+  display: flex;
+  gap: 8px;
+}
+
+.libraryMetaField {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.libraryMetaLabel {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
   color: var(--dsw-alias-label-caption);
 }

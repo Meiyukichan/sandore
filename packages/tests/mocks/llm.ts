@@ -4,7 +4,7 @@
  * 提供 `listProviders`/`listModels`/`stream` 等价语义：`stream` 记录每次调用
  * 并委托 `streamHandler`，测试按需注入固定 chunk 流。以
  * `ctx.provide('llm', …)` 注入，避免在单元测试中拉起真实模型后端。
- * @module dsh-sandore/workflow/tests/mocks/llm
+ * @module @meiyukichan/dsh-sandore/workflow/tests/mocks/llm
  */
 import type {
   FinishReason,

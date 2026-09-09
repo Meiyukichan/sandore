@@ -2,7 +2,7 @@
  * 生命周期协调器（单步/全局暂停与恢复的纯协调器）。
  *
  * `LifecycleManager` 是暂停/恢复能力的「纯协调器」：不持有引擎状态，仅经注入的
- * 回调/选项访问宿主主代理、`subagents.interrupt`/`followup`、`readState`/
+ * 回调/选项访问宿主主代理、`subagents.interrupt`/子代理 prompt 投递、`readState`/
  * `commitState`（不可变重建 + 持久化）、`emitStepPaused`/`emitStepResumed`（事件
  * 双发）与暂停登记表读写。暂停登记表（内存 `Set<string>`，值 = 子代理 SessionId）
  * 是「暂停集」的唯一权威，与 `WorkflowTaskState.pausedChildIds` 数组同步（登记即
@@ -14,10 +14,10 @@
  * Step 置 `paused`（`pausedAt`）→ 持久化 → 双发 `sandore/step-paused`。已空闲
  * Step（`agent.status === 'idle' && !inbox.hasPending`）幂等 no-op；不存在/终态
  * Step 抛 `SandoreError('INVALID_OPERATION')`。单步恢复：反查 childId → 移出登记表
- * → `followup(hostAgent, childId, text(resumePrompt ?? 默认提示))` → Step 置
+ * → 投递 resume 提示（queue 投递，等价旧 followup）→ Step 置
  * `running`（`resumedAt`/`resumePrompt`）→ 持久化 → 双发 `sandore/step-resumed`；
  * 非登记 Step 抛 `INVALID_OPERATION`。
- * @module dsh-sandore/workflow/src/lifecycle-manager
+ * @module @meiyukichan/dsh-sandore/workflow/src/lifecycle-manager
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 
@@ -54,7 +54,7 @@ export interface LifecycleManagerOptions {
   readonly initialPausedChildIds: readonly string[];
   /** `ctx.subagents.interrupt` 的注入包装。 */
   readonly interrupt: (childId: string, authority: SubagentInterruptAuthority) => void;
-  /** `ctx.subagents.followup` 的注入包装。 */
+  /** 子代理 prompt 投递的注入包装（queue 投递，等价旧 `subagents.followup`，上游已删）。 */
   readonly followup: (childId: string, content: ContentBlock[], signal: AbortSignal) => Promise<void> | void;
   /** 按 childId 查活子代理（空闲幂等 no-op 判定用）。 */
   readonly getAgent: (childId: string) => Agent | undefined;

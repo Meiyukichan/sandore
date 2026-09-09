@@ -6,7 +6,7 @@
  * GateEvaluator（primary 纯代码产物校验 [零 AI] + secondary AI 门禁审查）与
  * finalizeStep 编排（跳过 / ask 中断门禁 / 完整 finalize 的 finalizeMeta 回写 /
  * 透传变量回写保留 refresh）。
- * @module dsh-sandore/microflow/src/finalize-manager.spec
+ * @module @meiyukichan/dsh-sandore/microflow/src/finalize-manager.spec
  */
 import { Context } from '@deepseek-ai/cordis';
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm';
@@ -19,7 +19,7 @@ import { FinalizeAssessor, FinalizeManager, GateEvaluator, buildFinalizeRetryHin
 import type { FinalizeManagerConfig } from './finalize-manager.ts';
 import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome } from './file-utils.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
-import type { ContinuableStart, ContinuableStartSpec } from './subagents.ts';
+import type { Agent, ContinuableStart, ContinuableStartSpec, MessageId, SessionId } from './subagents.ts';
 import type { ExecutedStepDefault } from '../workflow/types';
 import type { FinalizeAssessResult, GateEvalResult, WorkflowStep } from '../workflow/schema';
 
@@ -121,7 +121,7 @@ class FakeGateSubagents {
 
   constructor(private readonly agents: FakeAgentRegistry) {}
 
-  async followup(_parent: Agent, childId: SessionId, content: ContentBlock[], _options: SubagentFollowupOptions): Promise<MessageId> {
+  async followup(_parent: Agent, childId: SessionId, content: ContentBlock[], _options: { readonly source: unknown; readonly signal: AbortSignal }): Promise<MessageId> {
     this.followups.push({ childId, content });
     const agent = this.agents.get(childId);
     const reply = this.followupHandler?.();
@@ -211,9 +211,13 @@ function harness(config: FinalizeManagerConfig = {}): {
     defaultTimeoutMs: 60000,
     defaultProvider: 'p',
     defaultModel: 'm',
-    // secondary 门禁 startContinuable 的 request.parent（最小 Agent 桩；Phase B
-    // assessForked 仍走 hostAgentId/createAgent 旧机制，不受本字段影响）。
+    // secondary 门禁 startContinuable 的 request.parent（最小 Agent 桩）；Phase B
+    // assessForked 亦消费本字段（透传 forkStepSubagent 注入 preset 组合 setup）。
     hostAgent: new FakeAgent('host-1'),
+    // 上游适配（subagents.followup 已删）：纠正式重试经投递通道——适配器降级到
+    // FakeGateSubagents.followup（既有 followups 断言语义保持不变）。
+    deliverChildPrompt: async (parent, childId, content, source, signal) =>
+      subagents.followup(parent, childId, content, { source, signal: signal ?? new AbortController().signal }),
     ...config,
   };
   return {
@@ -548,9 +552,12 @@ describe('FinalizeAssessor.assessForked（Phase B 真 fork 子代理）', () => 
     });
 
     // agents.create 收到 seed = 完整事件 + meta.parentSession=宿主主代理 + origin='subagent'。
+    // 上游适配：meta 删 seedLength 改 isSeeded（+delegationDepth=宿主深度+1），
+    // 前缀长度移到顶层 inheritedEventCount。
     expect(agents.createSeeds).toHaveLength(1);
     expect(agents.createSeeds[0]).toEqual(closedEvents());
-    expect(agents.createMetas[0]).toEqual({ cwd: '/tmp', parentSession: 'host-1', seedLength: 4, origin: 'subagent' });
+    expect(agents.createMetas[0]).toEqual({ cwd: '/tmp', parentSession: 'host-1', isSeeded: true, origin: 'subagent', delegationDepth: 1 });
+    expect(agents.createInheritedEventCounts[0]).toBe(4);
     // 合成 fork 会话 id：纯 UUID（globalThis.crypto.randomUUID()）。
     expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     // 驱动一轮：followup 收到收尾处理提示词（含 <ReferenceInfo> 与 compressedOutput 格式），whenIdle 被 await。
@@ -599,7 +606,8 @@ describe('FinalizeAssessor.assessForked（Phase B 真 fork 子代理）', () => 
 
     // seed 截到最后一个闭合 turn/end（seq 0-3），未闭合尾部（turn/start 4 + assistant 5）不进 seed。
     expect(agents.createSeeds[0]).toEqual(closedEvents());
-    expect(agents.createMetas[0]?.seedLength).toBe(4);
+    expect(agents.createMetas[0]?.isSeeded).toBe(true);
+    expect(agents.createInheritedEventCounts[0]).toBe(4);
     expect(result.forkSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(result.compressedOutput).toBe('摘要');
   });
@@ -715,6 +723,59 @@ describe('FinalizeAssessor.assessForked（Phase B 真 fork 子代理）', () => 
     expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
     expect(result.compressedOutput).toBe('重试后摘要');
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('passes config.hostAgent to forkStepSubagent (setup + composeFrom parentCtx === hostAgent.ctx)', async () => {
+    // 覆盖 harness 默认 hostAgent：自定义 ctx 的宿主主代理，parentCtx 断言可识别对象。
+    const hostAgentCtx = { marker: 'host-ctx' };
+    const { agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      hostAgent: new FakeAgent('host-1', {}, undefined, hostAgentCtx),
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => closedEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: phaseBJson('{"projectName":"sandore"}', '摘要') }];
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    // assessForked → forkStepSubagent：agents.create 收到 setup（hostAgent → preset 组合）
+    // 且执行（composeFrom 第二参数 === hostAgent.ctx）。
+    expect(agents.createSetups).toHaveLength(1);
+    expect(typeof agents.createSetups[0]).toBe('function');
+    expect(agents.composeFromCalls).toHaveLength(1);
+    expect(agents.composeFromCalls[0]?.parentCtx).toBe(hostAgentCtx);
+    // fork 路径本身不受影响：合并 JSON 正常解析。
+    expect(result.status).toBe('done');
+    expect(result.passThroughVars).toEqual({ projectName: 'sandore' });
+  });
+
+  it('works without config.hostAgent (setup omitted, fork path unchanged)', async () => {
+    // 显式 hostAgent: undefined（覆盖 harness 默认值）：fork 子代理无 preset 组合但不失败。
+    const { agents, assessor } = harness({
+      hostAgentId: 'host-1',
+      hostAgent: undefined,
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => closedEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: phaseBJson('{}', '摘要') }];
+
+    const result = await assessor.assessForked({
+      step: step({ command: { type: 'agent', value: { promptText: 'x' } } }),
+      stepSessionId: 'child-1',
+      context: { input: 'req', output: 'out' },
+    });
+
+    // hostAgent 缺省：不传 setup（向后兼容）、composeFrom 不被调，fork 正常完成不降级。
+    expect(agents.createSeeds).toHaveLength(1);
+    expect(agents.createSetups).toEqual([undefined]);
+    expect(agents.composeFromCalls).toHaveLength(0);
+    expect(result.status).toBe('done');
+    expect(result.compressedOutput).toBe('摘要');
+    expect(result.errorDetail).toBeUndefined();
   });
 
   it('explains finalize JSON parse failures with concrete reasons', () => {

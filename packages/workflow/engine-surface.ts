@@ -4,7 +4,7 @@
  * 仅声明 `SandoreEngine` 抽象类暴露给宿主/工具的实例级操作签名，作为 seam 抽象类与
  * tool 包结构面之间的「单一事实来源」，避免两份独立声明静默漂移。本文件不含任何
  * `declare module` 模块增强与运行时代码，可被 tool 包以 `import type` 安全引用。
- * @module dsh-sandore/workflow/src/engine-surface
+ * @module @meiyukichan/dsh-sandore/workflow/src/engine-surface
  */
 import type { AskUserQuestionAnswer, DagInstanceState, DagRun, DagStartRequest } from './types.ts';
 import type { WorkflowTaskState } from './schema.ts';

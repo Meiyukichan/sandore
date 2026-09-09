@@ -139,7 +139,7 @@ function toolResultRow(
 
 /** 关闭行文本判定（DSH `tailData.hasText`：finalNode 携带非空文本块）。 */
 function hasText(node: Extract<ConversationNode, { kind: 'assistant' }>): boolean {
-  return node.blocks.some(block => block.kind === 'text' && block.text.trim() !== '')
+  return node.blocks.some((block: AssistantBlock) => block.kind === 'text' && block.text.trim() !== '')
 }
 
 /** 已完结 turn 的关闭行 + tail 数据（在 agent 行之后插入）。 */
