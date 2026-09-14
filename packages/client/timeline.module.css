@@ -84,6 +84,49 @@
   min-width: 0;
 }
 
+/* 主代理卡片的卡头：**整条是折叠开关**（真机缺陷修复：原先只有窄窄的状态 chip 可点，
+   点头像/标题/空白都没反应）。视觉逐值沿用 `.agentHead`（同 gap/间距/对齐），
+   只补按钮 reset（去掉 UA 边框/底色/内距/居中文字），并给出 hover/焦点反馈。 */
+.agentHeadButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  min-width: 0;
+  /* 整条可点：占满卡片内容宽（否则只有内容宽度可点，"点空白处" 无反应）。 */
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agentHeadButton:hover {
+  background: var(--sd-surface-hover, transparent);
+}
+
+.agentHeadButton:focus-visible {
+  outline: 2px solid var(--sd-brand);
+  outline-offset: 2px;
+}
+
+/* 折叠箭头（展开时旋转 180°，与 step 卡片/下拉触发器同款观感）。 */
+.headChevron {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: var(--sd-muted-foreground);
+  transition: transform 120ms ease;
+}
+
+.headChevronOpen {
+  transform: rotate(180deg);
+}
+
 .avatar {
   flex: none;
   display: inline-flex;
@@ -482,6 +525,14 @@
   color: var(--sd-muted-foreground);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+/* 批 B3：占位态（cold/loading/agent-busy loading/error）里的重试行槽位——与上方
+   error 详情同一缩进（16px 左右留白），行本体样式来自 composer-bar.module.css 的
+   .retryBlock（与 open 态底部动作位 `[data-step-chat-retry-seat]` 内那份完全同族；
+   需求 1 起面板内不再有输入框，重试行是面板唯一的底部动作）。 */
+.stepChatPlaceholderRetry {
+  padding: 0 16px 12px;
 }
 
 /* rc.1 占位：运行状态提示 + 「查看会话」按钮（无内嵌消息流时的引导）。 */

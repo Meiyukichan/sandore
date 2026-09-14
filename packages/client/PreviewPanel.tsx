@@ -7,7 +7,7 @@
  */
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import { markdownLabels } from './tool/primitive-labels.ts'
+import { markdownLabels } from './chat-utils/markdown-labels.ts'
 
 import type { PreviewTarget } from './workflow-store.ts'
 import css from './preview.module.css'

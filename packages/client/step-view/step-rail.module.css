@@ -1,0 +1,209 @@
+/* step-rail.module.css：discussion 右侧「每 step 一档」的轮次条。
+ *
+ * 视觉**逐值**照同一份 DSH 轮次条实现（`step-view/turn-navigator.module.css`，
+ * 那是 DSH `ui-chat chat/TurnNavigator.module.css` 的 1:1 移植）：等距刻度（10px）、
+ * 12/18/20px 三档 tick 宽度、active 用 label-primary、focus 用业务蓝 + 1px 外环、
+ * frame 内滚动 + 两端 24px 渐隐、hover 预览卡（右推 10px、300px 宽、10px 圆角、
+ * panel 阴影、120ms 渐入）。
+ * 差异只有两处（本次需求）：
+ * 1. 位置：垂直居中贴**滚动视口的右缘**（`.slot` 绝对定位在 .feedCol 上，
+ *    `top: 50%` + `translateY(-50%)`），而不是零高 sticky 落在列内；
+ * 2. 数量语义：每 **step** 一档（不是每轮），窄视口（< 560px）整轴收起同旧实现。 */
+
+.slot {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 7;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.frame {
+  --step-rail-preview-height: 100px;
+
+  position: absolute;
+  top: 0;
+  right: 12px;
+  width: 28px;
+  /* 刻度不会压缩：超过轴带高度的梯子在 frame 内滚动（同旧实现）。 */
+  height: min(
+    var(--step-rail-natural-height),
+    max(0px, calc(var(--step-rail-band, 520px) - 64px)),
+    420px
+  );
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateY(-50%);
+  transition: height 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* frame 内滚动器：不显示滚动条、不把滚动链传给消息列、两端渐隐。 */
+.scroller {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.fadeTop {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%);
+}
+
+.fadeBottom {
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.fadeTop.fadeBottom {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+.marks {
+  position: relative;
+  height: var(--step-rail-natural-height);
+}
+
+.markPosition {
+  position: absolute;
+  top: calc(var(--step-rail-position) + var(--step-rail-inset));
+  right: 0;
+  left: 0;
+  height: 10px;
+  transform: translateY(-50%);
+  transition: top 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: dsh-step-mark-enter 150ms ease-out;
+}
+
+/* 整列由轴接管指针：刻度只是键盘可达目标，本身不接收鼠标（同旧实现）。 */
+.mark {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.mark::before {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-border-l4);
+  content: '';
+  transform: translateY(-50%);
+  transition: width 140ms ease, background-color 140ms ease;
+}
+
+.markPreview::before {
+  width: 18px;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.markActive::before {
+  width: 20px;
+  background: var(--dsw-alias-label-primary);
+}
+
+.mark:focus-visible::before {
+  width: 20px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.mark:focus-visible {
+  outline: 1px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.preview {
+  position: absolute;
+  top: clamp(
+    0px,
+    calc(
+      var(--step-rail-position) + var(--step-rail-inset)
+      - var(--step-rail-scroll-top, 0px) - var(--step-rail-preview-height) / 2
+    ),
+    calc(100% - var(--step-rail-preview-height))
+  );
+  right: calc(100% + 10px);
+  box-sizing: border-box;
+  width: min(300px, calc(100cqw - 120px));
+  max-height: var(--step-rail-preview-height);
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+  pointer-events: none;
+  animation: dsh-step-preview-enter 120ms ease-out;
+  transition: top 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.previewPrompt,
+.previewResponse {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+}
+
+.previewPrompt {
+  font-weight: 600;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+  -webkit-line-clamp: 1;
+}
+
+.previewResponse {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: calc(16px + var(--dsh-content-font-delta-secondary, 0px));
+  -webkit-line-clamp: 3;
+}
+
+@keyframes dsh-step-mark-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dsh-step-preview-enter {
+  from { opacity: 0; transform: translateX(4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* 窄视口：整轴收起（同旧实现的阈值语义）。 */
+@container (max-width: 559px) {
+  .slot {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame,
+  .scroller,
+  .markPosition,
+  .mark::before,
+  .preview {
+    transition: none;
+    animation: none;
+    scroll-behavior: auto;
+  }
+}

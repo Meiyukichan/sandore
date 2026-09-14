@@ -121,6 +121,18 @@ export interface BranchEvalOptions {
   readonly stepSessionId?: string;
   /** 当前 step id（路由 fork 子代理合成 id 前缀；缺省 'route'）。 */
   readonly stepId?: string;
+  /** 当前 step 的可读名称（路由 fork 子代理列表标签用；缺省回退 stepId）。 */
+  readonly stepName?: string;
+  /**
+   * 路由判断 fork 子代理创建后回调（上报真实 `routingSessionId`，供调用方立即
+   * commit running + id）——与 Phase B 的 `onForkCreated` 是同一套机制/命名。
+   *
+   * 为什么需要：Phase D 开跑前那次 commit 的 running 快照里没有会话 id，而 UI 的
+   * 「判断中」徽标**只在有会话 id 时才渲染成可点按钮**（否则退化成纯文本 `<span>`）
+   * → 真机运行期点不到「判断中」。fork 一建好就上报即可让快照带上真实 id；
+   * 降级临时会话（未建 fork）不触发。
+   */
+  readonly onRoutingCreated?: (routingSessionId: string) => void;
 }
 
 /** 一次分支评估的最终结果。 */
@@ -529,6 +541,10 @@ export function matchesExpectation(result: string, expectation: string | undefin
 interface DispatchOptions {
   readonly stepSessionId?: string;
   readonly stepId?: string;
+  /** 当前 step 的可读名称（路由 fork 子代理列表标签用；缺省回退 stepId）。 */
+  readonly stepName?: string;
+  /** 路由 fork 创建后上报真实 id（调用方据此 commit running 快照，UI「判断中」可点）。 */
+  readonly onRoutingCreated?: (routingSessionId: string) => void;
   readonly workdir?: string;
   readonly signal?: AbortSignal;
 }
@@ -815,6 +831,8 @@ export class BranchEvaluator {
         const forked = await forkStepSubagent(this.ctx, options.stepSessionId, {
           hostAgentId,
           stepId: options.stepId ?? 'route',
+          // 可读标签（子代理列表展示；引擎据此补写身份事件，防「会话记录损坏」）。
+    label: `route ${options.stepName ?? options.stepId ?? 'unknown'}`,
           ...(options.workdir === undefined ? {} : { cwd: options.workdir }),
           ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
           createAgent,
@@ -825,6 +843,10 @@ export class BranchEvaluator {
         });
         if (forked !== undefined) {
           const { handle } = forked;
+          // 与 Phase B 的 `onForkCreated` 同一套机制/时机：fork 一建好就上报真实 id，
+          // 调用方据此立即 commit running 快照（含真实 routingSessionId）→
+          // UI「判断中」是**可点按钮**（不是退化的纯文本）。
+          options.onRoutingCreated?.(handle.agent.id);
           try {
             let output = await driveAgentRound(handle, promptText);
             let attempts = 0;
@@ -896,6 +918,8 @@ export class BranchEvaluator {
     return this.dispatchAi(route, promptText, {
       ...(options.stepSessionId === undefined ? {} : { stepSessionId: options.stepSessionId }),
       ...(options.stepId === undefined ? {} : { stepId: options.stepId }),
+      ...(options.stepName === undefined ? {} : { stepName: options.stepName }),
+      ...(options.onRoutingCreated === undefined ? {} : { onRoutingCreated: options.onRoutingCreated }),
       ...(options.workdir === undefined ? {} : { workdir: options.workdir }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     }, degradedPromptText);
@@ -925,6 +949,8 @@ export class BranchEvaluator {
         const forked = await forkStepSubagent(this.ctx, options.stepSessionId, {
           hostAgentId,
           stepId: options.stepId ?? 'route',
+          // 可读标签（子代理列表展示；引擎据此补写身份事件，防「会话记录损坏」）。
+    label: `route ${options.stepName ?? options.stepId ?? 'unknown'}`,
           ...(options.workdir === undefined ? {} : { cwd: options.workdir }),
           ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
           createAgent,
@@ -935,6 +961,9 @@ export class BranchEvaluator {
         });
         if (forked !== undefined) {
           const { handle } = forked;
+          // 与 Phase B 的 `onForkCreated` 同一套机制/时机：fork 一建好就上报真实 id
+          // （调用方立即 commit running 快照 → UI「判断中」可点）。
+          options.onRoutingCreated?.(handle.agent.id);
           // 两阶段接口：sessionHandle 同步为路由子代理 id，输出聚合异步驱动 + dispose。
           return {
             sessionHandle: handle.agent.id,

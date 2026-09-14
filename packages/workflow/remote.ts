@@ -365,7 +365,14 @@ export class SandoreRemote extends TypertRemoteService {
     return summaries
   }
 
-  /** 启动实例：校验定义存在后转发 `ctx.sandoreEngine.startInstance`（去 job 概念）。 */
+  /**
+   * 启动实例（入口归一第一阶段）：校验定义存在后转发 `ctx.sandoreEngine.startInstance`。
+   *
+   * 恒等式（架构决策 1）：本 RPC 只**建会话 + 绑实例 + 注入协作上下文**，返回
+   * `{instanceId, status:'pending'}`；真正的执行由该新建会话（= 实例 id = 宿主会话 id）
+   * 调用 `sandore_workflow_run` 触发。入参不再有 `hostSessionId`（宿主会话恒为本 RPC
+   * 新建的会话）。
+   */
   @Remote('startInstance')
   async startInstance(input: StartInstanceInput): Promise<DagRun> {
     const parsed = StartInstanceInputSchema.parse(input)
@@ -379,7 +386,6 @@ export class SandoreRemote extends TypertRemoteService {
       cwd: parsed.cwd,
       ...(parsed.model === undefined ? {} : { model: parsed.model }),
       ...(parsed.permission === undefined ? {} : { permission: parsed.permission }),
-      ...(parsed.hostSessionId === undefined ? {} : { hostSessionId: parsed.hostSessionId }),
     } as DagStartRequest
     return await this.ctx.sandoreEngine.startInstance(request)
   }
@@ -393,12 +399,17 @@ export class SandoreRemote extends TypertRemoteService {
   /**
    * 读取实例的完整状态快照：内存 active.state 第一优先级（收尾中间态立即可见），
    * 未在内存（终态清表/未启动）回退持久化；两者皆无抛 NODE_NOT_FOUND。
+   *
+   * **展示派生数据的按需回填**：`executedSteps[].sessionMessages` 不再持久化
+   *（实测占 state 的 41%–54%），本 RPC 返回前经 `engine.hydrateStateMessages`
+   * 从各段子代理会话现算补回（live 优先 → 持久化回退）。消费面（client 的
+   * `chatLinesOf`、e2e 断言）字段名与形状不变，只是数据来源从 state 副本改为会话真值。
    */
   @Remote('getInstanceState')
-  getInstanceState(instanceId: string): WorkflowTaskState {
+  async getInstanceState(instanceId: string): Promise<WorkflowTaskState> {
     const live = this.ctx.sandoreEngine.getInstanceState(instanceId)
-    if (live !== undefined) return live
-    return this.requireInstanceState(instanceId)
+    const state = live !== undefined ? live : this.requireInstanceState(instanceId)
+    return await this.ctx.sandoreEngine.hydrateStateMessages(state)
   }
 
   /** 中止运行中实例（转发引擎）；终态实例抛 `INVALID_OPERATION`。 */
@@ -490,14 +501,27 @@ export class SandoreRemote extends TypertRemoteService {
     await this.ctx.sandoreEngine.resumeAllSteps(parsed.instanceId, parsed.resumePrompt)
   }
 
-  /** 重试失败 Step（转发 `ctx.sandoreEngine.retryStep`，revert 可选 revertBoundary）。 */
+  /**
+   * 重试失败 Step（转发 `ctx.sandoreEngine.retryStep`）。
+   *
+   * @deprecated 架构决策 3 去掉了「回滚会话/回退点（revert）」功能：新工具面
+   * `sandore_workflow_control` 只用 continue（paused 续跑现有子代理）/ fork（failed
+   * 重建子代理），`revertBoundary` 不再对外提供。本 RPC 保留 `revert` 分支与
+   * `revertBoundary` 入参**仅为兼容既有 client 呈现层**（`packages/client/RunView.tsx`
+   * / `step-view/StepRetryRow.tsx` 仍装配它们，而呈现层不在本次改造范围内）。
+   */
   @Remote('retryStep')
   async retryStep(input: RetryStepInput): Promise<void> {
     const parsed = RetryStepInputSchema.parse(input)
     await this.ctx.sandoreEngine.retryStep(parsed.instanceId, parsed.stepId, parsed.mode, parsed.message, parsed.revertBoundary)
   }
 
-  /** 列出某 Step 子代理会话中可用的闭合 turn 回退点候选（revert 回退点选择数据源）。 */
+  /**
+   * 列出某 Step 子代理会话中可用的闭合 turn 回退点候选。
+   *
+   * @deprecated 见 {@link SandoreRemote.retryStep}：回退点功能已去掉，本 RPC 仅为兼容
+   * 既有 client 呈现层保留。
+   */
   @Remote('listRevertBoundaries')
   listRevertBoundaries(input: ListRevertBoundariesInput): RevertBoundaryOption[] {
     const parsed = ListRevertBoundariesInputSchema.parse(input)
@@ -505,15 +529,16 @@ export class SandoreRemote extends TypertRemoteService {
   }
 
   /**
-   * 向运行中实例的指定 Step 子代理追加一条用户 @mention 消息（缺陷 31）。
+   * 向运行中实例的指定 Step 子代理追加一条用户消息。
    *
    * zod 校验 + 终态守卫后转发 `ctx.sandoreEngine.sendStepMessage`（对齐
    * `updateInstancePermissionMode` / `recoverInstance` / `abortInstance` 的两层
    * 守卫：remote 层基于持久化 state 终态守卫，engine 层基于内存 ActiveInstance）。
-   * 引擎层 requireActive + 终态守卫 → 按 stepId 反查最后活跃段 childId →
-   * synthetic===false 才 subagents.followup（synthetic 抛 INVALID_OPERATION）→
-   * 追加 userMessages `{kind:'message', target:stepId}` → persistState → 双发
-   * `sandore/step-message`。错误透传（对齐 retryStep 风格，不吞 SandoreError）。
+   * 引擎层 requireActive + 终态守卫 → 按 stepId 反查最后活跃段并校验状态门槛
+   * （仅 running/interacting；synthetic 抛 INVALID_OPERATION）→ 投递到子代理会话 →
+   * 单发 `sandore/step-message`。**不写 `state.userMessages`**（消息只在子代理会话
+   * 与事件里，discussion 页只展示 step agent 消息与主代理消息）。
+   * 错误透传（对齐 retryStep 风格，不吞 SandoreError）。
    */
   @Remote('sendStepMessage')
   async sendStepMessage(input: SendStepMessageInput): Promise<void> {

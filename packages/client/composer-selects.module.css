@@ -1,4 +1,5 @@
-/* ComposerSelects：模型/权限选择器（照 DSH ModelSelect.module.css + PermissionSelect.module.css）。 */
+/* ComposerSelects：模型/权限选择器（**逐值**照 DSH ModelSelect.module.css +
+ * PermissionSelect.module.css + ui-primitives Menu.module.css；每处值标注出处行号）。 */
 
 /* ── 通用（触发器 / 菜单材料） ───────────────────────────────────────────── */
 
@@ -7,12 +8,17 @@
   min-width: 0;
 }
 
+/* 触发器：DSH PermissionSelect.module.css:1-19 与 ModelSelect.module.css:9-30 的共同值
+   （13/20 medium secondary 标签、4px gap、12px caption chevron、28px 高、24px 圆角）。 */
 .trigger {
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
+  /* 模型触发器两行 max-width（ModelSelect.module.css:16-17）：220px 兜底 + 行宽 45% 的
+     相对上限（`.row` 是 inline-size 容器，见 main-agent-input.module.css 的 `.row`）。 */
   max-width: 220px;
+  max-width: min(360px, 45cqw);
   height: 28px;
   padding: 0 4px 0 8px;
   border: none;
@@ -57,6 +63,7 @@
   flex: 0 0 auto;
 }
 
+/* 触发器上的 16px 图形降一档显示（PermissionSelect.module.css:39-44）。 */
 .triggerIcon svg {
   width: 14px;
   height: 14px;
@@ -73,22 +80,59 @@
   transform: rotate(180deg);
 }
 
-.menu {
+/* 窄行折叠：只对**带图标**的权限触发器收起标签（PermissionSelect.module.css:68-72 逐值；
+   容器 = 输入框控件行 `.row`，匿名查询）。 */
+@container (max-width: 460px) {
+  .trigger:has(.triggerIcon) .triggerLabel {
+    display: none;
+  }
+}
+
+/* ── 模型菜单：DSH ModelSelect.module.css:68-98 逐值 ───────────────────────── */
+.modelMenu {
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
   z-index: 20;
   display: flex;
   flex-direction: column;
-  width: min(240px, calc(100vw - 32px));
+  width: max-content;
+  min-width: min(240px, calc(100vw - 32px));
+  max-width: min(420px, calc(100vw - 32px));
   max-height: min(360px, calc(100vh - 96px));
   overflow: hidden;
   padding: 4px;
-  border: 1px solid var(--dsw-alias-border-inverted);
-  border-radius: 12px;
+  border: 0;
+  border-radius: 20px;
   background: var(--dsw-specific-menu);
-  box-shadow: var(--dsw-shadow-lv3);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent);
   color: var(--dsw-alias-label-primary);
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* ── 权限菜单：DSH Menu primitive 卡片（ui-primitives Menu.module.css:8-38）逐值 ────
+   权限下拉在 DSH 里就是 `Menu` 组件，故卡片规格照 Menu，而不是 ModelSelect 的自绘菜单。 */
+.menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px); /* Menu.module.css:53 的 `.sideTop`（bottom: 100% + 4px） */
+  z-index: 100; /* Menu.module.css:35 */
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 218px; /* Menu.module.css:36 */
+  max-width: 360px; /* Menu.module.css:37 */
+  padding: 4px; /* Menu.module.css:12 */
+  border: 0;
+  border-radius: 20px; /* Menu.module.css:17 */
+  background: var(--dsw-specific-menu);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); /* Menu.module.css:19 */
+  box-shadow: var(--dsw-elevation-prominent); /* Menu.module.css:20 */
+  color: var(--dsw-alias-label-primary);
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
 .status,
@@ -151,11 +195,14 @@
   font-weight: 500;
 }
 
+/* 模型菜单选项：DSH ModelSelect.module.css:160-192 逐值（38px 行、6/8 内距、10px 圆角）。 */
 .option {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  width: auto;
+  min-width: 100%;
   min-height: 38px;
   padding: 6px 8px;
   border: none;
@@ -168,18 +215,42 @@
   cursor: pointer;
 }
 
+/* 权限菜单行：DSH Menu.module.css:98-117 的 `.item` 逐值（40px 行、8/10 内距）。 */
+.optionPermission {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 14px;
+  line-height: 22px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .option:hover:not(:disabled),
-.option:focus-visible {
+.option:focus-visible,
+.optionPermission:hover:not(:disabled),
+.optionPermission:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.option:disabled {
-  color: var(--dsw-alias-label-dimmed);
-  cursor: default;
-}
-
+/* 选中标记是尾部对勾而不是底色（Menu.module.css:187-191 同语义）。 */
 .selected {
   background: transparent;
+}
+
+.option:disabled,
+.optionPermission:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
 }
 
 .optionIcon {
@@ -226,17 +297,14 @@
   color: var(--dsw-alias-label-primary);
 }
 
-.check svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* 两级菜单根单元格（模型 / 推理等级）。 */
+/* ── 两级菜单根单元格：DSH ModelSelect.module.css:221-257 逐值 ──────────────── */
 .cell {
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  width: auto;
+  min-width: 100%;
   height: 40px;
   padding: 0 10px;
   border: none;
@@ -255,19 +323,17 @@
 }
 
 .cellLabel {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.cellValue {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.cellValue {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: right;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -281,7 +347,7 @@
   height: 14px;
 }
 
-/* ── 完全访问风险确认（照 DSH RiskConfirmation 卡片） ────────────────────── */
+/* ── 完全访问风险确认（照 DSH RiskConfirmation.module.css + Modal 卡壳） ─────── */
 
 .riskMask {
   position: fixed;
@@ -297,7 +363,10 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: min(380px, calc(100vw - 48px));
+  /* RiskConfirmation.module.css:2：width: min(440px, 100%)。 */
+  width: min(440px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
   padding: 18px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 16px;
@@ -312,24 +381,35 @@
   line-height: 22px;
 }
 
+/* RiskConfirmation.module.css:19-26：正文 14/22 secondary + 顶部警示图标。 */
 .riskDesc {
-  font-size: 13px;
-  line-height: 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 22px;
   color: var(--dsw-alias-label-secondary);
 }
 
 .riskAck {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 20px;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 20px;
+  font-size: 14px;
+  line-height: 22px;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
 }
 
+/* RiskConfirmation.module.css:49-56：16px 勾选框 + button-primary-fill 强调色。 */
 .riskAck input {
-  accent-color: var(--dsw-alias-accent-primary);
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--dsw-alias-button-primary-fill);
+  cursor: pointer;
 }
 
 .riskActions {
@@ -350,7 +430,9 @@
   cursor: pointer;
 }
 
+/* RiskConfirmation.module.css:67-73：取消 72px、确认 136px 最小宽。 */
 .riskCancel {
+  min-width: 72px;
   border: 1px solid var(--dsw-alias-border-l2);
   background: transparent;
   color: var(--dsw-alias-label-primary);
@@ -361,6 +443,7 @@
 }
 
 .riskConfirm {
+  min-width: 136px;
   border: none;
   background: var(--dsw-alias-accent-primary);
   color: var(--dsw-alias-label-invert);

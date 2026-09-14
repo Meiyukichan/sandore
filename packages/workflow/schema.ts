@@ -198,11 +198,19 @@ export const WorkflowDefinitionSchema = z.object({
 
 // ── 运行时层 ────────────────────────────────────────────────────────────────
 
-/** Step 会话合成占位元数据（替代 SDK 时代的 `{sessionId,inputJson,outputJson,partsJson}`）。 */
+/** Step 会话元数据（2026-09-09：不再有合成占位 childId——真实子代理先拉起再落 id）。 */
 export const StepSessionMetaSchema = z.object({
-  childId: z.string(),
+  /** 真实子代理会话 id（prompt/agent/skill/mcp 步骤；step-start 前由 startContinuable 拿到真实值才写入）。shell 不建子代理 → 缺失。 */
+  childId: z.string().optional(),
   synthetic: z.boolean(),
   command: z.enum(['shell', 'prompt', 'agent', 'skill', 'mcp']),
+  /**
+   * 子代理的直接 parent（宿主主代理）会话 id。
+   *
+   * 入口归一后恒等式成立（架构决策 1）：本字段 ≡ 实例 id（taskId）。仍保留为
+   * **持久化数据字段**（client 呈现层据此组 subagent-kind 地址打开内嵌会话，
+   * `packages/client/run-view-model.ts` 的 `parentSessionId` 读它），不是入参。
+   */
   hostSessionId: z.string().optional(),
 })
 
@@ -375,7 +383,19 @@ export const FinalizeMetaSchema = z.object({
   errorDetail: z.string().optional(),
 })
 
-/** 会话消息记录。 */
+/**
+ * 会话消息记录（**不再持久化到 state**）。
+ *
+ * 历史沿革：过去每个执行段都会把子代理会话的最近 10 条消息行写进
+ * `executedSteps[].sessionMessages`。实测这占了 state 的 41%–54%（例如最新实例
+ * 149,165 字节里 61,667 字节），而它**只是展示派生数据**：真值在 DSH 的 step 子代理
+ * 会话里（`executedSteps[].sessionMeta.childId` 指向它）。
+ *
+ * 现在该字段**不再写入 state、也不在 schema 里**（旧快照里的残留由 zod 的默认
+ * strip 行为丢弃，读取/恢复不受影响）。需要展示时按需从会话会话事件派生
+ * （`microflow/subagents.ts` 的 `collectSessionMessages` + 引擎的
+ * `getStepSessionMessages`）—— 保留本 schema 供该按需路径构造同形数据。
+ */
 export const SessionMessageSchema = z.object({
   type: z.enum(['text', 'tool', 'reasoning']),
   text: z.string().optional(),
@@ -393,17 +413,26 @@ export const RetryRecordSchema = z.object({
   result: z.enum(['running', 'completed', 'failed']),
 })
 
-/** 用户在执行过程中的消息（原始需求 / 恢复 / 重试 / @mention 讨论，统一时间轴渲染）。 */
+/**
+ * 实例级「用户消息」记录（统一时间轴渲染）。
+ *
+ * **当前只由 `makeInitialState` 写入 `kind:'input'`（= 用户真正的原始需求）**。
+ * `resume`/`retry`/`message` 三类是**历史遗留**：引擎自己造的指令性文本
+ * （恢复/重试/`send_message` 投递）过去会在这里各记一条，从而被 discussion 时间轴
+ * 当「用户消息」重复展示；按用户要求（讨论页只展示 step agent 消息与主代理消息）
+ * 已**停止写入**，字段保留只为兼容旧实例的快照（读取不崩、不做破坏性迁移）。
+ * `answer` 自 Round 26 起也不再写入。
+ */
 export const UserMessageRecordSchema = z.object({
   id: z.string(),
   /**
    * 消息种类：
-   * - input=原始需求（makeInitialState 写入）
-   * - resume=继续消息（resumeStep/resumeAllSteps）
-   * - retry=重试消息（retryStep）
-   * - answer=ask 回答（replyQuestion followup 注回）
-   * - message=@mention 讨论消息（sendStepMessage，缺陷 31）——独立于 input
-   *   以免污染 originalInput 语义；UI 时间轴按 kind 渲染徽标区分。
+   * - input=原始需求（makeInitialState 写入；**唯一仍在写入的 kind**）
+   * - resume=继续消息（历史遗留：resumeStep/resumeAllSteps 曾写入）
+   * - retry=重试消息（历史遗留：retryStep 曾写入；现由段内 `retryHistory` 承载）
+   * - answer=ask 回答（历史遗留：Round 26 起不写）
+   * - message=@mention 讨论消息（历史遗留：sendStepMessage 曾写入；现已不写，
+   *   投递只落在子代理会话 + `sandore/step-message` 事件）
    */
   kind: z.enum(['input', 'resume', 'retry', 'answer', 'message']),
   /** 目标：'broadcast'（广播）或 Step 定义 id（定点）；input 时为 ''。 */
@@ -439,6 +468,24 @@ export const ExecutedStepDefaultSchema = z.object({
   branchMeta: BranchMetaSchema.optional(),
   error: z.string().optional(),
   pausedAt: z.string().optional(),
+  /**
+   * **读取期装饰字段（不写入、不持久化）**：step 子代理会话的展示消息行。
+   *
+   * 历史沿革：过去每个执行段都会把子代理会话的最近 10 条消息行写进这里。实测这占了
+   * state 的 41%–54%（真机 12 个实例：最新 61,667/149,165 字节；另一实例
+   * 112,053/206,991；隔离实例对比 5,301 → 2,536 字节），而它**只是展示派生数据**：
+   * 真值在 DSH 的 step 子代理会话里（`sessionMeta.childId` 指向它）。
+   *
+   * 现在的写读分工：
+   * - **写入方已全部移除**（`step-runner` 不再采集、`stage-executor` 不再回写）→
+   *   持久化的 state 里恒无该字段（旧快照里的残留由 zod 默认 strip，读取不崩）；
+   * - **读取方不变**：`SandoreEngine.hydrateStateMessages` 在 `getInstanceState` RPC /
+   *   `sandore_workflow_status` 的 `step`·`messages` detail 上按需从会话现算并挂到
+   *   **返回副本**上（不改内存 state、不回写持久化）。
+   *
+   * 声明保留是为了消费面类型不变（client `chatLinesOf`、e2e 断言仍按原字段名读取），
+   * 无需任何 client 侧改动。
+   */
   sessionMessages: z.array(SessionMessageSchema).optional(),
   pauseEntryId: z.string().optional(),
   loopIteration: z.array(z.number()).optional(),
@@ -478,6 +525,14 @@ export const StageContractSchema = z.object({
 /** 工作流实例的持久化状态快照（存储域 `state` 表 value）。 */
 export const WorkflowTaskStateSchema = z.object({
   taskId: z.string(),
+  /**
+   * **宿主主代理会话 id**（该实例的宿主会话；恒等于 `taskId`，但显式落地为字段，
+   * UI/工具不必再依赖"约定"）。
+   *
+   * 可选 + 读取回退 `?? taskId`：入口归一（架构决策 1）之前或更早版本写入的快照
+   * 没有该字段，读取/恢复必须继续可用（**不做破坏性迁移**）。
+   */
+  hostSessionId: z.string().optional(),
   /** 兼容旧版 job 关联（去 job 概念后新实例不写；旧快照保留以通过校验）。 */
   jobId: z.string().optional(),
   workflowId: z.string(),
@@ -510,12 +565,6 @@ export const WorkflowTaskStateSchema = z.object({
   /** 用户指令消息（恢复/重试；统一时间轴渲染，初始需求由 originalInput 承载）。 */
   userMessages: z.array(UserMessageRecordSchema).optional(),
   stageContracts: z.record(z.string(), StageContractSchema),
-  /** 复用宿主会话模式的调用方会话 id（startInstance hostSessionId；恢复时据此复用
-   *  宿主主代理——recover 不再无条件 resume(instanceId)；旧快照缺省 undefined 走新建语义）。 */
-  hostSessionId: z.string().optional(),
-  /** Round 26：是否把 ask/permission 上报宿主主代理（复用 hostSessionId 时 true；
-   *  overlay 新建 false——只走 discussion composer）。缺省（旧快照）true 兼容。 */
-  reportToHost: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

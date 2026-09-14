@@ -97,18 +97,26 @@ interface HostModelDirectoryLike {
  *  返回缓存值，否则 React 判定 store 每次都在变 → 「Maximum update depth exceeded」
  *  （React #185，seat 崩溃会关掉整个 conversation column）。`routable: false`
  *  让 ModelSelectSandore 直接渲染 null（隐藏选择器），而不是渲染一个错误触发器。 */
-function unavailableModelDirectory(reason: string): ModelDirectoryFace {
-  const snapshot: ModelDirectoryState = {
+function unavailableModelDirectory(reason: string | (() => string)): ModelDirectoryFace {
+  const reasonOf = typeof reason === 'function' ? reason : (): string => reason
+  /** 读取时现算（引用稳定的**对象**，但 error 文案随最后一次失败原因更新——诊断用）。 */
+  const snapshotOf = (): ModelDirectoryState => ({
     current: null, routable: false, groups: [], failures: [],
-    status: 'error', error: reason,
+    status: 'error', error: reasonOf(),
+  })
+  // 引用稳定性：只在失败原因变化时换对象（稳态下 uSES 看到的是同一个引用）。
+  let cached = snapshotOf()
+  const current = (): ModelDirectoryState => {
+    if (cached.error !== reasonOf()) cached = snapshotOf()
+    return cached
   }
   return {
     store: {
-      getSnapshot: () => snapshot,
+      getSnapshot: current,
       subscribe: () => () => {},
     },
-    async load(): Promise<never> { throw new Error(reason) },
-    async select(): Promise<never> { throw new Error(reason) },
+    async load(): Promise<never> { throw new Error(reasonOf()) },
+    async select(): Promise<never> { throw new Error(reasonOf()) },
     dispose(): void {},
   }
 }
@@ -141,13 +149,23 @@ export function bridgeModelDirectory(
     }
   }
   let directory: HostModelDirectoryLike | undefined
+  // 失败原因（诊断用：区分「宿主没装 ui-model-selection」与「directoryFor 抛错」——
+  // 两者的 UI 表现都是隐藏触发器，没有这条线索 e2e 只能看到「席位是空的」）。
+  let failure = 'model selection is unavailable (ui-model-selection not loaded)'
   const tryResolve = (): void => {
     if (directory !== undefined) return
     try {
       const resolver = readHost()
-      const raw = resolver?.modelDirectories?.directoryFor(sessionId)
+      if (resolver?.modelDirectories === undefined) {
+        failure = 'model selection is unavailable (ctx.modelDirectories is not resolvable)'
+        directory = undefined
+        return
+      }
+      const raw = resolver.modelDirectories.directoryFor(sessionId)
       directory = raw === undefined ? undefined : raw as HostModelDirectoryLike
-    } catch {
+      if (directory === undefined) failure = `model selection is unavailable (no directory for session ${sessionId})`
+    } catch (error) {
+      failure = `model selection is unavailable (directoryFor threw: ${error instanceof Error ? error.message : String(error)})`
       directory = undefined
     }
   }
@@ -165,8 +183,8 @@ export function bridgeModelDirectory(
   const immediate = resolved()
   if (immediate !== undefined) return immediate
   // 宿主未就绪：返回自愈占位——getSnapshot 每次重试解析（会话/服务晚出现后自动恢复），
-  // 未就绪期间快照引用稳定（unavailableModelDirectory 缓存单例）。
-  const unavailable = unavailableModelDirectory('model selection is unavailable (ui-model-selection not loaded)')
+  // 未就绪期间快照引用稳定（占位单例缓存；错误文案随最后一次失败原因更新）。
+  const unavailable = unavailableModelDirectory(() => failure)
   return {
     store: {
       getSnapshot: () => resolved()?.store.getSnapshot() ?? unavailable.store.getSnapshot(),

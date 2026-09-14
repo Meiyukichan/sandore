@@ -30,7 +30,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session';
 
 import type { Agent, AgentHandle, CreateAgentOptions } from '../microflow/subagents';
 import { SandoreError } from './errors.ts';
-import type { RetryRecord, UserMessageRecord, WorkflowTaskState } from './schema.ts';
+import type { RetryRecord, WorkflowTaskState } from './schema.ts';
 
 /** 重试三模式。 */
 export type RetryMode = 'continue' | 'revert' | 'fork';
@@ -69,8 +69,6 @@ export interface RecoveryManagerOptions {
   readonly readState: () => WorkflowTaskState;
   /** 不可变重建 + 持久化当前状态快照。 */
   readonly commitState: (next: WorkflowTaskState) => void;
-  /** 追加一条用户指令消息（写入 `state.userMessages` 并持久化）。 */
-  readonly appendUserMessage: (record: UserMessageRecord) => void;
   /** 子代理 prompt 投递的注入包装（已绑定宿主主代理作 parent；引擎经 queue 投递通道实现）。 */
   readonly followup: (childId: string, content: ContentBlock[], signal: AbortSignal) => Promise<void> | void;
   /** `ctx.agents.create` 的注入包装（revert/fork 创建带 seed 的新子代理）。 */
@@ -275,13 +273,10 @@ export class RecoveryManager {
       retryHistory: [...(cleaned.retryHistory ?? []), retryRecord],
     };
     this.commitRunningStep(state, runningStep);
-    this.deps.appendUserMessage({
-      id: `usr-${globalThis.crypto.randomUUID()}`,
-      kind: 'retry',
-      target: stepIdOf(step),
-      content: message,
-      createdAt: now(),
-    });
+    // **不写 `state.userMessages`**（用户要求：讨论页只展示 step agent 消息与主代理消息）：
+    // 重试指令已经作为一条用户消息进了被重建/续跑的**子代理会话**，重试本身也记在
+    // `runningStep.retryHistory`（结构化、归属该段）与 `sandore/step-retried` 事件里，
+    // 实例状态的 userMessages 不再重复记一份。
     this.deps.emitStepRetried(stepIdOf(step), mode, step.name, step.loopIteration);
 
     // 2. 按模式准备子代理会话（revert/fork 需 fork + 新 agent + 更新 childId/parentSessionId）。
@@ -321,11 +316,20 @@ export class RecoveryManager {
         // 上游适配：meta 删 seedLength（会话头校验显式拒绝），改 `isSeeded: true` +
         // 顶层 `inheritedEventCount`。parentSession 传源 childId（审计语义）；引擎的
         // createAgent 包装会覆盖为宿主主代理 id（DSH lineage 校验要求）。
+        //
+        // **不变量（2026-09）**：`seed` 只能来自**该 step 自己的会话事件**（上面
+        // `forkSession(childId, …)` 的 `childId` 即本 step 段子代理会话 id）——重建出来的
+        // 执行子代理继承的是自己上一次尝试的上下文，**不是**宿主主代理的历史。引擎注入的
+        // `forkSession` 包装对「源 = 宿主会话 id」会响亮拒绝（见
+        // workflow-engine.ts 的 forkSession 守卫），防止有人把宿主会话当 fork 源。
         await this.deps.createAgent({
           sessionId: newChildId,
           meta: { origin: 'subagent', parentSession: childId, isSeeded: true },
           inheritedEventCount: forked.events.length,
           seed: forked.events,
+          // 子代理列表标题（引擎消费：补写 `subagent/descriptor` 身份事件，防「会话记录损坏」）：
+          // 与其它创建路径同款 `<前缀> <名称> · <childId>`。
+          descriptorLabel: `retry ${step.name ?? stepIdOf(step)} · ${newChildId}`,
         });
         // 更新 sessionMeta.childId 为新 session id，parentSessionId 记旧值。
         // 注意：此处是同 id 段的原地更新（upsert），不能再用 commitRunningStep（append）——

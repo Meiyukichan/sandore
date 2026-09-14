@@ -1,9 +1,9 @@
 /**
  * loop-manager.ts（LoopManager）的单元测试。
  *
- * 覆盖 4 位 hex ID 后缀与 strip 还原、活跃循环/迭代栈、嵌套 loopIteration 路径、
- * checkLoopBreak（maxIterations 硬上限 + breakCondition 两阶段评估 + loopMeta 写入）
- * 与循环迭代上下文注入（in-loop-turn/all-loop-turn env）。
+ * 覆盖循环内 step 实际 id（纯 UUID）的生成/复用/反查还原、活跃循环/迭代栈、
+ * 嵌套 loopIteration 路径、checkLoopBreak（maxIterations 硬上限 + breakCondition
+ * 两阶段评估 + loopMeta 写入）与循环迭代上下文注入（in-loop-turn/all-loop-turn env）。
  * @module @meiyukichan/dsh-sandore/microflow/src/loop-manager.spec
  */
 import { Context } from '@deepseek-ai/cordis';
@@ -36,21 +36,38 @@ function harness(config: LoopManagerConfig = { defaultTimeoutMs: 60000 }): {
   return { ctx, llm, shell, subprocess, state, manager: new LoopManager(ctx, config, state) };
 }
 
-describe('LoopManager ID suffix', () => {
-  it('generates a 4-hex suffix id', () => {
+describe('LoopManager actual step id (UUID)', () => {
+  it('generates a pure UUID id', () => {
     const { manager } = harness();
-    expect(manager.getActualStepId('step-abc')).toMatch(/^step-abc-[0-9a-f]{4}$/);
+    expect(manager.getActualStepId('step-abc')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
-  it('reuses the same suffix within one iteration and strips it back', () => {
+  it('reuses the same UUID for the same stepId within one iteration', () => {
     const { manager } = harness();
     const first = manager.getActualStepId('step-abc');
     const second = manager.getActualStepId('step-abc');
     expect(second).toBe(first);
-    expect(manager.stripIdSuffix(first)).toBe('step-abc');
   });
 
-  it('generates a new suffix after incrementing the iteration', () => {
+  it('generates different UUIDs for different step ids', () => {
+    const { manager } = harness();
+    const first = manager.getActualStepId('step-abc');
+    const second = manager.getActualStepId('step-def');
+    expect(second).not.toBe(first);
+  });
+
+  it('strips an actual UUID back to the original step id', () => {
+    const { manager } = harness();
+    const actual = manager.getActualStepId('step-abc');
+    expect(manager.stripIdSuffix(actual)).toBe('step-abc');
+  });
+
+  it('returns a non-loop id unchanged from stripIdSuffix', () => {
+    const { manager } = harness();
+    expect(manager.stripIdSuffix('step-abc')).toBe('step-abc');
+  });
+
+  it('generates a new UUID after incrementing the iteration', () => {
     const { manager } = harness();
     manager.pushActiveLoop('loop-1', 5);
     const first = manager.getActualStepId('step-abc');

@@ -31,7 +31,7 @@ import { describeError, textSummary } from './internal.ts';
 import { LoopManager } from './loop-manager.ts';
 import { resolveStepRules } from './rules-resolver.ts';
 import { StepRunner } from './step-runner.ts';
-import type { StepRunnerConfig, PreviousStepOutput, StepRunResult } from './step-runner.ts';
+import type { StepRunnerConfig, PreviousStepOutput, StepRunRequest, StepRunResult } from './step-runner.ts';
 
 /** 分离式合并后的完整 Step：完整定义（command/映射等）+ 流控 branches。 */
 export type MergedStep = WorkflowStep & { readonly branches?: DagBranch[] | undefined };
@@ -53,6 +53,16 @@ export interface StageExecutionInput {
    */
   readonly contractArtifacts: Record<string, string[]>;
   readonly passThroughVars: WorkflowTaskState['passThroughVars'];
+  /**
+   * 实例级已完成步骤的前置输出播种（**跨 Stage**；每 stepId 只取最新执行段）。
+   *
+   * v7 修复：`previousOutputs` 原来只在本 Stage 内累积，于是「step 声明依赖**前一个 Stage**
+   * 的某个 step」永远解析不到（真机缺陷：loop 步骤声明依赖 sce3，`## 参考信息` 里 sce3
+   * 一份都没有）。引擎在建 Stage 执行器时用
+   * {@link previousOutputsFromExecutedSteps} 播种；本 Stage 内的完成步骤按 upsert-latest
+   * 覆盖同 id 条目。注入面仍由 `step.inputFrom` 决定（未声明不注入）。
+   */
+  readonly previousOutputs?: readonly PreviousStepOutput[];
 }
 
 /** 透传变量运行时值。 */
@@ -70,13 +80,14 @@ export interface StageSharedState {
 
 /** Step 生命周期钩子（由引擎注入，用于发射 `sandore/step-*` 事件）。 */
 export interface StageStepHooks {
-  readonly onStepStart: (step: WorkflowStep, childId: string) => void;
-  readonly onStepCompleted: (step: WorkflowStep, childId: string, output: ContentBlock[]) => void;
-  readonly onStepFailed: (step: WorkflowStep, childId: string, error: string) => void;
+  /** childId：真实子代理命令在 launchSubagent 后为真实会话 id；shell/无命令为 undefined。 */
+  readonly onStepStart: (step: WorkflowStep, childId: string | undefined) => void;
+  readonly onStepCompleted: (step: WorkflowStep, childId: string | undefined, output: ContentBlock[]) => void;
+  readonly onStepFailed: (step: WorkflowStep, childId: string | undefined, error: string) => void;
   /**
    * 收尾阶段流转钩子（`commitFinalize(currentPhase)` 写入 finalizeMeta 后触发，
    * 由引擎注入并双发 `sandore/step-phase` 事件）。`childId` 取执行段
-   * `sessionMeta.childId`（shell 等无真实会话时为合成占位/undefined，引擎侧回退）。
+   * `sessionMeta.childId`（shell 等无真实会话时为 undefined，引擎侧回退）。
    */
   readonly onPhaseChange?: (step: WorkflowStep, childId: string | undefined, phase: FinalizePhase) => void;
 }
@@ -248,6 +259,45 @@ function toPreviousOutput(step: ExecutedStepDefault, files: readonly string[] = 
 }
 
 /**
+ * 前置输出列表的 **upsert-latest** 语义：同一步骤（按 `id` = stepId）已有条目时**原地
+ * 替换**为最新执行段的输出，否则追加。
+ *
+ * 为什么必须 upsert 而不是 push：loop / 重试 / 暂停续跑都会为同一步骤产生新的执行段，
+ * 每段完成时都 push 会让 `state.previousOutputs` 随轮次线性膨胀（真机缺陷：一个 loop
+ * 步骤的 `## 参考信息` 里同一前置 step 出现 3–4 份），也让「只依赖某一步」的声明在
+ * 未过滤路径上被重复内容淹没。
+ * @param outputs - 当前列表（原地改写）。
+ * @param next - 刚落地的输出条目。
+ */
+export function upsertPreviousOutput(outputs: PreviousStepOutput[], next: PreviousStepOutput): void {
+  const index = outputs.findIndex(existing => existing.id === next.id);
+  if (index < 0) {
+    outputs.push(next);
+    return;
+  }
+  outputs[index] = next;
+}
+
+/**
+ * 从实例级 `executedSteps` 快照收集前置输出（**跨 Stage**；每 step 只取最新执行段）。
+ *
+ * 为什么需要：`previousOutputs` 原本只在本 Stage 内累积（`StageExecutor` 每 Stage 新建），
+ * 于是「声明依赖前一个 Stage 的某个 step」永远解析不到——真机现象就是「loop 步骤声明
+ * 依赖 sce3，`## 参考信息` 里 sce3 一份都没有」。引擎在建 Stage 执行器时用本函数播种
+ * 实例级已完成步骤（`files` 留空：跨 Stage 不重复收集产物清单，产物经 StageContract 传递）。
+ * @param executedSteps - `state.executedSteps`（含各执行段）。
+ * @returns 每 stepId 一条（最新段）的前置输出列表。
+ */
+export function previousOutputsFromExecutedSteps(executedSteps: readonly ExecutedStepDefault[]): PreviousStepOutput[] {
+  const outputs: PreviousStepOutput[] = [];
+  for (const step of executedSteps) {
+    if (step.output === undefined || step.output.length === 0) continue;
+    upsertPreviousOutput(outputs, toPreviousOutput(step));
+  }
+  return outputs;
+}
+
+/**
  * 组装 Stage 产物契约。
  *
  * 缺陷 16 修复：`artifacts[].files` 与 `contractArtifacts` 不再硬编码空值——
@@ -316,6 +366,74 @@ function mergeGates(workflowDef: WorkflowDefinition, stageDef: WorkflowStage, st
 }
 
 /**
+ * 计算某 Step 的**直接上游**（DAG 入边来源）step id 列表——未声明 `inputFrom` 时的默认注入集合。
+ *
+ * 规则（v8，2026-09 真机缺陷修复）：
+ * - 上游 = 流程上**指向该 step 的入边**，两类都算：
+ *   ① 普通 `next` 边（含条件分支 `condition`，但**不带 `loop` 子句**）；
+ *   ② 循环边的**出口** `loop.exitTo`——循环体跑满/跳出后流程落到 exitTo 目标，
+ *      它才是该目标在真机路径上的**数据上游**；
+ * - 循环边的回边 `loop.next` **不计入**（那是循环机制：重新进入循环体，不是数据依赖）；
+ * - 本 Stage 无入边（Stage 首步）时回退到**前一个 Stage 的末端 step**（无 in-stage 出边者）；
+ * - 第一个 Stage 的首步 → 无上游（只注入用户原始需求）。
+ *
+ * v7 → v8 的反转（真机证据，用户现场 `session-33ca337f…`）：
+ * v7 把 `exitTo` 一并排除，理由是「loop 的输入只有它的流程入边 `sce3`」。但真机
+ * `test-workflow` 的分支条件（`artifacts/{change-name}/proposal.md` 是否存在）**始终命中
+ * 「已存在」**那条边，`sce3` 在 15 个真机实例里**一次都没执行过** → `loop` 的默认上游
+ * 解析成 `{sce3}`（永不在产出集合里）→ 参考信息**整篇为空**（真机现象：loop 提示词的
+ * `<ReferenceInfo>` 只有自身身份块与用户原始需求）。把 loop 真正送进执行的边是
+ * `修复问题` 的 `{loop:{maxIterations:3, exitTo: loop}}`（循环跑满 3 轮跳出）——`exitTo`
+ * 就是数据上游。默认上游必须同时看 `next` 与 `exitTo`，否则「分支跳过」会让下游参考信息
+ * 静默变空；未执行/无输出的上游另有显式标注（见 step-runner 的「上游未产出内容」块）。
+ *
+ * 真机 `test-workflow` 对账：`parallel1/sce2/sce3 ← sce1`、`修复问题 ← sce2`、
+ * `loop ← sce3 + 修复问题（exitTo）`。
+ * @param definition - 工作流定义（stages 流控位 + 顶层 steps）。
+ * @param stageId - 目标 step 所在 Stage id。
+ * @param stepId - 目标 step id。
+ * @returns 上游 step id（去重；无上游返回空数组）。
+ */
+export function directUpstreamStepIds(
+  definition: WorkflowDefinition,
+  stageId: string,
+  stepId: string,
+): readonly string[] {
+  const stage = definition.stages.find(candidate => candidate.id === stageId);
+  if (stage === undefined) {
+    return [];
+  }
+  const upstreams: string[] = [];
+  for (const slot of stage.steps) {
+    if (slot.id === stepId) continue;
+    // 入边两类：普通 next 边（不含 loop 子句）；带 loop 子句的边的 **exitTo 目标**
+    // （循环出口 = 真实数据下游）。回边 `loop.next` 明确排除。
+    const feeds = slot.branches?.some(branch => (
+      (branch.next === stepId && branch.loop === undefined)
+      || branch.loop?.exitTo === stepId
+    ));
+    if (feeds === true) {
+      upstreams.push(slot.id);
+    }
+  }
+  if (upstreams.length > 0) {
+    return [...new Set(upstreams)];
+  }
+  const index = definition.stages.findIndex(candidate => candidate.id === stage.id);
+  const previous = index > 0 ? definition.stages[index - 1] : undefined;
+  if (previous === undefined) {
+    return [];
+  }
+  const referenced = new Set<string>();
+  for (const slot of previous.steps) {
+    for (const branch of slot.branches ?? []) {
+      referenced.add(branch.next);
+    }
+  }
+  return previous.steps.map(slot => slot.id).filter(id => !referenced.has(id));
+}
+
+/**
  * Stage 内部执行器。
  *
  * 构造时绑定 Stage 定义、共享状态、StepRunner 配置与调度依赖（LoopManager /
@@ -345,7 +463,7 @@ interface StageRunState {
     readonly nodeId: string;
     readonly step: WorkflowStep;
     readonly executed: ExecutedStepDefault;
-    readonly childId: string;
+    readonly childId: string | undefined;
   } | undefined;
   /**
    * resume 分流表：nodeId → 续跑 Step 定义 + 既有执行段 + childId（initState 从
@@ -373,19 +491,63 @@ export class StageExecutor {
 
   constructor(private readonly options: StageExecutorOptions) {
     this.runner = new StepRunner(options.ctx, this.trackChildStarted(options.runnerConfig));
-    // 分离式合并：stage.steps 提供 id + 流控（branches），definition.steps 提供完整定义
-    // （command/映射/gates 等），按 id 合并成执行用的完整 WorkflowStep。
+    // 分离式合并：stage.steps 提供 id + 流控（branches）+ **流程 inputFrom**，
+    // definition.steps 提供完整定义（command/映射/gates 等），按 id 合并成执行用的完整
+    // WorkflowStep。
+    //
+    // **v7 修复（真机缺陷根因）**：旧实现只从流控位取 `branches`、丢掉 `inputFrom`，
+    // 于是「在 stage 流控位/Microflow 库条目上声明的依赖」到不了执行步 →
+    // step-runner 的 inputFrom 过滤退化成"注入全量前置输出"（loop 场景越滚越多、
+    // 声明依赖反而缺失）。这里与 `manager-tool.mergedStepView` 同口径：
+    // 流控位 inputFrom 优先，缺省回退顶层定义的同名字段。
     const definitions = new Map((options.workflowDef.steps ?? []).map(step => [step.id, step] as const));
     this.steps = options.stageDef.steps.map(flowStep => {
       const definition = definitions.get(flowStep.id);
-      return definition === undefined
-        ? flowStep as MergedStep
-        : { ...definition, ...(flowStep.branches === undefined ? {} : { branches: flowStep.branches }) } as MergedStep;
+      if (definition === undefined) {
+        return flowStep as MergedStep;
+      }
+      const inputFrom = flowStep.inputFrom ?? definition.inputFrom;
+      return {
+        ...definition,
+        ...(flowStep.branches === undefined ? {} : { branches: flowStep.branches }),
+        ...(inputFrom === undefined ? {} : { inputFrom }),
+      } as MergedStep;
     });
   }
 
-  /** 包装 onChildStarted：记录真实 childId（供取消类错误查暂停登记表），再透传原回调。 */
-  private trackChildStarted(runnerConfig: StepRunnerConfig): StepRunnerConfig {
+  /**
+   * 某 Step 的**直接上游**（DAG 入边来源）step id 列表——未声明 `inputFrom` 时的默认注入集合。
+   *
+   * 规则（v8）：
+   * - 上游 = **普通 `next` 入边**（含条件分支）**∪ 循环边的 `exitTo` 目标**（循环出口是其
+   *   真实数据下游；v7 曾排除 exitTo，导致分支跳过时下游参考信息静默变空——见
+   *   {@link directUpstreamStepIds} 的真机证据）；
+   * - 回边 `loop.next` 不计入（循环机制，不是数据依赖）；
+   * - 本 Stage 无入边（Stage 首步）时回退到**前一个 Stage 的末端 step**（无出边的 sink）。
+   *
+   * 真机 `test-workflow` 对账：`parallel1/sce2/sce3 ← sce1`、`修复问题 ← sce2`、
+   * `loop ← sce3 + 修复问题（exitTo）`。
+   * @param stepId - 目标 step id。
+   * @returns 上游 step id（去重；无上游返回空数组）。
+   */
+  private upstreamStepIds(stepId: string): readonly string[] {
+    return directUpstreamStepIds(this.options.workflowDef, this.options.stageDef.id, stepId);
+  }
+
+  /**
+   * 上游 step id → 展示名（提示词「上游未产出内容」标注用）。
+   * @param stepIds - 目标 step 的上游 id（直接上游 ∪ 声明 inputFrom 的 path）。
+   * @returns id → 名称（查不到定义时回退 id 本身）。
+   */
+  private upstreamStepNamesOf(stepIds: readonly string[]): Record<string, string> {
+    const names: Record<string, string> = {};
+    for (const id of stepIds) {
+      names[id] = this.steps.find(candidate => candidate.id === id)?.name ?? id;
+    }
+    return names;
+  }
+
+  /** 包装 onChildStarted：记录真实 childId（供取消类错误查暂停登记表），再透传原回调。 */  private trackChildStarted(runnerConfig: StepRunnerConfig): StepRunnerConfig {
     const onChildStarted = runnerConfig.onChildStarted;
     if (onChildStarted === undefined) {
       return runnerConfig;
@@ -509,12 +671,16 @@ export class StageExecutor {
           initialQueue.push(id);
         }
       }
+      // previousOutputs 播种（v7）：先放**实例级**已完成步骤（跨 Stage，每 step 最新段），
+      // 再用本 Stage 的 completedSteps upsert 覆盖（本 Stage 的产物清单更精确）。
+      const seeded = [...this.options.input.previousOutputs ?? []] as PreviousStepOutput[];
+      for (const [index, step] of completedSteps.entries()) {
+        upsertPreviousOutput(seeded, toPreviousOutput(step, artifactsPerStep[index]!.flatMap(a => a.value)));
+      }
       return {
         stepIndex,
         executedSteps: [...completedSteps],
-        previousOutputs: completedSteps.map((s, i) =>
-          toPreviousOutput(s, artifactsPerStep[i]!.flatMap(a => a.value)),
-        ),
+        previousOutputs: seeded,
         passThroughVars,
         pendingQueue: initialQueue,
         status: 'running',
@@ -531,7 +697,8 @@ export class StageExecutor {
     return {
       stepIndex,
       executedSteps: [],
-      previousOutputs: [],
+      // 新 Stage 的 previousOutputs 同样从实例级快照播种（v7：跨 Stage 依赖可解析）。
+      previousOutputs: [...this.options.input.previousOutputs ?? []] as PreviousStepOutput[],
       passThroughVars,
       pendingQueue: firstStep === undefined ? [] : [firstStep.id],
       status: 'completed',
@@ -771,9 +938,11 @@ export class StageExecutor {
     const { stageDef, input, sharedState, signal, hooks, loopManager, visitCounts } = this.options;
     const command = step.command;
     const inLoop = loopManager.buildLoopIterationPath().length > 0;
-    // executed.id = 执行段唯一 id（纯 UUID）；childId = sessionMeta 子代理占位/真实会话
-    // id（两者解耦：同一 Step 多次执行段各自新 id，子代理会话 id 可复用/由 onChildStarted 更新）。
-    const childId = inLoop ? loopManager.getActualStepId(step.id) : synthesizeChildId(step.id);
+    // executed.id = 执行段唯一 id（纯 UUID）。childId 只承载**真实子代理会话 id**：
+    // 2026-09-09 起不再生成合成占位 id——shell 不建子代理（sessionMeta 无 childId）；
+    // prompt/agent/skill/mcp 先落 running 段（无 childId）→ `launchSubagent` 拉起
+    // 真实子代理（engine onChildStarted 把段 sessionMeta 回填真实 childId + 落盘）
+    // → 之后才发 step-start（事件载荷即真实 id，UI 拿到即可绑定子代理会话）。
     // 新模型下 visitCount 由 runLoop 单一递增（处理节点前 +1），这里只快照当前值进 entry
     // （等价基准 processNode L93-94 递增 + L496 快照），不再 +1、不回写 visitCounts。
     // 根治命令门双重计数（缺陷 3 case ①）：命令门自回边再递增与 processCommandNode 递增叠加。
@@ -792,13 +961,13 @@ export class StageExecutor {
       ...(step.passThroughVars === undefined ? {} : { passThroughVars: step.passThroughVars }),
       ...(command === undefined
         ? {}
-        : { sessionMeta: { childId, synthetic: true, command: command.type } }),
+        : { sessionMeta: { synthetic: true, command: command.type } }),
       visitCount: visitCounts[nodeId] ?? 0,
       ...(inLoop ? { loopIteration: loopManager.buildLoopIterationPath() } : {}),
     };
 
-    hooks?.onStepStart(step, childId);
-    // 持久化 running 快照（暂停定位与崩溃恢复需要 executedSteps 含运行中 Step）。
+    // 持久化 running 快照（暂停定位与崩溃恢复需要 executedSteps 含运行中 Step；
+    // 真实子代理命令此时尚无 childId，engine onChildStarted 会回填真实 id 再落盘）。
     await this.persist(executed, state);
 
     if (command === undefined) {
@@ -807,7 +976,7 @@ export class StageExecutor {
       executed.error = message;
       executed.updatedAt = now();
       state.executedSteps.push(executed);
-      hooks?.onStepFailed(step, childId, message);
+      hooks?.onStepFailed(step, undefined, message);
       await this.persist(executed, state);
       state.status = 'failed';
       state.errorDetail = message;
@@ -815,6 +984,8 @@ export class StageExecutor {
       return 'failed';
     }
 
+    // childId 在真实子代理拉起前保持 undefined（shell 恒 undefined）。
+    let childId: string | undefined;
     try {
       const loopContext = loopManager.getLoopIterationContext();
       // 缺陷 7 修复：3 级合并解析任务规则（step ∪ stage → workflow.rules 查内容），
@@ -822,19 +993,42 @@ export class StageExecutor {
       // 仅命令节点计算（路由节点无 AI 提示词）；shell Step 无 AI 提示词，resolvedRules
       // 经 request 传递但 runShell 不消费（与基准 shell 不适用规则一致）。
       const resolvedRules = resolveStepRules(this.options.workflowDef, stageDef, step);
-      const result = await this.runner.run({
+      // v8：上游 id 一次性算好（直接上游 ∪ 声明 inputFrom 的 path），并附带展示名——
+      // 未声明 inputFrom 时用于过滤默认注入集合，另外供 step-runner 标注「上游未产出内容」。
+      const upstreamIds = this.upstreamStepIds(step.id);
+      const declaredUpstreamIds = (step.inputFrom ?? [])
+        .map(item => item.path)
+        .filter((path): path is string => path !== undefined && path !== '');
+      const upstreamStepNames = this.upstreamStepNamesOf([...declaredUpstreamIds, ...upstreamIds]);
+      const request: StepRunRequest = {
         step,
         executedId: executed.id,
         workdir: sharedState.cwd,
         originalInput: input.originalInput,
         previousOutputs: state.previousOutputs,
+        // v7：未声明 inputFrom 时注入**直接上游**（DAG 入边）的输出；声明了则按声明过滤。
+        upstreamStepIds: upstreamIds,
+        ...(Object.keys(upstreamStepNames).length === 0 ? {} : { upstreamStepNames }),
         passThroughVars: toVarMap(state.passThroughVars),
         stageId: stageDef.id,
         loopTurn: loopContext.loopTurn,
         loopMaxIterations: loopContext.loopMaxIterations,
         ...(signal === undefined ? {} : { signal }),
         ...(Object.keys(resolvedRules).length === 0 ? {} : { resolvedRules }),
-      });
+      };
+      if (command.type === 'shell') {
+        // shell：无子代理、无 childId；宣告开始即执行。
+        hooks?.onStepStart(step, undefined);
+        const shellResult = await this.runner.run(request);
+        return await this.finishCommandNode(nodeId, step, undefined, executed, shellResult, state);
+      }
+      // prompt/agent/skill/mcp：**先拉起真实子代理拿真实 childId**（startContinuable
+      // 返回时 onChildStarted 已把 running 段 sessionMeta 回填真实 id 并落盘），
+      // 拿到真实 id 才发 step-start——UI/事件见到的 childId 恒为真实会话 id。
+      const launched = await this.runner.launchSubagent(request);
+      childId = launched.childId;
+      hooks?.onStepStart(step, childId);
+      const result = await this.runner.resumeSubagent(launched.commandType, childId, step.id, stageDef.id, signal);
       return await this.finishCommandNode(nodeId, step, childId, executed, result, state);
     } catch (error) {
       // 暂停判定：**以 settle stopReason 为权威**（对齐 DSH `subagent/end`）。
@@ -849,9 +1043,22 @@ export class StageExecutor {
       if (error instanceof SandoreError && error.code === 'STEP_PAUSED') {
         executed.status = 'paused';
         executed.updatedAt = now();
+        // 真实 childId + parent（hostAgent.id 的确定性来源 runnerConfig.parentSessionId）
+        // 写回 meta：暂停段持久化后 UI 仍能组 subagent-kind 地址打开内嵌会话（2026-09-09）。
+        const pausedRealChildId = this.realChildIds.get(step.id) ?? childId;
+        if (executed.sessionMeta !== undefined && pausedRealChildId !== undefined) {
+          executed.sessionMeta = {
+            ...executed.sessionMeta,
+            childId: pausedRealChildId,
+            synthetic: false,
+            ...(this.options.runnerConfig.parentSessionId === undefined
+              ? {}
+              : { hostSessionId: this.options.runnerConfig.parentSessionId }),
+          };
+        }
         state.executedSteps.push(executed);
         state.status = 'paused';
-        state.pendingPaused = { nodeId, step, executed, childId: this.realChildIds.get(step.id) ?? childId };
+        state.pendingPaused = { nodeId, step, executed, childId: pausedRealChildId };
         this.options.commitState?.({ status: 'paused' });
         return 'paused';
       }
@@ -889,7 +1096,7 @@ export class StageExecutor {
   private async finishCommandNode(
     nodeId: string,
     step: WorkflowStep,
-    childId: string,
+    childId: string | undefined,
     executed: ExecutedStepDefault,
     result: StepRunResult,
     state: StageRunState,
@@ -900,13 +1107,15 @@ export class StageExecutor {
     // running → [interacting（仅 state.status）] → running → completed）。
     executed.updatedAt = now();
     executed.output = result.output;
-    // §3.8A：真实子代理会话消息随结果带出，写入段快照（onPersist 持久化定格；
-    // shell 无该字段 → 前端走 fallback）。
-    if (result.sessionMessages !== undefined) {
-      executed.sessionMessages = result.sessionMessages;
-    }
+    // 注意：**不再写 `executed.sessionMessages`**（2026-09）：state 不再持久化该展示
+    // 派生字段（实测占 state 的 41%–54%），改由 `getInstanceState` RPC 读取时从各段
+    // 子代理会话按需回算（workflow-engine.ts 的 `hydrateStateMessages`）。
     if (result.sessionMeta !== undefined) {
+      // 合并（而非三字段重写）：保留既有字段（如 pre-launch/onChildStarted 写入的
+      // hostSessionId parent，2026-09-09 起真实子代理段须持久化 parent 供 UI 组
+      // subagent-kind 地址），再以 result 覆盖 childId/synthetic/command。
       executed.sessionMeta = {
+        ...(executed.sessionMeta === undefined ? {} : executed.sessionMeta),
         childId: result.sessionMeta.childId ?? childId,
         synthetic: result.sessionMeta.synthetic,
         command: result.sessionMeta.command,
@@ -963,7 +1172,7 @@ export class StageExecutor {
   private async runPhasesBC(
     nodeId: string,
     step: WorkflowStep,
-    childId: string,
+    childId: string | undefined,
     executed: ExecutedStepDefault,
     context: FinalizeStepContext,
     gates: Gates | undefined,
@@ -1131,7 +1340,7 @@ export class StageExecutor {
    */
   private async runPhaseC(
     step: WorkflowStep,
-    childId: string,
+    childId: string | undefined,
     executed: ExecutedStepDefault,
     context: FinalizeStepContext,
     gates: Gates | undefined,
@@ -1144,9 +1353,23 @@ export class StageExecutor {
     const finalizeManager = this.options.finalizeManager;
     const request = this.buildFinalizeRequest(step, executed, context, gates, state);
     // Round 11：门禁评估前先 commit running 快照（evaluateGates 耗时期间 UI 显示「门禁中」）。
+    // 该快照里 `gateSessionId` 只能是空串（门禁子代理还没建）→ 徽标退化成不可点的纯文本；
+    // 故紧接着用 `onGateCreated` 早报（与 Phase B 的 `onForkCreated` 同一套机制/时机）：
+    // 子代理一建好就 commit 带**真实 gateSessionId** 的 running 快照，运行期「门禁中」即可点。
     await finalizeManager.commitFinalize(request, assessResult, undefined, 'gating');
     // 门禁启用 ⇒ 评估必已运行（runPhaseA 跳过条件为无变量且无门禁）；兜底空评估仅供类型。
-    const gateResult = await finalizeManager.evaluateGates(request, assessResult ?? EMPTY_ASSESS_RESULT);
+    const gateResult = await finalizeManager.evaluateGates({
+      ...request,
+      onGateCreated: (gateSessionId: string) => {
+        const runningGateResult: GateEvalResult = {
+          status: 'running',
+          gatesPassed: false,
+          gateSessionId,
+          assessmentRaw: '',
+        };
+        void finalizeManager.commitFinalize(request, assessResult, runningGateResult, 'gating');
+      },
+    }, assessResult ?? EMPTY_ASSESS_RESULT);
     if (!gateResult.gatesPassed) {
       const message = gateResult.errorDetail ?? 'gate evaluation failed';
       executed.status = 'failed';
@@ -1179,7 +1402,7 @@ export class StageExecutor {
   private async completeAfterFinalize(
     nodeId: string,
     step: WorkflowStep,
-    childId: string,
+    childId: string | undefined,
     executed: ExecutedStepDefault,
     context: FinalizeStepContext,
     gates: Gates | undefined,
@@ -1194,7 +1417,26 @@ export class StageExecutor {
     if (hasFinalize) {
       await this.options.finalizeManager.commitFinalize(buildRequest(), phaseBResult, gateResult, 'routing');
     }
-    const routed = await this.options.stepNavigator.resolveNextNodes(nodeId, this.buildContext(state));
+    // Phase D 早报（与 Phase B 的 `onForkCreated` 同一套机制/时机）：路由判断 fork 一建好
+    // 就 commit 带**真实 routingSessionId** 的 running 快照——上面那次 commit 没有会话 id，
+    // 徽标会退化成不可点的纯文本（真机：运行期点不到「判断中」）。
+    const routed = await this.options.stepNavigator.resolveNextNodes(nodeId, {
+      ...this.buildContext(state),
+      ...(hasFinalize
+        ? {
+          onRoutingCreated: (routingSessionId: string) => {
+            const runningRoutingResult: RoutingResult = { status: 'running', routingSessionId };
+            void this.options.finalizeManager.commitFinalize(
+              buildRequest(),
+              phaseBResult,
+              gateResult,
+              'routing',
+              { routingResult: runningRoutingResult },
+            );
+          },
+        }
+        : {}),
+    });
     // Phase D 路由结果写入 finalizeMeta.routingResult（不再写入 executed 顶层 branchMeta/loopMeta）。
     const routingResult: RoutingResult | undefined = routed.branchMeta !== undefined || routed.loopMeta !== undefined
       ? {
@@ -1207,7 +1449,13 @@ export class StageExecutor {
     // previousOutputs：Phase B JSON 的 compressedOutput（压缩摘要，替代原
     // compressStepOutput 的 returnPrompt 产物）；无 Phase B 结果/空摘要时兜底
     // textSummary(output)（缺陷 16 内收集产物文件填 base.files）。
-    const previousOutput = await this.buildPhaseBPreviousOutput(executed, phaseBResult?.compressedOutput, state);    state.previousOutputs.push(previousOutput);
+    //
+    // **v7 修复（真机缺陷根因）**：按 stepId **原地替换**（upsert-latest）而不是 push——
+    // loop/重试/暂停续跑会让同一步骤产生多个执行段，push 会把每次尝试的输出都留在
+    // 数组里（真机现象：`sce2` 出现 3 次、`修复问题` 出现 4 次），既撑爆 prompt 也让
+    // "只依赖某一步"的声明失效。语义：**每个前置 Step 只保留最新执行段的输出**。
+    const previousOutput = await this.buildPhaseBPreviousOutput(executed, phaseBResult?.compressedOutput, state);
+    upsertPreviousOutput(state.previousOutputs, previousOutput);
     // finalizeMeta 终态（currentPhase='completed'；含 gateResult；vars 已由 Phase B 回写，
     // 此处幂等重写）。
     if (hasFinalize) {
@@ -1299,6 +1547,12 @@ export class StageExecutor {
     const pending = state.pendingPaused!;
     state.pendingPaused = undefined;
     const base = pending.executed;
+    // 暂停只对真实子代理 Step 发生：childId 应恒为真实会话 id（pendingPaused.childId
+    // 或旧段 sessionMeta.childId）；防御性缺失时直接报错（不续跑无会话的 Step）。
+    const resumeChildId = pending.childId ?? base.sessionMeta?.childId;
+    if (resumeChildId === undefined) {
+      throw new SandoreError(`paused step '${pending.step.id}' has no child session id`, 'INVALID_OPERATION');
+    }
     // 新段继承旧段快照但清除暂停/失败细节（exactOptionalPropertyTypes 下不能赋 undefined，
     // 用解构剔除字段；sessionMeta 保持原 childId，仅清暂停细节）。
     const { pausedAt: _pausedAt, error: _error, ...rest } = base;
@@ -1309,11 +1563,11 @@ export class StageExecutor {
       createdAt: now(),
       startedAt: now(),
       status: 'running',
-      ...(base.sessionMeta === undefined ? {} : { sessionMeta: { ...base.sessionMeta, childId: pending.childId } }),
+      ...(base.sessionMeta === undefined ? {} : { sessionMeta: { ...base.sessionMeta, childId: resumeChildId } }),
     };
     // running 新段先持久化（崩溃恢复/暂停定位需要 executedSteps 含运行中 Step）。
     await this.persist(segment, state);
-    return this.resumeSubagentStep(state, pending.nodeId, pending.step, segment, pending.childId);
+    return this.resumeSubagentStep(state, pending.nodeId, pending.step, segment, resumeChildId);
   }
 
   /** 续跑子代理 Step 的公共尾段：重新收集输出 + 公共收尾（finishCommandNode）。 */
@@ -1348,9 +1602,21 @@ export class StageExecutor {
       if (error instanceof SandoreError && error.code === 'STEP_PAUSED') {
         executed.status = 'paused';
         executed.updatedAt = now();
+        // 与首次执行暂停分支一致：meta 写回真实 childId + parent（runnerConfig.parentSessionId）。
+        const pausedRealChildId = this.realChildIds.get(step.id) ?? childId;
+        if (executed.sessionMeta !== undefined && pausedRealChildId !== undefined) {
+          executed.sessionMeta = {
+            ...executed.sessionMeta,
+            childId: pausedRealChildId,
+            synthetic: false,
+            ...(this.options.runnerConfig.parentSessionId === undefined
+              ? {}
+              : { hostSessionId: this.options.runnerConfig.parentSessionId }),
+          };
+        }
         state.executedSteps.push(executed);
         state.status = 'paused';
-        state.pendingPaused = { nodeId, step, executed, childId: this.realChildIds.get(step.id) ?? childId };
+        state.pendingPaused = { nodeId, step, executed, childId: pausedRealChildId };
         this.options.commitState?.({ status: 'paused' });
         return 'paused';
       }
@@ -1407,10 +1673,7 @@ export class StageExecutor {
       // state.status）——重收集输出后置回 running（若重评估再 ask 仅 state.status
       // 置 interacting；error 则置 failed），最终由 completeAfterFinalize 置 completed。
       executed.status = 'running';
-      // §3.8A：回答注回后子代理新产出 → 消息行随新输出更新。
-      if (result.sessionMessages !== undefined) {
-        executed.sessionMessages = result.sessionMessages;
-      }
+      // 注意：**不再写 `executed.sessionMessages`**（同上一处：改由 RPC 读取时按需回算）。
       await this.persist(executed, state);
       // 重新评估（可能再次 ask → 挂回断点续问，受 MAX_FINALIZE_ASK_ROUNDS 保护）。
       const context = await this.buildFinalizeContext(step, executed, state);

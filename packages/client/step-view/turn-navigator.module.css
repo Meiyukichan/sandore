@@ -1,0 +1,241 @@
+/* turn-navigator.module.css（B4a step-view 版）：抄自 DSH 0.1.2-rc.1
+   ui-chat chat/TurnNavigator.module.css（只读参考 deepseek-harness）。
+   与 rc.1 的差异（B4a 裁剪，逐条注释）：
+   - unloaded 刻度（outline 投影/分页）与 busy 脉冲（loadThrough 跳页）整条
+     剪除——面板 view 面只有 loaded 窗（见 turn-rail.ts 头注释），对应类
+     .markUnloaded/.markBusy、dsh-turn-mark-busy 动画与 aria-busy 不存在；
+   - 轴带高 --turn-rail-band 改为 TurnNavigator 自测：量「面板滚动视口」
+     （.stepChatScroll 的父级）的 clientHeight 后以内联变量下发（rc.1 由
+     ConversationRoot 在滚动视口发布 --dsh-conversation-viewport-height 与
+     --dsh-composer-height；面板无 composer，故 band = 整个滚动视口高，
+     「band/2 垂直居中」即视口居中）；未量出前回退 520px 首帧。
+     需求 1 起面板底部动作位是**重试行**（failed 段才有），它仍按 DSH 契约发布为
+     --dsh-composer-height，但本轴的 band 一如既往取整个视口高（不扣该变量），
+     故失败段的轴带与其它段一致；
+   - 轴右缘：.stepChatScroll 侧 padding 固定 16（无 composer 侧 clearance），
+     rc.1 的 right 公式 12px − (clearance + 16px) 在 clearance=0 即 −4px——
+     刻度外缘保持在滚动视口内缘 12px（与 rc.1 几何一致，见下方注释）；
+   - 字号令牌化：rc.1 预览卡直接用 --dsw-font-xs-strong-13 / --dsw-font-xxs-12
+     简写令牌；本仓库行级视觉统一读 --dsh-content-font-size(-secondary)/
+     --dsh-content-font-delta(-secondary)（默认值即 rc.1 值），颜色仍走
+     --dsw-alias-* 令牌（深浅色随全局 body[data-ds-dark-theme]）；
+   - 窄面板降级：rc.1 在容器宽 < 900px 收起（其槽位保证宽视口才有足够列旁
+     间隙）；面板嵌在 step 卡内、宽度常态小于 900，直接沿用会恒不显示，故阈值
+     改为 < 560px 收起（更窄时轴与正文重叠收益为负；如需「窄条按钮」变体另开
+     批实现）。面板滚动视口 .stepChatScroll 本身是 query container
+     （container-type: inline-size，见 step-chat-panel.module.css）。 */
+
+/* 零高 sticky 槽位（同回到底部控制）：轴浮在转录区右缘，不撑高滚动内容。 */
+.slot {
+  position: sticky;
+  top: 0;
+  /* 压过转录区 CodeBlock 横幅（z-index 6）。 */
+  z-index: 7;
+  height: 0;
+  pointer-events: none;
+}
+
+.frame {
+  --turn-preview-height: 100px;
+
+  position: absolute;
+  top: calc(var(--turn-rail-band, 520px) / 2);
+  /* Flush with the scrollport edge: the slot sits inside the transcript's side
+     padding, so the rail gives that inset back and keeps 12px of its own.
+     sandore 面板 padding 恒 16px（无 composer clearance 变量）→ 12 − 16 = −4。 */
+  right: calc(12px - 16px);
+  width: 28px;
+  /* Fixed-pitch marks never compress: a ladder taller than the band scrolls
+     inside this frame instead of pushing marks under the footer. */
+  height: min(
+    var(--turn-natural-height),
+    max(0px, calc(var(--turn-rail-band, 520px) - 64px)),
+    420px
+  );
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateY(-50%);
+  transition: height 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* The frame's inner scroller: no visible scrollbar, no scroll chaining into
+   the transcript, and gradient fades over the ends that can still scroll. */
+.scroller {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.fadeTop {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%);
+}
+
+.fadeBottom {
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.fadeTop.fadeBottom {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+.marks {
+  position: relative;
+  height: var(--turn-natural-height);
+}
+
+.markPosition {
+  position: absolute;
+  top: calc(var(--turn-natural-position) + var(--turn-rail-inset));
+  right: 0;
+  left: 0;
+  height: 10px;
+  transform: translateY(-50%);
+  transition: top 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: dsh-turn-mark-enter 150ms ease-out;
+}
+
+/* The rail owns pointer input for the whole column, so a mark is a keyboard
+   destination that paints one tick — never a mouse target of its own. */
+.mark {
+  position: absolute;
+  /* As wide as the longest tick, right-aligned with it: the focus ring below
+     then wraps the tick instead of the rail's full pointer column. */
+  inset: 0 0 0 auto;
+  width: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.mark::before {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-border-l4);
+  content: '';
+  transform: translateY(-50%);
+  transition: width 140ms ease, background-color 140ms ease;
+}
+
+.markPreview::before {
+  width: 18px;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.markActive::before {
+  width: 20px;
+  background: var(--dsw-alias-label-primary);
+}
+
+/* Keyboard focus outranks both resting states: the tick takes the brand color
+   the rest of the rail never uses, and a hairline ring keeps it legible
+   against a busy transcript. */
+.mark:focus-visible::before {
+  width: 20px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.mark:focus-visible {
+  outline: 1px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.preview {
+  position: absolute;
+  /* Centered on its mark. Mark positions live in the scrolled ladder, so the
+     frame-level preview subtracts the scroller's offset, then holds clear of
+     both frame ends. */
+  top: clamp(
+    0px,
+    calc(
+      var(--turn-natural-position) + var(--turn-rail-inset)
+      - var(--turn-scroll-top, 0px) - var(--turn-preview-height) / 2
+    ),
+    calc(100% - var(--turn-preview-height))
+  );
+  right: calc(100% + 10px);
+  box-sizing: border-box;
+  width: min(300px, calc(100cqw - 120px));
+  max-height: var(--turn-preview-height);
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-elevation-panel);
+  pointer-events: none;
+  animation: dsh-turn-preview-enter 120ms ease-out;
+  transition: top 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.previewPrompt,
+.previewResponse {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+}
+
+/* rc.1 为 font 简写令牌 --dsw-font-xs-strong-13；按仓库惯例令牌化字号行高。 */
+.previewPrompt {
+  font-weight: 600;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+  -webkit-line-clamp: 1;
+}
+
+/* rc.1 为 --dsw-font-xxs-12；令牌化为 12px + 次级字号增量。 */
+.previewResponse {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: calc(16px + var(--dsh-content-font-delta-secondary, 0px));
+  -webkit-line-clamp: 3;
+}
+
+@keyframes dsh-turn-mark-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dsh-turn-preview-enter {
+  from { opacity: 0; transform: translateX(4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* 窄面板：整轴收起（见文件头注释：面板常窄于 rc.1 的 900 断点，改用 < 560）。 */
+@container (max-width: 559px) {
+  .slot {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame,
+  .scroller,
+  .markPosition,
+  .mark::before,
+  .preview {
+    transition: none;
+    animation: none;
+    scroll-behavior: auto;
+  }
+}

@@ -57,9 +57,17 @@ function step(overrides: Partial<ExecutedStep> = {}): ExecutedStep {
   }
 }
 
-/** 构造子代理 sessionMeta（childId + synthetic + command）。 */
-function sessionMeta(command: 'shell' | 'prompt' | 'agent' | 'skill' | 'mcp'): NonNullable<ExecutedStep['sessionMeta']> {
-  return { childId: 'child-1', synthetic: false, command }
+/** 构造子代理 sessionMeta（childId + synthetic + command；可带 parent hostSessionId）。 */
+function sessionMeta(
+  command: 'shell' | 'prompt' | 'agent' | 'skill' | 'mcp',
+  extra: { hostSessionId?: string } = {},
+): NonNullable<ExecutedStep['sessionMeta']> {
+  return {
+    childId: 'child-1',
+    synthetic: false,
+    command,
+    ...(extra.hostSessionId === undefined ? {} : { hostSessionId: extra.hostSessionId }),
+  }
 }
 
 describe('stepDotState', () => {
@@ -464,6 +472,40 @@ describe('buildTimeline 收尾字段（4.10：finalizePhase/finalizeErrorDetail�
   })
 })
 
+describe('buildTimeline childId/parentSessionId（2026-09-09：真实子代理段携带 parent）', () => {
+  const stateOf = (executedSteps: ExecutedStep[]): Parameters<typeof buildTimeline>[0] => ({
+    taskId: 'inst-1',
+    workflowId: 'wfl-1',
+    status: 'running',
+    originalInput: 'do it',
+    currentStageId: 'stg-1',
+    executedSteps,
+    stageInfos: [],
+    pendingQueue: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  })
+
+  it('propagates sessionMeta.childId + hostSessionId into the timeline item', () => {
+    const executed = step({ sessionMeta: sessionMeta('agent', { hostSessionId: 'host-1' }) })
+    const stepItem = buildTimeline(stateOf([executed]))[0]!
+    expect(stepItem.kind).toBe('step')
+    if (stepItem.kind !== 'step') return
+    expect(stepItem.childId).toBe('child-1')
+    expect(stepItem.parentSessionId).toBe('host-1')
+    expect(stepItem.synthetic).toBe(false)
+  })
+
+  it('omits childId/parentSessionId for shell segments (no subagent, no parent)', () => {
+    const executed = step({ sessionMeta: { synthetic: true, command: 'shell' } })
+    const stepItem = buildTimeline(stateOf([executed]))[0]!
+    expect(stepItem.kind).toBe('step')
+    if (stepItem.kind !== 'step') return
+    expect(stepItem.childId).toBeUndefined()
+    expect(stepItem.parentSessionId).toBeUndefined()
+  })
+})
+
 describe('buildRunTree（Round 26：完全按 executedSteps 渲染导航树）', () => {
   it('shows every executed step segment grouped by stageId, skips empty stages, keeps creation order', () => {
     const s1 = step({ id: 'exec-1', stageId: 'stg-1', stepId: 'step-a', name: 'sce1', status: 'completed' })
@@ -724,5 +766,80 @@ describe('buildTimeline 引用稳定缓存（轮询期 memo 保活）', () => {
     expect(attempt1[1]?.kind).toBe('step')
     if (attempt1[1]?.kind !== 'step') return
     expect(attempt1[1].attemptIndex).toBe(1)
+  })
+})
+
+describe('buildTimeline 用户消息白名单（旧实例遗留指令性行不再渲染）', () => {
+  /** 构造最小实例状态；`userMessages` 是唯一关注字段。 */
+  function legacyState(
+    userMessages: ReadonlyArray<{ kind: string; content: string; createdAt: string; target?: string }>,
+  ): Parameters<typeof buildTimeline>[0] {
+    return {
+      taskId: 'inst-legacy',
+      workflowId: 'wfl-legacy',
+      status: 'paused',
+      originalInput: 'do it',
+      currentStageId: 'stg-legacy',
+      executedSteps: [],
+      stageInfos: [],
+      pendingQueue: [],
+      userMessages,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as unknown as Parameters<typeof buildTimeline>[0]
+  }
+
+  const userItemsOf = (state: Parameters<typeof buildTimeline>[0]) =>
+    buildTimeline(state).filter((item): item is Extract<ReturnType<typeof buildTimeline>[number], { kind: 'user' }> =>
+      item.kind === 'user')
+
+  it('只渲染 kind:input；answer/resume/retry/message 一律不渲染（含已落盘的历史记录）', () => {
+    const items = userItemsOf(legacyState([
+      { kind: 'resume', content: '请继续完成当前任务', createdAt: '2026-01-01T00:00:01.000Z' },
+      { kind: 'input', content: '原始需求 do it', createdAt: '2026-01-01T00:00:02.000Z' },
+      { kind: 'retry', content: '请重试该步骤', createdAt: '2026-01-01T00:00:03.000Z' },
+      { kind: 'answer', content: '选 A', createdAt: '2026-01-01T00:00:04.000Z' },
+      { kind: 'message', content: '给 step-1 的讨论消息', createdAt: '2026-01-01T00:00:05.000Z', target: 'step-1' },
+    ]))
+
+    // 正向：真实用户输入仍在（这条不能被误伤）。
+    expect(items).toHaveLength(1)
+    expect(items[0]?.content).toBe('原始需求 do it')
+    expect(items[0]?.messageKind).toBe('input')
+    // 负向：4 种遗留 kind 的文本一个都不出现（旧行为会各自成一行右侧气泡）。
+    const texts = items.map(item => item.content)
+    expect(texts).not.toContain('请继续完成当前任务')
+    expect(texts).not.toContain('请重试该步骤')
+    expect(texts).not.toContain('选 A')
+    expect(texts).not.toContain('给 step-1 的讨论消息')
+  })
+
+  it('遗留行即使时间最早也不进时间轴首位（按 createdAt 合并时不占位）', () => {
+    const state = legacyState([
+      { kind: 'resume', content: '最早的遗留恢复指令', createdAt: '2026-01-01T00:00:00.500Z' },
+      { kind: 'input', content: '原始需求 do it', createdAt: '2026-01-01T00:00:02.000Z' },
+    ])
+    const items = buildTimeline(state)
+    // 时间轴首行必须是那条真实输入；遗留行不产生任何条目。
+    expect(items).toHaveLength(1)
+    expect(items[0]?.kind).toBe('user')
+    if (items[0]?.kind !== 'user') return
+    expect(items[0].content).toBe('原始需求 do it')
+  })
+
+  it('白名单而非黑名单：未知 kind 同样不渲染（防新增 kind 漏进讨论页）', () => {
+    const items = userItemsOf(legacyState([
+      { kind: 'broadcast', content: '引擎自造的广播指令', createdAt: '2026-01-01T00:00:01.000Z' },
+      { kind: 'input', content: '原始需求 do it', createdAt: '2026-01-01T00:00:02.000Z' },
+    ]))
+    expect(items.map(item => item.content)).toEqual(['原始需求 do it'])
+  })
+
+  it('旧实例只剩遗留 kind 时时间轴无任何用户行（整体为空，不吐空壳行）', () => {
+    const items = buildTimeline(legacyState([
+      { kind: 'resume', content: '请继续完成当前任务', createdAt: '2026-01-01T00:00:01.000Z' },
+      { kind: 'message', content: '给 step-1 的讨论消息', createdAt: '2026-01-01T00:00:02.000Z', target: 'step-1' },
+    ]))
+    expect(items).toHaveLength(0)
   })
 })

@@ -9,12 +9,14 @@
  * `tryAdvanceStage` 评估 Stage `branch.condition`（基于 StageContract）选下一 Stage）。每次状态
  * 变化 `persistState` 并单发 `sandore/*` 事件（`ctx.emit` → SSE → UI；Round 25 起
  * 不再 append 到宿主会话，宿主会话保持工作流级编排身份）；每个 Step 完成后经
- * `onPersist` 钩子立即追加到 `state.executedSteps` 并持久化；`childId = step-{stepId}-{execId 前 8 位}`
- * 合成 sessionMeta。
+ * `onPersist` 钩子立即追加到 `state.executedSteps` 并持久化；`childId = 真实子代理会话
+ * id`（2026-09-09 起无合成占位：先 `launchSubagent`/startContinuable 拿到真实 UUID 才
+ * 发 step-start 并写入 sessionMeta；shell 无 childId）合成 sessionMeta。
  * @module @meiyukichan/dsh-sandore/workflow/src/workflow-engine
  */
 import { Context, Service } from '@deepseek-ai/cordis';
-import type { ContentBlock } from '@deepseek-ai/dsh-llm';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
+import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm';
 import type { Session } from '@deepseek-ai/dsh-session';
 import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session';
 // 加载 @deepseek-ai/dsh-session-title 的 Cordis 面声明（使 `ctx.sessionTitle` 类型可用）。
@@ -42,17 +44,25 @@ interface WorkspaceSeam {
 import { WorkflowDagNavigator } from './dag-navigator.ts';
 import { SandoreError } from './errors.ts';
 import { ReactiveState } from './reactive-state.ts';
-import { createHostAgentSetup } from './host-agent.ts';
-import type { AgentPresetsSeam } from './host-agent.ts';
+import { createHostAgentSetup, resolveHostAgentOptions } from './host-agent.ts';
+import type {
+  AgentDefaultModelSeam,
+  AgentPresetsSeam,
+  HostModelSelectionDeps,
+  SessionProjectionsSeam,
+} from './host-agent.ts';
 import { registerGlobalAskTool } from './ask-tool.ts';
-import { registerGlobalManagerTool } from './manager-tool.ts';
+import { registerGlobalWorkflowTools } from './host-tools.ts';
+import { buildHostContextInjection, hostContextSource } from './host-context.ts';
+import { hostWakeupDiag } from './wakeup-diag.ts';
+import type { HostWakeupBatchEntry, HostWakeupRecord } from './wakeup-diag.ts';
 import type { SandoreManagerPersistenceSeam } from './manager-tool.ts';
 import { createChildPromptDelivery } from './subagent-delivery.ts';
 import { InteractionManager, buildAnswerText, isRejectedAnswer } from './interaction-manager.ts';
 import { LifecycleManager } from './lifecycle-manager.ts';
 import type { SandorePersistence } from './persistence.ts';
 import { RecoveryManager } from './recovery-manager.ts';
-import { listClosedTurnBoundaries } from './recovery-manager.ts';
+import { listClosedTurnBoundaries, synthesizeChildId } from './recovery-manager.ts';
 import type { RecoverResult, RetryMode } from './recovery-manager.ts';
 import type { WorkflowDefinition, WorkflowStep, WorkflowTaskState, WorkflowStage } from './schema.ts';
 import type { FinalizePhase } from './schema.ts';
@@ -80,12 +90,14 @@ import { parseWorkflowYaml } from './yaml-parser.ts';
 import { FinalizeManager } from '../microflow/finalize-manager';
 import { createConcurrencyLimiter } from '../microflow/concurrency-limiter';
 import type { ConcurrencyLimiter } from '../microflow/concurrency-limiter';
-import { StageExecutor } from '../microflow/stage-executor';
+import { StageExecutor, previousOutputsFromExecutedSteps } from '../microflow/stage-executor';
 import type { StageExecutorResume, StageStepHooks } from '../microflow/stage-executor';
 import { StepNavigator } from '../microflow/step-navigator';
 import type { StepRunnerConfig } from '../microflow/step-runner';
-import type { Agent, ChildPromptDelivery, CreateAgentOptions, MessageId, SubagentSettlement, SubagentStopReason } from '../microflow/subagents';
+import type { Agent, AgentHandle, ChildPromptDelivery, CreateAgentOptions, MessageId, SessionEvent, SubagentSettlement, SubagentStopReason } from '../microflow/subagents';
+import { collectSessionMessages } from '../microflow/subagents';
 import { delegatedChildSetup } from '../microflow/fork-session';
+import { ensureSubagentDescriptor } from './subagent-identity';
 
 /**
  * `agent/pre-step` 事件的最小结构面（sandore 不 import `@deepseek-ai/dsh-agent` 类型，
@@ -94,10 +106,20 @@ import { delegatedChildSetup } from '../microflow/fork-session';
  */
 interface HostAgentPreStepPayload {
   readonly agent: { readonly id: SessionId };
-  readonly messages: readonly unknown[];
+  readonly messages: readonly PreStepMessage[];
   readonly turn: number;
   readonly step: number;
   readonly signal: AbortSignal;
+}
+
+/**
+ * `agent/pre-step` 载荷中单条消息的最小面（只读 `source.kind` 做来源过滤）。
+ *
+ * 结构对齐 DSH `UserMessage`（`createUserMessage` 产物的 `source` 为可合并扩展的
+ * `MessageSource` 判别联合；`kind` 回答「谁产出的」）。
+ */
+interface PreStepMessage {
+  readonly source?: { readonly kind?: string; readonly [key: string]: unknown };
 }
 
 /** `agent/pre-step` 的决策：reject 关闭该 turn（无 step、不产生模型调用）或 enter 消息批次。 */
@@ -107,6 +129,24 @@ type HostAgentPreStepDecision =
 
 /** `agent/pre-step` 的 `next` 委托：调用则进入下游监听链/内建行为。 */
 type HostAgentPreStepNext = () => Promise<HostAgentPreStepDecision>;
+
+/**
+ * `hydrateStateMessages` 每段最多回填的消息行数（**与移除前持久化时的截断一致**：
+ * step-runner 当年写 state 时取 `slice(-10)`）。避免 RPC 响应被长会话撑大。
+ */
+const HYDRATED_MESSAGES_LIMIT = 10;
+
+/**
+ * DSH `session/event` 载荷中单条事件的最小面（只读 `type` 与 `turn/end` 的 reason）。
+ *
+ * 结构对齐 DSH `SessionEvent`（`turn/end` 的 `data.reason` 为 `TurnEndReason`：
+ * `{kind:'completed'|'blocked'|'aborted'|'error'|'max-tokens'|'interrupted'}`，
+ * `aborted` 携带 `reason: AgentCancelCause`）。
+ */
+interface HostSessionEventLike {
+  readonly type: string;
+  readonly data?: { readonly reason?: { readonly kind?: string; readonly reason?: { readonly kind?: string } } };
+}
 
 /** 运行中的实例（控制器 + 宿主 Session + 宿主主代理 + 定义 + 状态快照 + 交互管理器）。 */
 interface ActiveInstance {
@@ -142,10 +182,54 @@ interface ActiveInstance {
   settlementBuffer: Map<string, SubagentSettlement>;
   /** per-childId settle awaiter resolver（awaitSubagentSettlement 挂起时注册，监听器唤醒）。 */
   settlementResolvers: Map<string, (settlement: SubagentSettlement) => void>;
+  /**
+   * 中止广播一次性标记（{@link markAborted} 专用）。
+   *
+   * 同一次中止只允许广播一次 `sandore/aborted`：`abortInstance` 与主循环 aborted
+   * 兜底分支天然交错（被 kill 的 Step 失败回写会把内存态打回 failed，使兜底守卫
+   * 误判「尚未落态」），故两条路径都查本标记——谁先到谁广播，后到者只补落态。
+   */
+  abortedBroadcast: boolean;
+  /**
+   * 本实例 `sandore/subagent-settled` 监听器的 disposer（{@link buildActiveInstance} 注册）。
+   *
+   * 入口归一后**同一个会话 id 可以先后承载多个实例**（终态后再 run 复用同一槽位），
+   * 故替换 ActiveInstance 时必须先撤销旧监听器，否则每次重跑都会多留一个监听器。
+   */
+  disposeSettlementListener: () => void;
 }
 
 /** 实例终态集合：`abortInstance` 对终态实例拒绝操作。 */
 const TERMINAL_STATUSES: ReadonlySet<WorkflowTaskState['status']> = new Set(['completed', 'failed', 'aborted']);
+
+/**
+ * 可接收 @mention 消息的 Step 段状态（P3：与工具描述同口径，两条投递路径共用）。
+ *
+ * 与 `lifecycle-manager` 的可暂停集合一致：只有 **running/interacting** 的段背后
+ * 才有「活着、会消费队列」的子代理会话；paused/failed/completed 的段虽仍绑定 childId，
+ * 但消息只会堆在一个不会醒来的会话里（旧实现就是这么静默成功的）。
+ */
+const MESSAGEABLE_STEP_STATUSES: ReadonlySet<string> = new Set(['running', 'interacting']);
+
+/**
+ * 不可收消息时的**自纠建议**（按当前状态给出下一步该调的动作）。
+ *
+ * 错误信息是模型唯一能读到的反馈：只说「不可收」不够，必须给出「那该怎么办」。
+ * @param status - 该段当前状态。
+ * @returns 以「；」开头的建议片段。
+ */
+function messageableSuggestion(status: string): string {
+  switch (status) {
+    case 'paused':
+      return '；该 Step 已暂停：先 sandore_workflow_control {action:"continue"} 恢复它，再发消息';
+    case 'failed':
+      return '；该 Step 已失败：先 sandore_workflow_control {action:"continue"} 重建子代理重试，再发消息';
+    case 'completed':
+      return '；该 Step 已完成，无需再发消息（要改结论请新建实例或对失败的 Step 重试）';
+    default:
+      return '；请用 sandore_workflow_status detail=steps 确认该 Step 的最新执行段状态';
+  }
+}
 
 /** 渲染任意抛出值为可读消息。 */
 function renderError(error: unknown): string {
@@ -155,6 +239,27 @@ function renderError(error: unknown): string {
 /** 当前 ISO 时间戳。 */
 function now(): string {
   return new Date().toISOString();
+}
+
+/** 组装一条宿主唤醒诊断记录（仅测试开关下输出，见 wakeup-diag.ts）。 */
+function diagRecord(
+  active: ActiveInstance,
+  payload: HostAgentPreStepPayload,
+  batch: ReadonlyArray<HostWakeupBatchEntry & { message: PreStepMessage }>,
+  decision: 'park' | 'enter' | 'partial' | 'pass',
+): HostWakeupRecord {
+  return {
+    hostSessionId: active.state.taskId,
+    instanceStatus: active.state.status,
+    turn: payload.turn,
+    step: payload.step,
+    batch: batch.map(entry => ({
+      ...(entry.kind === undefined ? {} : { kind: entry.kind }),
+      ...(entry.senderSessionId === undefined ? {} : { senderSessionId: entry.senderSessionId }),
+      attribution: entry.attribution,
+    })),
+    decision,
+  };
 }
 
 /**
@@ -230,17 +335,22 @@ function makeInitialState(options: {
   readonly definition: WorkflowDefinition;
   readonly createdAt: string;
   readonly cwd: string;
+  /** 初始状态：overlay 新建路径为 `pending`（等宿主会话调用 run），已知会话路径直接 `running`。 */
+  readonly status?: 'pending' | 'running';
 }): WorkflowTaskState {
   const { instanceId, request, definition, createdAt, cwd } = options;
   return {
     taskId: instanceId,
+    // 显式落地宿主主代理会话 id（恒等于 taskId；入口归一后不再依赖"约定"）。
+    // 读取侧一律 `hostSessionId ?? taskId` 回退（旧快照没有该字段）。
+    hostSessionId: instanceId,
     workflowId: request.workflowId,
     workflowName: definition.name,
     ...(definition.description === undefined ? {} : { description: definition.description }),
     ...(request.model === undefined ? {} : { modelSelection: request.model }),
     ...(request.permission === undefined ? {} : { permission: request.permission }),
     cwd,
-    status: 'pending',
+    status: options.status ?? 'pending',
     originalInput: request.originalInput,
     currentStageId: definition.stages[0]?.id ?? '',
     executedSteps: [],
@@ -264,12 +374,9 @@ function makeInitialState(options: {
       createdAt,
     }],
     stageContracts: {},
-    // Round 26：ask/permission 是否上报宿主主代理——复用 hostSessionId（场景 B）为
-    // true；overlay 新建（场景 A，hostSessionId 未传）为 false（只走 discussion）。
-    reportToHost: request.hostSessionId !== undefined,
-    // F2：复用模式（hostSessionId 传入）把调用方会话 id 落快照——崩溃恢复据此复用
-    // 宿主主代理，而不是对从未创建的 instanceId 会话执行 agents.resume。
-    ...(request.hostSessionId === undefined ? {} : { hostSessionId: request.hostSessionId }),
+    // 入口归一（架构决策 1）：宿主会话 id 恒等于实例 id（taskId）——现已**显式落地**
+    // 为顶层 `hostSessionId` 字段（见上），读取侧 `?? taskId` 回退兼容旧快照；
+    // ask/permission 一律上报宿主主代理（reportToHost 单值化，恒 true——见 interaction-manager）。
     createdAt,
     updatedAt: createdAt,
   };
@@ -279,6 +386,8 @@ function makeInitialState(options: {
 function toDagInstanceState(state: WorkflowTaskState): DagInstanceState {
   return {
     taskId: state.taskId,
+    // 宿主主代理会话 id：新快照显式字段，旧快照回退 taskId（不做破坏性迁移）。
+    hostSessionId: state.hostSessionId ?? state.taskId,
     workflowId: state.workflowId,
     status: state.status,
     originalInput: state.originalInput,
@@ -313,21 +422,13 @@ export default class SandoreEngineRuntime extends SandoreEngine {
 
   private readonly instances = new Map<string, ActiveInstance>();
   /**
-   * 宿主主代理冻结登记（sandore 侧 hostAgent 冻结，不改 DSH）：存「工作流未成功完成」
-   * 的宿主主代理 id（= hostAgent.id）。startInstance/recoverInstance 创建或恢复 hostAgent
-   * 时加入；解冻规则：
-   * - **completed（成功完成）**：移除登记，hostAgent 恢复普通响应（实例仍留 instances 表，
-   *   不解冻则 hostAgent 永远被拒）。
-   * - **failed（实例留 instances 表）**：保持冻结（工作流没成功完成，hostAgent 不应恢复
-   *   活跃）。
-   * - **aborted / recoverInstance-catch（实例清出 instances 表）**：移除登记（清表即
-   *   放行——实例生命周期结束，hostAgent 恢复普通响应）。
+   * 宿主会话 → 其子会话 id 集合（`session/created` 按 `header.parentSession` 登记）。
    *
-   * 判定按 hostAgent.id 而非 instances 表键（复用场景 hostAgent.id = hostSessionId ≠
-   * instanceId，instances.get 查不到会误放行）；崩溃恢复重建 hostAgent 时 recoverInstance
-   * 重新加入，天然覆盖。
+   * 用途：宿主唤醒抑制的判据③（见 {@link childAttribution}）。**这是唯一与「子会话是否
+   * 仍 live」无关的归属来源**，因此 fillParams 参数填充 / secondary 门禁这类辅助子代理
+   * 在 settle（其 live 会话已 dispose）之后仍能被正确归属并 park。
    */
-  private readonly frozenHostAgents = new Set<string>();
+  private readonly hostChildSessions = new Map<string, Set<string>>();
   /**
    * 宿主 → 子代理 prompt 投递通道（`[Service.init]` 期经 `createChildPromptDelivery`
    * 解析一次；上游 `subagents.followup` 已删，见 subagent-delivery.ts）。
@@ -359,18 +460,35 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   /** 启动时（Cordis Service.init）自动扫描并恢复孤儿实例（崩溃恢复启动扫描）。 */
   protected async [Service.init](): Promise<void> {
     this.registerSubagentSettlementAdapter();
-    this.registerHostAgentFreezeListener();
+    // 架构决策 2：宿主主代理**解冻**（不再有 frozenHostAgents / pre-step reject），
+    // 改为「只 park 本实例子代理的消息」——见 registerHostSessionNoticeFilter。
+    // 子会话登记表必须先挂（判据③依赖它；创建早于登记的会话由判据⑤持久化兜底）。
+    this.registerHostChildSessionTracker();
+    this.registerHostSessionNoticeFilter();
+    // 架构决策 6：宿主会话 turn 被用户中断（输入框「停止生成」）→ 实例 paused。
+    this.registerHostTurnAbortWatcher();
     // 双通道 ask 通道 1：全局注册 `sandore_ask_user_question` 工具 + execute 期 gate
     // （上游 `registerContinuableSetup` 已删，child-scope 注入通道不复存在，见 ask-tool.ts）。
     this.ctx.effect(() => registerGlobalAskTool(this.ctx, this), 'sandore: global sandore_ask_user_question tool');
-    // sandore_workflow 统一管理工具（定义查改/运行/状态/库浏览；全局注册 + execute 期
-    // gate 仅顶层主代理会话，六 action 见 manager-tool.ts）。
-    this.ctx.effect(() => registerGlobalManagerTool(this.ctx, {
+    // 五个 sandore_workflow_* 模型工具（架构决策 3）：sandore_workflow（定义/Step 库/
+    // Microflow 库读写）+ sandore_workflow_run（唯一启动入口）+ sandore_workflow_status +
+    // sandore_workflow_send_message + sandore_workflow_control；全局注册 + execute 期 gate
+    // 仅顶层主代理会话（见 manager-tool.ts / host-tools.ts）。
+    this.ctx.effect(() => registerGlobalWorkflowTools(this.ctx, {
       startInstance: request => this.startInstance(request),
+      runInstanceInSession: (hostSessionId, request) => this.runInstanceInSession(hostSessionId, request),
       getState: instanceId => this.getState(instanceId),
       getInstanceState: instanceId => this.getInstanceState(instanceId),
+      hydrateStateMessages: state => this.hydrateStateMessages(state),
+      findInstanceIdByHostSession: hostSessionId => this.findInstanceIdByHostSession(hostSessionId),
+      pauseStep: (instanceId, stepId) => this.pauseStep(instanceId, stepId),
+      pauseAllSteps: instanceId => this.pauseAllSteps(instanceId),
+      resumeStep: (instanceId, stepId, resumePrompt) => this.resumeStep(instanceId, stepId, resumePrompt),
+      resumeAllSteps: (instanceId, resumePrompt) => this.resumeAllSteps(instanceId, resumePrompt),
+      retryStep: (instanceId, stepId, mode, message) => this.retryStep(instanceId, stepId, mode, message),
+      sendStepMessage: (instanceId, stepId, message) => this.sendStepMessage(instanceId, stepId, message),
       persistence: () => this.managerPersistenceView(),
-    }), 'sandore: global sandore_workflow manager tool');
+    }), 'sandore: global sandore_workflow_* tools');
     // 宿主 → 子代理 prompt 投递通道（上游 `subagents.followup` 已删，统一 queue 投递；
     // 工厂期解析通道，皆无时抛可读错误，见 subagent-delivery.ts）。
     this.childDelivery = createChildPromptDelivery(this.ctx.subagents);
@@ -432,46 +550,326 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   }
 
   /**
-   * 宿主主代理冻结监听（sandore 侧 hostAgent 冻结，不改 DSH）。
+   * 宿主会话「子代理消息 park」监听（架构决策 2：删除冻结机制后的替代手段）。
    *
-   * 工作流未成功完成前 hostAgent 不执行任何模型 turn：子代理 settle / report 唤醒投给
-   * hostAgent 的消息在 `agent/pre-step` 被 reject（DSH 官方 park-parent 模式，
-   * `deepseek-harness/packages/subagent/tool-subagent-control/tests/park-parent.ts`）——
-   * reject 后 turn 以 blocked 关闭、不发 user/message、不产生任何模型调用，消息在
-   * claim 处被消费；hostAgent 保持注册存活（引擎只把它当 parent 身份锚点，从不驱动
-   * 它，pre-step reject 不影响注册）。
+   * **背景**：旧的宿主主代理冻结机制在 `agent/pre-step` 对宿主会话的**每个 turn**
+   * 一律 `reject`——宿主主代理完全失去自主性（连周边任务都做不了）。架构决策 2 要求
+   * 移除该机制、恢复宿主主代理自主性，**但同时**必须抑制 DSH 投给宿主会话的
+   * 「子代理结算通知」，否则宿主主代理会被每个 Step 的结算各唤醒一次。
    *
-   * **解冻规则（仅两条路径）**：`frozenHostAgents` 在 startInstance/recoverInstance 加入；
-   * ① runInstance completed 分支移除（成功完成才解冻）；② abortInstance /
-   * recoverInstance-catch 清出 instances 表时同步移除（清表即放行）。**failed（实例留
-   * instances 表）保持冻结**——除非工作流成功完成或实例生命周期结束，否则 hostAgent
-   * 一直冻结。
+   * **DSH 侧的投递路径（查证依据）**：`@deepseek-ai/dsh-subagent` 的
+   * `SubagentContinuationManager.notifySettlement`（DSH 源码
+   * `packages/subagent/subagent/src/continuation.ts:1535-1584`）在每个 continuable
+   * 子代理 settle（走完即 dispose）时**无条件**向直接 parent 投一条消息：source
+   * `{ kind: 'subagent-settled', form: 'notice', summary, senderSessionId: childId }`
+   * （同文件 :1541-1554）；子代理显式发给 parent 的消息走 `agentMessage`，source
+   * `{ kind: 'agent-message', form: 'relay', senderSessionId: childId }`（:276-293）。
+   * parent 空闲走 `parent.followup(message)`（**开新 turn = 唤醒**），忙走
+   * `parent.steer(...)`。该投递**不可配置关闭**：`ContinuableStartSpec` 只有
+   * `{provider,label,childId?,request,signal}`（:92），continuation.ts 内没有任何
+   * quiet/reportDelivery 开关，`notifySettlement` 是 `disposeActivation` 的固定一步，
+   * 且被 DSH 当作契约（:1517-1534 注释「Unconditional for every child…」）。
+   * → 抑制只能做在 `agent/pre-step` 这一层。
    *
-   * 挂引擎 ctx + 按 subject.id 过滤（挂 hostAgent.ctx 的 scope 隔离不可行：sandore
-   * 接缝 `Agent.ctx` 为 unknown、mock 环境为 undefined）：DSH `agent/pre-step` 在 agent
-   * scope 分发，事件沿 scope 链冒泡到引擎 ctx（与 registerSubagentSettlementAdapter
-   * 同机制）。子代理的 pre-step 同样到达本监听器，但 childId 不在冻结登记 → 放行
-   * （不冻结子代理）。按 hostAgent.id 登记（复用场景 hostAgent.id = hostSessionId ≠
-   * instanceId，instances.get 查不到会误放行——故以登记集合为判定依据）。
+   * **判定「是否我们实例的子代理发的」**（两条判据，来源字段足以稳定判定）：
+   * ① `source.senderSessionId` ∈ 本实例已知子代理会话集合（`executedSteps[].sessionMeta.childId`
+   * 全段 —— running/interacting/completed/failed/paused 都覆盖，含多执行段与冷恢复后的
+   * 新 childId；再并上生命周期暂停登记表 `lifecycle.pausedIds`）；
+   * ② 兜底：`ctx.sessions.get(senderSessionId).header.parentSession === 宿主会话 id`
+   * （覆盖未落在 executedSteps 上的引擎自建子代理，如 fillParams 参数填充子代理、
+   * secondary 门禁子代理——它们的 parent 同样是宿主会话）。
+   * 两条都不命中 → 放行（其它 sandore 实例、DSH 自己的子代理、用户消息、ask/权限
+   * 卡片等一切非本实例子代理来源）。
    *
-   * `prepend: true`：冻结期间最先 reject，避免下游 pre-step 监听器（tmux-context/
-   * session-reference 等）先行注入上下文再做无用功。settlement 内容不丢：sandore 自持
-   * `sandore/subagent-settled` 通道，不依赖 hostAgent 会话。可选部署级增强（不改
-   * DSH / agent-presets，仅文档提示）：tool-subagent-report 配 `reportDelivery: 'quiet'`
-   * 可连显式 report 的唤醒都省掉——reject 已保证零模型成本，report 唤醒只是多一次空
-   * turn 噪声。
+   * **park 的实现与 DSH 语义（重要更正）**：本监听器对「整批消息全来自本实例子代理」
+   * 的唤醒返回 `{kind:'reject'}`（turn 以 `blocked` 关闭、零模型调用）。**注意 DSH 的
+   * reject 并不把消息留在 inbox**——`Inbox.claim`（`packages/core/agent/src/inbox.ts:71-78`）
+   * 在 waterfall 之前就同步认领（splice 删除）了整批消息，`preStep` 返回 reject 后
+   * `agent.ts:276-279` 直接结束 turn。DSH 源码 `consumed-work.ts:33-49` 对此有原文：
+   * 「A `blocked` end is that input's ending too — the pre-step rejection that produced it
+   * **discarded the claimed messages**, so the work it took will never run.」DSH 官方测试
+   * `core/agent-loop/tests/interception.spec.ts:236-257` 亦锁定「no `user/message`」。
+   * 即：park = 消费并丢弃，**不会**在下次唤醒时重新可见。
+   * 对本插件无损：子代理的最终输出由引擎自己经 `sandore/subagent-settled` 适配通道
+   * （DSH `subagent/end`）取得并落到 `executedSteps[].output / sessionMessages`，
+   * `sandore_workflow_status` 可读；实例终态另有 {@link notifyHostTerminal} 一条汇总。
+   *
+   * **批次混排**：`messages` 里既有本实例子代理消息又有其它来源（用户消息等）时不能
+   * reject（会连用户消息一起丢），改为「摘掉属于本实例子代理的那些、其余原样进入本
+   * step」——DSH `agent.ts:243-252` 明确允许监听器改写 `messages` 批次，且
+   * `agent.ts:280-286` 支持空批次（注释原文「A removed waking message … still owns the
+   * initial turn boundary, but it spends no model call.」）。
+   *
+   * **终态放行**：本实例已终态（completed/failed/aborted）时不再 park——那一次通知
+   * 让宿主主代理被唤醒去汇报结果；实例终结本身另有 {@link notifyHostTerminal}。
    */
-  private registerHostAgentFreezeListener(): void {
-    const handler = ((
+  private registerHostSessionNoticeFilter(): void {
+    const handler = (async (
       payload: HostAgentPreStepPayload,
       next: HostAgentPreStepNext,
     ): Promise<HostAgentPreStepDecision> => {
-      if (!this.frozenHostAgents.has(payload.agent.id)) {
+      const active = this.instances.get(payload.agent.id);
+      if (active === undefined) {
+        // 非本引擎实例的会话（含 Step 子代理自身）：放行，不诊断（别人的会话）。
         return next();
       }
-      return Promise.resolve({ kind: 'reject' });
+      if (TERMINAL_STATUSES.has(active.state.status)) {
+        // 本实例已终态：放行（让主代理醒一次去汇报）。**仍要诊断**——否则「终态那一次
+        // 唤醒」不会进 dump，唤醒计数会偏小（M8 取证用例靠它核对次数）。
+        hostWakeupDiag(diagRecord(active, payload, await this.attributeBatch(active, payload.messages), 'pass'));
+        return next();
+      }
+      const attribution = await this.attributeBatch(active, payload.messages);
+      const ours = attribution.filter(entry => entry.attribution !== null);
+      if (ours.length === 0) {
+        hostWakeupDiag(diagRecord(active, payload, attribution, 'pass'));
+        return next();
+      }
+      if (ours.length === payload.messages.length) {
+        // 整批都是本实例子代理的消息：park（turn 以 blocked 关闭、零模型调用）。
+        hostWakeupDiag(diagRecord(active, payload, attribution, 'park'));
+        return { kind: 'reject' };
+      }
+      // 混排：只摘掉本实例子代理的那些，其它（用户消息/ask 卡片/别的来源）照常进入。
+      const oursSet = new Set(ours.map(entry => entry.message));
+      const kept = payload.messages.filter(message => !oursSet.has(message));
+      hostWakeupDiag(diagRecord(active, payload, attribution, 'partial'));
+      return { kind: 'enter', messages: kept };
     }) as unknown as (settlement: SubagentSettlement) => void;
     this.ctx.on('agent/pre-step' as 'sandore/subagent-settled', handler, { prepend: true });
+  }
+
+  /** 批次归属判定：逐条消息给出 `{kind, senderSessionId, attribution}`（诊断与判定共用）。 */
+  private async attributeBatch(
+    active: ActiveInstance,
+    messages: readonly PreStepMessage[],
+  ): Promise<Array<HostWakeupBatchEntry & { message: PreStepMessage }>> {
+    const entries: Array<HostWakeupBatchEntry & { message: PreStepMessage }> = [];
+    for (const message of messages) {
+      const senderSessionId = message.source?.['senderSessionId'];
+      const sender = typeof senderSessionId === 'string' && senderSessionId !== '' ? senderSessionId : undefined;
+      const kind = message.source?.['kind'];
+      entries.push({
+        message,
+        ...(typeof kind === 'string' ? { kind } : {}),
+        ...(sender === undefined ? {} : { senderSessionId: sender }),
+        attribution: sender === undefined ? null : await this.childAttribution(active, sender, kind),
+      });
+    }
+    return entries;
+  }
+
+  /**
+   * 该 pre-step 消息是否来自**本实例**的子代理会话，命中即给出判据名
+   * （`executed`/`paused`/`registry`/`live`/`persisted`；未命中 null）。
+   *
+   * 五条判据（由廉价到昂贵；命中即返回）：
+   * ① `executed`：`senderSessionId` ∈ `executedSteps[].sessionMeta.childId`（覆盖
+   *    running/interacting/completed/failed/paused、多执行段与冷恢复后的新 childId）；
+   * ② `paused`：∈ 生命周期暂停登记表（兜住 `executedSteps` 尚未回写 childId 的窗口）；
+   * ③ `registry`：∈ **子会话登记表**（{@link registerHostChildSessionTracker} 在
+   *    `session/created` 时按 `header.parentSession = 某个活跃实例 id` 登记）——这一条
+   *    是 2026-09 真机缺陷的修复核心：`fillParams` 参数填充 / secondary 门禁这类**引擎
+   *    自建辅助子代理**的 childId **不在** `executedSteps`，而其 live 会话在 settle 时
+   *    即被 dispose（`sessions.get` 读不到），旧判据①②因此双双落空 → 它们的结算通知
+   *    会**放行并唤醒宿主主代理**（真机表现：工作流还在跑，主代理却收到一次唤醒并自行
+   *    发了一条「进展更新」）。登记表在**创建时**记录，与被 dispose 无关。
+   * ④ `live`：`ctx.sessions.get(sender).header.parentSession === taskId`（live 兜底）；
+   * ⑤ `persisted`：`sessionPersistence.inspect(sender).header.parentSession === taskId`
+   *    （**持久化兜底**，覆盖登记表未覆盖的场景：进程重启后遗留的辅助子代理、注册监听
+   *    之前就已创建的会话）。仅对**子代理来源**消息（`subagent-settled`/`agent-message`）
+   *    尝试，用户消息与 ask 卡片永不进入本路径。
+   *
+   * 安全边界：①②③④⑤ 全部要求「该会话确属本实例宿主会话的子会话」；用户消息
+   * （`source.kind === 'user'`，无 senderSessionId）与带 `senderSessionId` 但无法归属的
+   * 消息一律放行——**宁可少 park，也不误 park 用户消息**。
+   * @param active - 本实例的运行态。
+   * @param senderSessionId - 消息来源会话 id（`source.senderSessionId`）。
+   * @param kind - `source.kind`（决定是否尝试持久化兜底）。
+   * @returns 判据名或 null。
+   */
+  private async childAttribution(
+    active: ActiveInstance,
+    senderSessionId: string,
+    kind: unknown,
+  ): Promise<string | null> {
+    for (const step of active.state.executedSteps) {
+      if (step.sessionMeta?.childId === senderSessionId) {
+        return 'executed';
+      }
+    }
+    if (active.lifecycle.pausedIds.includes(senderSessionId)) {
+      return 'paused';
+    }
+    if (this.hostChildSessions.get(active.state.taskId)?.has(senderSessionId) === true) {
+      return 'registry';
+    }
+    if (this.ctx.sessions.get(SessionId(senderSessionId))?.header?.parentSession === active.state.taskId) {
+      return 'live';
+    }
+    if (kind !== 'subagent-settled' && kind !== 'agent-message') {
+      return null;
+    }
+    return await this.persistedChildOf(active.state.taskId, senderSessionId) ? 'persisted' : null;
+  }
+
+  /**
+   * 持久化兜底：读子会话的持久化 header，判断其 `parentSession` 是否为本实例宿主会话。
+   *
+   * DSH `SessionPersistence.inspect(id)` 返回 `SessionInspection`（含 `header`，见
+   * `packages/session/session-persistence/src/index.ts:26,253`）。服务缺失/无 `inspect`/
+   * 读取失败一律返回 false（放行——不误 park）。
+   */
+  private async persistedChildOf(hostSessionId: string, senderSessionId: string): Promise<boolean> {
+    const persistence = this.ctx.get('sessionPersistence') as
+      | { inspect?: (id: SessionId) => Promise<{ header?: { parentSession?: string } } | undefined> }
+      | undefined;
+    if (persistence?.inspect === undefined) {
+      return false;
+    }
+    try {
+      const inspected = await persistence.inspect(SessionId(senderSessionId));
+      return inspected?.header?.parentSession === hostSessionId;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 子会话登记表（`taskId → 该宿主会话的子会话 id 集合`）监听。
+   *
+   * 在 DSH `session/created`（`packages/core/session/src/index.ts:52,1044`）时按
+   * `header.parentSession` 归属登记：**这是唯一与「子会话是否仍 live」无关的归属来源**，
+   * 因此是辅助子代理（fillParams/secondary 门禁）结算通知的正确判据。
+   *
+   * `{ global: true }`：DSH 自己的 invariant 也以该选项监听同一事件
+   * （`core/session/src/invariant.ts:220`）——不加会漏掉不在本 ctx scope 下创建的会话。
+   */
+  private registerHostChildSessionTracker(): void {
+    const handler = ((session: { readonly header?: { readonly id?: string; readonly parentSession?: string } }): void => {
+      const parent = session.header?.parentSession;
+      const id = session.header?.id;
+      if (typeof parent !== 'string' || typeof id !== 'string' || parent === '' || id === '') {
+        return;
+      }
+      // 只登记「本引擎活跃实例」的子会话；别的实例/DSH 自己的会话不登记（故其消息仍放行）。
+      if (!this.instances.has(parent)) {
+        return;
+      }
+      const children = this.hostChildSessions.get(parent) ?? new Set<string>();
+      children.add(id);
+      this.hostChildSessions.set(parent, children);
+    }) as unknown as (settlement: SubagentSettlement) => void;
+    this.ctx.on('session/created' as 'sandore/subagent-settled', handler, { global: true });
+  }
+
+  /**
+   * 宿主会话 turn 中断监听（架构决策 6：DSH 输入框「停止生成」→ 工作流暂停）。
+   *
+   * **DSH 语义（查证依据，非本插件定义）**：输入框那个按钮是 `input.stop` =「停止生成」，
+   * client 侧 `InputMachine.onRelease`（DSH 源码
+   * `packages/client/ui-conversation/src/client/input/machine.ts:226-236`）abort 本次
+   * 发送；不挂子代理地址时会话级动作走 `session.cancel` RPC → `SessionCommandController.cancel`
+   * （`packages/api/session-controller/src/commands.ts:434-448`）→ `agent.cancel({kind:'user'},
+   * {keepInbox:true})`——即 DSH **只是中止当前 turn，没有「暂停会话」能力**。
+   *
+   * **本插件附加的语义**（任务书决策 6）：把「宿主会话 turn 被用户中断」解释为
+   * 「暂停本工作流实例」，走既有 pause 路径（`pauseAllSteps` → interrupt 运行中
+   * Step 子代理 → 主循环 parked 在 paused）。可观测信号是 DSH `session/event`
+   * 生命周期事件（`packages/core/session/src/index.ts:74`）中宿主会话的 `turn/end`
+   * 且 `reason.kind === 'aborted'` 且 `reason.reason.kind === 'user'`
+   * （`packages/core/session/src/types.ts:181-196`）——`user` 才是「用户点了停止生成」，
+   * `parent`/`disposed`/`hook` 等其他原因不触发暂停。
+   *
+   * 恢复由主代理调 `sandore_workflow_control(action:'continue')`（或 UI 既有 resume）。
+   */
+  private registerHostTurnAbortWatcher(): void {
+    const handler = (session: { readonly id?: SessionId }, event: HostSessionEventLike): void => {
+      if (event.type !== 'turn/end') {
+        return;
+      }
+      const reason = event.data?.reason;
+      if (reason?.kind !== 'aborted' || reason.reason?.kind !== 'user') {
+        return;
+      }
+      const sessionId = typeof session.id === 'string' ? session.id : undefined;
+      if (sessionId === undefined) {
+        return;
+      }
+      const active = this.instances.get(sessionId);
+      if (active === undefined || TERMINAL_STATUSES.has(active.state.status)) {
+        return;
+      }
+      try {
+        active.lifecycle.pauseAllSteps();
+      } catch (error) {
+        // 暂停登记表为空（无运行中 Step）时 pauseAllSteps 是无害 no-op；此处只兜住
+        // 意外抛错，不影响宿主会话自身的中断语义。
+        this.ctx.logger.warn(`sandore: pause on host turn abort failed: ${renderError(error)}`);
+      }
+    };
+    this.ctx.on('session/event' as 'sandore/subagent-settled', handler as unknown as (settlement: SubagentSettlement) => void);
+  }
+
+  /**
+   * 实例进入终态时唤醒宿主会话一次（架构决策 2 的配套闭环）。
+   *
+   * 为什么需要：Step 子代理的结算通知被 {@link registerHostSessionNoticeFilter} park 掉
+   * 之后，宿主主代理不会自动知道实例结束了，也就无法按注入的协作规则「结束后读取结果
+   * 并汇报给用户」。故引擎在实例落终态时主动投一条汇总。
+   *
+   * **唤醒语义（2026-09 修订，用户要求对齐 DSH）**：投递按宿主**状态分流**——
+   * 空闲走 `followup`（DSH `Agent.followup` = 「排入 next-turn 并唤醒驱动」，
+   * `agent-loop/src/agent.ts:131-133`）→ 开一个新 turn（终态汇报必须靠这次唤醒）；
+   * **正忙走 `steer`**（`agent.ts:135-137` = 「排入 next-step」）→ 并进**当前 turn** 的
+   * 下一步，不再多造一个 turn（也就不再产生那一类空 turn）。
+   * 这正是 DSH 自己投递结算通知的口径：`continuation.ts:1574-1577`
+   * 「`if (parent.status === 'idle') parent.followup(message) else parent.steer(message)`」，
+   * 注释原文「A busy parent is steered instead of woken: … several children settling
+   * together cost one step rather than one turn each.」——原实现无条件 followup，
+   * 宿主忙时消息会一直等到下一个 turn（`Inbox.claim(target, turn)` 只在 turn 边界取
+   * next-turn 队列，`core/agent/src/inbox.ts:71-78`），既多造 turn 又与 DSH 不一致。
+   *
+   * 若希望连这一次也不唤醒（主代理只在用户消息/自身工具调用时醒），把 `followup` 换成
+   * `inject`（`agent.ts:139-141`：同队列但不唤醒，消息在下次唤醒时由 `Inbox.claim` 一并取走）
+   * ——决策 2 的验收口径要求「终态那一次放行、让主代理被唤醒一次去汇报结果」，故空闲时仍取
+   * followup。
+   *
+   * source 用 {@link buildHostContextSource}（DSH 上下文注入形态）：客户端按
+   * `source.kind !== 'user'` 把消息渲染成**左侧「上下文注入」行**而不是右侧用户气泡
+   * （契约与证据见 host-context.ts 的 `HostContextSource` 文档）。唤醒语义不变（由投递
+   * API 决定，与 source 无关）；本引擎的 park 判据只认「`senderSessionId` 属本实例子代理」
+   * 的消息，注入消息不带该字段故不会被误 park。
+   */
+  private notifyHostTerminal(active: ActiveInstance, status: 'completed' | 'failed' | 'aborted'): void {
+    const workflowName = active.state.workflowName ?? active.state.workflowId;
+    try {
+      this.deliverToHost(active.hostAgent, createUserMessage({
+        source: hostContextSource(`工作流「${workflowName}」已结束（status=${status}）`),
+        content: [{
+          type: 'text',
+          text: `[sandore 工作流] 实例 ${active.state.taskId}（工作流「${workflowName}」）`
+            + `已结束，status=${status}。请调用 sandore_workflow_status 读取结果并汇报给用户。`,
+        }],
+      }));
+    } catch (error) {
+      this.ctx.logger.warn(`sandore: host terminal notice failed: ${renderError(error)}`);
+    }
+  }
+
+  /**
+   * 宿主投递的**唯一通道**：空闲 → `followup`（唤醒、开新 turn），正忙 → `steer`（并进
+   * 当前 turn 的下一步）。与 DSH `SubagentContinuationManager.notifySettlement` 同口径
+   * （`continuation.ts:1574-1577`），理由见 {@link notifyHostTerminal} 的注释。
+   * @param hostAgent - 宿主主代理（本实例的 hostAgent）。
+   * @param message - 待投递消息（source 决定客户端的呈现形态）。
+   */
+  private deliverToHost(hostAgent: Agent, message: UserMessage): void {
+    if (hostAgent.status === 'idle') {
+      hostAgent.followup(message);
+      return;
+    }
+    hostAgent.steer(message);
   }
 
   /** 发射 `sandore/subagent-settled` 事件（与 mock `FakeSubagents.emitSettlement` 同形：unscoped dispatch）。 */
@@ -489,8 +887,19 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   }
 
   /**
-   * 启动实例：读定义 → parse → 初始化 pending 快照 → 解析宿主主代理（复用调用方传入
-   * 的 hostSessionId，或未传入时新建）→ fire-and-forget 执行。
+   * 启动实例（入口归一的**第一阶段**：新建真实顶层会话 + 绑定 + 注入协作上下文）。
+   *
+   * 流程（架构决策 1）：读定义 → parse → 生成 instanceId → **新建真实顶层会话**
+   * （`ctx.agents.create(SessionId(instanceId))`，会话 id 恒等于实例 id）→ 应用标题/
+   * 权限/workspace → 建 pending 快照并登记 → **注入协作上下文**（架构决策 4，经
+   * `hostAgent.followup` 唤醒宿主会话）→ 返回 `{instanceId, status:'pending'}`。
+   *
+   * **本方法不再执行工作流**：唯一启动入口是 `sandore_workflow_run`
+   * （{@link runInstanceInSession}），由新建出来的那个真实会话调用——正是这一步让
+   * 恒等式 `hostAgent.id ≡ 宿主会话 id ≡ instanceId ≡ 调用会话` 成立。
+   *
+   * @param request - 启动请求（不含宿主会话 id：宿主会话由本方法新建，见 DagStartRequest）。
+   * @returns `{instanceId, status:'pending'}`（执行在宿主会话调用 run 后开始）。
    */
   async startInstance(request: DagStartRequest): Promise<DagRun> {
     const persistence = this.persistence();
@@ -504,84 +913,233 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     const definition = parseWorkflowYaml(record.yaml);
     const instanceId = makeInstanceId();
     const createdAt = now();
-    // 工作目录：request.cwd 必填（新增实例弹窗传入；hostAgent 据此 attach web workspace）。
     const cwd = request.cwd;
-    const state = makeInitialState({ instanceId, request, definition, createdAt, cwd });
+    // 宿主会话 id ≡ 实例 id（恒等式，架构决策 1）：不再有 hostSessionId 入参与
+    // 「复用 / 新建」分流，本方法恒新建真实顶层会话。
+    const hostSessionId = instanceId;
+    const state = makeInitialState({ instanceId, request, definition, createdAt, cwd, status: 'pending' });
     const controller = new AbortController();
-    // 宿主主代理会话 id：调用方可传 `hostSessionId` 复用已存在的宿主会话（不新建）；
-    // 未传入时以 instanceId 新建（hostAgent 会话 id = instanceId，历史行为）。事件单发
-    // （ctx.emit → SSE）的 live 会话统一按 hostSessionId 读回。
-    const hostSessionId = request.hostSessionId ?? instanceId;
-    let hostAgent: Agent;
-    let session: Session;
-    if (request.hostSessionId === undefined) {
-      // §3.0 宿主主代理 = 纯 DSH 默认主代理：setup 只挂默认 preset（系统提示词/skills/
-      // 工具全进来），不注册 sandore 工具、不注入角色提示词。`meta.agentPreset` 须在
-      // create 前 resolve（会话边界在 setup 前快照 meta）——对齐 apiproxy composeAgent：
-      // 先 resolve 得 resolvedId，再传 meta + setup 内 mount。presets 服务缺失时跳过。
-      const presets = this.ctx.get('agentPresets') as
-        | AgentPresetsSeam
-        | undefined;
-      const resolvedPresetId = presets === undefined ? undefined : (await presets.resolve())?.id;
-      const handle = await this.ctx.agents.create({
-        sessionId: SessionId(instanceId),
-        meta: {
-          cwd,
-          ...(resolvedPresetId === undefined ? {} : { agentPreset: resolvedPresetId }),
-        },
-        setup: createHostAgentSetup({ instanceId, ...(presets === undefined ? {} : { presets }) }),
-      });
-      hostAgent = handle.agent;
-      // agents.create 已把宿主 Session 发布进 ctx.sessions，此处读回 live 会话供宿主
-      // 会话身份使用（sandbox/mode append、sessionTitle、workspace attach）。
-      const createdSession = this.ctx.sessions.get(SessionId(instanceId));
-      if (createdSession === undefined) {
-        throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
-      }
-      session = createdSession;
-      // 补设宿主会话标题 = 用户输入的需求（originalInput，对齐「宿主会话承载本工作流
-      // 需求」语义）；rename 失败仅记录 warn，不得使 startInstance 失败或中断实例执行。
-      try {
-        this.ctx.sessionTitle.rename(session, request.originalInput);
-      } catch (error) {
-        this.ctx.logger.warn(`sandore: set host session title failed: ${renderError(error)}`);
-      }
-      // 宿主主代理 attach 到 web workspace（仅新建分支：子代理获得正确 durable parent，
-      // web sidebar 可见 / 暂停走 subagents.interrupt / ask 可答；复用分支的会话归属
-      // 由调用方负责，不在此重复 attach）。
-      await this.attachHostAgentToWorkspace(hostAgent, cwd);
-    } else {
-      // 复用调用方传入的宿主主代理会话（不新建）：校验 agent 存在（live，在注册表）。
-      // 复用场景 hostAgent.id = hostSessionId ≠ instanceId——引擎只把它当 parent 身份
-      // 锚点（subagents.interrupt/followup 的 authority），不驱动它，复用与新建等价。
-      const existing = this.ctx.agents.get(SessionId(hostSessionId));
-      if (existing === undefined) {
-        throw new SandoreError(`host agent session '${hostSessionId}' not found`, 'NODE_NOT_FOUND');
-      }
-      hostAgent = existing;
-      const existingSession = this.ctx.sessions.get(SessionId(hostSessionId));
-      if (existingSession === undefined) {
-        throw new SandoreError(`host session '${hostSessionId}' was not published`, 'INVALID_OPERATION');
-      }
-      session = existingSession;
-      // 复用不重设标题：保留调用方会话的既有标题。
+    // §3.0 宿主主代理 = 纯 DSH 默认主代理：setup 只挂默认 preset（系统提示词/skills/
+    // 工具全进来）+ 装 agent-scoped 模型选择，不注册 sandore 工具、不注入角色提示词。
+    // `meta.agentPreset` 须在 create 前 resolve（会话边界在 setup 前快照 meta）——对齐
+    // apiproxy composeAgent：先 resolve 得 resolvedId，再传 meta + setup 内 mount。
+    // presets 服务缺失时跳过。
+    const presets = this.ctx.get('agentPresets') as AgentPresetsSeam | undefined;
+    const resolvedPresetId = presets === undefined ? undefined : (await presets.resolve())?.id;
+    const selectionDeps = this.hostModelSelectionDeps();
+    // 宿主会话的模型路由（`AgentOptions`）：不加这一项，宿主会话的 turn 会在 DSH
+    // `agent-loop/agent.ts:483-485` 的「no provider/model」检查处直接失败（错误被 loop
+    // 归一为 turn 级 error，不进 stderr），表现为「实例永远 pending、一次模型调用都没有」。
+    const hostAgentOptions = resolveHostAgentOptions(selectionDeps);
+    const handle = await this.ctx.agents.create({
+      sessionId: SessionId(instanceId),
+      meta: {
+        cwd,
+        ...(resolvedPresetId === undefined ? {} : { agentPreset: resolvedPresetId }),
+      },
+      ...(hostAgentOptions === undefined ? {} : { agentOptions: hostAgentOptions }),
+      setup: createHostAgentSetup({
+        instanceId,
+        ...selectionDeps,
+        ...(presets === undefined ? {} : { presets }),
+      }),
+    });
+    const hostAgent = handle.agent;
+    // agents.create 已把宿主 Session 发布进 ctx.sessions，此处读回 live 会话供宿主
+    // 会话身份使用（sandbox/mode append、sessionTitle、workspace attach）。
+    const createdSession = this.ctx.sessions.get(SessionId(instanceId));
+    if (createdSession === undefined) {
+      throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
     }
+    const session = createdSession;
+    // 补设宿主会话标题 = 用户输入的需求（originalInput，对齐「宿主会话承载本工作流
+    // 需求」语义）；rename 失败仅记录 warn，不得使 startInstance 失败或中断实例执行。
+    try {
+      this.ctx.sessionTitle.rename(session, request.originalInput);
+    } catch (error) {
+      this.ctx.logger.warn(`sandore: set host session title failed: ${renderError(error)}`);
+    }
+    // 宿主主代理 attach 到 web workspace（子代理获得正确 durable parent，web sidebar
+    // 可见 / 暂停走 subagents.interrupt / ask 可答）。
+    await this.attachHostAgentToWorkspace(hostAgent, cwd);
     // 创建实例时选择的权限预设（弹窗传入）：宿主会话 sandbox 模式 + 审批策略，
-    // 在 fire 执行前应用（shell/子代理继承宿主会话权限）。
+    // 在注入上下文前应用（shell/子代理继承宿主会话权限）。
     if (request.permission !== undefined) {
       this.applyPermission(session, hostAgent, request.permission);
     }
     const active = this.buildActiveInstance(controller, session, hostAgent, definition, state);
     this.instances.set(instanceId, active);
-    // 冻结宿主主代理（hostAgent 新建或复用即冻结，直到工作流 completed 才解冻；
-    // failed/aborted 保持冻结）。按 hostAgent.id 登记（复用场景 hostAgent.id =
-    // hostSessionId ≠ instanceId）。置于 execute 前：子代理 settle/report 唤醒在
-    // pre-step 即被 reject。注意：同一 hostSessionId 复用于多个并发实例时，冻结状态
-    // 按 hostAgent 主体共享——任一实例 completed 即解冻该 hostAgent。
-    this.frozenHostAgents.add(hostAgent.id);
-    void this.persistState(active);
-    void this.execute(instanceId);
-    return { instanceId, status: 'running' };
+    await this.persistState(active);
+    // 架构决策 4：把协作上下文注入宿主主代理（唤醒它去调用 sandore_workflow_run）。
+    this.injectHostContext(active);
+    return { instanceId, status: 'pending' };
+  }
+
+  /**
+   * 启动实例（入口归一的**第二阶段 / 唯一启动入口**）：在调用方会话内拉起工作流。
+   *
+   * 两条路径在此汇合（恒等式 `hostAgent.id ≡ 宿主会话 id ≡ instanceId ≡ 调用会话`）：
+   * - **overlay 新建**：`startInstance` 已用同一 id 建好宿主会话 + pending 实例，
+   *   宿主主代理按注入的协作规则调用 run → 本方法发现 pending 实例 → 直接开跑
+   *   （以 pending 请求为准；run 入参只校验 `workflowId` 一致）。
+   * - **已知会话拉起**：用户在某个真实顶层会话里让主代理调 run → 该会话本身成为宿主
+   *   （不新建会话），instanceId = 调用会话 id。
+   *
+   * 终态实例所在的会话可以再次 run（视为该会话的新实例，覆盖同 id 槽位）；**非终态**
+   * 已有实例时拒绝（架构决策 5：同一任务结束前不要重复调用 run）。
+   *
+   * @param hostSessionId - 调用方（宿主）会话 id。
+   * @param request - 启动请求（run 工具入参装配）。
+   * @returns `{instanceId, status:'running'}`。
+   */
+  async runInstanceInSession(hostSessionId: string, request: DagStartRequest): Promise<DagRun> {
+    const persistence = this.persistence();
+    if (persistence === undefined) {
+      throw new SandoreError('sandore persistence is not available', 'INVALID_OPERATION');
+    }
+    const existing = this.instances.get(hostSessionId);
+    if (existing !== undefined && !TERMINAL_STATUSES.has(existing.state.status) && existing.state.status !== 'pending') {
+      throw new SandoreError(
+        `session '${hostSessionId}' already hosts a non-terminal instance '${hostSessionId}' (status '${existing.state.status}'); `
+          + 'do not call sandore_workflow_run again before it ends',
+        'INVALID_OPERATION',
+      );
+    }
+    if (existing !== undefined && existing.state.status === 'pending') {
+      // overlay 新建路径：pending 请求为权威（弹窗里选的 cwd/model/permission 不因
+      // 模型复述 run 入参而丢失），run 入参只做 workflowId 一致性校验。
+      if (existing.state.workflowId !== request.workflowId) {
+        throw new SandoreError(
+          `instance '${hostSessionId}' was created for workflow '${existing.state.workflowId}', `
+            + `not '${request.workflowId}'`,
+          'INVALID_OPERATION',
+        );
+      }
+      existing.state = { ...existing.state, status: 'running', updatedAt: now() };
+      await this.persistState(existing);
+      void this.execute(hostSessionId);
+      return { instanceId: hostSessionId, status: 'running' };
+    }
+    // 已知会话路径（或终态复用）：以调用者会话为宿主，instanceId ≡ 该会话 id。
+    // 终态复用会覆盖同槽位的旧 ActiveInstance → 先撤销它的 settle 监听器（防泄漏；
+    // 旧实例已终结，其 awaiter 早已解开）。
+    if (existing !== undefined) {
+      existing.disposeSettlementListener();
+    }
+    const record = persistence.definitions.get(request.workflowId);
+    if (record === undefined) {
+      throw new SandoreError(`definition '${request.workflowId}' not found`, 'NODE_NOT_FOUND');
+    }
+    const definition = parseWorkflowYaml(record.yaml);
+    const hostAgent = this.ctx.agents.get(SessionId(hostSessionId));
+    if (hostAgent === undefined) {
+      throw new SandoreError(`host agent session '${hostSessionId}' not found`, 'NODE_NOT_FOUND');
+    }
+    const session = this.ctx.sessions.get(SessionId(hostSessionId));
+    if (session === undefined) {
+      throw new SandoreError(`host session '${hostSessionId}' was not published`, 'INVALID_OPERATION');
+    }
+    const createdAt = now();
+    const state = makeInitialState({
+      instanceId: hostSessionId,
+      request,
+      definition,
+      createdAt,
+      cwd: request.cwd,
+      status: 'running',
+    });
+    if (request.permission !== undefined) {
+      this.applyPermission(session, hostAgent, request.permission);
+    }
+    const active = this.buildActiveInstance(new AbortController(), session, hostAgent, definition, state);
+    this.instances.set(hostSessionId, active);
+    await this.persistState(active);
+    void this.execute(hostSessionId);
+    return { instanceId: hostSessionId, status: 'running' };
+  }
+
+  /**
+   * 建**引擎自有的子代理会话**（评估/路由 fork、重试 fork）——并补写 DSH 的子代理身份。
+   *
+   * 两条职责：
+   * 1. 调 `ctx.agents.create`（`descriptorLabel` 是本仓库给引擎用的字段，**必须剥掉**再
+   *    透传，DSH 只认它自己声明的 create 选项）；
+   * 2. 创建后补写 `subagent/descriptor`（见 {@link ensureSubagentDescriptor}）。
+   *
+   * 为什么必须补：这些会话带 `origin:'subagent'` 头但不经 DSH subagent provider 建立，
+   * 缺身份事件时子代理列表会把它们显示成**「会话记录损坏」**（真机缺陷：每个 step 下面
+   * 多一个 uuid 形态的损坏项）。补写后列表显示为正常条目，标签是可读文本。
+   * @param options - create 选项（含可选的 `descriptorLabel`）。
+   * @returns 子代理句柄。
+   */
+  private async createChildAgent(options: CreateAgentOptions): Promise<AgentHandle> {
+    const { descriptorLabel, ...rest } = options;
+    const handle = await this.ctx.agents.create(rest);
+    try {
+      ensureSubagentDescriptor(this.ctx, handle.agent.id, descriptorLabel);
+    } catch (error) {
+      // 身份补写失败不得影响子代理本身（列表项退化为「损坏」优于评估流程失败）。
+      this.ctx.logger.warn(`sandore: subagent descriptor seeding failed for '${handle.agent.id}': ${renderError(error)}`);
+    }
+    return handle;
+  }
+
+  /**
+   * 反查某会话当前绑定的实例 id（恒等于会话 id；`sandore_workflow_status` 的
+   * `instanceId` 省略路径用）。终态实例仍在表中（getState 兜底可读），故一并返回。
+   *
+   * 内存未命中时回退扫 state 表（进程重启后内存未重建、但快照仍在的场景）。
+   */
+  private findInstanceIdByHostSession(hostSessionId: string): string | undefined {
+    if (this.instances.has(hostSessionId)) {
+      return hostSessionId;
+    }
+    return this.persistence()?.state.get(hostSessionId) === undefined ? undefined : hostSessionId;
+  }
+
+  /**
+   * 解析宿主会话模型选择的两个服务访问面（可选服务；缺失时为 undefined）。
+   *
+   * - `agentDefaultModel`：部署级默认模型（宿主会话 `AgentOptions` 与选择兜底的来源，
+   *   对齐 DSH `api/session-controller/src/agent.ts:488-491`）；
+   * - `sessionProjections`：读 `modelSelection` 投影（用户在会话里选的模型 → 宿主会话
+   *   经 `installModelSelection` 生效，见 host-agent.ts）。
+   *
+   * 两者都不在 `inject` 列表里（可选依赖，`ctx.get` 缺席容忍），与 `agentPresets` 同款处理。
+   */
+  private hostModelSelectionDeps(): HostModelSelectionDeps {
+    const defaults = this.ctx.get('agentDefaultModel') as AgentDefaultModelSeam | undefined;
+    const projections = this.ctx.get('sessionProjections') as SessionProjectionsSeam | undefined;
+    return {
+      ...(defaults === undefined ? {} : { defaults }),
+      ...(projections === undefined ? {} : { projections }),
+    };
+  }
+
+  /**
+   * 注入宿主主代理协作上下文（架构决策 4；文本见 {@link buildHostContextInjection}）。
+   *
+   * source 用 {@link hostContextSource}（DSH 上下文注入形态）：客户端按
+   * `source.kind !== 'user'` 把它渲染成**左侧「上下文注入」行**，与终态通知同款；
+   * 投递仍用 `followup`（= 唤醒宿主去调 `sandore_workflow_run`），唤醒语义不变。
+   */
+  private injectHostContext(active: ActiveInstance): void {
+    const workflowName = active.state.workflowName ?? active.state.workflowId;
+    const text = buildHostContextInjection({
+      workflowId: active.state.workflowId,
+      workflowName,
+      originalInput: active.state.originalInput,
+    });
+    try {
+      // 投递口径同 notifyHostTerminal：空闲 → followup（唤醒去调 run）、正忙 → steer
+      // （并进当前 turn，不额外造 turn）。
+      this.deliverToHost(active.hostAgent, createUserMessage({
+        source: hostContextSource(`用户选择用工作流「${workflowName}」执行一个任务，请调用 sandore_workflow_run 启动`),
+        content: [{ type: 'text', text }],
+      }));
+    } catch (error) {
+      this.ctx.logger.warn(`sandore: host context injection failed: ${renderError(error)}`);
+    }
   }
 
   /**
@@ -648,6 +1206,61 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     return this.instances.get(instanceId)?.state;
   }
 
+  /**
+   * **按需**为 state 里的执行段补上 `sessionMessages`（展示派生数据，不再持久化）。
+   *
+   * ## 为什么不再持久化
+   * 实测（真机 12 个实例）：`executedSteps[].sessionMessages` 占 state 的 **41%–54%**
+   * （最新实例 61,667 / 149,165 字节；另一实例 112,053 / 206,991），而它只是从
+   * **step 子代理会话**（`sessionMeta.childId` 指向的 DSH 会话）派生的展示行——
+   * 真值在会话里，state 里存的是副本。故 schema 与写入点已移除该字段。
+   *
+   * ## 兼容（不做破坏性迁移）
+   * 消费面（`getInstanceState` RPC 的调用方：client 的 `chatLinesOf`、e2e 断言）仍按
+   * 原字段名拿到同样的数据，但改由本方法**在读取时从会话现算**：live 会话优先，
+   * live 已移除（子代理 settle 后 dispose）时回退 `sessionPersistence.inspect`。
+   * 每段只取尾部 {@link HYDRATED_MESSAGES_LIMIT} 条（与原持久化截断一致）。
+   *
+   * 会话已不可读（未落盘 / 无 persistence / 事件为空）时该段不带 `sessionMessages`
+   * （消费面本来就把缺省当「无消息行」，见 client `chatLinesOf` 的 undefined 分支）。
+   * @param state - 待装饰的 state（返回**新对象**，不修改入参）。
+   * @returns 带 `sessionMessages` 的 state（无段可补时原样返回入参）。
+   */
+  async hydrateStateMessages(state: WorkflowTaskState): Promise<WorkflowTaskState> {
+    if (state.executedSteps.length === 0) return state;
+    const steps = await Promise.all(state.executedSteps.map(async step => {
+      const childId = step.sessionMeta?.childId;
+      if (childId === undefined || childId === '') return step;
+      const events = await this.readChildEvents(childId);
+      if (events === undefined || events.length === 0) return step;
+      const messages = collectSessionMessages(events);
+      if (messages.length === 0) return step;
+      return { ...step, sessionMessages: messages.slice(-HYDRATED_MESSAGES_LIMIT) } as typeof step;
+    }));
+    return { ...state, executedSteps: steps };
+  }
+
+  /**
+   * 读某个子代理会话的完整事件（live 优先 → 持久化回退）。
+   * @param childId - 子代理会话 id。
+   * @returns 事件数组；两路都取不到时 undefined。
+   */
+  private async readChildEvents(childId: string): Promise<readonly SessionEvent[] | undefined> {
+    const live = this.ctx.sessions.get(SessionId(childId));
+    if (live !== undefined) {
+      return live.snapshotEvents() as unknown as readonly SessionEvent[];
+    }    const persistence = this.ctx.get('sessionPersistence') as
+      | { inspect?: (id: string) => Promise<{ events: readonly SessionEvent[] } | undefined> }
+      | undefined;
+    if (persistence?.inspect === undefined) return undefined;
+    try {
+      const inspected = await persistence.inspect(childId);
+      return inspected?.events;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** 查询实例的当前状态快照（内存活跃实例优先，state 表兜底读）。 */
   getState(instanceId: string): DagInstanceState {
     const active = this.instances.get(instanceId);
@@ -664,8 +1277,11 @@ export default class SandoreEngineRuntime extends SandoreEngine {
 
   /**
    * 中止运行中的实例：置中止标志 → 登记表内全部子代理 interrupt（ancestor）→
-   * 实例 aborted 终态（保留持久化快照）→ 单发 `sandore/aborted` → 清理内存
-   * ActiveInstance（getState 退回 state 表仍可读到 aborted 快照）。
+   * {@link markAborted} 落 aborted 终态（保留持久化快照）+ 单发 `sandore/aborted`
+   * → 清理内存 ActiveInstance（getState 退回 state 表仍可读到 aborted 快照）。
+   *
+   * 广播经 `markAborted` 的幂等单一出口：主循环 aborted 兜底分支同样调用它，
+   * 故同一次中止恒只广播一次（详见 {@link markAborted}）。
    */
   async abortInstance(instanceId: string): Promise<void> {
     const active = this.instances.get(instanceId);
@@ -692,15 +1308,57 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     for (const childId of active.lifecycle.pausedIds) {
       this.ctx.subagents.interrupt(childId, { kind: 'ancestor', agent: active.hostAgent });
     }
-    // 实例 aborted 终态（清理前落盘，保证清理后 getState 仍能读到 aborted 快照）。
-    active.state = { ...active.state, status: 'aborted', updatedAt: now() };
-    await this.persistState(active);
-    this.emitAborted(info);
-    // 清表分支：实例清出 instances 表后冻结登记同步移除——监听器对 subject 自动放行
-    // （hostAgent 恢复普通响应；failed/aborted 中仅清表分支放行，留表分支保持冻结）。
-    this.frozenHostAgents.delete(active.hostAgent.id);
-    // 清理内存 ActiveInstance（保留持久化快照）。
+    // 中止落态 + 单发 `sandore/aborted`（幂等单一出口：主循环 aborted 兜底分支同样经
+    // markAborted，故无论两路径以何序交错都只广播一次）。
+    await this.markAborted(active, info);
+    // 架构决策 2：宿主主代理不再冻结，中止路径无非冻结副作用；仅给宿主会话注入一条
+    // 收尾通知（不唤醒——主代理下次被用户消息唤醒时读到，可据此汇报）。
+    this.notifyHostTerminal(active, 'aborted');
+    // 清理内存 ActiveInstance（保留持久化快照）+ 子会话登记表（实例已不在内存，
+    // 不会再产生需要归属的唤醒）。
     this.instances.delete(instanceId);
+    this.hostChildSessions.delete(instanceId);
+  }
+
+  /**
+   * 中止落态 + 单发 `sandore/aborted`（**幂等单一出口**，所有中止路径都经此）。
+   *
+   * **为什么必须收敛到单一出口**：中止天然有多条路径——① {@link abortInstance} 显式
+   * 路径（`controller.abort()` 后立即落态并广播）；② 主循环 aborted 兜底分支；③
+   * `runAndCatch` 捕获到中止期异常（如宿主弹窗随 abort 取消 → ask waiter reject）的兜底。
+   * ①与②交错时：`controller.abort()` 同步唤醒被 kill 的 shell/子代理 Step，它在①落态
+   * 之后以 `aborted: true` 结算 → StepRunner 抛 `STEP_EXECUTION` → StageExecutor catch
+   * 分支 `commitState({ status: 'failed' })` 把内存态**打回 failed**（stage-executor.ts
+   * 失败分支 → 引擎 `commitState` 回调）→ ②原守卫 `status !== 'aborted'` 读到 failed
+   * 而误判「尚未落态」→ 二次落态 + 二次广播（e2e F 层中止用例实测 2 次
+   * `sandore/aborted` 的根因，探针实测兜底守卫观察到的 status 为 `failed`）。
+   *
+   * **幂等语义**：`active.abortedBroadcast` 一次性标记在第一处 `await` 之前**同步占用**
+   * ——即使多条路径在持久化 await 窗口内并发进入，也只有先到者广播（后到者 `shouldBroadcast`
+   * 为 false）。而**终态收敛每次都执行**（status='aborted' + 清空循环上下文 + 落盘）：
+   * 中止期间的失败回写可能把内存态打成 failed，若不重新落态，`getState` 读到的持久化快照
+   * 会停在错误的终态。中止路径**不发** `sandore/end`（②直接 return，③在中止态下不再
+   * 走 failed 分支）。
+   *
+   * @param active - 运行中的实例（可能已清出 instances 表，仍可落盘/广播）。
+   * @param info - `sandore/aborted` 的 `DagRunInfo`（taskId + workflowId）。
+   */
+  private async markAborted(active: ActiveInstance, info: DagRunInfo): Promise<void> {
+    const shouldBroadcast = !active.abortedBroadcast;
+    active.abortedBroadcast = true;
+    active.state = {
+      ...active.state,
+      status: 'aborted',
+      // 2026-08-25 real-e2e：终态统一清空循环上下文（幽灵循环帧清理）。
+      activeLoopIterationStack: [],
+      activeLoopStack: [],
+      activeLoopNodeId: null,
+      updatedAt: now(),
+    };
+    await this.persistState(active);
+    if (shouldBroadcast) {
+      this.emitAborted(info);
+    }
   }
 
   /**
@@ -736,55 +1394,46 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     }
     const definition = parseWorkflowYaml(record.yaml);
     const controller = new AbortController();
-    // 宿主主代理恢复（F2）：复用模式（快照携带 hostSessionId = startInstance 复用的
-    // 调用方会话）→ 直接复用仍注册的宿主 agent/会话（不 agents.resume(instanceId)——
-    // 复用分支从未创建 instanceId 会话，resume 必失败）；调用方会话已销毁则抛可读
-    // 错误。overlay 新建模式保持现状：agents.resume 冷恢复宿主主代理 + attach。
-    let hostAgent: Agent;
-    let session: Session;
-    if (snapshot.hostSessionId !== undefined) {
-      const hostSessionId = snapshot.hostSessionId;
-      const existing = this.ctx.agents.get(SessionId(hostSessionId));
-      if (existing === undefined) {
-        throw new SandoreError(`host agent session '${hostSessionId}' not found (recover reuse mode)`, 'NODE_NOT_FOUND');
-      }
-      hostAgent = existing;
-      const existingSession = this.ctx.sessions.get(SessionId(hostSessionId));
-      if (existingSession === undefined) {
-        throw new SandoreError(`host session '${hostSessionId}' was not published (recover reuse mode)`, 'INVALID_OPERATION');
-      }
-      session = existingSession;
-      // 复用分支不重复 attach workspace（对齐 startInstance 复用分支：会话归属由调用方负责）。
-    } else {
-      // 冷恢复宿主主代理（resume 重跑 setup：只挂默认 preset，保持冷恢复后能力一致）。
-      const presets = this.ctx.get('agentPresets') as AgentPresetsSeam | undefined;
-      const handle = await this.ctx.agents.resume({
-        resumeSessionId: SessionId(instanceId),
-        setup: createHostAgentSetup({ instanceId, ...(presets === undefined ? {} : { presets }) }),
-      });
-      hostAgent = handle.agent;
-      const createdSession = this.ctx.sessions.get(SessionId(instanceId));
-      if (createdSession === undefined) {
-        throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
-      }
-      session = createdSession;
-      // 崩溃恢复重建 hostAgent 后重新 attach 到快照 cwd 对应的 web workspace（与
-      // startInstance 新建分支对齐；registry 缺失时静默跳过）。
-      await this.attachHostAgentToWorkspace(hostAgent, snapshot.cwd);
+    // 宿主主代理恢复：入口归一后恒等式成立（hostAgent.id ≡ 宿主会话 id ≡ instanceId），
+    // 故冷恢复唯一路径 = `agents.resume(SessionId(instanceId))`（重跑 setup：只挂默认
+    // preset，保持冷恢复后能力一致）。旧的「复用调用方会话」分支已随 hostSessionId
+    // 入参一并删除（架构决策 1）——不存在「instanceId 会话从未创建」的实例了。
+    const presets = this.ctx.get('agentPresets') as AgentPresetsSeam | undefined;
+    const selectionDeps = this.hostModelSelectionDeps();
+    const hostAgentOptions = resolveHostAgentOptions(selectionDeps);
+    const handle = await this.ctx.agents.resume({
+      resumeSessionId: SessionId(instanceId),
+      ...(hostAgentOptions === undefined ? {} : { agentOptions: hostAgentOptions }),
+      setup: createHostAgentSetup({
+        instanceId,
+        ...selectionDeps,
+        ...(presets === undefined ? {} : { presets }),
+      }),
+    });
+    const hostAgent = handle.agent;
+    const createdSession = this.ctx.sessions.get(SessionId(instanceId));
+    if (createdSession === undefined) {
+      throw new SandoreError(`host session '${instanceId}' was not published`, 'INVALID_OPERATION');
     }
+    const session = createdSession;
+    // 崩溃恢复重建 hostAgent 后重新 attach 到快照 cwd 对应的 web workspace（与
+    // startInstance 对齐；registry 缺失时静默跳过）。
+    await this.attachHostAgentToWorkspace(hostAgent, snapshot.cwd);
     const active = this.buildActiveInstance(controller, session, hostAgent, definition, snapshot);
     this.instances.set(instanceId, active);
-    // 冻结宿主主代理（崩溃恢复重建 hostAgent 后重新冻结，直到工作流 completed 才解冻；
-    // failed/aborted 保持冻结）。按 hostAgent.id 登记（resume 场景 hostAgent.id =
-    // instanceId）。置于 recover 前：恢复期子代理 settle/report 唤醒同样
-    // 在 pre-step 被 reject。
-    this.frozenHostAgents.add(hostAgent.id);
     // 清空快照残留 stale pendingInteractions（缺陷 9 B / 缺陷 27 崩溃恢复路径）：
     // InteractionManager 重建时 Maps 为空（不 hydrate），快照中的 ghost ask/permission
     // 条目会被 UI 复弹且 replyQuestion 抛 INVALID_OPERATION。clearAll 终态化 + 清空 +
     // syncState 重持久化空 pending（对齐基准 recover 步骤 B clearAll）。
     active.interactions.clearAll();
     await this.persistState(active);
+
+    // pending 实例（overlay 新建后宿主会话尚未调用 run 就重启）：**保持 pending**，
+    // 不自动执行——两阶段语义（架构决策 1）要求执行由宿主会话的 run 触发；重建进
+    // 内存后，宿主会话随后的 `sandore_workflow_run` 仍能在同一槽位开跑。
+    if (snapshot.status === 'pending') {
+      return { instanceId, status: 'pending' };
+    }
 
     // recover() 本体故障兜底（缺陷 11 并入 9）：followup 抛错等异常若传播出
     // recoverInstance，实例残留内存 running + 快照无 failed 落盘，二次 recoverInstance
@@ -799,20 +1448,20 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       await this.persistState(active);
       const failInfo: DagRunInfo = { taskId: active.state.taskId, workflowId: active.state.workflowId };
       this.emitEnd(failInfo, { taskId: active.state.taskId, status: 'failed', error: renderError(error) });
-      // 清表分支：实例清出 instances 表后冻结登记同步移除——监听器对 subject 自动放行。
-      this.frozenHostAgents.delete(active.hostAgent.id);
+      this.notifyHostTerminal(active, 'failed');
       // 清内存：避免持有崩溃恢复期不一致的运行时对象；getState 兜底读快照（failed 终态）。
       this.instances.delete(instanceId);
+      this.hostChildSessions.delete(instanceId);
       return { instanceId, status: 'failed' };
     }
     if (recoverResult.hasFailure) {
       // 合成 session（shell）失败：落 failed 终态 + emitEnd（缺陷 11 补充缺口一：
       // 原实现标 failed 但不 emitEnd，与 runAndCatch 不一致，前端收不到终态通知）。
-      // **保持冻结**：工作流未成功完成，hostAgent 不恢复活跃。
       active.state = { ...active.state, status: 'failed', updatedAt: now() };
       await this.persistState(active);
       const failInfo: DagRunInfo = { taskId: active.state.taskId, workflowId: active.state.workflowId };
       this.emitEnd(failInfo, { taskId: active.state.taskId, status: 'failed', error: 'unrecoverable synthetic session step' });
+      this.notifyHostTerminal(active, 'failed');
       return { instanceId, status: 'failed' };
     }
     if (recoverResult.hasResume) {
@@ -980,7 +1629,21 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   /** 恢复登记表内全部 Step（逐个 followup 并清空登记表）。 */
   async resumeAllSteps(instanceId: string, resumePrompt?: string): Promise<void> {
     const active = this.requireActive(instanceId);
+    // 唤醒落点必须与主循环的等待 key 同源（缺陷修复：恢复后实例停在 paused 的根因 B）。
+    // 主循环 parked 时以 `pausedStep?.stepId ?? pausedStep?.id` 为 key 调 waitForResume
+    // （见 runInstance 的 paused 分支），而 waitForResume 只消费**具体 stepId** 的同名标志。
+    // 恢复手势若早于暂停落态到达（子代理 settle 慢于用户点击 → 主循环还没 parked），
+    // 原来的「只置 `'*'`」标志不会被该 key 消费 → 唤醒被永久丢弃，实例停在 paused。
+    // 故先按登记表内 childId 反查各 Step 的对外 stepId（与 lifecycle `childIdOf` 同一回退），
+    // 恢复后对这些 key 逐个 notifyResume：已 parked → 直接唤醒；未 parked → 置同名标志。
+    const resumedStepIds = active.lifecycle.pausedIds
+      .map(childId => active.state.executedSteps.find(step => (step.sessionMeta?.childId ?? step.id) === childId))
+      .map(step => step?.stepId ?? step?.id)
+      .filter((stepId): stepId is string => stepId !== undefined);
     await active.lifecycle.resumeAllSteps(resumePrompt);
+    for (const stepId of resumedStepIds) {
+      this.notifyResume(active, stepId);
+    }
     // 唤醒所有等待中的 waiter（每个 stepId key + '*' key）。
     for (const key of active.resumeWaiters.keys()) {
       this.notifyResume(active, key);
@@ -1005,7 +1668,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     if (step === undefined) {
       throw new SandoreError(`step '${stepId}' not found`, 'INVALID_OPERATION');
     }
-    const childId = step.sessionMeta?.childId ?? step.id;
+    const childId = step.sessionMeta?.childId ?? synthesizeChildId(step.id);
     const child = this.ctx.sessions.get(SessionId(childId));
     if (child === undefined) {
       return [];
@@ -1030,6 +1693,10 @@ export default class SandoreEngineRuntime extends SandoreEngine {
    * 4. synthetic===false 才投递（synthetic 步骤——shell 合成 session
    *    无真实子代理——抛 INVALID_OPERATION，对齐 LifecycleManager.pauseStep 的
    *    非子代理守卫语义）
+   * 4b. **状态门槛（P3）**：反查到的段必须是 running/interacting。旧实现没有这道闸，
+   *    于是「暂停后直接发消息」会 ok 落进一个静止的子代理会话（工具描述却写着只接受
+   *    running/interacting——描述与行为不符）。现在 paused/failed/completed 一律
+   *    INVALID_OPERATION，错误信息给出**当前状态 + 建议动作**（可自纠）。
    * 5. 追加 userMessages `{kind:'message', target:stepId}`——**不复用 'input'**
    *    （SA8 核实：'input' 语义为原始需求/resume 输入，与讨论消息混淆会污染
    *    originalInput 语义；新增独立 kind:'message' 供时间轴区分渲染）
@@ -1056,24 +1723,28 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         'INVALID_OPERATION',
       );
     }
+    // 状态门槛（P3，与工具描述同口径）：只有 running/interacting 的子代理段可收消息。
+    // 放在非子代理守卫**之后**：shell 段的结构性错误依然报「非子代理」（更精确）。
+    if (!MESSAGEABLE_STEP_STATUSES.has(step.status)) {
+      throw new SandoreError(
+        `step '${stepId}' is in status '${step.status}' and cannot receive messages`
+        + `（仅 running/interacting 的子代理 Step 可收消息）${messageableSuggestion(step.status)}`,
+        'INVALID_OPERATION',
+      );
+    }
     const childId = sessionMeta.childId;
+    if (childId === undefined) {
+      // synthetic===false 的真实子代理段必然携带真实 childId（2026-09-09 起先拉起
+      // 子代理再落 id）；此处仅为类型收窄 + 防御旧持久化数据。
+      throw new SandoreError(`step '${stepId}' has no child session id`, 'INVALID_OPERATION');
+    }
     // queue 投递（独立 FIFO 轮次语义，等价旧 subagents.followup；上游已删 followup）。
     await this.deliverChildPrompt(active.hostAgent, childId, [{ type: 'text', text: message }], active.controller.signal);
-    active.state = {
-      ...active.state,
-      userMessages: [
-        ...(active.state.userMessages ?? []),
-        {
-          id: `usr-${globalThis.crypto.randomUUID()}`,
-          kind: 'message',
-          target: step.stepId ?? step.id,
-          content: message,
-          createdAt: now(),
-        },
-      ],
-      updatedAt: now(),
-    };
-    await this.persistState(active);
+    // 投递**不写 state**（用户要求：讨论页只展示 step agent 消息与主代理消息）。
+    // 该消息本身已经落在**子代理会话**里（= 该 step 面板自己那条「step agent 消息」），
+    // 再往 `state.userMessages` 记一条只会把它重复搬进 discussion 时间轴。
+    // 投递凭据仍有两处可对账：本工具返回的 `data.delivered`，以及下面的
+    // `sandore/step-message` 单发事件（SSE）。
     this.emitStepMessage(
       { taskId: active.state.taskId, workflowId: active.state.workflowId },
       step.stepId ?? step.id,
@@ -1136,8 +1807,20 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     try {
       await this.runInstance(active, isResume);
     } catch (error) {
+      // 中止触发的异常（第三条中止路径）：中止期间冒泡的异常多由 abort 本身引起
+      // （如实例中止 → DSH 弹窗取消 → `userQuestions.ask` reject → interaction-manager
+      // `failQuestion` 拒绝引擎 waiter → 异常穿出 runInstance）。此时**不得**落 failed、
+      // **不得**发 `sandore/end`：中止终态与广播统一由 markAborted 幂等出口收口
+      // （已广播则只补落态），否则中止路径会同时出现 `sandore/aborted` + `sandore/end`
+      // 且终态快照被 failed 覆盖（中止契约破裂）。
+      if (active.controller.signal.aborted) {
+        await this.markAborted(active, {
+          taskId: active.state.taskId,
+          workflowId: active.state.workflowId,
+        });
+        return;
+      }
       // 引擎级意外故障（非 Step 失败）：响亮落为 failed 终态。
-      // **保持冻结**：工作流未成功完成，hostAgent 不恢复活跃。
       active.state = { ...active.state, status: 'failed', updatedAt: now() };
       await this.persistState(active);
       const info: DagRunInfo = {
@@ -1149,6 +1832,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         status: 'failed',
         error: renderError(error),
       });
+      this.notifyHostTerminal(active, 'failed');
     }
   }
 
@@ -1194,7 +1878,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       ...(runnerConfig.subagentProvider === undefined ? {} : { subagentProvider: runnerConfig.subagentProvider }),
       // secondary 门禁纠正重试的宿主投递通道（上游 followup 已删；[Service.init] 期解析）。
       ...(this.childDelivery === undefined ? {} : { deliverChildPrompt: this.childDelivery }),
-      createAgent: options => this.ctx.agents.create(options),
+      createAgent: options => this.createChildAgent(options),
       getStepSessionEvents: async childId => {
         // live → 持久化回退：子代理 settle 后 live store 已移除，从 sessionPersistence
         // inspect 读完整事件（对齐 DSH `inspectApiRemoteSession` 的持久化读路径）。
@@ -1223,7 +1907,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       // setup 经 `agentPresets.composeFrom` 组合宿主主代理 preset（继承工具集 + prompt
       // sections，对齐 DSH `applyChildComposition`——scope-local 工具注册不自动继承 parent）。
       ...(runnerConfig.hostAgent === undefined ? {} : { hostAgent: runnerConfig.hostAgent }),
-      createAgent: (options: CreateAgentOptions) => this.ctx.agents.create(options),
+      createAgent: (options: CreateAgentOptions) => this.createChildAgent(options),
       getStepSessionEvents: async (childId: string) => {
         // 上游 dsh-session 0.1.2：Session.events 直读已删，经 snapshotEvents() 取全量。
         const live = this.ctx.sessions.get(SessionId(childId));
@@ -1277,8 +1961,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         onStepCompleted: (step, childId, output) => this.emitStepCompleted(info, step.id, childId, output, step.name ?? step.id, currentLoopIteration()),
         onStepFailed: (step, childId, error) => this.emitStepFailed(info, step.id, childId, error, step.name ?? step.id, currentLoopIteration()),
         // 收尾阶段流转：commitFinalize 写入 currentPhase 后单发 sandore/step-phase，
-        // 供 UI 经 SSE 即时刷新（childId 缺省时回退 stepId 占位）。
-        onPhaseChange: (step, childId, phase) => this.emitStepPhase(info, step.id, childId ?? step.id, phase, step.name ?? step.id, currentLoopIteration()),
+        // 供 UI 经 SSE 即时刷新（2026-09-09：shell 无 childId，事件直接带 undefined，
+        // 不再回退 step.id——childId 只承载真实子代理会话 id）。
+        onPhaseChange: (step, childId, phase) => this.emitStepPhase(info, step.id, childId, phase, step.name ?? step.id, currentLoopIteration()),
       };
 
       const resumeFrom = this.resumeInfo(active, stage);
@@ -1291,6 +1976,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           originalInput: active.state.originalInput,
           contractArtifacts: navigator.getContractArtifacts(),
           passThroughVars: active.state.passThroughVars,
+          // v7：跨 Stage 播种前置输出（每 step 最新段）——让「依赖前一个 Stage 的 step」
+          // 的 inputFrom 声明能被解析；注入面仍由 inputFrom 决定（未声明不注入）。
+          previousOutputs: previousOutputsFromExecutedSteps(active.state.executedSteps as unknown as readonly ExecutedStepDefault[]),
         },
         sharedState: {
           cwd: active.state.cwd,
@@ -1306,10 +1994,25 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         visitCounts: active.state.visitCounts,
         ...(resumeFrom === undefined ? {} : { resumeFrom }),
         commitState: (patch) => {
+          // 暂停落态以**生命周期登记表 + 未消费的 resume 手势**为权威（lifecycle
+          // `commitPausedRegistry`（lifecycle-manager.ts:208-217）/ `commitStepStatus` 即按
+          // `status = pausedChildIds.size > 0 ? 'paused' : 'running'` 判定）：执行器在
+          // 「settle(aborted) → STEP_PAUSED」catch 分支里的 `{ status: 'paused' }` 回写
+          // （stage-executor.ts:886 / :1407）可能晚于 resume 手势（`resumeAllSteps` 已清空
+          // 登记表、写入 running，并留下未消费的 resume 通知）——若照样落 paused，
+          // 恢复后的实例会被打回暂停态（e2e M5「恢复后仍 paused」根因 A，与 aborted 双发
+          // 同属「落态被回写」类缺陷）。
+          // 两个条件同时成立才视为被恢复手势接管的陈旧落态：**登记表为空**（无人被登记为
+          // 暂停）且**存在未消费的 resume 通知**（手势先于落态到达）。无手势的中断
+          // （子代理被外部取消）不改写语义——保留 paused，用户仍可经恢复动作解锁。
+          const supersededPause = patch.status === 'paused'
+            && active.lifecycle.pausedIds.length === 0
+            && active.resumeRequested.size > 0;
+          const status = supersededPause ? undefined : patch.status;
           active.state = {
             ...active.state,
-            ...(patch.status !== undefined ? { status: patch.status } : {}),
-            ...(patch.errorDetail !== undefined ? { errorDetail: patch.errorDetail } : {}),
+            ...(status === undefined ? {} : { status }),
+            ...(patch.errorDetail === undefined ? {} : { errorDetail: patch.errorDetail }),
             updatedAt: now(),
           };
         },
@@ -1321,6 +2024,17 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           // WorkflowTaskState.pendingQueue → 崩溃恢复时直接读回 re-queue（精确重放，
           // 不再从 executedSteps 反推 DAG next）。
           const entry = executed as unknown as WorkflowTaskState['executedSteps'][number];
+          // 不变量（2026-09-09，入口归一后更简单）：真实子代理段（childId 已定）持久化时
+          // hostSessionId（parent）必须存在——UI 据此组 subagent-kind 地址打开内嵌会话。
+          // 中间 meta 写手可能只带 childId/synthetic/command，此处按权威来源回填兜底：
+          // 恒等式下宿主会话 id ≡ taskId（架构决策 1），不再有 `hostSessionId ?? taskId`。
+          if (entry.sessionMeta !== undefined && entry.sessionMeta.childId !== undefined
+            && entry.sessionMeta.hostSessionId === undefined) {
+            entry.sessionMeta = {
+              ...entry.sessionMeta,
+              hostSessionId: active.state.taskId,
+            };
+          }
           const index = active.state.executedSteps.findIndex(item => item.id === entry.id);
           active.state = {
             ...active.state,
@@ -1334,7 +2048,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           // pause→完成竞态清理：interrupt 是软信号，子代理仍可能自然完成——若该 Step
           // 已 completed 而其 childId 仍在暂停登记表，移除登记（否则残留「段 completed +
           // 登记表有值」，resume 将卡死等待不存在的 paused Step）。
-          if (entry.status === 'completed' && entry.sessionMeta?.synthetic === false) {
+          if (entry.status === 'completed' && entry.sessionMeta?.synthetic === false
+            && entry.sessionMeta.childId !== undefined) {
             active.lifecycle.clearPausedOnCompletion(entry.sessionMeta.childId);
           }
           await this.persistState(active);
@@ -1388,6 +2103,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
             };
             await this.persistState(active);
             this.emitEnd(info, { taskId: info.taskId, status: 'failed', error: errorMessage });
+            this.notifyHostTerminal(active, 'failed');
             return;
           }
           const entry: PendingQuestionEntry = {
@@ -1447,24 +2163,12 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       if (signal.aborted) {
         // aborted 处理分支：paused 等待期命中（waitForResume 与 signal.aborted 竞争后
         // 退出循环，result 仍为 'paused'）或 Step 因中止失败（result 为 'failed'）。
-        // abortInstance 已落 aborted 态并单发 sandore/aborted，此处仅在尚未落态时兜底
-        // （`active.state.status !== 'aborted'` 守卫避免 sandore/aborted 重复发）。
+        // 中止落态 + 广播收敛到 markAborted（幂等单一出口）：abortInstance 已广播则本分支
+        // 只补落态**不重发** `sandore/aborted`——即使中途有失败回写把内存态打回 failed，
+        // 一次性标记仍拦住二次广播；终态 status='aborted' 由 markAborted 重新落盘保证。
+        // 兜底分支不触碰冻结登记——abort 清表语义由 abortInstance 统一处理。
         this.markStageStatus(active, stageId, 'failed');
-        if (active.state.status !== 'aborted') {
-          // 兜底落 aborted 终态（正常路径 abortInstance 已落态、清表并移除冻结登记；
-          // 兜底分支不触碰登记——abort 清表语义由 abortInstance 统一处理）。
-          active.state = {
-            ...active.state,
-            status: 'aborted',
-            // 2026-08-25 real-e2e：终态统一清空循环上下文（幽灵循环帧清理）。
-            activeLoopIterationStack: [],
-            activeLoopStack: [],
-            activeLoopNodeId: null,
-            updatedAt: now(),
-          };
-          await this.persistState(active);
-          this.emitAborted(info);
-        }
+        await this.markAborted(active, info);
         return;
       }
 
@@ -1477,7 +2181,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
 
       if (result.status === 'failed') {
         this.markStageStatus(active, stageId, 'failed');
-        // 落 failed 终态（保持冻结：工作流未成功完成，hostAgent 不恢复活跃）。
+        // 落 failed 终态。
         active.state = {
           ...active.state,
           status: 'failed',
@@ -1494,6 +2198,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
           status: 'failed',
           ...(result.errorDetail === undefined ? {} : { error: result.errorDetail }),
         });
+        this.notifyHostTerminal(active, 'failed');
         return;
       }
 
@@ -1523,10 +2228,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       }
     }
 
-    // 工作流成功完成：落 completed 终态并解冻宿主主代理——**唯一解冻点**（failed/aborted
-    // 终态不移除冻结登记，hostAgent 保持冻结）。引擎不 dispose hostAgent、ActiveInstance
-    // 仍留 instances 表，解冻后 hostAgent 恢复普通响应。
-    this.frozenHostAgents.delete(active.hostAgent.id);
+    // 工作流成功完成：落 completed 终态。架构决策 2 已删除宿主主代理冻结登记，此处
+    // 只需给宿主会话注入一条收尾通知（不唤醒；主代理下次被唤醒时读到，可据此汇报）。
+    this.notifyHostTerminal(active, 'completed');
     active.state = {
       ...active.state,
       status: 'completed',
@@ -1574,7 +2278,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   ): Promise<void> {
     const stepEntry = ask.step;
     const stepId = stepEntry.stepId ?? stepEntry.id;
-    const childId = stepEntry.sessionMeta?.childId ?? stepEntry.id;
+    const childId = stepEntry.sessionMeta?.childId ?? synthesizeChildId(stepEntry.id);
     const name = stepEntry.name;
     const errorMessage = 'Question rejected by user';
     // 标 ask Step failed（写 executedSteps + persist）。该 Step 此前在 ask 保底中断
@@ -1595,10 +2299,11 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     // 落 Stage failed + 实例 failed（无 Stage 级失败容错 → 整实例 failed，但经显式
     // 代码非异常冒泡；Step 正确置 failed 而非滞留 interacting）。
     this.markStageStatus(active, stageId, 'failed');
-    // 落 failed 终态（保持冻结：工作流未成功完成，hostAgent 不恢复活跃）。
+    // 落 failed 终态。
     active.state = { ...active.state, status: 'failed', updatedAt: now() };
     await this.persistState(active);
     this.emitEnd(info, { taskId: info.taskId, status: 'failed', error: errorMessage });
+    this.notifyHostTerminal(active, 'failed');
   }
 
   private runnerConfig(definition: WorkflowDefinition, hostAgent: Agent, active: ActiveInstance): StepRunnerConfig {
@@ -1616,6 +2321,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       mcps: definition.mcps,
       agents: definition.agents,
       hostAgent,
+      // 子代理直接 parent 会话 id（恒等式：宿主会话 id ≡ 实例 id ≡ taskId，架构决策 1；
+      // 不再有 `hostSessionId ?? taskId` 回退）。
+      parentSessionId: active.state.taskId,
       onChildStarted: async (stepId, childId) => {
         // Round 25（方案 B）：发布真实 childId 前尽力确认子代理会话已 live 可读
         // （startContinuable 返回时通常已 publish；仅在极端发布竞态下短暂等待一次），
@@ -1632,7 +2340,15 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         if (entry === undefined || entry.sessionMeta === undefined) {
           return;
         }
-        const sessionMeta = { ...entry.sessionMeta, childId, synthetic: false };
+        // hostSessionId = 宿主主代理会话 id（= 子代理的直接 parent，恒等于 taskId）：
+        // UI 据此组 subagent-kind 地址 {kind:'subagent', parentSessionId, childSessionId,
+        // mode:'continuable'} 打开内嵌会话（plain open 会被 rc.1 宿主恒拒）。
+        const sessionMeta = {
+          ...entry.sessionMeta,
+          childId,
+          synthetic: false,
+          hostSessionId: active.state.taskId,
+        };
         active.state = {
           ...active.state,
           executedSteps: active.state.executedSteps.map(item => (item.id === entry.id ? { ...item, sessionMeta } : item)),
@@ -1719,9 +2435,9 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     const interactions = new InteractionManager({
       hostAgent,
       userQuestions: () => this.ctx.get('userQuestions'),
-      // Round 26：ask 是否上报宿主主代理（场景 A/B）。快照持久化（崩溃恢复后仍知）；
-      // 旧快照无该字段（undefined）时按 true 兼容（复用语义）。
-      reportToHost: state.reportToHost ?? true,
+      // 入口归一（架构决策 1）：ask/permission **一律**上报宿主主代理（reportToHost
+      // 单值化为恒 true）——恒等式下宿主会话就是发起 run 的那个真实会话，其弹窗
+      // 用户可见可答；不再有 overlay/复用两种场景的分流。
       persist: (entries) => {
         active.state = { ...active.state, pendingInteractions: entries, updatedAt: now() };
         void this.persistState(active);
@@ -1745,14 +2461,6 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         active.state = next;
         void this.persistState(active);
       },
-      appendUserMessage: (record) => {
-        active.state = {
-          ...active.state,
-          userMessages: [...(active.state.userMessages ?? []), record],
-          updatedAt: now(),
-        };
-        void this.persistState(active);
-      },
       emitStepPaused: (stepId, childId, name, loopIteration) => this.emitStepPaused(active, stepId, childId, name, loopIteration),
       emitStepResumed: (stepId, childId, resumePrompt, name, loopIteration) => this.emitStepResumed(active, stepId, childId, resumePrompt, name, loopIteration),
     });
@@ -1761,14 +2469,6 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       readState: () => active.state,
       commitState: (next) => {
         active.state = next;
-        void this.persistState(active);
-      },
-      appendUserMessage: (record) => {
-        active.state = {
-          ...active.state,
-          userMessages: [...(active.state.userMessages ?? []), record],
-          updatedAt: now(),
-        };
         void this.persistState(active);
       },
       // 上游 `subagents.followup` 已删：retry 冷恢复/重试驱动经 queue 投递。
@@ -1787,7 +2487,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         // 缺陷（scope-local 工具注册不自动继承 parent，未组合 preset 的 child 工具
         // registry 为空）；capture 在本包装体内同步执行（首个 await 之前）。
         const setup = delegatedChildSetup(hostAgent);
-        return this.ctx.agents.create({
+        return this.createChildAgent({
           ...options,
           ...(options.meta === undefined ? {} : {
             meta: { ...options.meta, parentSession: hostAgent.id },
@@ -1805,7 +2505,20 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       // live → 持久化回退（对齐 getStepSessionEvents）：live 命中走 sessions.fork；
       // 否则从 sessionPersistence inspect 读事件构造 seed（recovery-manager 用
       // forked.events 作 createAgent 的 seed，无需 live 会话本体）。
+      //
+      // **不变量守卫（2026-09）**：fork 源**只能**是某个 step 段子代理会话（重建执行
+      // 子代理时继承它自己上一次尝试的上下文）。把**宿主主代理会话**当 fork 源会把主代理
+      // 历史灌进执行子代理（真机缺陷的形态），故在此响亮拒绝——这条守卫与
+      // `microflow/subagents.ts` 的 FRESH_SUBAGENT_PROVIDER 一起构成「执行子代理必须全新
+      // / 只带自己的上下文」的显式不变量，改回去会立刻被测试抓到。
       forkSession: async (source, boundary) => {
+        if (source === active.state.taskId) {
+          throw new SandoreError(
+            `refusing to fork host session '${source}' as a step-subagent seed: `
+            + 'step subagents must not inherit the host main-agent history (see FRESH_SUBAGENT_PROVIDER)',
+            'INVALID_OPERATION',
+          );
+        }
         const live = this.ctx.sessions.get(SessionId(source));
         if (live !== undefined) {
           // 上游 dsh-session 0.1.2：fork boundary 为 SessionSeq 品牌数；Session.events
@@ -1858,6 +2571,8 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       resumeWaiters: new Map<string, Array<() => void>>(),
       settlementBuffer: new Map<string, SubagentSettlement>(),
       settlementResolvers: new Map<string, (settlement: SubagentSettlement) => void>(),
+      abortedBroadcast: false,
+      disposeSettlementListener: () => {},
     };
     // 用 Object.defineProperty 给 state 加 getter/setter 委托 ReactiveState。
     // 这样所有 `active.state = {...}` 赋值自动触发 setter → 持久化调度，
@@ -1868,11 +2583,17 @@ export default class SandoreEngineRuntime extends SandoreEngine {
       enumerable: true,
       configurable: true,
     });
-    // 单一 `sandore/subagent-settled` 监听器：缓冲 settlement + 唤醒挂起 awaiter。
+    // 单一 `sandore/subagent-settled` 监听器：唤醒挂起 awaiter，或在**无 awaiter** 时缓冲。
     // DSH 适配层（registerSubagentSettlementAdapter 把 DSH subagent/end 转译为本事件）
-    // 与 mock FakeSubagents.settleChild 都经此通道；监听器存活于 active 生命周期。
-    this.ctx.on('sandore/subagent-settled', (settlement: SubagentSettlement) => {
-      active.settlementBuffer.set(settlement.childId, settlement);
+    // 与 mock FakeSubagents.settleChild/interrupt 都经此通道；监听器存活于 active 生命周期。
+    //
+    // **有 awaiter 时绝不写缓冲**（缺陷修复：恢复后实例停留在 paused 的根因 C）：
+    // 原实现在 resolver 判定**之前**无条件 `settlementBuffer.set(...)`，使一次已被 awaiter
+    // 消费的 settlement 仍以陈旧副本留在缓冲里。pause 的 interrupt 发出的 `{aborted}`
+    // 因此残留 → resume 后新段 `collectSubagentOutput` → `awaitSubagentSettlement` 直接命中
+    // 缓冲的陈旧 `{aborted}` → 抛 `STEP_PAUSED` → stage-executor 把段/实例重新判为 paused
+    // （`sandore/step-resumed` 已发、无错误提示，但实例状态停在 paused）。
+    active.disposeSettlementListener = this.ctx.on('sandore/subagent-settled', (settlement: SubagentSettlement) => {
       const resolve = active.settlementResolvers.get(settlement.childId);
       if (resolve !== undefined) {
         // 有 awaiter 在等：直接 resolve，不写 buffer（避免陈旧 settlement 残留，
@@ -1962,7 +2683,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
         return {
           step: mergedStep,
           executed: step as unknown as ExecutedStepDefault,
-          childId: step.sessionMeta?.childId ?? step.id,
+          childId: step.sessionMeta?.childId ?? synthesizeChildId(step.id),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== undefined);
@@ -2116,15 +2837,15 @@ export default class SandoreEngineRuntime extends SandoreEngine {
     this.emitContained('sandore/stage-completed', [info, stageId, stageContract]);
   }
 
-  private emitStepStart(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void {
+  private emitStepStart(info: DagRunInfo, stepId: string, childId: string | undefined, name: string, loopIteration?: number[]): void {
     this.emitContained('sandore/step-start', [info, stepId, childId, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
   }
 
-  private emitStepCompleted(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[], name: string, loopIteration?: number[]): void {
+  private emitStepCompleted(info: DagRunInfo, stepId: string, childId: string | undefined, output: ContentBlock[], name: string, loopIteration?: number[]): void {
     this.emitContained('sandore/step-completed', [info, stepId, childId, output, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
   }
 
-  private emitStepFailed(info: DagRunInfo, stepId: string, childId: string, error: string, name: string, loopIteration?: number[]): void {
+  private emitStepFailed(info: DagRunInfo, stepId: string, childId: string | undefined, error: string, name: string, loopIteration?: number[]): void {
     this.emitContained('sandore/step-failed', [info, stepId, childId, error, name, ...(loopIteration === undefined ? [] : [loopIteration])]);
   }
 
@@ -2166,7 +2887,7 @@ export default class SandoreEngineRuntime extends SandoreEngine {
   private emitStepPhase(
     info: DagRunInfo,
     stepId: string,
-    childId: string,
+    childId: string | undefined,
     phase: FinalizePhase,
     name: string,
     loopIteration?: number[],

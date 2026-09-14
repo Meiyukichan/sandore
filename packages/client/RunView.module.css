@@ -57,7 +57,10 @@
   min-height: 0;
 }
 
-/* 右：对话消息列表（标题条 / 滚动区 / 输入框三段隔离）。 */
+/* 右：对话消息列表（标题条 / 滚动区 / 输入框三段隔离）。
+   同时是**宽度基准的发布点**：ResizeObserver 在本元素上发布 `--sandore-msg-content-width`
+   （= 消息列实测**内容**宽，px），主代理输入卡与 ask/permission 接管卡据此与消息列同轴心、
+   只比消息宽一点（真机反馈：「以 step 消息列为中心让输入框对齐，左右比消息宽上一些」）。 */
 .feedCol {
   flex: 1;
   min-width: 0;
@@ -65,6 +68,9 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 每 step 一档的轮次条（`StepRail`）绝对定位挂在本列右缘、垂直居中 ⇒ 本列是它的
+     定位上下文（见 step-rail.module.css 的 `.slot`）。 */
+  position: relative;
 }
 
 /* 消息滚动区（独立滚动）。 */
@@ -74,14 +80,13 @@
   overflow-y: auto;
 }
 
-/* 输入框：固定在对话列最底部（照 DSH 主会话输入框位置），与消息区隔离。 */
+/* 输入框：固定在对话列最底部（照 DSH 主会话输入框位置），与消息区隔离。
+   这一层只负责占位；宽度/居中由输入卡按 `--sandore-msg-content-width + 24px` 自己算
+   （见 main-agent-input.module.css 的 `.card`），故不设 max-width/内距。 */
 .composerWrap {
   flex: none;
   box-sizing: border-box;
   width: 100%;
-  max-width: 768px;
-  margin: 0 auto;
-  padding: 0 24px 24px;
 }
 
 /* 拖拽分隔条（照 DSH AppFrame .drag-handle 观感）。 */
@@ -197,13 +202,42 @@
   animation: sd-pulse 1.2s infinite;
 }
 
+/* 标题栏的「中止」按钮（真机反馈后从输入框旁移到这里：不与「停止生成」并列）。
+   观感照输入框停靠区的次要按钮：ghost 底 + 12px 文案。 */
+.abortBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--sd-border) 80%, transparent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sd-muted-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.abortBtn:hover:not(:disabled) {
+  background: var(--sd-accent);
+  color: var(--sd-destructive);
+}
+
+.abortBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 @keyframes sd-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
 
-/* ── 对话消息列表（768px 居中列，顶部对齐标题栏） ───────────────────────── */
-
+/* ── 对话消息列表（768px 居中列，顶部对齐标题栏） ─────────────────────────
+   真机反馈：输入框宽度应**以这里的消息列为基准**（只比它宽一点、同轴心），故本列保持既有
+   768px 居中列不变；宽度基准由 `.feedCol` 上发布的 `--sandore-msg-content-width`（实测内容宽）
+   提供给输入卡与 ask/permission 接管卡。 */
 .column {
   max-width: 768px;
   margin: 0 auto;
@@ -218,6 +252,20 @@
   font-size: 12px;
   line-height: 18px;
   color: var(--sd-muted-foreground);
+}
+
+/* 说明位：`hostFilter` 模式（主代理会话内的 tab 右栏）下「本会话没有绑定实例」时用它。
+   取值照 `WorkflowOverlay.module.css` 的 `.editorPlaceholder`（同类席位、同一份观感）。 */
+.editorPlaceholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--sd-muted-foreground);
+  text-align: center;
 }
 
 .error {

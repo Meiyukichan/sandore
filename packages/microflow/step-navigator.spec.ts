@@ -13,12 +13,14 @@ import type { SessionStore } from '@deepseek-ai/dsh-session';
 import { describe, expect, it } from 'vitest';
 
 import type { WorkflowDefinition, WorkflowStage } from '../workflow/schema';
+import { FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../tests/mocks/llm.ts';
 import { FakeShell, successResult } from '../tests/mocks/shell.ts';
 import { FakeSubagents } from '../tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
 import { StepNavigator } from './step-navigator.ts';
 import type { ResolveNextNodesContext } from './step-navigator.ts';
+import type { BranchEvaluatorConfig } from './branch-evaluator.ts';
 import type { LoopState } from './loop-manager.ts';
 
 /** 组装测试 ctx（注入 FakeLlm + FakeShell + 占位 sessions）。 */
@@ -55,8 +57,39 @@ function makeNavigator(
   stage: WorkflowStage,
   def: WorkflowDefinition,
   loopState: LoopState = { activeLoopStack: [], activeLoopIterationStack: [] },
+  config?: BranchEvaluatorConfig,
 ): StepNavigator {
-  return new StepNavigator(ctx, { defaultTimeoutMs: 60000 }, loopState, stage, def);
+  return new StepNavigator(ctx, config ?? { defaultTimeoutMs: 60000 }, loopState, stage, def);
+}
+
+/** 源 step 子代理完整事件（turn 0 闭合；fork 的 seed 源）。 */
+function childEvents(): Array<{ type: string; seq: number; time: number; data: unknown }> {
+  return [
+    { type: 'turn/start', seq: 0, time: 0, data: { turn: 0 } },
+    { type: 'user/message', seq: 1, time: 0, data: { id: 'u1', content: [{ type: 'text', text: 'do it' }] } },
+    { type: 'assistant/message', seq: 2, time: 0, data: { turn: 0, step: 0, message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'work output' }], source: { kind: 'model', provider: 'mock', model: 'mock' } } } },
+    { type: 'turn/end', seq: 3, time: 0, data: { turn: 0, reason: { kind: 'completed' } } },
+  ];
+}
+
+/** makeCtx + 注入 FakeAgentRegistry（Phase D 路由 fork 的 `agents.create` 记录面）。 */
+function makeCtxWithAgents(): { ctx: Context; llm: FakeLlm; shell: FakeShell; agents: FakeAgentRegistry } {
+  const { ctx, llm, shell } = makeCtx();
+  const agents = new FakeAgentRegistry();
+  ctx.provide('agents', agents);
+  return { ctx, llm, shell, agents };
+}
+
+/** Phase D 路由 fork 的 BranchEvaluatorConfig（真机引擎注入的同款三件套）。 */
+function forkConfig(agents: FakeAgentRegistry): BranchEvaluatorConfig {
+  return {
+    defaultTimeoutMs: 60000,
+    defaultProvider: 'p',
+    defaultModel: 'm',
+    hostAgentId: 'host-1',
+    createAgent: options => agents.create(options),
+    getStepSessionEvents: async () => childEvents(),
+  };
 }
 
 describe('StepNavigator Step 级路由迁移回归', () => {
@@ -274,6 +307,76 @@ describe('StepNavigator Step 级路由迁移回归', () => {
       // 内层弹栈：外层仍活跃；内层作用域节点（step-iter）visitCount 归零。
       expect(nav.loopManagerInstance.activeLoopNodeId).toBe('step-outer');
       expect(nav.loopManagerInstance.buildLoopIterationPath()).toEqual([1]);
+    });
+  });
+
+  describe('路由 fork 子代理标签（step 名，真机缺陷）', () => {
+    // 真机缺陷：循环迭代的实际 step id 是纯 UUID（`step-1846d923-…`），路由 fork 子代理标题
+    // 显示 `route step-1846d923-…`（用户要求 `route sce1`）——name 已在 buildStepIndex 解析好
+    // （`merged.name ?? flowStep.id`），调用点漏传才退回定义 id。
+    it('条件分支路由 fork 标签取 step 名（route sce1，不是 route step-<uuid>）', async () => {
+      const { ctx, agents } = makeCtxWithAgents();
+      const stage: WorkflowStage = {
+        id: 'stg-1', name: 's1',
+        steps: [
+          { id: 'step-1846d923-1c2f', branches: [{ next: 'step-b', condition: { type: 'prompt', value: { promptText: 'ok?' } } }] },
+          { id: 'step-b' },
+        ],
+      };
+      const def = makeDef([stage], [{ id: 'step-1846d923-1c2f', name: 'sce1' }, { id: 'step-b' }]);
+      const nav = makeNavigator(ctx, stage, def, undefined, forkConfig(agents));
+      agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": ["step-b"]}' }];
+
+      const result = await nav.resolveNextNodes('step-1846d923-1c2f', {
+        ...ctxWith({}),
+        recentStepSessionId: 'child-1',
+      });
+
+      expect(result.nextNodeIds).toEqual(['step-b']);
+      expect(agents.createCalls).toHaveLength(1);
+      expect(agents.createCalls[0]?.descriptorLabel).toMatch(/^route sce1 · /);
+      expect(agents.createCalls[0]?.descriptorLabel).not.toContain('step-1846d923');
+    });
+
+    it('循环跳出路由 fork 标签取 step 名（route sce1，不是 route step-<uuid>）', async () => {
+      const { ctx, agents } = makeCtxWithAgents();
+      const stage: WorkflowStage = {
+        id: 'stg-1', name: 's1',
+        steps: [
+          {
+            id: 'step-loop-uuid',
+            branches: [{
+              next: 'step-iter',
+              loop: {
+                maxIterations: 5,
+                breakCondition: { type: 'prompt', value: { promptText: 'done?' } },
+                next: 'step-iter',
+                exitTo: 'step-done',
+              },
+            }],
+          },
+          { id: 'step-iter', branches: [{ next: 'step-loop-uuid' }] },
+          { id: 'step-done' },
+        ],
+      };
+      const def = makeDef(
+        [stage],
+        [{ id: 'step-loop-uuid', name: 'sce1' }, { id: 'step-iter' }, { id: 'step-done' }],
+      );
+      const nav = makeNavigator(ctx, stage, def, undefined, forkConfig(agents));
+      agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldBreak": true}' }];
+
+      // 首入即跳出（visitCount=0 < maxIterations=5 → 走 breakCondition 的 fork 判断）。
+      const result = await nav.resolveNextNodes('step-loop-uuid', {
+        ...ctxWith({ 'step-loop-uuid': 0 }),
+        recentStepSessionId: 'child-1',
+      });
+
+      expect(result.nextNodeIds).toEqual(['step-done']);
+      expect(result.loopMeta?.result).toContain('shouldBreak');
+      expect(agents.createCalls).toHaveLength(1);
+      expect(agents.createCalls[0]?.descriptorLabel).toMatch(/^route sce1 · /);
+      expect(agents.createCalls[0]?.descriptorLabel).not.toContain('step-loop-uuid');
     });
   });
 

@@ -1,0 +1,28 @@
+/* 主代理会话内「工作流」tab 的面板壳。
+ *
+ * 只有一条规则：占满 DSH 会话视图区（`ConversationSession` 的 `.viewArea` 是
+ * `display:flex; flex-direction:column; flex:1; min-height:0` 的纵向 flex 容器），
+ * 让内部渲染的**侧栏工作流页面本体**（`WorkflowOverlay`：`.viewRoot` 是 100% 高 +
+ * 纵向 flex）拿到确定高度、左右两栏各自滚动。
+ *
+ * **不自造任何外壳/空态样式**：页面本体（列表、模式切换、搜索、按钮、空态、
+ * 编辑器/执行视图）的样式全部由 `WorkflowOverlay.module.css` / `WorkflowPanel.module.css`
+ * 提供 —— tab 与侧栏看到的是同一份视觉与同一套交互入口（用户口径：内容几乎完全等于
+ * 侧边栏点开得到的那个页面）。
+ *
+ * **铺满（不继承 Chat 的消息版式）**：与 DSH 轨迹 tab 同款 —— 面板根挂
+ * `data-conversation-composer-overlay` 空标记（见 `main-agent-workflow-tab.tsx`），
+ * DSH 的 `ConversationRoot` 据此切换到「视图自持滚动」的版式并撤掉会话列的宽度拖拽条。
+ * 下面这条 width/height 100% 只是保证页面本体（`.viewRoot` 是 `height:100%` 的纵向 flex）
+ * 拿到确定高度、左右两栏各自滚动。 */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}

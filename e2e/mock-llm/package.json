@@ -1,0 +1,12 @@
+{
+  "name": "@sandore-e2e/mock-llm",
+  "version": "0.0.0",
+  "private": true,
+  "description": "M 层 e2e 用的键控 mock LLM adapter（纯 JS Cordis 插件，零依赖，不进生产 composition）",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  }
+}

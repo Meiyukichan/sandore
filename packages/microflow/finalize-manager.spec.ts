@@ -910,12 +910,15 @@ describe('GateEvaluator', () => {
       stepSessionId: 'step-session-1',
     });
 
-    // secondary 经 startContinuable 建宿主可续接子代理：provider 缺省 'fork'、label 带
-    // step id、parent=宿主主代理（Agent 对象）、agentOptions 承载模型路由。
+    // secondary 经 startContinuable 建宿主可续接子代理：provider 缺省 `spawn`
+    // （= 全新子代理，不继承父会话上下文）、label = `gate <名称> · <childId>`、
+    // parent=宿主主代理（Agent 对象）、agentOptions 承载模型路由。
     expect(subagents.starts).toHaveLength(1);
     const spec = subagents.starts[0]!;
-    expect(spec.provider).toBe('fork');
-    expect(spec.label).toBe('gate step-a');
+    expect(spec.provider).toBe('spawn');
+    expect(spec.label).toMatch(/^gate step-a · [0-9a-f-]{36}$/);
+    expect(spec.childId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(spec.label).toBe(`gate step-a · ${spec.childId}`);
     expect(spec.request.parent.id).toBe('host-1');
     expect(spec.request.agentOptions).toEqual({ provider: 'p', model: 'm' });
     // prompt 携带 secondary 门禁提示词（原样注入用户 prompt）。

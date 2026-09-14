@@ -1,7 +1,10 @@
 /**
- * `manager-tool.ts` 的单元测试：六 action 语义、寻址/合并纯函数、跨字段硬约束、
- * run 的 hostSessionId/cwd 组装、get-state 定点与裁剪、lib 浏览、注册降级与
- * execute 期 gate。全 mock（Map 背书的 persistence 视图 + fake host），无宿主依赖。
+ * `manager-tool.ts` 的单元测试（架构决策 3 收窄后）：定义查改（get-def/update-def）
+ * 四 action 语义、寻址/合并纯函数、跨字段硬约束、lib 浏览、注册降级与 execute 期 gate。
+ * 全 mock（Map 背书的 persistence 视图 + fake host），无宿主依赖。
+ *
+ * 运行面（run / status / send_message / control）已拆成独立工具，用例见
+ * `host-tools.spec.ts`。
  * @module @meiyukichan/dsh-sandore/workflow/src/manager-tool.spec
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -19,8 +22,8 @@ import {
 } from './manager-tool.ts';
 import type {
   ManagerToolArgs,
-  SandoreManagerToolHost,
-  SandoreManagerToolResult,
+  SandoreToolEnvelope,
+  SandoreToolHost,
   TableView,
 } from './manager-tool.ts';
 import type { Context } from '@deepseek-ai/cordis';
@@ -113,11 +116,15 @@ function makePersistence(): FixturePersistence {
   };
 }
 
-function makeHost(persistence: FixturePersistence): SandoreManagerToolHost & { startRequests: DagStartRequest[] } {
+function makeHost(persistence: FixturePersistence): SandoreToolHost & { startRequests: DagStartRequest[] } {
   const startRequests: DagStartRequest[] = [];
   return {
     startRequests,
     startInstance: vi.fn(async (request: DagStartRequest) => {
+      startRequests.push(request);
+      return { instanceId: 'inst-1', status: 'pending' as const };
+    }),
+    runInstanceInSession: vi.fn(async (_hostSessionId: string, request: DagStartRequest) => {
       startRequests.push(request);
       return { instanceId: 'inst-1', status: 'running' as const };
     }),
@@ -125,6 +132,13 @@ function makeHost(persistence: FixturePersistence): SandoreManagerToolHost & { s
       throw new Error('not stubbed');
     }),
     getInstanceState: vi.fn(() => undefined),
+    findInstanceIdByHostSession: vi.fn(() => undefined),
+    pauseStep: vi.fn(async () => {}),
+    pauseAllSteps: vi.fn(async () => {}),
+    resumeStep: vi.fn(async () => {}),
+    resumeAllSteps: vi.fn(async () => {}),
+    retryStep: vi.fn(async () => {}),
+    sendStepMessage: vi.fn(async () => {}),
     persistence: () => persistence,
   };
 }
@@ -134,7 +148,7 @@ const topLevelExec = { agent: { session: { id: 'sess-1', header: { cwd: '/w' } }
 /** 委派子代理调用方（gate 拒绝）。 */
 const subagentExec = { agent: { session: { id: 'child-1', header: { parentSession: 'host-x' } } } };
 
-async function run(host: SandoreManagerToolHost, args: Partial<ManagerToolArgs>, exec: unknown = topLevelExec): Promise<SandoreManagerToolResult> {
+async function run(host: SandoreToolHost, args: Partial<ManagerToolArgs>, exec: unknown = topLevelExec): Promise<SandoreToolEnvelope> {
   return await executeManagerTool(host, { action: 'get-def', ...args } as unknown, exec as never);
 }
 
@@ -224,13 +238,38 @@ describe('get-def', () => {
     const host = makeHost(makePersistence());
     const result = await run(host, { action: 'get-def', workflowId: 'wfl-1' });
     expect(result.ok).toBe(true);
-    const data = result.data as { stages: Array<{ id: string; steps: Array<{ id: string }> }>; stepDefinitions: unknown[]; libraryHints: { stages: Array<{ id: string; present: boolean; name?: string; libraryUpdatedAt?: string }>; steps: Array<{ id: string; present: boolean }> } };
+    const data = result.data as { stages: Array<{ id: string; steps: Array<{ id: string }> }>; stepDefinitionCount: number; orphanStepDefinitions?: unknown[]; libraryHints: { stages: Array<{ id: string; present: boolean; name?: string; libraryUpdatedAt?: string }>; steps: Array<{ id: string; present: boolean }> } };
     expect(data.stages[0]!.steps.map(step => step.id)).toEqual(['step-1', 'step-2']);
-    expect(data.stepDefinitions).toHaveLength(2);
+    // S3：完整 step 定义只在 stages[].steps[] 的合并视图里出现一次（不再重复一份 stepDefinitions）。
+    expect(data.stepDefinitionCount).toBe(2);
+    expect(data.orphanStepDefinitions).toBeUndefined();
     // 库提示按「库表是否有同 id 快照条目」判定：stg-a/step-1 有库条目；step-2 无。
     expect(data.libraryHints.stages.find(hint => hint.id === 'stg-a')).toMatchObject({ present: true, name: 'StageA', libraryUpdatedAt: 't1' });
     expect(data.libraryHints.steps.find(hint => hint.id === 'step-1')).toMatchObject({ present: true, name: 'StepOne' });
     expect(data.libraryHints.steps.find(hint => hint.id === 'step-2')).toMatchObject({ present: false });
+  });
+
+  it('S3: returns ONLY orphan step definitions (流控位未引用的定义)，已放置的定义只在合并视图里出现一次', async () => {
+    const persistence = makePersistence();
+    // 在 demo 定义上追加一个「有顶层定义但没有任何 stage 流控位引用」的孤儿 step。
+    const original = parseWorkflowYaml(demoYaml);
+    const withOrphan = `${demoYaml}  - id: step-orphan\n    name: OrphanStep\n`;
+    void original;
+    persistence.definitions.map.set('wfl-1', {
+      yaml: withOrphan, name: 'Demo', version: '1', createdAt: 't0', updatedAt: 't1',
+    });
+    const host = makeHost(persistence);
+    const result = await run(host, { action: 'get-def', workflowId: 'wfl-1' });
+    expect(result.ok).toBe(true);
+    const data = result.data as {
+      stages: Array<{ steps: Array<{ id: string }> }>;
+      stepDefinitionCount: number;
+      orphanStepDefinitions?: Array<{ id: string }>;
+    };
+    // 已放置的 step-1/step-2 在合并视图里；孤儿定义**只**在 orphanStepDefinitions 里（不重复返回）。
+    expect(data.stepDefinitionCount).toBe(3);
+    expect(data.stages[0]!.steps.map(step => step.id)).toEqual(['step-1', 'step-2']);
+    expect(data.orphanStepDefinitions?.map(step => step.id)).toEqual(['step-orphan']);
   });
 
   it('targets a stage (merged) and a step (all occurrences)', async () => {
@@ -345,172 +384,14 @@ describe('update-def', () => {
   });
 });
 
-// ── run ───────────────────────────────────────────────────────────────────────
-
-describe('run', () => {
-  it('assembles DagStartRequest with hostSessionId (attach default true) and session cwd', async () => {
-    const host = makeHost(makePersistence());
-    const result = await run(host, { action: 'run', workflowId: 'wfl-1', originalInput: 'go' });
-    expect(result.ok).toBe(true);
-    expect(host.startRequests[0]).toEqual({
-      workflowId: 'wfl-1',
-      originalInput: 'go',
-      cwd: '/w',
-      hostSessionId: 'sess-1',
-    });
-  });
-
-  it('omits hostSessionId when attachSession=false and honors explicit cwd/model/permission', async () => {
-    const host = makeHost(makePersistence());
-    await run(host, {
-      action: 'run',
-      workflowId: 'wfl-1',
-      originalInput: 'go',
-      attachSession: false,
-      cwd: '/other',
-      model: { provider: 'p', model: 'm' },
-      permission: 'read-only',
-    });
-    expect(host.startRequests[0]).toEqual({
-      workflowId: 'wfl-1',
-      originalInput: 'go',
-      cwd: '/other',
-      model: { provider: 'p', model: 'm' },
-      permission: 'read-only',
-    });
-  });
-
-  it('fails when cwd cannot be derived and requires workflowId/originalInput', async () => {
-    const host = makeHost(makePersistence());
-    const noCwd = await executeManagerTool(host, { action: 'run', workflowId: 'wfl-1', originalInput: 'go' }, { agent: { session: { id: 's1' } } });
-    expect(noCwd.error).toMatchObject({ code: 'INVALID_OPERATION' });
-    const noInput = await run(host, { action: 'run', workflowId: 'wfl-1' });
-    expect(noInput.error).toMatchObject({ code: 'INVALID_OPERATION' });
-    const noWorkflow = await run(host, { action: 'run', originalInput: 'go' });
-    expect(noWorkflow.error).toMatchObject({ code: 'INVALID_OPERATION' });
-  });
-
-  it('propagates engine SandoreError through the envelope', async () => {
-    const host = makeHost(makePersistence());
-    host.startInstance = vi.fn(async () => { throw Object.assign(new Error("definition 'x' not found"), { code: 'NODE_NOT_FOUND' }); });
-    const result = await run(host, { action: 'run', workflowId: 'wfl-1', originalInput: 'go' });
-    expect(result.ok).toBe(false);
-    expect(result.error).toMatchObject({ code: 'NODE_NOT_FOUND' });
-  });
-});
-
-// ── get-state ─────────────────────────────────────────────────────────────────
-
-describe('get-state', () => {
-  it('lists instance summaries with workflowId/status filters', async () => {
-    const persistence = makePersistence();
-    persistence.state.map.set('inst-1', makeState({ taskId: 'inst-1', status: 'running' }));
-    persistence.state.map.set('inst-2', makeState({ taskId: 'inst-2', workflowId: 'wfl-2', status: 'completed' }));
-    const host = makeHost(persistence);
-    const all = await run(host, { action: 'get-state' });
-    expect((all.data as { instances: unknown[] }).instances).toHaveLength(2);
-    const filtered = await run(host, { action: 'get-state', workflowId: 'wfl-2', status: 'completed' });
-    expect((filtered.data as { instances: Array<{ instanceId: string }> }).instances).toEqual([
-      expect.objectContaining({ instanceId: 'inst-2' }),
-    ]);
-  });
-
-  it('prefers in-memory state, falls back to persistence, and NODE_NOT_FOUND when both miss', async () => {
-    const persistence = makePersistence();
-    persistence.state.map.set('inst-1', makeState());
-    const host = makeHost(persistence);
-    const detail = await run(host, { action: 'get-state', instanceId: 'inst-1' });
-    expect(detail.ok).toBe(true);
-    expect(host.getInstanceState).toHaveBeenCalledWith('inst-1');
-
-    const fallbackHost = makeHost(persistence);
-    fallbackHost.getInstanceState = vi.fn(() => undefined);
-    const fallback = await run(fallbackHost, { action: 'get-state', instanceId: 'inst-1' });
-    expect((fallback.data as { instanceId: string }).instanceId).toBe('inst-1');
-
-    const missing = await run(fallbackHost, { action: 'get-state', instanceId: 'inst-x' });
-    expect(missing.error).toMatchObject({ code: 'NODE_NOT_FOUND' });
-  });
-
-  it('targets a step: latest segment by default, attemptIndex pick, caps unless includeDetail', async () => {
-    const persistence = makePersistence();
-    persistence.state.map.set('inst-1', makeState({
-      executedSteps: [
-        makeExecutedStep({ id: 'seg-0', attemptIndex: 0, createdAt: 't0', output: [{ type: 'text', text: 'old' }], sessionMessages: [{ type: 'text', text: 'm0' }] }),
-        makeExecutedStep({ id: 'seg-1', attemptIndex: 1, createdAt: 't1', output: [{ type: 'text', text: 'x'.repeat(3000) }], sessionMeta: { childId: 'child-9', synthetic: false, command: 'shell' }, sessionMessages: [{ type: 'text', text: 'm1' }, { type: 'text', text: 'm2' }] }),
-      ],
-    }));
-    const host = makeHost(persistence);
-    const latest = await run(host, { action: 'get-state', instanceId: 'inst-1', stepId: 'step-1' });
-    const latestData = latest.data as { segmentCount: number; latest: { attemptIndex?: number; outputPreview?: { text: string; truncated: boolean }; sessionMessagesCount?: number; output?: unknown; sessionMeta?: { childId: string } } };
-    expect(latestData.segmentCount).toBe(2);
-    expect(latestData.latest.attemptIndex).toBe(1);
-    expect(latestData.latest.outputPreview).toMatchObject({ truncated: true });
-    expect(latestData.latest.sessionMessagesCount).toBe(2);
-    expect(latestData.latest.output).toBeUndefined();
-    expect(latestData.latest.sessionMeta).toMatchObject({ childId: 'child-9' });
-
-    const picked = await run(host, { action: 'get-state', instanceId: 'inst-1', stepId: 'step-1', attemptIndex: 0 });
-    expect(((picked.data as { latest: { attemptIndex?: number } }).latest).attemptIndex).toBe(0);
-
-    const detailed = await run(host, { action: 'get-state', instanceId: 'inst-1', stepId: 'step-1', includeDetail: true });
-    const detailedData = detailed.data as { latest: { output: unknown; sessionMessages?: unknown[] } };
-    expect(Array.isArray(detailedData.latest.output)).toBe(true);
-    expect(detailedData.latest.sessionMessages).toHaveLength(2);
-
-    const unknownSegment = await run(host, { action: 'get-state', instanceId: 'inst-1', stepId: 'nope' });
-    expect(unknownSegment.error).toMatchObject({ code: 'NODE_NOT_FOUND' });
-    const unknownAttempt = await run(host, { action: 'get-state', instanceId: 'inst-1', stepId: 'step-1', attemptIndex: 9 });
-    expect(unknownAttempt.error).toMatchObject({ code: 'NODE_NOT_FOUND' });
-  });
-
-  it('returns the full summary shape (workflowName/pending interactions filtered/userMessages tail)', async () => {
-    const question = { id: 'q-1', stageId: 'stg-a', stepId: 'step-1', sessionId: 's1', requestId: 'rq-1', kind: 'question' as const, status: 'pending' as const, payload: { questions: [{ id: 'q1', question: 'Q?' }] }, createdAt: 't0' };
-    const replied = { id: 'q-2', stageId: 'stg-a', stepId: 'step-1', sessionId: 's1', requestId: 'rq-2', kind: 'question' as const, status: 'replied' as const, payload: { questions: [{ id: 'q1', question: 'Q?' }] }, answer: [['A']], createdAt: 't0' };
-    const permission = { id: 'p-1', stageId: 'stg-a', stepId: 'step-2', sessionId: 's1', requestId: 'rq-3', kind: 'permission' as const, status: 'pending' as const, payload: { permission: 'workspace-write' }, createdAt: 't0' };
-    const userMessages = Array.from({ length: 12 }, (_, index) => ({ id: `m-${index}`, kind: 'message' as const, target: 'step-1', content: `msg ${index}`, createdAt: `t${index}` }));
-    const persistence = makePersistence();
-    persistence.state.map.set('inst-1', makeState({
-      workflowName: 'Demo',
-      executedSteps: [makeExecutedStep(), makeExecutedStep({ id: 'seg-b', stepId: 'step-2', name: 'StepTwo' })],
-      pendingQueue: ['step-1'],
-      pendingInteractions: [question, replied, permission],
-      userMessages,
-    }));
-    const host = makeHost(persistence);
-    const result = await run(host, { action: 'get-state', instanceId: 'inst-1' });
-    expect(result.ok).toBe(true);
-    const data = result.data as {
-      workflowName?: string;
-      executedSteps: unknown[];
-      pendingQueue: string[];
-      pendingInteractions: Array<{ id: string; kind: string }>;
-      userMessages?: unknown[];
-    };
-    expect(data.workflowName).toBe('Demo');
-    expect(data.executedSteps).toHaveLength(2);
-    expect(data.pendingQueue).toEqual(['step-1']);
-    // 只列 pending 的交互（replied 过滤掉），保留 question/permission 两 kind。
-    expect(data.pendingInteractions.map(entry => entry.kind).sort()).toEqual(['permission', 'question']);
-    expect(data.userMessages).toHaveLength(10); // 尾部 10 条
-  });
-
-  it('targets a stage (info + contract + step rows) and rejects unknown stages', async () => {
-    const persistence = makePersistence();
-    persistence.state.map.set('inst-1', makeState({
-      executedSteps: [makeExecutedStep()],
-      stageContracts: { 'stg-a': { stageId: 'stg-a', stageName: 'StageA', status: 'running', artifacts: [], passThroughVars: {}, contractArtifacts: {}, completedAt: 't1' } },
-    }));
-    const host = makeHost(persistence);
-    const result = await run(host, { action: 'get-state', instanceId: 'inst-1', stageId: 'stg-a' });
-    const data = result.data as { stage: { id: string }; contract?: { stageId: string }; executedSteps: unknown[] };
-    expect(data.stage.id).toBe('stg-a');
-    expect(data.contract).toMatchObject({ stageId: 'stg-a' });
-    expect(data.executedSteps).toHaveLength(1);
-    const unknown = await run(host, { action: 'get-state', instanceId: 'inst-1', stageId: 'nope' });
-    expect(unknown.error).toMatchObject({ code: 'NODE_NOT_FOUND' });
-  });
-});
+// ── run / get-state 已迁出（架构决策 3：独立工具） ─────────────────────────────
+//
+// 原 `sandore_workflow` 的 `run` 与 `get-state` 两个 action 已移除（不留两套入口）：
+// - run → `sandore_workflow_run`（run-tool.spec.ts + host-tools.spec.ts）
+// - get-state → `sandore_workflow_status`（status-tool.spec.ts + host-tools.spec.ts）
+//
+// 旧用例（hostSessionId 组装 / get-state 定点与裁剪）随行为迁移到上述 spec，
+// 此处不再保留——本文件只覆盖「定义 + 库」这条低频资源管理面。
 
 // ── lib-list / lib-get ────────────────────────────────────────────────────────
 
@@ -544,12 +425,19 @@ describe('lib-list / lib-get', () => {
     expect(missing.reason).toContain('Agent 库');
   });
 
-  it('rejects lib-get without lib/entryId and routes workflow kind to get-def', async () => {
+  it('rejects lib-get without lib/entryId and routes workflow kind to get-def (S2: 两条文案分开)', async () => {
     const host = makeHost(makePersistence());
     const workflowKind = await run(host, { action: 'lib-get', lib: 'workflow', entryId: 'wfl-1' });
     expect(workflowKind.error).toMatchObject({ code: 'INVALID_OPERATION' });
+    expect(workflowKind.reason).toContain("lib-get 不支持 lib='workflow'");
+    expect(workflowKind.reason).toContain("action='get-def'");
     const noEntry = await run(host, { action: 'lib-get', lib: 'step' });
     expect(noEntry.error).toMatchObject({ code: 'INVALID_OPERATION' });
+    // 缺 lib 的文案与 lib='workflow' 不同（旧实现共用一条，对「忘了传」不够直白）。
+    const noLib = await run(host, { action: 'lib-get', entryId: 'step-1' });
+    expect(noLib.error).toMatchObject({ code: 'INVALID_OPERATION' });
+    expect(noLib.reason).toContain('lib-get 必须携带 lib');
+    expect(noLib.reason).not.toBe(workflowKind.reason);
   });
 });
 
@@ -570,12 +458,13 @@ describe('registerGlobalManagerTool / execute gate', () => {
     expect(disposer).toBeTypeOf('function');
 
     expect(registered).toHaveLength(1);
-    const tool = registered[0] as { name: string; description: string; parameters: typeof WORKFLOW_MANAGER_PARAMETERS; output: { schema: { required: string[] } }; execute(args: unknown, exec: unknown): Promise<SandoreManagerToolResult> };
+    const tool = registered[0] as { name: string; description: string; parameters: typeof WORKFLOW_MANAGER_PARAMETERS; output: { schema: { required: string[] } }; execute(args: unknown, exec: unknown): Promise<SandoreToolEnvelope> };
     expect(tool.name).toBe(WORKFLOW_MANAGER_TOOL_NAME);
-    expect(tool.description).toContain('Sandore workflow manager');
-    // 规范化 JSON Schema：required 只用 object 节点字符串数组，六 action 枚举。
+    expect(tool.description).toContain('Sandore workflow definitions and libraries');
+    // 架构决策 3：本工具不再有运行面 action（run/get-state 已迁出，共 4 个 action）。
+    expect(tool.description).toContain('does NOT run workflows');
     expect(tool.parameters.required).toEqual(['action']);
-    expect(tool.parameters.properties.action.enum).toHaveLength(6);
+    expect(tool.parameters.properties.action.enum).toEqual(['get-def', 'update-def', 'lib-list', 'lib-get']);
     expect(tool.output.schema.required).toEqual(['ok']);
 
     // gate：委派子代理拒绝；顶层会话放行并真正执行 action。

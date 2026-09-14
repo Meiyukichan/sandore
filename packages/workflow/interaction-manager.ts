@@ -37,9 +37,6 @@ export interface InteractionManagerOptions {
   readonly hostAgent: Agent;
   /** `ctx.userQuestions` 软依赖获取器（可能不存在）。 */
   readonly userQuestions: () => UserQuestions | undefined;
-  /** Round 26：是否把 ask 上报宿主主代理（复用 hostSessionId 时 true；overlay 新建
-   *  false——只走 discussion composer 卡，经 replyQuestion 兼容路径回答）。 */
-  readonly reportToHost: boolean;
   /** 把当前 pending 条目全量镜像持久化到状态快照。 */
   readonly persist: (entries: PendingInteractionEntry[]) => void;
   /** 双发 `sandore/question` 事件（Cordis + Session append）。 */
@@ -176,12 +173,12 @@ export class InteractionManager {
    * 引擎级 ask 主通道：登记 → 视场景决定是否 `ctx.userQuestions.ask`（hostAgent 身份）
    * → await 答案。
    *
-   * Round 26 场景拆分：`reportToHost === true`（复用 hostSessionId）时向宿主主代理
-   * 上报（DSH 弹窗）+ sandore composer 卡双通道；`false`（overlay 新建）时**不上报**
-   * 宿主（不调 userQuestions.ask），仅由 {@link replyQuestion} 兼容路径（composer 卡）
-   * resolve。无论是否上报，每次 ask 使用**独立内部 AbortController**（链式继承调用方
-   * signal：调用方 abort → 内部 abort；finish/reject/cancel 主动 abort 关闭 DSH 弹窗
-   * 时不会误杀实例/子代理）。返回前条目已终态化（status=replied + answer）并持久化。
+   * 入口归一（架构决策 1）：宿主会话恒为「发起 run 的那个真实顶层会话」，故 ask
+   * **一律**上报宿主主代理（DSH 弹窗）+ sandore composer 卡双通道（reportToHost
+   * 已单值化为恒 true，参数与分流一并删除）。每次 ask 使用**独立内部 AbortController**
+   * （链式继承调用方 signal：调用方 abort → 内部 abort；finish/reject/cancel 主动 abort
+   * 关闭 DSH 弹窗时不会误杀实例/子代理）。返回前条目已终态化（status=replied + answer）
+   * 并持久化。
    * @param input - pending 条目与可选取消信号。
    * @returns 用户整批回答。
    */
@@ -197,8 +194,8 @@ export class InteractionManager {
       return await new Promise<AskUserQuestionAnswer>((resolve, reject) => {
         this.questionWaiters.set(entry.requestId, { resolve, reject });
         const userQuestions = this.deps.userQuestions();
-        // Round 26：reportToHost=false（overlay 新建）不上报宿主——挂起等 replyQuestion。
-        if (userQuestions !== undefined && this.deps.reportToHost) {
+        // userQuestions 服务缺失（最小桩部署）时只挂起等 replyQuestion 兼容路径。
+        if (userQuestions !== undefined) {
           void userQuestions.ask({
             questions: toAskItems(entry.payload),
             agent: this.deps.hostAgent,

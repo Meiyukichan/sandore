@@ -252,6 +252,9 @@ export interface TimelineStepItem {
   readonly routingStatus?: 'running' | 'done'
   /** 子代理会话 id（跳「查看详情」）。 */
   readonly childId?: string | undefined
+  /** 子代理的父（宿主主代理）会话 id（sessionMeta.hostSessionId；内嵌面板组
+   *  subagent-kind 地址 {kind:'subagent', parentSessionId,...} 打开会话用）。 */
+  readonly parentSessionId?: string | undefined
   /** 命令类型（step.sessionMeta.command：'shell'/'prompt'/'agent'/'skill'/'mcp'；shell completed 直接显示命令输出）。 */
   readonly commandType?: string | undefined
   /** 是否合成会话（shell 无真实子代理，标题不可点击跳子代理页）。 */
@@ -564,13 +567,26 @@ function stabilizeTimelineItem(item: TimelineItem, key: string): TimelineItem {
 }
 
 /**
+ * 讨论页时间轴唯一渲染的用户消息 kind。
+ *
+ * 引擎侧当前**只有** `makeInitialState` 写 `state.userMessages`（`kind:'input'`）；因此
+ * 「白名单只放行 input」与「数据源只含 input」等价。写成白名单而不是黑名单，是为了让
+ * 任何非真实用户输入（尤其旧实例里遗留的 `resume`/`retry`/`message`/`answer` 行）都进不了
+ * 讨论页——黑名单一旦漏掉一个 kind，指令性文本就会重新出现在用户消息区。
+ */
+const RENDERED_USER_MESSAGE_KIND = 'input'
+
+/**
  * 从 `WorkflowTaskState` 构建统一时间线（段模型 + 用户消息统一排序）。
  *
  * 三路来源严格按 `createdAt` 排序合并：
- * 1. `userMessages`（input/resume/retry/message，含原始需求——初始 input 消息
- *    由引擎 makeInitialState 写入，前端不再单独拼 `state.originalInput` 气泡；
- *    Round 26：**过滤 kind:'answer'**——Phase A ask 的回答是给子代理的内部闭环
- *    消息，不注入 discussion 时间轴；历史实例已落盘的 answer 记录同样隐藏）
+ * 1. `userMessages` 里**只保留真实用户输入**（`kind:'input'`，即原始需求——由引擎
+ *    `makeInitialState` 写入，前端不再单独拼 `state.originalInput` 气泡）。其余 kind
+ *    （`resume`/`retry`/`message`/`answer`）都是**历史遗留记录**：旧版本把引擎自己造的
+ *    指令性文本（恢复/重试/广播指令、Phase A ask 的回答）写进 `userMessages`，前端据此
+ *    渲染成右侧「用户消息」气泡；现在这些行一律不再渲染，**旧实例已落盘的那些行同样隐藏**
+ *    （用户口径：讨论页只有 step agent 消息与主代理消息）。白名单见
+ *    {@link RENDERED_USER_MESSAGE_KIND}。
  * 2. executedSteps 各**执行段**（`createdAt` 为段开始时间；同 stepId 多次执行段
  *    各自成卡，`attemptIndex` 标注第几次）
  * 3. running 卡无实时消息流（引擎不写 sessionMessages、无 step-message 事件），
@@ -584,8 +600,9 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
   const liveKeys = new Set<string>()
 
   for (const message of state.userMessages ?? []) {
-    // Round 26：回答不进讨论页（Phase A ask 回答已 followup 注回子代理）。
-    if (message.kind === 'answer') continue
+    // 只渲染真实用户输入：其余 kind 都是历史遗留的指令性文本（详见 buildTimeline 注释），
+    // 旧实例已落盘的这些行同样不再显示。
+    if (message.kind !== RENDERED_USER_MESSAGE_KIND) continue
     const item: TimelineUserItem = {
       kind: 'user',
       content: message.content,
@@ -652,13 +669,18 @@ export function buildTimeline(state: WorkflowTaskState): TimelineItem[] {
               : {}),
           }
         : undefined,
-      finalizeRoutingSessionId: step.finalizeMeta?.routingResult?.routingSessionId,
+      // Phase D 路由判断会话：首选 routingResult.routingSessionId；旧快照可能只有
+      // branchMeta/loopMeta.sessionId（分支/循环评估会话）——同样可供「判断」标签打开。
+      finalizeRoutingSessionId: step.finalizeMeta?.routingResult?.routingSessionId
+        ?? step.finalizeMeta?.routingResult?.branchMeta?.sessionId
+        ?? step.finalizeMeta?.routingResult?.loopMeta?.sessionId,
       // Round 11：各阶段独立 status 字段（顶层，供 PhaseBadge 直接读取）
       ...(step.finalizeMeta?.askResult?.status !== undefined ? { askStatus: step.finalizeMeta.askResult.status } : {}),
       ...(step.finalizeMeta?.assessResult?.status !== undefined ? { assessStatus: step.finalizeMeta.assessResult.status } : {}),
       ...(step.finalizeMeta?.gateResult?.status !== undefined ? { gateStatus: step.finalizeMeta.gateResult.status } : {}),
       ...(step.finalizeMeta?.routingResult?.status !== undefined ? { routingStatus: step.finalizeMeta.routingResult.status } : {}),
       childId: step.sessionMeta?.childId,
+      parentSessionId: step.sessionMeta?.hostSessionId,
       commandType: step.sessionMeta?.command,
       synthetic: step.sessionMeta?.synthetic,
       messages: chatLinesOf(step),

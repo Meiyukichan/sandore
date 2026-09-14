@@ -36,10 +36,16 @@ export interface WorkflowListProps {
   workspaces: readonly WorkspaceView[]
   /** 业务 face（列表类 RPC 已解包）。 */
   face: WorkflowOverlayFace
-  /** 刷新计数：变化时重挂载列表（保存/删除/手动刷新后）。 */
+  /** 刷新计数：变化时重挂载列表（保存/删除/刷新后）。 */
   refreshKey: number
   /** 列表列宽（px，拖拽分隔条驱动）。 */
   width: number
+  /**
+   * **宿主会话过滤**（可选；只有主代理会话内的「工作流」tab 传 = 该会话 id）：
+   * 实例列表只列绑定到该会话的实例（硬约束：绝不列别的会话的实例）。
+   * 侧栏工作流页不传 ⇒ 行为与改动前完全一致。
+   */
+  hostFilter?: string | undefined
 }
 
 /** 编排态三分区 tab 定义（key → store 子模式 + 文案键）。 */
@@ -50,7 +56,7 @@ const SUB_MODE_TABS: readonly { key: 'workflow' | 'microflow' | 'agent'; labelKe
 ]
 
 /** 渲染工作流 overlay 左栏列表。 */
-export function WorkflowList({ t, workspaces, face, refreshKey, width }: WorkflowListProps) {
+export function WorkflowList({ t, workspaces, face, refreshKey, width, hostFilter }: WorkflowListProps) {
   const listMode = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().listMode)
   const subMode = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().librarySubMode)
   const selectedInstanceId = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId)
@@ -93,8 +99,9 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
               </svg>
             </button>
           </div>
-          {/* 实例/编排 开关：胶囊轨道 + 滑块，点击切换激活侧。 */}
-          <div className={css.toggle} role="tablist" aria-label={t('list.mode.switch')}>
+          {/* 实例/编排 开关：胶囊轨道 + 滑块，点击切换激活侧。
+              `data-sandore-list-mode-tab` = 稳定 e2e 锚点（两个 WebUI 宿主共用同一份列表头）。 */}
+          <div className={css.toggle} role="tablist" aria-label={t('list.mode.switch')} data-sandore-list-mode-tab>
             <span className={`${css.toggleThumb} ${listMode === 'definition' ? css.toggleThumbRight : ''}`} />
             <button
               type="button"
@@ -128,6 +135,10 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
           <Button
             size="sm"
             variant="primary"
+            // 稳定 e2e 锚点：实例模式 = 「运行工作流」；编排/库分区 = 「新增」（加号）。
+            data-sandore-list-primary-action={
+              listMode === 'instance' ? 'run-workflow' : subMode === 'workflow' ? 'add-definition' : `add-${subMode}`
+            }
             // 实例模式 = 运行工作流（播放图标）；编排/库分区保持「新增」（加号）。
             icon={listMode === 'instance' ? <IconPlayOutline16 /> : <IconPlusOutline16 />}
             title={listMode === 'instance'
@@ -196,6 +207,7 @@ export function WorkflowList({ t, workspaces, face, refreshKey, width }: Workflo
             workspaces={workspaces}
             query={query}
             activeId={selectedInstanceId}
+            {...(hostFilter === undefined ? {} : { hostFilter })}
             listInstances={face.listInstances}
             deleteInstance={face.deleteInstance}
             onOpen={selectInstance}

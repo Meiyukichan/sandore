@@ -130,7 +130,14 @@ export const StartModelSelectionSchema = z.object({
   reasoningEffort: z.string().optional(),
 })
 
-/** `startInstance` 入参（去 job 概念：直接绑定工作流定义 + 工作目录 + 模型/权限）。 */
+/**
+ * `startInstance` 入参（去 job 概念：直接绑定工作流定义 + 工作目录 + 模型/权限）。
+ *
+ * **入口归一（架构决策 1）**：**不再有 `hostSessionId`**——overlay 新建路径由引擎
+ * 新建真实顶层会话（实例 id = 该会话 id），已知会话路径由 `sandore_workflow_run`
+ * 工具以「调用会话」启动（实例 id = 调用会话 id）。两条路径的恒等式一致：
+ * `hostAgent.id ≡ 宿主会话 id ≡ instanceId ≡ 调用会话`。
+ */
 export const StartInstanceInputSchema = z.object({
   workflowId: z.string(),
   originalInput: z.string(),
@@ -138,11 +145,6 @@ export const StartInstanceInputSchema = z.object({
   cwd: z.string(),
   model: StartModelSelectionSchema.optional(),
   permission: z.string().optional(),
-  /**
-   * 可选：调用方（UI/上层）传入的已存在宿主主代理会话 id——复用该会话作为本实例
-   * 的 hostAgent（不新建）；省略时引擎新建（hostAgent 会话 id = instanceId）。
-   */
-  hostSessionId: z.string().optional(),
 })
 
 /** 单个问题回答的 zod 校验（对齐 DSH `AskUserQuestionAnswerItem`）。 */
@@ -214,17 +216,29 @@ export const ResumeAllInputSchema = z.object({
   resumePrompt: z.string().optional(),
 })
 
-/** `retryStep` 入参（`mode` 限定 continue/revert/fork；revert 可选 `revertBoundary`）。 */
+/**
+ * `retryStep` 入参（`mode` 限定 continue/revert/fork）。
+ *
+ * @deprecated `mode:'revert'` 与 `revertBoundary`（回滚会话/回退点）按架构决策 3
+ * **不再对外提供**：引擎侧能力保留仅为兼容已发布的 client 呈现层
+ * （`packages/client/RunView.tsx` / `step-view/StepRetryRow.tsx` 仍装配这两个入参，
+ * 而呈现层不在本次改造范围内）。新代码（`sandore_workflow_control`）不暴露 revert。
+ */
 export const RetryStepInputSchema = z.object({
   instanceId: z.string(),
   stepId: z.string(),
   mode: z.enum(['continue', 'revert', 'fork']),
   message: z.string(),
-  /** 可选：revert 模式用户所选闭合 turn/end 的事件 seq；省略 = 最后一个闭合 turn/end。 */
+  /** @deprecated 见 {@link RetryStepInputSchema}（revert 模式用户所选闭合 turn/end 的事件 seq；省略 = 最后一个闭合 turn/end）。 */
   revertBoundary: z.number().optional(),
 })
 
-/** revert 回退点候选（一个闭合 turn 的 `turn/end` 事件 seq + turn 编号 + 文本预览）。 */
+/**
+ * revert 回退点候选（一个闭合 turn 的 `turn/end` 事件 seq + turn 编号 + 文本预览）。
+ *
+ * @deprecated 见 {@link RetryStepInputSchema}：按架构决策 3，回退点（revert）功能
+ * 不再对外提供；本类型与其 RPC 仅为兼容既有 client 呈现层保留。
+ */
 export const RevertBoundaryOptionSchema = z.object({
   /** 闭合 turn 的 `turn/end` 事件 seq（传给 `retryStep` 的 `revertBoundary`）。 */
   seq: z.number(),
@@ -234,7 +248,11 @@ export const RevertBoundaryOptionSchema = z.object({
   preview: z.string(),
 })
 
-/** `listRevertBoundaries` 入参（实例 + 目标 Step）。 */
+/**
+ * `listRevertBoundaries` 入参（实例 + 目标 Step）。
+ *
+ * @deprecated 见 {@link RetryStepInputSchema}。
+ */
 export const ListRevertBoundariesInputSchema = z.object({
   instanceId: z.string(),
   stepId: z.string(),
@@ -246,16 +264,15 @@ export const RecoverInstanceInputSchema = z.object({
 })
 
 /**
- * `sendStepMessage` 入参（缺陷 31）：向运行中实例的指定 Step 子代理追加一条
- * 用户消息（@mention 语义）。
+ * `sendStepMessage` 入参：向运行中实例的指定 Step 子代理追加一条用户消息。
  *
- * @mention 由 UI 端 @Step 选择器产出 `stepId`，引擎端不做文本解析。`message`
- * 至少 1 字符（空串无意义且与 followup 调用约定相悖）。转发
+ * `stepId` 由调用方给出（工具/面板），引擎端不做文本解析。`message` 至少 1 字符
+ * （空串无意义且与投递调用约定相悖）。转发
  * `ctx.sandoreEngine.sendStepMessage`：requireActive + 终态守卫 → 按 stepId
- * 反查最后活跃段 sessionMeta.childId → synthetic===false 才 subagents.followup
- * （synthetic 步骤抛 INVALID_OPERATION）→ 追加 userMessages `{kind:'message',
- * target:stepId}`（不复用 'input'，避免污染 originalInput 语义）→ persistState →
- * 双发 `sandore/step-message`。详见 {@link ./workflow-engine.ts SandoreEngineRuntime.sendStepMessage}。
+ * 反查最后活跃段并校验状态门槛（仅 running/interacting；synthetic 段抛
+ * INVALID_OPERATION）→ 投递到子代理会话 → 单发 `sandore/step-message`。
+ * **不写 `state.userMessages`**（消息只落在子代理会话与事件里）。
+ * 详见 {@link ./workflow-engine.ts SandoreEngineRuntime.sendStepMessage}。
  */
 export const SendStepMessageInputSchema = z.object({
   instanceId: z.string(),

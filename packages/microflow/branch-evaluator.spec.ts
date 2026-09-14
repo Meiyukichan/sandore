@@ -804,6 +804,82 @@ describe('BranchEvaluator Phase D 路由 fork 子代理机制', () => {
     expect(result.sessionHandle).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
+  it('labels the condition-routing fork subagent with the step NAME (route sce1, not route step-<uuid>)', async () => {
+    const { agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": ["step-branch"]}' }];
+
+    await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
+      // 缺陷现场：stepId 是循环迭代的实际 id（纯 UUID），stepName 才是 `sce1`。
+      { stepSessionId: 'child-1', stepId: 'step-1846d923-1c2f', stepName: 'sce1' },
+    );
+
+    // 真机缺陷：路由 fork 子代理标题显示 `route step-1846d923-…`（用户要求 `route sce1`）。
+    // 标签 = `route <step 名> · <childId>`（fork-session 拼 childId 后缀）。
+    const label = agents.createCalls[0]?.descriptorLabel;
+    expect(label).toMatch(/^route sce1 · [0-9a-f-]{36}$/i);
+    expect(label).not.toContain('step-1846d923');
+  });
+
+  it('labels the loop-break routing fork subagent with the step NAME (route sce1, not route step-<uuid>)', async () => {
+    const { agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldBreak": true}' }];
+
+    const result = await evaluator.evaluateBreak(
+      { type: 'prompt', value: { promptText: '判断跳出' } },
+      { stepSessionId: 'child-1', stepId: 'step-loop-9f8e7d6c', stepName: '循环体' },
+    );
+
+    // evaluateBreak（LoopManager 走的路径）与条件分支同口径：标签取 step 名。
+    expect(agents.createCalls[0]?.descriptorLabel).toMatch(/^route 循环体 · [0-9a-f-]{36}$/i);
+    expect(agents.createCalls[0]?.descriptorLabel).not.toContain('step-loop-9f8e7d6c');
+    expect(result.output).toBe('{"shouldBreak": true}');
+  });
+
+  it('labels the dispatchAi (startBreak) routing fork subagent with the step NAME too', async () => {
+    const { agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldBreak": false}' }];
+
+    // 两阶段接口 startBreak → dispatchAi：stepName 也必须随 DispatchOptions 下传
+    // （否则真机经这条通道的 fork 仍显示定义 id）。
+    const partial = await evaluator.startBreak(
+      { type: 'prompt', value: { promptText: '判断跳出' } },
+      { stepSessionId: 'child-1', stepId: 'step-loop-9f8e7d6c', stepName: '循环体' },
+    );
+    await evaluator.collect(partial);
+
+    expect(agents.createCalls[0]?.descriptorLabel).toMatch(/^route 循环体 · [0-9a-f-]{36}$/i);
+  });
+
+  it('falls back to the step id in the routing label when stepName is absent (backward compatible)', async () => {
+    const { agents, evaluator } = harnessWithAgents({
+      hostAgentId: 'host-1',
+      createAgent: options => agents.create(options),
+      getStepSessionEvents: async () => childEvents(),
+    });
+    agents.createFollowupHandler = () => [{ type: 'text', text: '{"shouldExecute": ["step-branch"]}' }];
+
+    await evaluator.evaluateConditions(
+      [{ branch: { next: 'step-branch', label: 'L1' }, condition: { type: 'prompt', value: { promptText: '判断分支' } } }],
+      { stepSessionId: 'child-1', stepId: 'step-branch' },
+    );
+
+    // 未提供 stepName（旧调用点）→ 保持原标签，回归不变。
+    expect(agents.createCalls[0]?.descriptorLabel).toMatch(/^route step-branch · [0-9a-f-]{36}$/i);
+  });
+
   /** 带 FakeAgentRegistry 的 harness（Phase D 路由 fork 配置：hostAgentId/createAgent/getStepSessionEvents）。 */
   function harnessWithAgents(config: BranchEvaluatorConfig): {
     ctx: Context;

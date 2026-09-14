@@ -17,20 +17,22 @@ import type { SessionStore } from '@deepseek-ai/dsh-session';
 import { describe, expect, it } from 'vitest';
 
 import type { WorkflowDefinition, WorkflowStage, WorkflowStep, WorkflowTaskState } from '../workflow/schema';
+import { parseWorkflowYaml } from '../workflow/yaml-parser';
 import { assistantMessageEvent, FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeLlm, textChunks } from '../tests/mocks/llm.ts';
 import { FakeShell } from '../tests/mocks/shell.ts';
 import { FakeSubagents } from '../tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
 import type { ConcurrencyLimiter } from './concurrency-limiter.ts';
+import type { BranchEvaluatorConfig } from './branch-evaluator.ts';
 import { FinalizeManager } from './finalize-manager.ts';
 import type { FinalizeManagerConfig } from './finalize-manager.ts';
 import type { FileSystem, FsDirEntry, FsTarget, FsWriteOutcome } from './file-utils.ts';
 import type { LoopState } from './loop-manager.ts';
-import { StageExecutor } from './stage-executor.ts';
+import { StageExecutor, directUpstreamStepIds, previousOutputsFromExecutedSteps, upsertPreviousOutput } from './stage-executor.ts';
 import type { StageExecutorOptions, StageExecutorResume } from './stage-executor.ts';
 import { StepNavigator } from './step-navigator.ts';
-import type { StepRunnerConfig } from './step-runner.ts';
+import type { PreviousStepOutput, StepRunnerConfig } from './step-runner.ts';
 import type { SubagentSettlement, SubagentStopReason } from './subagents.ts';
 
 /** 纯 UUID 形状（8-4-4-4-12 十六进制）。 */
@@ -125,7 +127,11 @@ function harness(): {
   subprocess: FakeSubprocess;
   fs: FakeFs;
   agents: FakeAgentRegistry;
-  makeExecutor: (options?: Partial<StageExecutorOptions>, finalizeConfig?: FinalizeManagerConfig) => StageExecutor;
+  makeExecutor: (
+    options?: Partial<StageExecutorOptions>,
+    finalizeConfig?: FinalizeManagerConfig,
+    branchConfig?: BranchEvaluatorConfig,
+  ) => StageExecutor;
 } {
   const ctx = new Context();
   const llm = new FakeLlm();
@@ -142,14 +148,29 @@ function harness(): {
   ctx.provide('agents', agents);
   ctx.provide('fs', fs as unknown as FileSystem);
 
-  const makeExecutor = (options?: Partial<StageExecutorOptions>, finalizeConfig?: FinalizeManagerConfig): StageExecutor => {
+  const makeExecutor = (
+    options?: Partial<StageExecutorOptions>,
+    finalizeConfig?: FinalizeManagerConfig,
+    /**
+     * 可选：Step 级路由的 `BranchEvaluatorConfig`（真实引擎给 `StepNavigator` 注入
+     * `hostAgentId`/`createAgent`/`getStepSessionEvents`，使 Phase D 路由判断走 fork 子代理）。
+     * 缺省不注入 ⇒ 路由判断降级临时会话（既有用例的现状，保持行为不变）。
+     */
+    branchConfig?: BranchEvaluatorConfig,
+  ): StageExecutor => {
     const { definition, stage } = singleShellDefinition();
     const stageDef = options?.stageDef ?? stage;
     const workflowDef = options?.workflowDef ?? definition;
     const loopState: LoopState = { activeLoopStack: [], activeLoopIterationStack: [] };
     // Step 级路由已归 microflow：用真实 StepNavigator（持当前 Stage Step 节点图 + 循环管理器），
     // 不再经 options 注入 resolveNextNodes。
-    const stepNavigator = new StepNavigator(ctx, { defaultTimeoutMs: 60000 }, loopState, stageDef, workflowDef);
+    const stepNavigator = new StepNavigator(
+      ctx,
+      { defaultTimeoutMs: 60000, ...(branchConfig ?? {}) },
+      loopState,
+      stageDef,
+      workflowDef,
+    );
     const loopManager = stepNavigator.loopManagerInstance;
     const config: FinalizeManagerConfig = {
       defaultTimeoutMs: 60000,
@@ -235,7 +256,7 @@ describe('StageExecutor 段模型不变量', () => {
     expect(ids[0]).not.toBe(ids[1]);
   });
 
-  it('sessionMeta.childId 与段 id 解耦（合成占位 ≠ 执行段 id）', async () => {
+  it('shell 步骤 sessionMeta 无 childId（不建子代理），synthetic:true 与段 id 解耦', async () => {
     const { shell, makeExecutor } = harness();
     shell.runHandler = async spec => ({ exitCode: 0, stdout: 'hi', stderr: '' });
 
@@ -243,10 +264,11 @@ describe('StageExecutor 段模型不变量', () => {
     const result = await executor.execute();
 
     const segment = result.executedSteps[0]!;
-    // shell 为合成会话：childId 是 step-{stepId}-{hex} 占位，与段 id（UUID）不同。
+    // 2026-09-09 架构决定：shell 不建子代理 → sessionMeta 无 childId（不再有合成占位
+    // UUID）；真实子代理命令的 childId 先经 launchSubagent 拿到真实 id 才写入段。
     expect(segment.sessionMeta?.synthetic).toBe(true);
-    expect(segment.sessionMeta?.childId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    expect(segment.sessionMeta?.childId).not.toBe(segment.id);
+    expect(segment.sessionMeta?.childId).toBeUndefined();
+    expect(segment.sessionMeta?.command).toBe('shell');
   });
 
   it('命令节点段携带 createdAt 与 attemptIndex: 0（时间轴排序键）', async () => {
@@ -545,8 +567,53 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
   });
 
   // 功能点 ③：toPreviousOutput files 非空（前置产物 <artifacts> 块）
-  it('toPreviousOutput 收集产物填前置 Step 提示词 <artifacts> 块（缺陷 16）', async () => {
-    const { definition, stage } = singleShellDefinition();
+  it('directUpstreamStepIds：真机 test-workflow 定义下，默认上游 = next 入边 ∪ 循环 exitTo 出口（loop ← sce3 + 修复问题）', async () => {
+    // 直接用真机定义 fixture（`packages/tests/fixtures/test-workflow.yaml`）——它是用户现场那份。
+    const { readFileSync } = await import('node:fs');
+    const yaml = readFileSync(new URL('../tests/fixtures/test-workflow.yaml', import.meta.url), 'utf8');
+    const definition = parseWorkflowYaml(yaml);
+    const stageId = definition.stages[0]!.id;
+    const byName = new Map(definition.steps!.map(step => [step.name, step.id]));
+    const upstreamOf = (name: string): readonly string[] =>
+      directUpstreamStepIds(definition, stageId, byName.get(name)!);
+    const nameOf = (id: string): string => definition.steps!.find(step => step.id === id)?.name ?? id;
+
+    // 普通 next 入边：与各 step 声明的 inputFrom 一致。
+    expect(upstreamOf('parallel1').map(nameOf)).toEqual(['sce1']);
+    expect(upstreamOf('sce2').map(nameOf)).toEqual(['sce1']);
+    expect(upstreamOf('sce3').map(nameOf)).toEqual(['sce1']);
+    expect(upstreamOf('修复问题').map(nameOf)).toEqual(['sce2']);
+    // **核心断言（v8，2026-09 真机缺陷修复）**：loop 的上游 = 普通入边 sce3 **∪**
+    // 循环出口 `修复问题`（`{loop:{maxIterations:3, exitTo: loop}}`）。真机上分支条件始终
+    // 命中「proposal.md 已存在」→ sce3 从未执行 → v7 的「只认 next 边」会让 loop 的
+    // 参考信息整篇为空；退出循环的那条 exitTo 边才是它真实的数据上游。
+    // 回边 `loop.next`（loop → sce1）仍不计入。
+    expect(upstreamOf('loop').map(nameOf)).toEqual(['sce3', '修复问题']);
+    // sce1 是 Stage 首步且 Stage 只有它一个入口 → 无上游（只注入用户原始需求）。
+    expect(upstreamOf('sce1')).toEqual([]);
+  });
+
+  it('upsertPreviousOutput / previousOutputsFromExecutedSteps：同一 Step 多执行段只保留最新段（v7 反膨胀）', () => {
+    const outputs: PreviousStepOutput[] = [];
+    upsertPreviousOutput(outputs, { name: 'sce2', id: 'sce2', returnPrompt: '第 1 段', files: [] });
+    upsertPreviousOutput(outputs, { name: 'sce1', id: 'sce1', returnPrompt: 'sce1 输出', files: [] });
+    upsertPreviousOutput(outputs, { name: 'sce2', id: 'sce2', returnPrompt: '第 3 段', files: [] });
+    // 同 id 原地替换：没有累积、没有重复。
+    expect(outputs).toHaveLength(2);
+    expect(outputs.find(item => item.id === 'sce2')?.returnPrompt).toBe('第 3 段');
+
+    // 实例级快照收集：loop 多段 + 空输出段（跳过）→ 每 stepId 恰好一条（最新）。
+    const collected = previousOutputsFromExecutedSteps([
+      { id: 'seg-1', stepId: 'sce2', stageId: 's1', name: 'sce2', status: 'completed', visitCount: 1, output: [{ type: 'text', text: '第一次' }] },
+      { id: 'seg-2', stepId: 'sce2', stageId: 's1', name: 'sce2', status: 'completed', visitCount: 2, output: [{ type: 'text', text: '第二次' }] },
+      { id: 'seg-3', stepId: 'fix', stageId: 's1', name: '修复问题', status: 'completed', visitCount: 1, output: [] },
+      { id: 'seg-4', stepId: 'sce3', stageId: 's2', name: 'sce3', status: 'completed', visitCount: 1, output: [{ type: 'text', text: 'sce3 输出' }] },
+    ] as never);
+    expect(collected.map(item => item.id)).toEqual(['sce2', 'sce3']);
+    expect(collected.find(item => item.id === 'sce2')?.returnPrompt).toBe('第二次');
+  });
+
+  it('toPreviousOutput 收集产物填前置 Step 提示词 <artifacts> 块（缺陷 16）', async () => {    const { definition, stage } = singleShellDefinition();
     const stepA: WorkflowStep = {
       id: 'step-a', name: 'produce',
       command: { type: 'shell', value: { command: 'echo done' } },
@@ -555,6 +622,8 @@ describe('StageExecutor 缺陷 16：collectStepArtifacts 产物收集', () => {
     const stepB: WorkflowStep = {
       id: 'step-b', name: 'consume',
       command: { type: 'prompt', value: { promptText: 'review previous' } },
+      // v7：前置输出只在**声明的依赖**上注入（未声明不注入）。
+      inputFrom: [{ path: 'step-a' }],
     };
     const twoStepStage: WorkflowStage = { ...stage, steps: [{ id: 'step-a' }, { id: 'step-b' }] };
     const twoStepDef: WorkflowDefinition = { ...definition, stages: [twoStepStage], steps: [stepA, stepB] };
@@ -986,6 +1055,8 @@ describe('StageExecutor 收尾真 fork（5 阶段收尾重构）', () => {
       id: 'step-b',
       name: 'consume',
       command: { type: 'prompt', value: { promptText: 'review previous' } },
+      // v7：前置输出只在**声明的依赖**上注入（未声明不注入）。
+      inputFrom: [{ path: 'step-a' }],
     };
     const stage: WorkflowStage = { id: 'stg-1', name: 'Stage 1', steps: [{ id: 'step-a' }, { id: 'step-b' }] };
     const definition: WorkflowDefinition = {
@@ -1069,6 +1140,97 @@ describe('StageExecutor 收尾真 fork（5 阶段收尾重构）', () => {
       { stepId: 'step-a', phase: 'routing' },
       { stepId: 'step-a', phase: 'completed' },
     ]);
+  });
+
+  it('Phase D 早报：路由 fork 建好后 commit 的 running 快照带真实 routingSessionId（UI「判断中」运行期可点）', async () => {
+    // 与 Phase B 的 `onForkCreated` 同一套机制/时机：Phase D 开跑前那次 commit 的 running
+    // 快照没有会话 id（UI 徽标退化成不可点的纯文本 span），fork 一建好就必须补带真实 id。
+    const stepA: WorkflowStep = {
+      id: 'step-a',
+      name: 'agent',
+      command: { type: 'agent', value: { promptText: 'do work' } },
+      passThroughVars: [{ name: 'projectName', value: '${projectName}', description: 'project' }],
+    };
+    const stepB: WorkflowStep = {
+      id: 'step-b',
+      name: 'consume',
+      command: { type: 'prompt', value: { promptText: 'review previous' } },
+    };
+    // step-a 带**条件分支** → Phase D 走 AI 路由 fork（fork 自 step-a 的执行子代理会话 child-1）。
+    const stage: WorkflowStage = {
+      id: 'stg-1',
+      name: 'Stage 1',
+      steps: [
+        { id: 'step-a', branches: [{ next: 'step-b', condition: { type: 'prompt', value: { promptText: 'go?' } } }] },
+        { id: 'step-b' },
+      ],
+    };
+    const definition: WorkflowDefinition = {
+      id: 'wfl-fork-d', name: 'wfl-fork-d', version: '1', stages: [stage], steps: [stepA, stepB], settings: {},
+    };
+    const { llm, subagents, agents, makeExecutor } = harness();
+    llm.providers.push({ id: 'p', name: 'Provider' });
+    llm.models.set('p', [{ provider: 'p', id: 'm', name: 'Model' }]);
+    llm.streamHandler = () => textChunks('{"hasAsk":false,"passThroughVars":{}}');
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'agent work output' }]));
+    agents.register(child);
+    const childB = new FakeAgent('child-2');
+    childB.session.append(assistantMessageEvent([{ type: 'text', text: 'review done' }]));
+    agents.register(childB);
+    // 第 1 次 create = Phase B 收尾 fork（合并 JSON）；第 2 次 create = Phase D 路由 fork（shouldExecute）。
+    let created = 0;
+    agents.createFollowupHandler = () => {
+      created += 1;
+      return created === 1
+        ? [{ type: 'text', text: '{"passThroughVars":{"projectName":"sandore"},"compressedOutput":"agent 压缩摘要"}' }]
+        : [{ type: 'text', text: '{"shouldExecute":["step-b"]}' }];
+    };
+    // 每次 commitFinalize 都先 onPersist 再发阶段事件 ⇒ 逐次快照即「各 commit 落盘时的 finalizeMeta」。
+    const snapshots: Array<{ phase: string | undefined; routingStatus: string | undefined; routingSessionId: string | undefined }> = [];
+
+    const executor = makeExecutor(
+      {
+        stageDef: stage,
+        workflowDef: definition,
+        onPersist: async (step) => {
+          snapshots.push({
+            phase: step.finalizeMeta?.currentPhase,
+            routingStatus: step.finalizeMeta?.routingResult?.status,
+            routingSessionId: step.finalizeMeta?.routingResult?.routingSessionId,
+          });
+        },
+      },
+      {
+        defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm',
+        hostAgentId: 'host-1',
+        hostAgent: new FakeAgent('host-1'),
+        createAgent: options => agents.create(options),
+        getStepSessionEvents: async childId => (childId === 'child-1' ? childEvents() : undefined),
+      },
+      // 真实引擎给 StepNavigator 的同一份配置（Phase D 路由判断才有 fork 子代理可早报）。
+      {
+        defaultTimeoutMs: 60000, defaultProvider: 'p', defaultModel: 'm',
+        hostAgentId: 'host-1',
+        hostAgent: new FakeAgent('host-1'),
+        createAgent: options => agents.create(options),
+        getStepSessionEvents: async childId => (childId === 'child-1' ? childEvents() : undefined),
+      },
+    );
+    const result = await executor.execute();
+
+    expect(result.status).toBe('completed');
+    expect(result.executedSteps.find(s => s.stepId === 'step-b'), '条件分支命中后应执行 step-b').toBeDefined();
+    // 路由 fork 的真实 id（纯 UUID）——从收尾终态快照读回。
+    const routingSessionId = result.executedSteps.find(s => s.stepId === 'step-a')?.finalizeMeta?.routingResult?.routingSessionId;
+    expect(routingSessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // 早报：routing 阶段的 running 快照必须有**带真实 routingSessionId** 的那一次
+    // （Phase D 开跑前那次 commit 无 id，fork 建好后的早报补上真实 id）。
+    const runningRouting = snapshots.filter(s => s.phase === 'routing' && s.routingStatus === 'running');
+    expect(runningRouting.length, 'Phase D 应有 2 次 running commit（开跑前无 id + 早报带 id）').toBe(2);
+    expect(runningRouting[0]?.routingSessionId).toBeUndefined();
+    expect(runningRouting[1]?.routingSessionId).toBe(routingSessionId);
+    expect(subagents.continuableStarts.length).toBe(2); // step-a / step-b 两个执行子代理
   });
 
   it('Phase B 事件源缺失（shell 合成会话）→ 降级临时会话并记 errorDetail（不失败）', async () => {

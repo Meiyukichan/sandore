@@ -1,0 +1,135 @@
+/* orchestration-tool-card.module.css：工具行内嵌「工作流导航」卡片的外壳。
+   视觉口径：与 DSH 工具卡片/`ui-workflow-run` 的 WorkflowRunPanel 同族——
+   32px 读头、细线 chevron、状态点、`--dsw-alias-label-*` 文字色、8px 圆角、
+   1px 边框；树身由 TreeNav 自己负责（其 tree-nav.module.css 已逐值照 DSH 面板抄录）。 */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  border: 1px solid var(--dsw-alias-border-secondary, rgb(255 255 255 / 8%));
+  border-radius: 8px;
+  /* 与 DSH WorkflowRunPanel 的 run 头同底色（模块平台色）。 */
+  background: var(--dsw-alias-bg-module-platform, rgb(255 255 255 / 2%));
+  overflow: hidden;
+}
+
+/* 读头：整条可点（折叠开关），32px + `padding: 0 8px` + 8px 圆角，逐值对齐 DSH
+   WorkflowRunPanel 的 `.runHeader`（`WorkflowRunPanel.module.css:6-17`）。 */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: 24px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.head:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgb(255 255 255 / 4%));
+}
+
+/* 焦点样式照 DSH：2px business-primary + 负 offset（`:19-22`）。 */
+.head:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4d6bfe);
+  outline-offset: -2px;
+}
+
+.chevron {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dot {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* DSH 的 run 标题 max-width:42% + 13px/24px（`.runTitle` `:35-45`）。 */
+  max-width: 42%;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: 24px;
+}
+
+/* 状态文字：DSH 面板里状态点旁必有文字（`.statusTail` `:58-70`，11px/510）。 */
+.statusText {
+  flex: none;
+  margin-left: auto;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 510;
+  line-height: 16px;
+}
+
+/* 动作 chip（pause / continue）与进度读数：右侧同行，11–12px 次要色。 */
+.actionChip,
+.progress {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-hover-solid, rgb(255 255 255 / 6%));
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* 状态文字已占 `margin-left:auto`；其后的元素只补间距。 */
+.statusText ~ .actionChip,
+.statusText ~ .progress {
+  margin-left: 6px;
+}
+
+/* 两个都在时并列（动作 chip 先，进度读数后）。 */
+.actionChip + .progress {
+  margin-left: 6px;
+}
+
+/* 卡体：树身有界高度 + 自身滚动（工具行不能把会话撑成无限长）。 */
+.body {
+  border-top: 1px solid var(--dsw-alias-border-secondary, rgb(255 255 255 / 8%));
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* 树身：TreeNav 在紧凑态不占满高度，只按内容展开。
+   顶部只留 2px（真机反馈：读头/卡体到第一条树的距离过大；底部保持 6px 不变）。 */
+.navSlot {
+  padding: 2px 0 6px;
+}
+
+.placeholder,
+.error {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.error {
+  color: var(--dsw-alias-state-error-primary, #e5484d);
+}

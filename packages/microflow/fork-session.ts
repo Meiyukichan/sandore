@@ -60,7 +60,8 @@ import type { Agent, AgentHandle, AgentOptions, AgentSetup, AgentSetupContext, C
  * - {@link resolveChildDepthSeam} ← `resolveChildDepth`（child-agent.ts L49-58）
  * - {@link composeChildSessionMeta} ← `childSessionMeta`（child-agent.ts L138-156）
  * - {@link applyChildCompositionSeam} ← `applyChildComposition`（child-agent.ts
- *   L199-218，composition 恒 `{}`：persona/toolFilter 分支由 sandore 调用方承担）
+ *   L199-218，composition 恒 `{}`：persona 由 sandore 调用方承担；toolFilter 只用于
+ *   架构决策 5 的 `send_message` 屏蔽——经 scoped `tools.restrict` 实施）
  * - {@link captureDelegatedPolicyOverridesSeam} ← `captureDelegatedPolicyOverrides`
  *   （child-agent.ts L242-247）
  * - {@link appendDelegatedPolicyOverridesSeam} ← `appendDelegatedPolicyOverrides`
@@ -177,9 +178,15 @@ function appendDelegatedPolicyOverridesSeam(session: AgentSetupContext['agent'][
  * ① join parent preset（`childCtx.get('agentPresets')?.composeFrom(childCtx,
  * parent.ctx)`——无 preset 部署 `?.` 容忍）；② 注册 delegation 域模型面声明
  * （runtime-context contribution，非 system-prompt section——部署系统提示词在
- * parent/child 间保持一致）。join 在前、child 自有注册在后（scope 就近遮蔽的层次
- * 语义，上游注释 L186-194）；组合缺失的 child 工具 registry 为空（本函数存在的
- * 意义即让该缺陷在调用点不可表达）。
+ * parent/child 间保持一致）；③ 架构决策 5：把 `send_message` 从 child 工具集里
+ * 移除（`childCtx.tools.restrict({deny:['send_message']})`，对齐 DSH child-agent.ts
+ * L217 的 `childCtx.tools.restrict(composition.toolFilter)` 同一原语）。join 在前、
+ * child 自有注册/限制在后（scope 就近遮蔽的层次语义，上游注释 L186-194）。
+ *
+ * `restrict` 的三处容错（缺一不可，否则最小部署会因缺工具而**致命失败**）：
+ * ① `tools.restrict` 不存在（旧版/最小 agentCtx）→ 跳过；② 该 scope 内没有
+ * `send_message` 全局工具时 DSH 会抛 `tools.restrict() names unknown global tool`
+ * → 捕获并 warn（此时本就没有要屏蔽的工具，语义已达成）；③ 任何其他抛错同理只 warn。
  */
 function applyChildCompositionSeam(childCtx: AgentSetupContext, parent: Agent): void {
   childCtx.get?.('agentPresets')?.composeFrom(childCtx, parent.ctx);
@@ -188,6 +195,15 @@ function applyChildCompositionSeam(childCtx: AgentSetupContext, parent: Agent): 
     order: childCtx.systemPrompt.getContextOrder('SUBAGENT_DELEGATION'),
     text: SUBAGENT_DELEGATION_CONTEXT,
   });
+  const restrict = childCtx.tools.restrict;
+  if (typeof restrict !== 'function') {
+    return;
+  }
+  try {
+    restrict.call(childCtx.tools, { deny: ['send_message'] });
+  } catch {
+    // 未注册全局 send_message 的部署：无工具可屏蔽，语义已达成（不阻断 child 创建）。
+  }
 }
 
 /** fork 会话历史注入结果（derived messages + fork 会话 id）。 */
@@ -355,8 +371,14 @@ export function hasUnclosedTurnTail(events: readonly SeedBoundaryEvent[]): boole
 export interface ForkStepSubagentOptions {
   /** 宿主主代理 session id（meta.parentSession：fork 子代理作为宿主主代理的子代理）。 */
   readonly hostAgentId: string;
-  /** 源 step id（合成 fork 会话 id 前缀：`finalize-{stepId}-{random}`）。 */
+  /** 源 step id（合成 fork 会话 id 为纯 UUID，经 synthesizeFinalizeChildId 生成）。 */
   readonly stepId: string;
+  /**
+   * 子代理列表标题的 `<前缀> <名称>` 部分（引擎消费：创建后补写 `subagent/descriptor`
+   * 身份事件，最终标题为 `<本值> · <childId>`；缺省 `finalize <stepId>`）。调用方应传
+   * **可读的 step 名称**，避免列表出现 `step-<uuid>`。
+   */
+  readonly label?: string;
   /** 子代理工作目录（meta.cwd）。 */
   readonly cwd?: string;
   /** 取源会话完整事件（live → persistence 回退，由引擎注入；undefined = 无事件源）。 */
@@ -464,6 +486,16 @@ export async function forkStepSubagent(
   if (opts.createAgent === undefined) {
     return undefined;
   }
+  // **不变量守卫（2026-09）**：本函数是**评估类 fork**（Phase B 收尾评估 / Phase D 路由
+  // 判断）——它的 seed 源**必须**是某个 step 子代理会话（评估子代理据此看到该 step 的
+  // 完整历史，属设计如此）；把**宿主主代理会话**当源会把主代理历史灌进执行子代理
+  // （真机缺陷形态），故显式拒绝。
+  if (stepSessionId === opts.hostAgentId) {
+    throw new Error(
+      `refusing to seed a fork from the host session '${stepSessionId}': `
+      + 'execution subagents must be fresh; only a step subagent session may be a fork source',
+    );
+  }
   const events = opts.getEvents === undefined
     ? undefined
     : await opts.getEvents(stepSessionId);
@@ -503,13 +535,20 @@ export async function forkStepSubagent(
         parentSession: SessionId(opts.hostAgentId),
       };
     })();
+  // childId 用**纯 UUID**（`synthesizeFinalizeChildId` = `randomUUID()`），并把它拼进标签，
+  // 使列表标题形如 `finalize 分析 · 34ef519c-…`（与 step 执行同款）。
+  const childSessionId = synthesizeFinalizeChildId(opts.stepId);
   const handle = await opts.createAgent({
-    sessionId: SessionId(synthesizeFinalizeChildId(opts.stepId)),
+    sessionId: SessionId(childSessionId),
     seed,
     meta,
     inheritedEventCount: seed.length,
     ...(opts.agentOptions === undefined ? {} : { agentOptions: opts.agentOptions }),
     ...(hostAgent === undefined ? {} : { setup: delegatedChildSetup(hostAgent) }),
+    // 子代理列表标签（引擎消费：补写 `subagent/descriptor` 身份事件，见
+    // workflow/subagent-identity.ts）。`opts.label` 传 `<前缀> <名称>`，这里补上 childId，
+    // 最终形如 `finalize 分析 · 34ef519c-…`。
+    descriptorLabel: `${opts.label ?? `finalize ${opts.stepId}`} · ${childSessionId}`,
   });
   return { handle, events: seed };
 }

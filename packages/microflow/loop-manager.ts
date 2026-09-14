@@ -2,8 +2,8 @@
  * 循环与嵌套循环管理（loop-manager）。
  *
  * 维护活跃循环节点栈与嵌套迭代路径栈（`activeLoopStack`/`activeLoopIterationStack`，
- * 对齐 `WorkflowTaskState` 持久化字段），为循环内每次迭代生成 4 位 hex 后缀 id
- * （`getActualStepId`/`stripIdSuffix`/`stepIdSuffixMap`），构建扁平
+ * 对齐 `WorkflowTaskState` 持久化字段），为循环内每次迭代生成纯 UUID 实际 id
+ * （`getActualStepId`/`stripIdSuffix`/`stepIdActualIdMap`），构建扁平
  * `loopIteration` 嵌套数组（`buildLoopIterationPath`），并以 `checkLoopBreak` 两阶段
  * 判定循环跳出（`visitCount >= maxIterations` 硬上限优先，其次 `breakCondition`
  * agent/prompt/skill/mcp 走 `extractBreakResult === 'true'`、shell 走
@@ -44,8 +44,12 @@ export interface LoopNode {
 export interface LoopBreakOptions {
   /** 当前 step 的子代理会话 ID（fork 子代理 seed 源）。 */
   readonly stepSessionId?: string;
-  /** 当前循环节点 id（路由 fork 子代理合成 id 前缀）。 */
+  /** 当前循环节点 id（路由 fork 子代理会话的源 step id；合成会话 id 为纯 UUID）。 */
   readonly stepId?: string;
+  /** 当前 step 的可读名称（路由 fork 子代理列表标签用；缺省回退 stepId）。 */
+  readonly stepName?: string;
+  /** 路由判断 fork 创建后上报真实 id（调用方据此 commit running 快照，UI「判断中」可点）。 */
+  readonly onRoutingCreated?: (routingSessionId: string) => void;
   /** 透传变量（shell breakCondition env 注入 + 提示词 `${xxx}` 替换）。 */
   readonly passThroughVars?: Readonly<Record<string, string>>;
 }
@@ -62,11 +66,11 @@ export interface LoopBreakOutcome {
  *
  * 构造时绑定 `ctx`、引擎级配置与循环持久化状态（`activeLoopStack`/
  * `activeLoopIterationStack`），内部自建 {@link BranchEvaluator} 承担 breakCondition
- * 两阶段评估。`loopMaxIterations` 栈与 `stepIdSuffixMap` 为进程内辅助状态（不持久化）。
+ * 两阶段评估。`loopMaxIterations` 栈与 `stepIdActualIdMap` 为进程内辅助状态（不持久化）。
  */
 export class LoopManager {
-  /** 原始 step id → 4 位 hex 后缀（同一次迭代内同一原始 id 复用同一后缀）。 */
-  readonly stepIdSuffixMap = new Map<string, string>();
+  /** 原始 step id → 实际执行 id（纯 UUID；同一迭代内同一原始 id 复用同一 UUID）。 */
+  readonly stepIdActualIdMap = new Map<string, string>();
 
   private readonly loopMaxIterationsStack: number[] = [];
   /**
@@ -74,7 +78,7 @@ export class LoopManager {
    * `runLoop` 计数的节点 id。内层节点同时记入所有外层作用域集（内层节点也属于外层
    * 循环）。跳出时 `resetLoopVisitCounts` 归零栈顶集内所有节点 visitCount（等价基准
    * `workflow-loop-manager.ts:resetLoopVisitCounts` 的「跳出时归零」语义，取代缺陷 22
-   * 的「进入时归零」）。运行时不持久化（与 stepIdSuffixMap/loopMaxIterationsStack 同）。
+   * 的「进入时归零」）。运行时不持久化（与 stepIdActualIdMap/loopMaxIterationsStack 同）。
    */
   private readonly loopScopeStack: Set<string>[] = [];
   private readonly evaluator: BranchEvaluator;
@@ -92,26 +96,21 @@ export class LoopManager {
     return this.state.activeLoopStack[this.state.activeLoopStack.length - 1] ?? null;
   }
 
-  /** 生成 4 位 hex 后缀（小写 0-9a-f）。 */
-  static loopIdSuffix(): string {
-    return globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 4);
-  }
-
-  /** 返回循环内实际执行的带后缀 id（`原始id-4位hex`）；同迭代同原始 id 复用同后缀。 */
+  /** 返回循环内实际执行 id（纯 UUID）；同一迭代内同一原始 id 复用同一 UUID。 */
   getActualStepId(originalStepId: string): string {
-    const existing = this.stepIdSuffixMap.get(originalStepId);
+    const existing = this.stepIdActualIdMap.get(originalStepId);
     if (existing !== undefined) {
-      return `${originalStepId}-${existing}`;
+      return existing;
     }
-    const suffix = LoopManager.loopIdSuffix();
-    this.stepIdSuffixMap.set(originalStepId, suffix);
-    return `${originalStepId}-${suffix}`;
+    const id = globalThis.crypto.randomUUID();
+    this.stepIdActualIdMap.set(originalStepId, id);
+    return id;
   }
 
-  /** 去除循环后缀还原原始 id（非本迭代生成的后缀原样返回）。 */
+  /** 反查实际 id 还原原始 step id（非本循环生成的 id 原样返回）。 */
   stripIdSuffix(id: string): string {
-    for (const [original, suffix] of this.stepIdSuffixMap) {
-      if (id === `${original}-${suffix}`) {
+    for (const [original, actualId] of this.stepIdActualIdMap) {
+      if (id === actualId) {
         return original;
       }
     }
@@ -123,22 +122,22 @@ export class LoopManager {
     return [...this.state.activeLoopIterationStack];
   }
 
-  /** 递增最内层迭代计数，并清除本迭代的后缀映射（新迭代生成新后缀）。 */
+  /** 递增最内层迭代计数，并清除本迭代的 id 映射（新迭代生成新 UUID）。 */
   incrementLoopIteration(): void {
     const last = this.state.activeLoopIterationStack.length - 1;
     if (last >= 0) {
       this.state.activeLoopIterationStack[last] = (this.state.activeLoopIterationStack[last] ?? 0) + 1;
     }
-    this.stepIdSuffixMap.clear();
+    this.stepIdActualIdMap.clear();
   }
 
-  /** 进入循环：压循环栈 + 迭代栈（初始计数 1）+ maxIterations 栈 + 作用域集，并清除后缀映射。 */
+  /** 进入循环：压循环栈 + 迭代栈（初始计数 1）+ maxIterations 栈 + 作用域集，并清除 id 映射。 */
   pushActiveLoop(nodeId: string, maxIterations: number): void {
     this.state.activeLoopStack.push(nodeId);
     this.state.activeLoopIterationStack.push(1);
     this.loopMaxIterationsStack.push(maxIterations);
     this.loopScopeStack.push(new Set<string>());
-    this.stepIdSuffixMap.clear();
+    this.stepIdActualIdMap.clear();
   }
 
   /** 跳出循环：先弹迭代栈，再弹循环栈（含 maxIterations 栈与作用域集）。 */
@@ -216,6 +215,8 @@ export class LoopManager {
     const result = await this.evaluator.evaluateBreak(breakCondition, {
       ...(options.stepSessionId === undefined ? {} : { stepSessionId: options.stepSessionId }),
       ...(options.stepId === undefined ? {} : { stepId: options.stepId }),
+      ...(options.stepName === undefined ? {} : { stepName: options.stepName }),
+      ...(options.onRoutingCreated === undefined ? {} : { onRoutingCreated: options.onRoutingCreated }),
       loopTurn: this.currentLoopTurn(),
       loopMaxIterations: this.currentLoopMaxIterations(),
       ...(options.passThroughVars === undefined ? {} : { passThroughVars: options.passThroughVars }),

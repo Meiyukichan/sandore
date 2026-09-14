@@ -1,0 +1,54 @@
+/* turn-process-node.module.css（B3 step-view 版）：抄自 DSH 0.1.2-rc.1
+   ui-chat chat/TurnProcessNodeView.module.css（只读参考 deepseek-harness）。
+   差异：字号行高令牌化（--dsh-content-font-size/-delta，默认值即 rc.1 的
+   14px/24px），高度随字号 delta 同步放大（rc.1 固定 33px）；颜色全部走
+   --dsw-alias-*（深浅色随全局令牌）。 */
+
+.root {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: calc(33px + var(--dsh-content-font-delta, 0px));
+  padding: 0 0 8px;
+  border: none;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.root:not([data-open]) {
+  margin-bottom: 8px;
+}
+
+.chevron {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(-90deg);
+  transition: transform 100ms ease;
+}
+
+.root[data-open] .chevron {
+  transform: rotate(0deg);
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}

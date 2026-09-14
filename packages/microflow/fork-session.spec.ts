@@ -17,7 +17,7 @@
  * @module @meiyukichan/dsh-sandore/microflow/src/fork-session.spec
  */
 import { Context } from '@deepseek-ai/cordis';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { FakeAgent, FakeAgentRegistry } from '../tests/mocks/agents.ts';
 import { FakeSessionStore } from '../tests/mocks/sessions.ts';
@@ -229,8 +229,89 @@ describe('forkStepSubagent（收尾真 fork：hostAgent setup 注入 + preset �
     });
   });
 
-  it('omits setup when hostAgent is not provided (backward compatible)', async () => {
+  it('refuses to seed a fork from the HOST session (execution subagents must be fresh)', async () => {
     const registry = new FakeAgentRegistry();
+    const getEvents = vi.fn(async () => closedTurnEvents());
+    const hostAgent = new FakeAgent('host-1');
+
+    // 不变量（2026-09 真机缺陷）：评估类 fork 的 seed 源**只能是 step 子代理会话**；
+    // 把宿主主代理会话当源会把主代理历史灌进子代理（污染形态），故响亮拒绝。
+    await expect(forkStepSubagent(new Context(), 'host-1', {
+      hostAgentId: 'host-1',
+      stepId: 'step-a',
+      createAgent: options => registry.create(options),
+      getEvents,
+      hostAgent,
+    })).rejects.toThrowError(/refusing to seed a fork from the host session/);
+    // 拒绝发生在取事件之前（不会先读宿主历史再丢弃），也没有建任何子代理。
+    expect(getEvents).not.toHaveBeenCalled();
+    expect(registry.createSeeds).toEqual([]);
+  });
+
+  it('提交的 seed 只含继承前缀（inheritedEventCount = seed.length），身份事件由引擎追加在其后', async () => {
+    const registry = new FakeAgentRegistry();
+    const hostAgent = new FakeAgent('host-1');
+    const events = closedTurnEvents();
+
+    await forkStepSubagent(new Context(), 'child-1', {
+      hostAgentId: 'host-1',
+      stepId: 'step-a',
+      label: 'finalize 分析',
+      createAgent: options => registry.create(options),
+      getEvents: async () => events,
+      hostAgent,
+    });
+
+    // ① 提交给 `agents.create` 的 seed = **纯继承前缀**（本 step 的完整事件）；身份事件
+    //    **不在** seed 里 —— 由引擎创建后追加（`ensureSubagentDescriptor`），从而落在
+    //    自有区间（seq === seed.length），满足 DSH `identity.seq >= inheritedEventCount`。
+    expect(registry.createSeeds[0]).toEqual(events);
+    expect(registry.createSeeds[0]?.some(item => item.type === 'subagent/descriptor')).toBe(false);
+    // ② `inheritedEventCount` 只计继承部分（= seed.length，**不是**含身份事件的总长度）。
+    expect(registry.createInheritedEventCounts[0]).toBe(events.length);
+    // ③ 标签形态：`<前缀> <名称> · <childId>`（childId = 引擎合成的纯 UUID）。
+    const sessionId = String(registry.createCalls[0]?.sessionId ?? '');
+    expect(sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect((registry.createCalls[0] as unknown as { descriptorLabel?: string })?.descriptorLabel)
+      .toBe(`finalize 分析 · ${sessionId}`);
+    // ④ 归属仍是**宿主主代理**（这样它才出现在主代理的子代理列表里）。
+    expect(registry.createCalls[0]?.meta?.parentSession).toBe('host-1');
+    expect(registry.createCalls[0]?.meta?.origin).toBe('subagent');
+  });
+
+  it('denies send_message in the fork child scope via tools.restrict (架构决策 5)', async () => {    const registry = new FakeAgentRegistry();
+    const hostAgent = new FakeAgent('host-1');
+    await forkStepSubagent(new Context(), 'child-1', {
+      hostAgentId: 'host-1',
+      stepId: 'step-a',
+      createAgent: options => registry.create(options),
+      getEvents: async () => closedTurnEvents(),
+      hostAgent,
+    });
+    // child setup 期间经 scoped restrict 把 send_message 从子代理工具集里移除
+    // （对齐 DSH child-agent.ts:217 的 `childCtx.tools.restrict(request.toolFilter)` 原语）。
+    expect(registry.toolsRestrictions).toEqual([{ deny: ['send_message'] }]);
+  });
+
+  it('tolerates a restrict failure (tool not registered / no scoped ctx) without breaking the fork', async () => {
+    const registry = new FakeAgentRegistry();
+    // 真实 DSH 在「该 scope 内没有这个名字的全局工具」时抛错；沙盒/极小部署下也可能
+    // 没有 restrict。两种情形都必须只降级（工具本来就不存在 → 语义已达成）。
+    registry.restrictError = new Error('tools.restrict() names unknown global tool "send_message"');
+    const hostAgent = new FakeAgent('host-1');
+    const result = await forkStepSubagent(new Context(), 'child-1', {
+      hostAgentId: 'host-1',
+      stepId: 'step-a',
+      createAgent: options => registry.create(options),
+      getEvents: async () => closedTurnEvents(),
+      hostAgent,
+    });
+    expect(result).toBeDefined();
+    expect(registry.toolsRestrictions).toEqual([]);
+    expect(registry.composeFromCalls).toHaveLength(1);
+  });
+
+  it('omits setup when hostAgent is not provided (backward compatible)', async () => {    const registry = new FakeAgentRegistry();
 
     const result = await forkStepSubagent(new Context(), 'child-1', {
       hostAgentId: 'host-1',

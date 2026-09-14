@@ -1,419 +1,88 @@
-/* DiscussionInput：DSH composer 风格 + composer 接管面板（原型 execution-detail-prototype.html 的
-   .composer-card / .perm-trigger / .model-trigger / .send-btn / .approval-card / .question-card）。 */
+/* DiscussionInput：唯一的停止按钮 + composer 接管面板
+   （原型 execution-detail-prototype.html 的 .approval-card / .question-card）。
+
+   呈现层统一（最终形态）：
+   - 运行页输入框 = `main-agent-input.tsx` 的**独立输入框**（视觉细节逐值照抄 DSH 默认会话
+     输入框，样式在同目录的 `main-agent-input.module.css`）；本文件只保留它两侧的东西：
+     停止按钮（`.stopBtn`）与接管面板（approval/question）；
+   - **已删除**：输入框上方那行「主代理 / 消息发给主代理（不是发给某个 Step）」标识行
+     （`.mainAgentBar/.mainAgentName/.mainAgentHint`，真机反馈明确不要——语义改由主代理卡片的
+     卡头「头像 M + 标题 主代理」承担）；
+   - **已删除**：原来的两个圆形动作按钮（`.runActions`/`.pauseBtn`/`.abortBtn`）——真机反馈
+     「输入框的模型下拉左边会有两个暂停按钮？不要多此一举」；现在只剩一个 DSH 同款停止按钮；
+   - 旧的自绘输入（.toolbar/.picker/.composerInput/.sendBtn）、@step 选择器样式与
+     「输入壳未就绪」占位（.mainShell/.mainUnavailable/.composerCard…）**已整块删除**
+     ——那些挂载点都不存在了，留着就是半死状态。 */
+
+/* ── 已删除：主代理标识行（.mainAgentBar/.mainAgentName/.mainAgentHint）─────────────
+   真机反馈：「这个输入框上面的，显示这个干嘛，去掉」。DOM 与文案一起删除（locales.ts 里
+   只被它使用的 `run.mainAgent.inputHint` 也已清掉）。 */
+
+/* ── 已删除：输入框区的停止/暂停按钮（.stopBtn）──────────────────────────────────
+   真机反馈第三轮（用户原话）：「还是有个暂停按钮在输入框那里，悬浮 tips 显示：暂停工作流实例，
+   并中止主代理当前回复。**去掉这个按钮**」——该按钮（`[data-sandore-stop]`，DSH 停止席位同款）
+   连同渲染条件、双语义点击逻辑与 tooltip 文案一并删除；输入框区**不再有任何工作流动作按钮**
+   （只剩：左 = 权限下拉、右 = 模型下拉 + 发送钮）。
+   暂停的可用入口（能力不丢）：DSH 中心列输入框自带的「停止生成」（取消宿主主代理当前 turn →
+   引擎据此把实例判为 `paused`，见 DiscussionInput.tsx 文件头「需求 4」与 M-LAYER.md §5.8）；
+   实例「中止」仍在运行视图标题栏（`RunView.module.css` 的 `.abortBtn`）。 */
+
+/* 宽度基准（真机反馈修正）：接管面板与输入卡同宽同轴心——都由 `.feedCol` 上发布的
+   `--sandore-msg-content-width`（消息列实测内容宽）+ 24px 决定（见 run-view-metrics.ts）。 */
+.takeoverWidth {
+  width: min(calc(var(--sandore-msg-content-width, 100%) + 24px), 100%);
+  margin-inline: auto;
+}
 
 .root {
   margin-top: 24px;
   position: relative;
 }
 
-/* ── paused/failed 细工具条（@Step 目标 + 重试模式） ─────────────────────── */
+/* ── 已删除：@Step 目标选择器 / 暂停态的细工具条 ────────────────────────────────
+   这里原有 `.toolbar`（目标按钮行）、`.targetBtn`、`.picker` / `.picker button` /
+   `.pickerActive`（`[data-sandore-step-picker]` 的浮层）。它们属于**已退役的
+   @step 结构化引用**（需求 2：运行页不再有 step 选择器），挂载点全删，样式随之删除。 */
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 2px 8px;
-  position: relative;
-}
+/* ── 已删除：重试模式行与 revert 回退点下拉 ───────────────────────────────────
+   这里原有 `.retryRow` / `.retryLabel` / `.retryBtn` / `.retryBtnActive` 与
+   `.boundaryPicker` / `.boundaryHint` / `.boundarySelect`。运行页不再有「重试/恢复」
+   输入语义（step 级重试住在 step 面板底部动作位），故这些样式随挂载点一并删除。 */
 
-.targetBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 10px;
-  border: none;
-  border-radius: 999px;
-  background: var(--sd-surface-hover);
-  color: var(--sd-muted-foreground);
-  font-size: 12px;
-  line-height: 20px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-}
+/* ── 已删除：自绘输入卡与模型/权限胶囊 ────────────────────────────────────────
+   这里原有 `.composerCard` / `.composerScroll` / `.composerInput` / `.composerRow` /
+   `.composerTools` / `.composerTrailing`（运行页旧的自绘输入卡）与 `.permTrigger` /
+   `.permGlyph` / `.permLabel` / `.permChev` / `.modelTrigger` / `.modelLabel` /
+   `.modelChev`（模型/权限胶囊）。运行页输入框现在是 `main-agent-input.tsx` 的独立输入框
+   （样式在 `main-agent-input.module.css`），这些样式随挂载点一并删除。 */
 
-.targetBtn:hover:not(:disabled) {
-  background: var(--sd-accent);
-  color: var(--sd-foreground);
-}
+/* ── 已删除：中止 ghost 按钮（.abortBtn）────────────────────────────────────────
+   真机反馈「不要多此一举」后，它从输入框旁移到了运行视图标题栏（`RunView.module.css` 的
+   `.abortBtn`）——能力保留、位置换到不与停止按钮并列。 */
 
-.targetBtn:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
+/* ── 已删除：旧的自绘圆形主按钮（暂停 / 发送）与 composer 错误行 ──────────────
+   这里原有 `.sendBtn`（旧自绘输入的圆形主按钮）与 `.composerError`。运行页输入框现在是
+   独立输入框（主按钮样式在 `main-agent-input.module.css` 的 `.primary`），旧样式随之删除；
+   运行中的动作只剩上面那一个 `.stopBtn`。 */
 
-.targetBtn svg {
-  width: 12px;
-  height: 12px;
-  color: var(--sd-faint-foreground);
-}
-
-.picker {
-  position: absolute;
-  top: 32px;
-  left: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  min-width: 180px;
-  padding: 4px;
-  border: 1px solid var(--sd-border);
-  border-radius: 10px;
-  background: var(--sd-surface);
-  box-shadow: var(--sd-card-shadow);
-}
-
-.picker button {
-  display: flex;
-  align-items: center;
-  height: 30px;
-  padding: 0 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--sd-foreground);
-  font-size: 12px;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.picker button:hover {
-  background: var(--sd-accent);
-}
-
-.pickerActive {
-  background: var(--sd-accent) !important;
-  color: var(--sd-primary) !important;
-  font-weight: 500;
-}
-
-.retryRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.retryLabel {
-  font-size: 12px;
-  color: var(--sd-muted-foreground);
-}
-
-.retryBtn {
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--sd-border);
-  border-radius: 999px;
-  background: var(--sd-surface);
-  color: var(--sd-muted-foreground);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.retryBtn:hover {
-  background: var(--sd-accent);
-  color: var(--sd-foreground);
-}
-
-.retryBtnActive {
-  border-color: transparent;
-  background: var(--sd-primary);
-  color: var(--sd-primary-foreground);
-  font-weight: 500;
-}
-
-/* ── revert 回退点下拉（仅 revert 模式 + 选定失败目标时显示） ─────────────── */
-
-.boundaryPicker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.boundaryHint {
-  font-size: 12px;
-  color: var(--sd-muted-foreground);
-}
-
-.boundarySelect {
-  height: 26px;
-  max-width: 220px;
-  padding: 0 8px;
-  border: 1px solid var(--sd-border);
-  border-radius: 8px;
-  background: var(--sd-surface);
-  color: var(--sd-foreground);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.boundarySelect:hover:not(:disabled) {
-  border-color: var(--sd-primary);
-}
-
-.boundarySelect:focus-visible {
-  outline: 2px solid var(--sd-primary);
-  outline-offset: 1px;
-}
-
-.boundarySelect:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-/* ── composer 卡片（DSH InputBar） ───────────────────────────────────────── */
-
-.composerCard {
-  box-sizing: border-box;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: 100%;
-  padding-top: 10px;
-  border: 1px solid color-mix(in srgb, var(--sd-border) 80%, transparent);
-  border-radius: 22px;
-  background: var(--sd-surface);
-  box-shadow: var(--sd-card-shadow);
-  font-size: 16px;
-  line-height: 24px;
-}
-
-.composerScroll {
-  max-height: 336px;
-  overflow-y: auto;
-}
-
-.composerInput {
-  box-sizing: border-box;
-  width: 100%;
-  resize: none;
-  overflow: hidden;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--sd-brand);
-  font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  padding: 4px 12px 0 16px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-
-.composerInput::placeholder {
-  color: var(--sd-muted-foreground);
-  user-select: none;
-}
-
-.composerInput:disabled {
-  color: var(--sd-faint-foreground);
-  cursor: not-allowed;
-}
-
-.composerRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 8px 6px;
-  min-width: 0;
-}
-
-.composerTools {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.composerTrailing {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex: none;
-}
-
-/* 权限胶囊（DSH PermissionSelect trigger） */
-.permTrigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 220px;
-  height: 28px;
-  padding: 0 4px 0 8px;
-  border: none;
-  border-radius: 24px;
-  outline: none;
-  background: transparent;
-  color: var(--sd-muted-foreground);
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.permTrigger:hover {
-  background: var(--sd-accent);
-}
-
-.permGlyph {
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-
-.permGlyph svg {
-  width: 14px;
-  height: 14px;
-}
-
-.permLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.permChev {
-  display: inline-flex;
-  flex: 0 0 auto;
-  color: var(--sd-faint-foreground);
-}
-
-.permChev svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* 模型胶囊（DSH ModelSelect trigger） */
-.modelTrigger {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 220px;
-  height: 28px;
-  padding: 0 4px 0 8px;
-  border: none;
-  border-radius: 24px;
-  outline: none;
-  background: transparent;
-  color: var(--sd-muted-foreground);
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.modelTrigger:hover {
-  background: var(--sd-accent);
-}
-
-.modelLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.modelChev {
-  flex: 0 0 auto;
-  display: inline-flex;
-  color: var(--sd-faint-foreground);
-}
-
-.modelChev svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* 中止 ghost（running/paused 时 trailing 出现） */
-.abortBtn {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--sd-muted-foreground);
-  cursor: pointer;
-}
-
-.abortBtn:hover:not(:disabled) {
-  background: var(--sd-accent);
-  color: var(--sd-destructive);
-}
-
-.abortBtn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.abortBtn svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* 圆形主按钮（暂停 / 发送） */
-.sendBtn {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--sd-brand);
-  color: #fff;
-  cursor: pointer;
-  transform: translateY(-2px);
-  transition: background-color 100ms ease;
-}
-
-.sendBtn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--sd-brand) 85%, #fff);
-}
-
-.sendBtn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.sendBtn svg {
-  width: 16px;
-  height: 16px;
-}
+/* 圆形主按钮（暂停） */
 
 /* ── composer 接管：权限申请（ApprovalPanel 风格） ────────────────────────── */
 
 .takeover {
   margin-top: 16px;
-}
-
-.composerError {
-  margin-bottom: 8px;
-  color: var(--sd-destructive);
-  font-size: 12px;
-  line-height: 20px;
-  text-align: center;
+  /* 与输入框同一可用宽度（输入框根有 8px 侧留白）：这样接管卡与输入卡的
+     `min(消息列内容宽 + 24px, 100%)` 在同一约束下解析，两者宽度完全一致。 */
+  padding: 0 8px;
 }
 
 .approvalCard {
+  box-sizing: border-box;
   overflow: hidden;
-  width: 100%;
+  /* 与输入卡同宽同轴心（真机反馈：权限申请弹层宽度必须和输入框统一）。
+     `border-box` 让 1px 描边算在宽度内——与输入卡的盒模型一致，宽度才逐像素相同。 */
+  width: min(calc(var(--sandore-msg-content-width, 100%) + 24px), 100%);
+  margin-inline: auto;
   border: 1px solid var(--sd-warning);
   border-radius: 20px;
   background: var(--sd-surface);
@@ -526,9 +195,13 @@
 /* ── composer 接管：问题选择（QuestionComposer 风格） ─────────────────────── */
 
 .questionCard {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  width: 100%;
+  /* 与输入卡同宽同轴心（真机反馈：问题选择弹层宽度必须和输入框统一）；
+     `border-box` 让 1px 描边算在宽度内——与输入卡的盒模型一致，宽度才逐像素相同。 */
+  width: min(calc(var(--sandore-msg-content-width, 100%) + 24px), 100%);
+  margin-inline: auto;
   max-height: min(60vh, 520px);
   padding: 0 0 10px;
   border: 1px solid color-mix(in srgb, var(--sd-border) 80%, transparent);

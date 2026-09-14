@@ -25,6 +25,19 @@ describe('sessionEventList', () => {
     expect(sessionEventList(session)).toBe(direct);
   });
 
+  it('calls snapshotEvents with the session as this (rc.1 default-param reads this.seq)', () => {
+    // 真实 DSH snapshotEvents 是方法，默认参数 toSeqExclusive = this.seq 依赖 this
+    const session = {
+      _log: [{ type: 'turn/end', seq: 0, time: 0, data: {} }],
+      snapshotEvents() {
+        const _ = this.seq; // 强制求值 this（裸调 this=undefined → 抛 reading 'seq'）
+        return this._log;
+      },
+      get seq() { return this._log.length; },
+    };
+    expect(sessionEventList(session)).toEqual(session._log);
+  });
+
   it('returns [] for absent/undefined sessions, non-array events and non-array snapshots', () => {
     expect(sessionEventList(undefined)).toEqual([]);
     expect(sessionEventList(null)).toEqual([]);

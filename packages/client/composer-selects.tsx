@@ -10,11 +10,20 @@
  *   执行 `/permission <id>`（与主 session 同一命令路径）；`danger-full-access`
  *   先弹风险确认。触发器显示当前权限名 + 盾牌图标。
  * 样式照 DSH ModelSelect.module.css / PermissionSelect.module.css。
+ *
+ * **挂载现状（呈现层统一）**：运行页输入框已换成**主代理输入壳**
+ * （`DiscussionInput.tsx` 复用 `step-view/ComposerBar.tsx` 的 DSH 输入内核装配），而 ComposerBar
+ * 的自绘壳**结构性不含**模型 / 权限席位（见其文件头）——故本文件的两个选择器当前**没有生产
+ * 挂载点**：`RunView` 不再传入 `modelDirectory` / `permissions` / `runCommand` /
+ * `queryPermission`（那四个 face 入参仍保留在 `RunViewProps` 里，作为席位 face 的契约）。
+ * 本文件与 `model-faces.spec.ts` 一并保留为「恢复运行页选择器」的唯一入口：接回时把两个组件
+ * 放进 ComposerBar 的动作行（或 DiscussionInput 自己的工具栏）即可，无需改数据面。
  * @module @deepseek-ai/dsh-client-ui-sandore/src/client/composer-selects
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
-  IconCheckOutline16, IconChevronDownOutline14, IconChevronRightOutline14, Toast,
+  IconCheckOutline16, IconChevronDownOutline14, IconChevronRightOutline14,
+  IconWarningOutline16, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 
@@ -209,7 +218,7 @@ export function ModelSelectSandore({ t, directory, locked }: {
       </button>
 
       {open && (
-        <div className={css.menu} role="menu" aria-label={t('composer.model.menu')} aria-busy={state.status === 'loading' || busy}>
+        <div className={css.modelMenu} role="menu" aria-label={t('composer.model.menu')} aria-busy={state.status === 'loading' || busy}>
           {pane === 'root' && (
             <>
               <button type="button" role="menuitem" className={css.cell} onClick={() => { setPane('model') }}>
@@ -356,6 +365,18 @@ function displayName(name: string): string {
   return name.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
 }
 
+/**
+ * 预设值的展示名：**内置三档走 i18n**（与 DSH `access.preset.*` 逐字同文案：
+ * zh「仅可查看 / 工作区内修改 / 完全权限」、en「Read Only / Workspace Write / Full access」），
+ * 宿主自定义的预设名 passthrough（`displayName`）——照 DSH `permissionLabel` 的判定顺序。
+ */
+function permissionLabel(t: TranslateNS<'sandore'>, value: string, name: string): string {
+  if (value === 'read-only') return t('composer.access.readOnly')
+  if (value === 'workspace-write') return t('composer.access.workspaceWrite')
+  if (value === FULL_ACCESS) return t('composer.access.fullAccess')
+  return displayName(name)
+}
+
 /** 渲染权限触发器 + 菜单 + 完全访问确认（行为照 DSH PermissionSelect）。 */
 export function PermissionSelectSandore({ t, value, locked, runCommand, queryValue }: {
   readonly t: TranslateNS<'sandore'>
@@ -446,24 +467,21 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
   }
 
   const glyph = permissionGlyph(currentValue)
+  const currentLabel = current === undefined
+    ? permissionLabel(t, currentValue, currentValue)
+    : permissionLabel(t, current.value, current.name)
   return (
     <div ref={rootRef} className={css.msRoot}>
       <button
         type="button"
         className={css.trigger}
-        aria-label={t('run.permission.title')}
+        aria-label={t('composer.accessMode', { name: currentLabel })}
         title={current?.description}
         disabled={lockedOrDegraded || busy}
         onClick={() => { setOpen(!open) }}
       >
         <span className={css.triggerIcon} aria-hidden>{glyph}</span>
-        <span className={css.triggerLabel}>
-          {current === undefined
-            ? displayName(currentValue)
-            : current.value === FULL_ACCESS
-              ? 'Full access'
-              : displayName(current.name)}
-        </span>
+        <span className={css.triggerLabel}>{currentLabel}</span>
         <span className={`${css.chevron} ${open ? css.chevronOpen : ''}`} aria-hidden><IconChevronDownOutline14 /></span>
       </button>
 
@@ -479,16 +497,14 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
                   type="button"
                   role="menuitemradio"
                   aria-checked={selected}
-                  className={`${css.option} ${selected ? css.selected : ''}`}
+                  className={`${css.optionPermission} ${selected ? css.selected : ''}`}
                   key={option.value}
                   disabled={busy}
                   onClick={() => { choose(option.value) }}
                 >
                   <span className={css.optionIcon} aria-hidden>{icon}</span>
                   <span className={css.optionCopy}>
-                    <span className={css.modelName}>
-                      {option.value === FULL_ACCESS ? 'Full access' : displayName(option.name)}
-                    </span>
+                    <span className={css.modelName}>{permissionLabel(t, option.value, option.name)}</span>
                   </span>
                   <span className={css.check}>{selected ? <IconCheckOutline16 /> : null}</span>
                 </button>
@@ -500,8 +516,12 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
       {confirmation && (
         <div className={css.riskMask}>
           <div className={css.riskCard} role="alertdialog" aria-modal="true">
-            <div className={css.riskTitle}>{t('composer.permission.confirmTitle')}</div>
-            <div className={css.riskDesc}>{t('composer.permission.confirmDesc')}</div>
+            <div className={css.riskTitle}>{t('composer.access.confirmTitle')}</div>
+            <div className={css.riskDesc}>
+              {/* DSH RiskConfirmation：警示图标 + 正文（14/22 secondary）。 */}
+              <span aria-hidden><IconWarningOutline16 /></span>
+              <span>{t('composer.access.confirmDesc')}</span>
+            </div>
             <label className={css.riskAck}>
               <input
                 type="checkbox"
@@ -509,7 +529,7 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
                 disabled={lockedOrDegraded}
                 onChange={event => { setAcknowledged(event.target.checked) }}
               />
-              <span>{t('composer.permission.acknowledge')}</span>
+              <span>{t('composer.access.acknowledge')}</span>
             </label>
             <div className={css.riskActions}>
               <button
@@ -517,7 +537,7 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
                 className={css.riskCancel}
                 onClick={() => { setConfirmation(false); setAcknowledged(false) }}
               >
-                {t('composer.permission.cancel')}
+                {t('composer.access.cancel')}
               </button>
               <button
                 type="button"
@@ -525,7 +545,7 @@ export function PermissionSelectSandore({ t, value, locked, runCommand, queryVal
                 disabled={!acknowledged || lockedOrDegraded}
                 onClick={confirmFullAccess}
               >
-                {t('composer.permission.enable')}
+                {t('composer.access.confirmEnable')}
               </button>
             </div>
           </div>

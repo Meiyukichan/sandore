@@ -24,7 +24,6 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm';
 import type { Agent, SubagentInterruptAuthority } from '../microflow/subagents';
 import { SandoreError } from './errors.ts';
 import type { WorkflowTaskState } from './schema.ts';
-import type { UserMessageRecord } from './schema.ts';
 import type { StepStatus } from './types.ts';
 
 /** 已执行 Step 的运行时形状（与状态快照 `executedSteps` 元素严格一致）。 */
@@ -64,8 +63,6 @@ export interface LifecycleManagerOptions {
   readonly readState: () => WorkflowTaskState;
   /** 不可变重建 + 持久化当前状态快照。 */
   readonly commitState: (next: WorkflowTaskState) => void;
-  /** 追加一条用户指令消息（写入 `state.userMessages` 并持久化；广播只记一条）。 */
-  readonly appendUserMessage: (record: UserMessageRecord) => void;
   /** 双发 `sandore/step-paused` 事件（含 Step 名称与可选循环迭代路径）。 */
   readonly emitStepPaused: (stepId: string, childId: string, name: string, loopIteration?: number[]) => void;
   /** 双发 `sandore/step-resumed` 事件（含 Step 名称与可选循环迭代路径）。 */
@@ -144,11 +141,15 @@ export class LifecycleManager {
   }
 
   /**
-   * 恢复单个 Step（反查 childId + 移出登记表 + followup + 追加新执行段 + 用户消息）。
+   * 恢复单个 Step（反查 childId + 移出登记表 + followup + 追加新执行段）。
    *
    * 段模型：被暂停段保持 paused 定格快照；恢复时以它为基底创建**新执行段**
    * （新唯一执行 id + attemptIndex+1 + createdAt），followup 唤醒同一子代理续跑。
-   * 恢复消息不写入段（统一存 `userMessages`，避免广播时每段重复同一句话）。
+   *
+   * **不写 `state.userMessages`**（用户要求）：恢复指令是引擎自己造的指令性文本，
+   * 它已经作为一条普通用户消息进了**该 Step 子代理会话**（子代理在讨论页/面板里就是
+   * 那条「step agent 消息」），主代理侧则由主代理自己的会话承载（control 工具调用 +
+   * 用户输入）。再往实例状态记一条只会把它重复搬进 discussion 时间轴。
    */
   async resumeStep(stepId: string, resumePrompt?: string): Promise<void> {
     const step = this.findStep(stepId);
@@ -163,8 +164,8 @@ export class LifecycleManager {
     await this.deps.followup(childId, content, this.deps.signal);
     this.pausedChildIds.delete(childId);
     // 段创建权归执行器（stage-executor resumePendingPaused 基于旧段新建段对象）；
-    // lifecycle 只负责 followup + 登记表 + 用户消息 + 事件。段内不写 resumePrompt。
-    this.deps.appendUserMessage(this.userMessage('resume', this.stepIdOf(step), resumePrompt ?? DEFAULT_RESUME_PROMPT));
+    // lifecycle 只负责 followup + 登记表 + 事件。段内不写 resumePrompt；
+    // 实例状态也不记这条指令（见上方说明）。
     this.commitPausedRegistry();
     this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt, step.name, step.loopIteration);
   }
@@ -183,7 +184,8 @@ export class LifecycleManager {
 
   /**
    * 恢复登记表内全部 Step（逐个 followup + 移表，完成后登记表清空）。
-   * 广播指令是实例级事件：只追加一条 `target:'broadcast'` 用户消息（不得复制进每个 Step）。
+   * 广播指令是实例级动作：**不写 `state.userMessages`**（与 {@link resumeStep} 同因——
+   * 指令已进各 Step 子代理会话，实例状态不再记一份）。
    */
   async resumeAllSteps(resumePrompt?: string): Promise<void> {
     const childIds = [...this.pausedChildIds];
@@ -199,7 +201,6 @@ export class LifecycleManager {
       this.deps.emitStepResumed(this.stepIdOf(step), childId, resumePrompt, step.name, step.loopIteration);
     }
     if (childIds.length > 0) {
-      this.deps.appendUserMessage(this.userMessage('resume', 'broadcast', resumePrompt ?? DEFAULT_RESUME_PROMPT));
       this.commitPausedRegistry();
     }
   }
@@ -279,10 +280,5 @@ export class LifecycleManager {
       updatedAt: now(),
     };
     this.deps.commitState(next);
-  }
-
-  /** 构造一条用户消息记录（统一时间轴）。 */
-  private userMessage(kind: 'input' | 'resume' | 'retry' | 'answer', target: string, content: string): UserMessageRecord {
-    return { id: `usr-${globalThis.crypto.randomUUID()}`, kind, target, content, createdAt: now() };
   }
 }

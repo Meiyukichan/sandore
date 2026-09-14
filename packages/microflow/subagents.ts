@@ -67,6 +67,17 @@ export interface Agent {
    * Phase C secondary gate）用它驱动宿主主代理的子代理跑一轮评估。
    */
   followup(message: { readonly content: ContentBlock[]; readonly source?: MessageSource }): void;
+  /**
+   * 把消息**并入当前 turn 的下一步**并唤醒驱动（对齐 DSH `Agent.steer(message)`，
+   * `core/agent-loop/src/agent.ts:135-137` = `send(message, 'next-step', true)`）。
+   *
+   * 与 {@link followup}（`next-turn`：排在当前 turn **之后**，宿主忙时要等整个 turn 结束）
+   * 相对：agent 正忙时投递通知用 steer 才「并进当前 turn 的下一步」，既不额外开 turn、
+   * 也不与 DSH `SubagentContinuationManager.notifySettlement` 的分流口径分叉
+   * （`continuation.ts:1574-1577` 的「父 agent 空闲 → followup / 正忙 → steer」）。
+   * 引擎的宿主投递（`workflow-engine.ts` `deliverToHost`）消费本方法。
+   */
+  steer(message: { readonly content: ContentBlock[]; readonly source?: MessageSource }): void;
   /** 当前整代理活动达到静止后 resolve。 */
   whenIdle(): Promise<void>;
 }
@@ -116,7 +127,15 @@ export interface AgentSetupContext {
       append(type: string, data: unknown): unknown;
     };
   };
-  readonly tools: { register(tool: unknown): void };
+  readonly tools: {
+    register(tool: unknown): void;
+    /**
+     * 可选：scoped 工具作用域限制（对齐 DSH `ToolRuntime.restrict(filter)`；DSH
+     * child-agent.ts:217 用同一原语施加 `request.toolFilter`）。sandore 的 fork/create
+     * 子代理经它屏蔽 `send_message`（架构决策 5）；未提供（旧版/最小 agentCtx）时跳过。
+     */
+    restrict?(filter: ToolRestriction): unknown;
+  };
   readonly systemPrompt: {
     section(section: PromptSection): void;
     /** 注册有序动态运行时上下文（对齐 DSH `systemPrompt.context`，返回 disposer）。 */
@@ -131,6 +150,16 @@ export interface AgentSetupContext {
    * mock/测试环境的最小 agentCtx 未提供时视为无 preset 部署（上游同样以 `?.` 容忍）。
    */
   get?(name: 'agentPresets'): AgentSetupContext['agentPresets'];
+  /**
+   * 可选：scoped 事件订阅（DSH 真实 agent scope ctx 恒提供 cordis `on`）。
+   *
+   * sandore 用它装 DSH 官方 `installModelSelection`（宿主会话的模型选择装配，见
+   * `workflow/host-agent.ts`）——该原语内部注册 `system-prompt/assemble` 与
+   * `agent/request` 两个 scoped waterfall 监听器并返回 disposer。签名按最小面放宽：
+   * 调用点经 `as unknown as Context` 走真实 cordis 签名，此处只保证 mock/最小 agentCtx
+   * 可实现（其余字段同款「结构兼容」哲学）。
+   */
+  on?(name: string, handler: (...args: never[]) => unknown): () => void;
   /** agentPresets 服务最小面：挂载 preset 组合（§3.0 宿主主代理 = 纯 DSH 默认 preset）。 */
   readonly agentPresets?: {
     mount(agentCtx: AgentSetupContext, id?: string): Promise<unknown>;
@@ -171,6 +200,17 @@ export interface CreateAgentOptions {
   readonly agentOptions?: AgentOptions;
   readonly signal?: AbortSignal;
   readonly setup?: AgentSetup;
+  /**
+   * 子代理列表里显示的**创建标签**（引擎消费，不进 DSH `agents.create`）。
+   *
+   * 为什么需要：`agents.create` 建的会话必须带 DSH 的会话身份事件
+   * （`subagent/descriptor`，正常由 subagent provider 在创建期随 seed 写入），否则子代理
+   * 列表会把它显示成「会话记录损坏」（DSH `list-children.ts` 的 `corrupt` 判定 = 有
+   * `origin:'subagent'` 头但缺 subagent 身份投影）。sandore 的评估/重试 fork 走裸
+   * `agents.create`（需要 seed），拿不到 provider 的身份事件，故由引擎在创建后补写这条
+   * 身份事件，标签取自本字段（缺省回退会话 id）。
+   */
+  readonly descriptorLabel?: string;
 }
 
 /** `ctx.agents.resume` 的选项（resumeSessionId + 可选配置/取消/setup）。 */
@@ -207,7 +247,19 @@ export interface ContinuableStartRequest {
 /** `startContinuable` 的入参。 */
 export interface ContinuableStartSpec {
   readonly provider: string;
+  /**
+   * 首轮委派的短 `description`，作为 child 的创建 label 持久化。
+   *
+   * 子代理列表渲染 label 优先于 childId（DSH `SubagentHeaderLineage` 取
+   * `entry.label ?? entry.id`），因此引擎按 `<可读名> · <childId>` 组合本字段，
+   * 让列表里既读到人可读的 Step 名，也一眼看到纯 UUID 的 childId。
+   */
   readonly label: string;
+  /**
+   * 调用方预定的 child 身份。省略则保留 DSH 的 UUID 分配；显式传入让引擎在
+   * child 落地前就能把 label 与 childId 绑定（无需第二次身份握手）。
+   */
+  readonly childId?: SessionId;
   readonly request: ContinuableStartRequest;
   readonly signal: AbortSignal;
 }
@@ -322,6 +374,72 @@ export interface SubagentRuntime {
   interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;
   listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;
   start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;
+  /**
+   * 可选：按注册名取 subagent provider（DSH `SubagentRuntime.getProvider`，见
+   * `packages/subagent/subagent/src/index.ts:528`）。用于
+   * {@link assertFreshSubagentProvider} 的语义守卫；mock/最小运行时可不提供。
+   */
+  getProvider?(name: string): SubagentProviderInfo | undefined;
+}
+
+/** provider 的会话继承契约最小面（DSH `SubagentProvider` 子集）。 */
+export interface SubagentProviderInfo {
+  readonly name: string;
+  /**
+   * 该 provider 建子代理时是否**继承父会话上下文**（DSH
+   * `SubagentProvider.inheritsParentContext`，`packages/subagent/subagent/src/types.ts:310`）。
+   */
+  readonly inheritsParentContext?: boolean;
+}
+
+/**
+ * **step 执行子代理必须使用的 provider 名**（DSH base bundle 注册的 `spawn`）。
+ *
+ * ## 为什么必须是 `spawn` 而不是 `fork`（2026-09 真机缺陷，证据）
+ * DSH 的 `fork` provider 会用**父代理会话的闭合 turn 前缀**给子代理做 seed
+ * （`packages/subagent/subagent-fork-in-process/src/index.ts:48-54` 的
+ * `completedTurnPrefix(parent)`；`:76-81` `start` 与 `:84-90` `prepareContinuable` 把它
+ * 作为 `{seed}` 传给驱动），并显式声明 `inheritsParentContext = true`（`:71`）。
+ * 我们的 step 子代理 parent 是**宿主主代理**，于是每个 step 会话都被灌进主代理的历史
+ * （真机现场：step 面板里先出现主代理的「工作流已启动」「进展更新」，之后才是该 step
+ * 自己的提示词）。
+ *
+ * `spawn` provider 语义相反：`inheritsParentContext = false`
+ * （`subagent-spawn-in-process/src/index.ts:49-50`），`start` 传 `{}`（`:54-59`「Fresh
+ * child: no seed」），`prepareContinuable` 返回 `{}`（`:61-65`）。两者 capabilities 完全
+ * 相同（fork `:63-69` / spawn `:42-48`，五项全 true），故换用不丢任何能力
+ * （agentOptions / outputSchema / depthLimit / toolFilter / persona 全支持）。
+ *
+ * **不变量**：step（以及 fillParams / secondary 门禁这类引擎自建辅助）子代理的上下文
+ * **只能**来自它自己的 system prompt + 本次 Step 的 `UserInstruction` + `ReferenceInfo`；
+ * 绝不携带宿主主代理/父会话的历史。此前的「干净」只是**偶然**（宿主主代理被冻结 →
+ * 会话没有闭合 turn → seed 自然为空），冻结机制删除后立刻回归——所以必须显式保证。
+ */
+export const FRESH_SUBAGENT_PROVIDER = 'spawn';
+
+/**
+ * 守卫：断言某 provider **不继承父会话上下文**（禁 seed 宿主历史的显式化）。
+ *
+ * 运行时能力：DSH `ctx.subagents.getProvider(name)` 返回 provider 描述；若它声明
+ * `inheritsParentContext === true`（如 `fork`），说明用它建出来的 step 子代理一定会带上
+ * 父会话历史 —— 这是被明令禁止的，故**响亮抛错**，让配置错误在启动/首次执行时暴露，
+ * 而不是悄悄污染子代理上下文（用户明确要求：不能靠人记得）。
+ *
+ * provider 表不可查询（mock/最小运行时无 `getProvider`）时跳过——此时由
+ * {@link FRESH_SUBAGENT_PROVIDER} 的名字与单测锁定语义。
+ * @param runtime - `ctx.subagents` 运行时。
+ * @param providerName - 即将用于建子代理的 provider 注册名。
+ * @throws 当该 provider 声明继承父会话上下文时。
+ */
+export function assertFreshSubagentProvider(runtime: SubagentRuntime, providerName: string): void {
+  const provider = runtime.getProvider?.(providerName);
+  if (provider?.inheritsParentContext === true) {
+    throw new Error(
+      `sandore: subagent provider '${providerName}' inherits the parent session context `
+      + `(inheritsParentContext = true); step subagents must be FRESH — use '${FRESH_SUBAGENT_PROVIDER}'. `
+      + 'Seed 宿主主代理历史会污染 step 子代理上下文（见 microflow/subagents.ts 的 FRESH_SUBAGENT_PROVIDER 注释）。',
+    );
+  }
 }
 
 /** `assistant/message` 事件载荷。 */

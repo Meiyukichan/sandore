@@ -1,0 +1,347 @@
+/**
+ * composer-bar.module.css（B4b step-view 版）：ComposerBar 的简化输入框视觉。
+ * 抄自 DSH 0.1.2-rc.1 ui-conversation skeleton/InputBar.module.css（只读参考
+ * deepseek-harness；不 import），逐值对齐：
+ * - .card：22px 圆角胶囊、0.5px elevation 发丝描边重绑 l2（--dsw-elevation-
+ *   stroke-color，ui-theme 把描边画在 box-shadow 里不占布局）、--dsw-elevation-
+ *   soft 软阴影、--dsw-specific-input-major 输入面底、padding-top 10px + 纵向
+ *   gap 12px（文字区 → 工具行）、字号/行高随 --dsh-content-font-size/-delta；
+ * - .primary（发送钮）：34px 圆形、--dsw-alias-button-info-fill 蓝底白箭头
+ *   （深色主题 400/浅色 500 自动随令牌）、hover info-hover、空草稿 disabled
+ *   opacity .4、translateY(-2px) 抵消 .row 的 2px 下沉；
+ * - .notice 状态条（错误/发送中共用一族：胶囊底 + 12/18 次级字号）。
+ *
+ * 与 rc.1 的差异（B4b 显式折衷，逐条注释）：
+ * 1. 文本面用 native textarea 自动增高替代 rc.1 的 Lexical contenteditable +
+ *    镜像/装饰层（@chip、斜杠菜单等装饰全部裁剪，无镜像需求）；占位/光标色/
+ *    word-break/内滚上限（14 行 = --dsh-composer-text-max-height 336px）等价；
+ *    右下 padding 取 12px（= rc.1 .input 右 8 + .scroll 右 inset 4 之和），
+ *    底部补 0 与 rc.1 一致（行高盒已含下行空间）。
+ *    批 B1 追加：内核可用时改用 .editor（同一几何的 contenteditable，承载 DSH
+ *    Lexical 编辑器与 @step chip；占位走 :empty::before）——两条文本面的几何逐值
+ *    对齐，故视觉不随路径切换而变。
+ * 2. 无左右留白容器：rc.1 的页面级 clearance 由会话页承担，面板内消息列即从
+ *    滚动容器 16px padding 起（.stepChatScroll），本条横贯面板宽度时消息列
+ *    外侧多出 16px 即是 rc.1「输入卡比正文列每侧宽 clearance」的比例关系；
+ *    行内提示左缘补 8px 使文案与 textarea 文本左缘对齐（16px）。
+ * 3. 状态行（错误 alert / 发送中 status）替代 rc.1 的 Toast 浮层与机器 notice
+ *    pill：同为 8px 半径胶囊，错误态用 --dsw-alias-state-error-primary 文本 +
+ *    interactive-bg-hover-danger 底（rc.1 turn-error 的同族取色）。
+ *    批 B2 追加：重试行（输入卡上方，.retryBlock 一族）与重试错误行共用同一族
+ *    胶囊/描边取色，只读提示行亦复用 .statusInfo（见文件尾 B2 段）。
+ * 4. 卡片滚动条令牌（--dsh-scrollbar-*）与 rc.1 同法声明在 .card 上，随继承
+ *    进 textarea 的滚动区域（深色主题 thumb 取 l2 对）。
+ * 5. 无 hover/active 之外的附加装饰；按钮保留浏览器原生 focus 可见环
+ *    （rc.1 .primary 同样未移除 outline）。
+ * 深浅色/字号跟随机制见 step-chat-panel.module.css 文件头注释（--dsw-* 令牌 +
+ * --dsh-content-font-size*）；令牌全部宿主 ui-theme 提供，开发态缺省值仅在
+ * 布局类变量给（--dsh-composer-text-max-height）。
+ */
+
+/* 输入条根：面板底部（滚动容器外；step 卡结构 B4a 已确认零冲突）。 */
+.root {
+  margin-top: 6px;
+  padding-bottom: 8px;
+}
+
+/* 状态行（发送中 status / 错误 alert 共用的胶囊底；错误配色单独覆写）。 */
+.statusInfo,
+.statusError {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.statusError {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* 批 B3：候选浮层的定位锚（.= 输入卡宽度；浮层是 absolute，故本容器高度恒等于卡高）。
+   `.menu` 的 `bottom: calc(100% + 4px)` 因此落在**卡上缘 4px 之上**，与 DSH 会话页
+   composer 菜单的几何一致。 */
+.menuAnchor {
+  position: relative;
+  width: 100%;
+}
+
+/* 输入壳（rc.1 .card：圆角/描边/投影/字号行高全部逐字）。 */
+.card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding-top: 10px;
+  /* Input stroke: the light neutral (l2)，画成 elevation 发丝，不占布局。 */
+  border: 0;
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+  border-radius: 22px;
+  background: var(--dsw-specific-input-major);
+  box-shadow: var(--dsw-elevation-soft);
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  /* 深色主题输入面与菜单同族：卡内滚动区（textarea 达到上限后）的 thumb 取
+     l2 对（rc.1 同法：声明在面所属元素上，自定义属性随继承进入滚动盒）。 */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* 文本域（rc.1 .input：16px 左/12px 右、无描边无 outline、光标业务蓝、
+   自动增高上限内滚；native textarea 的 ::placeholder 等价 rc.1 占位层）。 */
+.area {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: calc(24px + var(--dsh-content-font-delta, 0px) + 4px);
+  max-height: var(--dsh-composer-text-max-height, 336px);
+  padding: 4px 12px 0 16px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  caret-color: var(--dsw-alias-state-business-primary);
+  font-family: var(--dsw-font-family);
+  font-size: inherit;
+  line-height: inherit;
+  overflow-y: auto;
+  resize: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.area::placeholder {
+  color: var(--dsw-alias-label-caption);
+  opacity: 1;
+}
+
+/* 文本面（内核路径，批 B1）：DSH 输入内核的 Lexical contenteditable 宿主。
+   与 .area 同几何（rc.1 .input 的 16px 左/12px 右、无描边无 outline、光标业务蓝、
+   word-break/内滚上限一致），差别仅在「元素是 div 而不是 textarea」——排版、换行、
+   光标几何与滚动全部交给浏览器（chip 是同一行内的 inline decorator，见
+   ReferenceChipNode.createDOM 的 contenteditable=false span）。
+   占位：无镜像层，用 `:empty::before` 复刻 rc.1 的 .placeholder 层（只在文档真正为空
+   时出现——内容里只有 decorator portal 的 chip 时不算空，符合预期）。 */
+.editor {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: calc(24px + var(--dsh-content-font-delta, 0px) + 4px);
+  max-height: var(--dsh-composer-text-max-height, 336px);
+  padding: 4px 12px 0 16px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  caret-color: var(--dsw-alias-state-business-primary);
+  font-family: var(--dsw-font-family);
+  font-size: inherit;
+  line-height: inherit;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--dsw-alias-label-caption);
+  pointer-events: none;
+}
+
+/* 只读（根被宿主原生会话页占用，或提交中）：文案降为 caption 色提示不可编辑。 */
+.editor[data-composer-readonly] {
+  color: var(--dsw-alias-label-caption);
+  cursor: default;
+}
+
+/* 工具行（rc.1 .row：左右分布；左侧仅排队提示、右侧仅发送钮——裁剪后无
+   附件/指令/模型/停止席位）。 */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 2px 8px 6px;
+}
+
+/* 排队提示（运行中注入的排队语义说明；rc.1 队列文案族：排队发送）。 */
+.queueHint {
+  min-width: 0;
+  padding-left: 8px; /* 与 textarea 文本左缘（16px）对齐 */
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 发送钮（rc.1 .primary 逐字：34px 圆、info-fill、白箭头、hover/disabled）。 */
+.send {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-info-fill);
+  /* Static white（设计两主题箭头恒白，不走前景令牌）。 */
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+  /* 抵消 .row 顶部 2px 下沉（rc.1 同：transform 而非 margin）。 */
+  transform: translateY(-2px);
+}
+
+.send:hover:not(:disabled) {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── 批 B2：重试行（failed 的真实子代理 step；输入卡**上方**） ───────────────
+   与 DiscussionInput 的重试行同族（input.module.css 的 .retryRow/.retryBtn/
+   .boundaryPicker/.boundarySelect 逐值对齐：26px 高、999px 胶囊、8px 圆角下拉），
+   取色改走面板同族的 --dsw-* 令牌（本面板在 step 卡里，--sd-* 只在沙盒页定义）：
+   未选中 = 透明底 + l2 发丝描边 + 次级字色；选中 = info-fill 底 + 静态白字（与
+   .send 同）；重试主按钮 = info-fill 胶囊并靠行尾对齐输入卡右缘。 */
+.retryBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding-left: 8px; /* 与 .queueHint 同：文案左缘对齐输入文本（16px） */
+}
+
+.retryRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.retryLabel {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.retryBtn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+.retryBtn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.retryBtnActive {
+  border-color: transparent;
+  background: var(--dsw-alias-button-info-fill);
+  /* Static white（与 .send 同：设计两主题恒白）。 */
+  color: #fff;
+}
+
+.retryBtnActive:hover:not(:disabled) {
+  background: var(--dsw-alias-button-info-hover);
+  color: #fff;
+}
+
+.retrySubmit {
+  height: 26px;
+  margin-left: auto; /* 靠行尾：与输入卡右缘同列 */
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-info-fill);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+.retrySubmit:hover:not(:disabled) {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.retryBtn:disabled,
+.retrySubmit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 提示行（回退点空/失败、F1 引导）：次级字色的单行说明，长文案可换行。 */
+.retryHint {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+/* revert 回退点下拉（仅 revert 模式显示；与 DiscussionInput 的 .boundaryPicker 同族）。 */
+.boundaryPicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.boundaryHint {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.boundarySelect {
+  height: 26px;
+  max-width: 220px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-specific-input-major);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.boundarySelect:hover:not(:disabled) {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.boundarySelect:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.boundarySelect:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

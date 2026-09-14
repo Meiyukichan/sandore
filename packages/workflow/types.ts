@@ -135,7 +135,16 @@ export interface StartModelSelection {
   reasoningEffort?: string
 }
 
-/** 启动一个工作流实例的请求（去 job 概念：直接绑定工作流定义）。 */
+/**
+ * 启动一个工作流实例的请求（去 job 概念：直接绑定工作流定义）。
+ *
+ * **入口归一（架构决策 1）**：本请求**不再携带宿主会话 id**。恒等式在引擎内部
+ * 恒成立——`hostAgent.id ≡ 宿主会话 id ≡ 实例 id（taskId）≡ 调用会话`：
+ * - overlay 新建（`startInstance`）：引擎新建真实顶层会话，实例 id 即该会话 id；
+ * - 已知会话拉起（`sandore_workflow_run`）：实例 id 即调用方会话 id。
+ * 因此任何需要「宿主会话 id」的位置都直接读**显式字段**
+ * `WorkflowTaskState.hostSessionId`（旧快照回退 `?? taskId`），不再有「复用 / 新建」两种模式。
+ */
 export interface DagStartRequest {
   /** 工作流定义 ID。 */
   workflowId: string
@@ -150,28 +159,27 @@ export interface DagStartRequest {
   model?: StartModelSelection
   /** 创建实例时选择的权限预设（read-only / workspace-write / danger-full-access）。 */
   permission?: string
-  /**
-   * 可选：调用方（UI/上层）传入的**已存在宿主主代理会话** id——复用该会话作为
-   * 本实例的 hostAgent（不新建）。省略时引擎以 `SessionId(instanceId)` 新建
-   * hostAgent（保持历史行为）。复用场景 hostAgent.id = hostSessionId ≠ instanceId，
-   * 冻结/解冻按 hostAgent.id 生效。注意：同一 hostSessionId 复用于多个并发实例时，
-   * 任一实例 completed 即解冻该 hostAgent（冻结状态按 hostAgent 主体登记）。
-   */
-  hostSessionId?: string
-}
-
-/** 工作流实例的运行句柄。 */
-export interface DagRun {
-  instanceId: string
-  status: DagRunStatus
 }
 
 /** 工作流实例的生命周期状态。 */
 export type DagRunStatus = 'pending' | 'running' | 'interacting' | 'completed' | 'failed' | 'aborted' | 'paused'
 
+/** 工作流实例的运行句柄（`hostAgent.id ≡ 宿主会话 id ≡ instanceId`，见 {@link DagStartRequest}）。 */
+export interface DagRun {
+  instanceId: string
+  status: DagRunStatus
+}
+
 /** 工作流实例的持久化状态快照。 */
 export interface DagInstanceState {
   taskId: string
+  /**
+   * 宿主主代理会话 id（该实例的宿主会话；恒等于 `taskId`）。
+   *
+   * 显式字段（2026-09 起）：消费面不必再依赖"taskId 即宿主会话"的约定。旧快照
+   * 没有该字段时读取回退 `taskId`（`hostSessionId ?? taskId`）。
+   */
+  hostSessionId: string
   workflowId: string
   status: DagRunStatus
   originalInput: string
@@ -208,6 +216,10 @@ export interface ExecutedStepDefault {
   branchMeta?: BranchMeta
   error?: string
   pausedAt?: string
+  // 注意：**没有 `sessionMessages`**——该字段曾是 state 最大冗余（占 41%–54%），
+  // 现改为 `getInstanceState` RPC 读取时从 step 子代理会话按需回填
+  // （`SandoreEngine.hydrateStateMessages`）。这里保留声明仅为类型面兼容历史调用方。
+  /** **仅内存/读取期**：由 `hydrateStateMessages` 从子代理会话现算，不持久化。 */
   sessionMessages?: SessionMessage[]
   pauseEntryId?: string
   loopIteration?: number[]

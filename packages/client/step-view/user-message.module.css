@@ -1,0 +1,32 @@
+/* user-message.module.css（B2a / 需求 2 step-view 版）：user/steering 行的**展开体**
+   样式（折叠行本体与思考行共用 reasoning-row.module.css，见
+   DisclosureSummaryRow.tsx 头注释）。
+
+   需求 2 的硬要求：用户消息行与「思考」行渲染一模一样、**都在左侧**。故本文件
+   **不含任何右对齐写法**（历史气泡形态的 `.userRow`/`.userStack` 的列右对齐与
+   82% 宽度上限、`.bubble` 的 `--dsw-specific-bubble` 圆角底一并删除）；也不允许
+   出现 flex-end 系对齐、自动左边距、右推 padding 之类把内容推向右侧的规则——两条行
+   的左边界由列内容盒左缘决定，逐像素齐平（jsdom 有源码级守卫，见
+   user-message-row.spec.ts 的「无右对齐残留」组）。
+
+   颜色/字号全部令牌化（--dsw-alias-*、--dsh-content-font-size*），深浅色与全局
+   字号设置自动跟随（与 reasoning-row.module.css 同一套令牌阶梯）。 */
+
+/* 展开体里的完整消息文本：思考行展开体（.thinkBody）同为灰字缩进块，这里只是把
+   正文层级放回主文本色（用户消息是内容而非推理过程）。 */
+.text {
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: calc(22px + var(--dsh-content-font-delta, 0px));
+  /* 用户排版的换行/缩进属于内容（与旧气泡的 pre-wrap 一致）。 */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 「引用会话 · …」摘要行（紧随召回上下文贴的标签；旧气泡版本同款规则，位置改到
+   展开体内）。 */
+.referenceSummary {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
+}

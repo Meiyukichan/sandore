@@ -42,8 +42,26 @@ export interface TreeNavProps {
   activePreviewId: string | null
   /** 点击叶子 → 打开右栏预览。 */
   onSelectLeaf(selection: TreeLeafSelection): void
-  /** 跳子代理会话（Step 行）。 */
-  onOpenChild(childId: string): void
+  /**
+   * 跳子代理会话（Step 行）。
+   * 缺省（`undefined`）= 本处没有跳转去处（例如工具行内嵌的只读树）→ **不显示**跳转按钮，
+   * 不产出点了没反应的死按钮。
+   */
+  onOpenChild?: ((childId: string) => void) | undefined
+  /**
+   * 紧凑态（默认 false）：省掉自身标题栏与外围留白，供嵌进卡片（工具行导航 UI）使用；
+   * 树身行高/缩进/令牌全部不变（同一套视觉）。
+   */
+  compact?: boolean | undefined
+  /**
+   * 隐藏**根 workflow 行**（默认 false；只对工具行内嵌卡片使用）。
+   *
+   * 为什么需要：工具行卡片的读头已经写了工作流名（`data-orchestration-title`）+ 状态 +
+   * 进度读数，树里再渲染一个同名根行就是**重复**（用户真机：展开后第一个根节点又叫
+   * `test-workflow`）。只去掉根行本身，**保留它给 Stage 行提供的容器与 16px 缩进**
+   * （`css.stageList`），所以树身视觉与运行页一致。
+   */
+  hideWorkflowRoot?: boolean | undefined
 }
 
 /** 状态 → StateDotState（DagRun/Step 7+7 态统一折入四态；缺省折入 warning）。 */
@@ -158,11 +176,12 @@ function StageRow({ node, children }: {
 /** Step 行：24px、chevron + 状态点 + 名称 +（running 跳子会话按钮），叶子随展开。 */
 function StepRow({ node, onOpenChild, t, children }: {
   readonly node: RunTreeNode
-  readonly onOpenChild: (childId: string) => void
+  /** 缺省 = 无跳转去处（不显示跳转按钮）。 */
+  readonly onOpenChild?: ((childId: string) => void) | undefined
   readonly t: TranslateNS<'sandore'>
   readonly children?: React.ReactNode
 }) {
-  const navigable = node.status === 'running' && node.childId !== undefined
+  const navigable = node.status === 'running' && node.childId !== undefined && onOpenChild !== undefined
   return (
     <DisclosureRow
       node={node}
@@ -232,7 +251,7 @@ function RenderNode({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t
   readonly depth: number
   readonly activePreviewId: string | null
   readonly onSelectLeaf: (selection: TreeLeafSelection) => void
-  readonly onOpenChild: (childId: string) => void
+  readonly onOpenChild?: ((childId: string) => void) | undefined
   readonly t: TranslateNS<'sandore'>
 }) {
   const children = node.children ?? []
@@ -276,18 +295,46 @@ function RenderNode({ node, depth, activePreviewId, onSelectLeaf, onOpenChild, t
 }
 
 /** 渲染树形导航（照 DSH WorkflowRunPanel；左上角标题 + 树身顶部留白）。 */
-export function TreeNav({ t, tree, activePreviewId, onSelectLeaf, onOpenChild }: TreeNavProps) {
+export function TreeNav({
+  t, tree, activePreviewId, onSelectLeaf, onOpenChild, compact = false, hideWorkflowRoot = false,
+}: TreeNavProps) {
+  const renderNode = (node: RunTreeNode, depth: number): React.ReactNode => (
+    <RenderNode
+      key={node.id}
+      node={node}
+      depth={depth}
+      activePreviewId={activePreviewId}
+      onSelectLeaf={onSelectLeaf}
+      {...(onOpenChild === undefined ? {} : { onOpenChild })}
+      t={t}
+    />
+  )
+  // hideWorkflowRoot：把 workflow 根行**换成它原本给 Stage 行用的容器**（`css.stageList`，
+  // 含 16px 缩进与顶部留白）——只去掉重复的同名根行，树身视觉不变。
+  const nodes = tree.map(node => (hideWorkflowRoot && node.type === 'workflow'
+    ? (
+      <div className={css.stageList} key={node.id} data-tree-workflow-children>
+        {(node.children ?? []).map(child => renderNode(child, 1))}
+      </div>
+    )
+    : renderNode(node, 0)))
+  // 紧凑态（工具行内嵌）：省掉自身标题栏与外围留白，树身与行高完全不变。
+  if (compact) {
+    return (
+      <nav className={`${css.root} ${css.rootCompact}`} aria-label={t('run.nav')} data-sandore-tree-nav data-tree-nav-compact>
+        <div className={css.scroll}>
+          <div className={`${css.body} ${css.bodyCompact}`}>{nodes}</div>
+        </div>
+      </nav>
+    )
+  }
   return (
     <nav className={css.root} aria-label={t('run.nav')} data-sandore-tree-nav>
       <div className={css.titleBar}>
         <span className={css.title}>{t('run.nav')}</span>
       </div>
       <div className={css.scroll}>
-        <div className={css.body}>
-          {tree.map(node => (
-            <RenderNode key={node.id} node={node} depth={0} activePreviewId={activePreviewId} onSelectLeaf={onSelectLeaf} onOpenChild={onOpenChild} t={t} />
-          ))}
-        </div>
+        <div className={css.body}>{nodes}</div>
       </div>
     </nav>
   )

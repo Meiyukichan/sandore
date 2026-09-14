@@ -45,13 +45,37 @@ const SELF_REFERENCE_ALIASES = [
   { find: /^@meiyukichan\/dsh-sandore\/typert$/, replacement: resolve('packages/workflow/typert/typert.host.js') },
 ]
 
+/**
+ * 外部依赖包里的 CSS module 桩：宿主 UI 包（`@deepseek-ai/dsh-client-ui-primitives` 等）
+ * 以 **built lib** 被消费，其 `lib/index.js` 里带裸 `.module.css` import，vitest 的
+ * node 外部化加载器会以 `Unknown file extension ".css"` 直接失败（本仓源码侧的 .module.css
+ * 由 vite 正常处理，不受影响）。这些样式对被测的**行为契约**无意义（类名只影响观感），
+ * 故统一映射到一个空代理对象：`css.anyClass` 返回类名字符串，取值不抛、渲染不炸。
+ *
+ * 为什么不逐个 `vi.mock` 宿主包：mock 需要把包的每个命名导出都手写一遍，加一个图标
+ * 就漏一个；按扩展名统一桩掉更稳，也不影响任何被测逻辑。
+ */
+const EXTERNAL_CSS_STUB = resolve('packages/tests/css-module-stub.ts')
+
 export default defineConfig({
   plugins: [standardDecoratorPlugin()],
   resolve: {
-    alias: SELF_REFERENCE_ALIASES,
+    alias: [
+      ...SELF_REFERENCE_ALIASES,
+      { find: /^@deepseek-ai\/.*\.css$/, replacement: EXTERNAL_CSS_STUB },
+    ],
   },
   test: {
     include: ['packages/**/*.spec.ts'],
     environment: 'node',
+    server: {
+      deps: {
+        // 宿主 UI 包（`@deepseek-ai/dsh-client-ui-primitives` 等）的 built lib 里带裸
+        // `.module.css` import：外部化加载（Node ESM require .css）会直接报
+        // `Unknown file extension ".css"`。inline 进 vite 管线后由 vite 自己解析
+        // CSS module（与本仓源码侧的 .module.css 同一条路径），无需逐包手写桩。
+        inline: [/@deepseek-ai\/dsh-client-ui-.*/],
+      },
+    },
   },
 })

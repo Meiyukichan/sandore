@@ -6,8 +6,7 @@
   },
   "include": [
     "packages/microflow",
-    "packages/workflow",
-    "packages/tool"
+    "packages/workflow"
   ],
   "exclude": [
     "packages/**/*.spec.ts",

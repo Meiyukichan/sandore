@@ -37,6 +37,27 @@
   box-sizing: border-box;
 }
 
+/* 紧凑态（工具行内嵌的只读树）：省掉自身标题栏与外围留白，行高/缩进/令牌完全不变
+   （外层卡片自己给边框与滚动）。
+   真机反馈（用户）：「树的第一行离上面的读头/卡片体太远」——顶部那几层留白（卡片
+   `.body` padding + `.navSlot` padding + 本行 `.bodyCompact` padding + `.stageList`
+   padding-top）叠起来过大，故**只收紧紧凑态路径的顶部留白**：`.bodyCompact` 顶部
+   0、`.stageList` 在紧凑态顶部 0（见下）；行高 32/24px、`padding-left: 16px` 缩进、
+   状态点/chevron 对齐、叶子行样式一律不动。运行页（非 compact）的左栏树**不跟着变**。 */
+.rootCompact {
+  min-height: 0;
+}
+
+.bodyCompact {
+  min-height: 0;
+  padding: 0 6px 8px;
+}
+
+/* 紧凑态下的 stage 列表：去掉顶部 4px（只此一处，非紧凑路径不受影响）。 */
+.bodyCompact .stageList {
+  padding-top: 0;
+}
+
 /* ── Workflow 根行（照 .runHeader） ──────────────────────────────────────── */
 
 .workflow {

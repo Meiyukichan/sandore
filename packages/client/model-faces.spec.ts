@@ -68,7 +68,7 @@ describe('bridgeModelDirectory', () => {
     expect(face.store.getSnapshot()).toMatchObject({ routable: false });
   });
 
-  it('self-heals when a resolver function starts unavailable and the service/session appears later (client B)', () => {
+  it('self-heals when a resolver function starts unavailable and the service/session appears later (client B)', async () => {
     const hostDirectory = makeHostDirectory();
     let service: unknown;
     const face = bridgeModelDirectory(
@@ -83,8 +83,8 @@ describe('bridgeModelDirectory', () => {
     service = { directoryFor: () => hostDirectory };
     const after = face.store.getSnapshot();
     expect(after).toMatchObject({ routable: true });
-    // 后续操作转发到 host。
-    void expect(face.load()).resolves.toBeUndefined();
+    // 后续操作转发到 host（必须 await：悬空断言在 vitest 下一主版本会直接失败）。
+    await expect(face.load()).resolves.toBeUndefined();
   });
 });
 

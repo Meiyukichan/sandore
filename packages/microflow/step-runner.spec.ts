@@ -412,15 +412,15 @@ describe('StepRunner prompt', () => {
     expect(result.sessionMeta).toEqual({ childId: 'child-1', synthetic: false, command: 'prompt' });
   });
 
-  it('keeps only the latest 10 session message lines in sessionMessages (截断持久化体积)', async () => {
+  it('不再采集 sessionMessages（state 冗余移除；改由 RPC 读取期从会话现算）', async () => {
     const { agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
       defaultModel: 'm',
     });
     const child = new FakeAgent('child-1');
-    // 15 条 assistant/message 事件 → 15 条消息行；采集后应只保留最新 10 条
-    // （StepChatPanel 实时订阅不读 sessionMessages，合成会话兜底也只展示最近 N 条）。
+    // 15 条 assistant/message 事件：过去会采集并被 `slice(-10)` 截断写进
+    // `executed.sessionMessages`（实测占 state 的 41%–54%）。现在执行结果**不带**该字段。
     for (let index = 0; index < 15; index += 1) {
       child.session.append(assistantMessageEvent([{ type: 'text', text: `msg-${index}` }], index));
     }
@@ -428,11 +428,12 @@ describe('StepRunner prompt', () => {
 
     const result = await runner.run(request(promptStep()));
 
-    expect(result.sessionMessages).toHaveLength(10);
-    expect(result.sessionMessages?.map(message => message.text)).toEqual([
-      'msg-5', 'msg-6', 'msg-7', 'msg-8', 'msg-9',
-      'msg-10', 'msg-11', 'msg-12', 'msg-13', 'msg-14',
-    ]);
+    // 结果面只有 output + sessionMeta；展示所需的会话消息行由
+    // `SandoreEngine.hydrateStateMessages` 在 getInstanceState RPC 读取时从
+    // `sessionMeta.childId` 指向的会话现算（每段尾部 10 条）。
+    expect(result).not.toHaveProperty('sessionMessages');
+    expect(result.sessionMeta?.childId).toBe('child-1');
+    expect(Object.keys(result).sort()).toEqual(['output', 'sessionMeta']);
   });
 
   it('throws STEP_EXECUTION when the subagent settle errors (model failure → failed)', async () => {
@@ -463,9 +464,9 @@ describe('StepRunner prompt', () => {
 
     await runner.run(request(promptStep({ providerId: 'a', modelId: 'a-model' })));
 
-    // provider 参数是 DSH subagent provider 注册名（缺省 'fork'），与模型路由解耦；
-    // 模型 provider 经 agentOptions 承载。
-    expect(subagents.continuableStarts[0]?.provider).toBe('fork');
+    // provider 参数是 DSH subagent provider 注册名（缺省 `spawn` = **全新子代理**，
+    // 不继承父会话上下文），与模型路由解耦；模型 provider 经 agentOptions 承载。
+    expect(subagents.continuableStarts[0]?.provider).toBe('spawn');
     expect(subagents.continuableStarts[0]?.request.agentOptions?.provider).toBe('a');
     expect(subagents.continuableStarts[0]?.request.agentOptions?.model).toBe('a-model');
   });
@@ -482,7 +483,7 @@ describe('StepRunner prompt', () => {
 
     await runner.run(request(promptStep()));
 
-    expect(subagents.continuableStarts[0]?.provider).toBe('fork');
+    expect(subagents.continuableStarts[0]?.provider).toBe('spawn');
     expect(subagents.continuableStarts[0]?.request.agentOptions?.provider).toBe('b');
     expect(subagents.continuableStarts[0]?.request.agentOptions?.model).toBe('b-model');
   });
@@ -500,9 +501,9 @@ describe('StepRunner prompt', () => {
     await runner.run(request(promptStep({ providerId: 'p', modelId: 'm' })));
 
     // 回归防护：startContinuable 的 provider 参数必须是 DSH subagent provider 注册名
-    // （缺省 'fork'），绝不能是模型 provider id（'p'）——否则真实 DSH 运行时报
+    // （缺省 `spawn` = 全新子代理），绝不能是模型 provider id（'p'）——否则真实 DSH 运行时报
     // `no subagent provider registered for "p"`。模型路由只经 agentOptions 承载。
-    expect(subagents.continuableStarts[0]?.provider).toBe('fork');
+    expect(subagents.continuableStarts[0]?.provider).toBe('spawn');
     expect(subagents.continuableStarts[0]?.request.agentOptions?.provider).toBe('p');
     expect(subagents.continuableStarts[0]?.request.agentOptions?.model).toBe('m');
   });
@@ -732,7 +733,10 @@ describe('StepRunner 双通道 ask 重构（4.4：[[SANDORE_ASK]] 机制已删�
     // 上游适配（registerContinuableSetup 已删）：child-scope 遮蔽机制不复存在，改
     // request.toolFilter deny DSH 全局版 ask_user_question，提问走全局注册的
     // sandore_ask_user_question（execute 期 gate 仅放行 sandore 子代理）。
-    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
+    // 架构决策 5：同时 deny `send_message`——DSH 只在子代理 scope 能解析出标准
+    // send_message 时才注入「完成后向 parent 汇报」的指引（continuation.ts:495-500），
+    // deny 后工具与指引一起消失，Step 产出由引擎 settle 通道收集。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question', 'send_message'] });
   });
 
   it('applies the deny-toolFilter/no-guidance behavior to agent subagents as well (shared runSubagent path)', async () => {
@@ -747,10 +751,13 @@ describe('StepRunner 双通道 ask 重构（4.4：[[SANDORE_ASK]] 机制已删�
 
     await runner.run(request(agentStep({ providerId: 'p', modelId: 'm' })));
 
-    // runSubagent 为 prompt/agent/skill/mcp 四路共用：agent 路同样 deny 全局版提问工具。
-    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question'] });
+    // runSubagent 为 prompt/agent/skill/mcp 四路共用：agent 路同样 deny 全局版提问工具
+    // + deny send_message（架构决策 5）。
+    expect(subagents.continuableStarts[0]?.request.toolFilter).toEqual({ deny: ['ask_user_question', 'send_message'] });
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
     expect(promptText).not.toContain('[[SANDORE_ASK]]');
+    // 架构决策 5 的 prompt 侧弱约束：明确告知「没有向主代理发消息的工具」。
+    expect(promptText).toContain('你没有向主代理发消息的工具，直接结束即可');
   });
 });
 
@@ -1131,7 +1138,125 @@ describe('StepRunner inputFrom 前置输出过滤（v6）', () => {
     expect(promptText).toContain('前置Step: sce1');
   });
 
-  it('inputFrom 未配置时保留全量前置输出（向后兼容）', async () => {
+  it('T1：执行子代理 label = `<名称> · <childId>`（无 `step ` 前缀），childId 由引擎生成纯 UUID 并显式传入', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+
+    await runner.run(request({ ...promptStep(), id: 'step-1846d923-133b-4617-9aac-b0b7e9344795', name: '分析问题' }));
+
+    const spec = subagents.continuableStarts[0]!;
+    // label 用 step **名称**（不是 id）拼 childId：真机缺陷是 `label: step ${step.id}` 撞上
+    // DAG 编辑器生成的 `step-<uuid>` 形态 id → 界面显示 `step step-<uuid>`。
+    expect(spec.label).toMatch(/^分析问题 · [0-9a-f-]{36}$/);
+    expect(spec.label).not.toContain('step-1846d923');
+    expect(spec.label.startsWith('step ')).toBe(false);
+    // childId 由引擎生成并显式传入（ContinuableStartSpec.childId 可选；label 里要带它
+    // 就必须先知道它）：纯 UUID，无前缀，且与 label 尾段完全一致。
+    expect(spec.childId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(spec.label).toBe(`分析问题 · ${spec.childId}`);
+  });
+
+  it('未声明 inputFrom 时只注入**直接上游**（v7：默认 = DAG 入边，不是全量）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    // 仿 test-workflow：loop 的唯一流程上游是 sce3；其它 step（sce1/parallel1/sce2/修复问题）
+    // 都已执行过但**不是上游**（真机缺陷形态：它们被整篇塞进了 loop 的参考信息）。
+    const previousOutputs = [
+      { name: 'sce1', id: 'sce1', returnPrompt: 'sce1 output', files: [] },
+      { name: 'parallel1', id: 'parallel1', returnPrompt: 'miku', files: [] },
+      { name: 'sce2', id: 'sce2', returnPrompt: 'counts 第 1 段', files: [] },
+      { name: 'sce2', id: 'sce2', returnPrompt: 'counts 第 3 段', files: [] },
+      { name: '修复问题', id: '修复问题', returnPrompt: 'fix 第 4 段', files: [] },
+      { name: 'sce3', id: 'sce3', returnPrompt: 'sce3 输出 miku', files: [] },
+    ];
+    await runner.run(request(promptStep(), { previousOutputs, upstreamStepIds: ['sce3'] }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    // 只有直接上游出现，且只出现一次。
+    expect(promptText).toContain('前置Step: sce3');
+    expect(promptText).toContain('sce3 输出 miku');
+    expect(promptText.split('前置Step: sce3').length - 1).toBe(1);
+    expect(promptText).not.toContain('前置Step: sce1');
+    expect(promptText).not.toContain('前置Step: parallel1');
+    expect(promptText).not.toContain('前置Step: sce2');
+    expect(promptText).not.toContain('前置Step: 修复问题');
+    // 全局上下文仍在：用户原始需求块。
+    expect(promptText).toContain('用户原始需求');
+    expect(promptText).toContain('<ReferenceInfo>');
+  });
+
+  it('上游未产出内容时显式标注（v8 真机形态：loop 的上游 sce3 因条件分支从未执行）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    // 真机实例 session-33ca337f…：分支条件始终命中「proposal.md 已存在」→ sce3 **从未执行**
+    //（真机 15 个实例一次都没跑过），而把 loop 送进执行的是 `修复问题` 的 exitTo 出口。
+    const previousOutputs = [
+      { name: 'sce1', id: 'sce1', returnPrompt: 'sce1 output', files: [] },
+      { name: '修复问题', id: '修复问题', returnPrompt: 'counts.json times=58', files: [] },
+    ];
+    await runner.run(request(promptStep(), {
+      previousOutputs,
+      upstreamStepIds: ['sce3', '修复问题'],
+      upstreamStepNames: { sce3: 'sce3', '修复问题': '修复问题' },
+    }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    // 未产出的上游显式点名（不再静默留空 → 模型/人都能区分「依赖丢了」与「本来就没有」）。
+    expect(promptText).toContain('上游未产出内容');
+    expect(promptText).toContain('sce3 (id: sce3)：本次未执行或输出为空，无可注入内容');
+    // 真出过力的上游照旧注入输出；未产出的那一个不产生「前置Step」块。
+    expect(promptText).toContain('前置Step: 修复问题');
+    expect(promptText).toContain('counts.json times=58');
+    expect(promptText).not.toContain('前置Step: sce3');
+  });
+
+  it('上游都有产出时不出现「上游未产出内容」标注；声明的 inputFrom 未执行时同样标注', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    // 第二次 start 会拿到 child-2（FakeSubagents 每次 +1），注册表里必须有它才算 settle 成功。
+    const second = new FakeAgent('child-2');
+    second.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(second);
+    const previousOutputs = [
+      { name: 'sce3', id: 'sce3', returnPrompt: 'sce3 输出 miku', files: [] },
+    ];
+    // ① 上游都有输出 → 无标注。
+    await runner.run(request(promptStep(), { previousOutputs, upstreamStepIds: ['sce3'] }));
+    expect(textOf(subagents.continuableStarts[0]?.request.prompt[0])).not.toContain('上游未产出内容');
+
+    // ② 声明的 inputFrom（path 形态）指向未执行的 step → 同样标注（默认上游与声明上游一视同仁）。
+    const declared = { ...promptStep(), inputFrom: [{ id: 'ipt-1', path: 'sce2' }] };
+    await runner.run(request(declared, { previousOutputs, upstreamStepNames: { sce2: 'sce2' } }));
+    const declaredPrompt = textOf(subagents.continuableStarts[1]?.request.prompt[0]);
+    expect(declaredPrompt).toContain('上游未产出内容');
+    expect(declaredPrompt).toContain('sce2 (id: sce2)：本次未执行或输出为空，无可注入内容');
+  });
+
+  it('未声明 inputFrom 且无直接上游（Stage 首步）时不注入任何前置输出', async () => {
     const { subagents, agents, runner } = harness({
       defaultTimeoutMs: 60000,
       defaultProvider: 'p',
@@ -1142,14 +1267,106 @@ describe('StepRunner inputFrom 前置输出过滤（v6）', () => {
     agents.register(child);
     const previousOutputs = [
       { name: 'sce1', id: 'sce1', returnPrompt: 'sce1 output', files: [] },
-      { name: 'parallel1', id: 'parallel1', returnPrompt: 'miku', files: [] },
     ];
-
-    await runner.run(request(promptStep(), { previousOutputs }));
+    await runner.run(request(promptStep(), { previousOutputs, upstreamStepIds: [] }));
 
     const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
-    expect(promptText).toContain('前置Step: sce1');
-    expect(promptText).toContain('前置Step: parallel1');
-    expect(promptText).toContain('miku');
+    expect(promptText).not.toContain('前置Step: sce1');
+    expect(promptText).toContain('用户原始需求');
+  });
+
+  it('同一前置 step 多段只注入一次（取最新段）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    const previousOutputs = [
+      { name: 'sce3', id: 'sce3', returnPrompt: 'sce3 第 1 段', files: [] },
+      { name: 'sce1', id: 'sce1', returnPrompt: 'sce1 输出', files: [] },
+      { name: 'sce3', id: 'sce3', returnPrompt: 'sce3 第 2 段', files: [] },
+    ];
+
+    await runner.run(request({ ...promptStep(), inputFrom: [{ path: 'sce3' }] }, { previousOutputs }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('前置Step: sce3');
+    expect(promptText).toContain('sce3 第 2 段');
+    expect(promptText).not.toContain('sce3 第 1 段');
+    expect(promptText).not.toContain('前置Step: sce1');
+    // 恰好一块（不因多段而重复）。
+    expect(promptText.split('前置Step: sce3').length - 1).toBe(1);
+  });
+
+  it('同一上游的**别名 id**（`sce3` 与 `sce3-<后缀>`）只注入一次（按上游 step 去重，不按原始 id）', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    // 真机形态（m15 全量跑出现 `前置Step: sce3` 两份）：同一步骤在快照里留下两个 id——
+    // `idMatches` 明确允许 `sce3-<后缀>` 这类**循环别名 id**（`actualId.startsWith(targetId + '-')`），
+    // 而 `previousOutputs` 的去重键是原始 id ⇒ 两个别名各注入一份、名字还都叫 sce3。
+    const previousOutputs = [
+      { name: 'sce3', id: 'sce3', returnPrompt: 'sce3 第 1 段', files: [] },
+      { name: 'sce3', id: 'sce3-9f8e7d6c', returnPrompt: 'sce3 第 2 段（循环别名 id）', files: [] },
+    ];
+
+    await runner.run(request(promptStep(), { previousOutputs, upstreamStepIds: ['sce3'] }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    // 断言口径：**按上游 step 去重**（别名归并到同一上游）→ 恰好一块，且取最新段。
+    expect(promptText.split('前置Step: sce3').length - 1, '同一上游（含别名 id）只注入一次').toBe(1);
+    expect(promptText).toContain('sce3 第 2 段（循环别名 id）');
+    expect(promptText).not.toContain('sce3 第 1 段');
+  });
+
+  it('声明 regex 时注入**提取后的片段**而不是整篇输出', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    const previousOutputs = [
+      { name: 'sce2', id: 'sce2', returnPrompt: '噪声\n版本号: v1.4.2\n噪声', files: [] },
+    ];
+
+    await runner.run(request({ ...promptStep(), inputFrom: [{ id: 'in-1', regex: '版本号: v[0-9.]+' }] }, { previousOutputs }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('版本号: v1.4.2');
+    expect(promptText).not.toContain('噪声');
+  });
+
+  it('参考信息体积护栏：超出预算时截断并标注', async () => {
+    const { subagents, agents, runner } = harness({
+      defaultTimeoutMs: 60000,
+      defaultProvider: 'p',
+      defaultModel: 'm',
+    });
+    const child = new FakeAgent('child-1');
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'ok' }]));
+    agents.register(child);
+    const previousOutputs = [
+      { name: 'big-1', id: 'big-1', returnPrompt: 'A'.repeat(12_000), files: [] },
+      { name: 'big-2', id: 'big-2', returnPrompt: 'B'.repeat(12_000), files: [] },
+    ];
+
+    await runner.run(request({ ...promptStep(), inputFrom: [{ path: 'big-1' }, { path: 'big-2' }] }, { previousOutputs }));
+
+    const promptText = textOf(subagents.continuableStarts[0]?.request.prompt[0]);
+    expect(promptText).toContain('前置Step: big-1');
+    expect(promptText).toContain('参考信息已截断');
+    expect(promptText).not.toContain('前置Step: big-2');
+    expect(promptText.length).toBeLessThan(40_000);
   });
 });

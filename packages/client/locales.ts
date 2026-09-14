@@ -119,6 +119,29 @@ export const zh = {
   'run.status.ready': '就绪',
   'run.members': '{count} 个成员',
   'run.abort': '中止',
+  // 主代理席位（呈现层统一）：运行页底部输入框 = **独立实现**的主代理输入框；主代理卡片是
+  // **与 step 卡片同级的独立卡片**（头像字母 M + 标题「主代理」+ 它的消息），在「主代理会话里
+  // 有助手消息」时出现（见 DiscussionInput.tsx / UnifiedTimeline.tsx / main-agent-card.ts）。
+  'run.mainAgent.name': '主代理',
+  'run.mainAgent.placeholder': '给主代理发消息…',
+  'run.mainAgent.unavailable': '主代理会话尚未就绪，稍后重试',
+  'run.mainAgent.status.running': '正在响应',
+  'run.mainAgent.status.idle': '已就绪',
+  // 卡头折叠开关的可访问名（整条卡头可点，见 UnifiedTimeline 的 MainAgentChatBlock）。
+  'run.mainAgent.toggle': '{name}：展开 / 折叠消息',
+  // DSH 输入框同款座席文案（逐字对齐 ui-conversation/locales.ts 的 input.accessMode / access.*，
+  // 视觉与可访问名都和 DSH 中心列输入框一致）。
+  'composer.accessMode': '访问模式，当前：{name}',
+  'composer.access.confirmTitle': '确认启用完全权限？',
+  'composer.access.confirmDesc': '启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
+  'composer.access.acknowledge': '我已了解风险，并愿意继续',
+  'composer.access.cancel': '取消',
+  'composer.access.confirmEnable': '启用完全权限',
+  'composer.access.readOnly': '仅可查看',
+  'composer.access.workspaceWrite': '工作区内修改',
+  'composer.access.fullAccess': '完全权限',
+  // 注：`composer.stop` / `run.pause.title` / `input.pause` 三个键随「输入框区的停止按钮」
+  // 一并删除（真机反馈第三轮要求去掉该按钮；暂停入口改为 DSH 中心列自带的「停止生成」）。
   'run.pauseAll': '全部暂停',
   'run.resumeAll': '全部恢复',
   'run.trajectory.title': '执行轨迹',
@@ -182,6 +205,17 @@ export const zh = {
   'step.retry.boundary.empty': '无可用回退点',
   'step.retry.boundary.loading': '加载回退点…',
   'view.workflow': '工作流',
+  // 主代理会话内的「工作流」tab（DSH `conversation.view` 席位；标签是注册期 thunk 读的，
+  // 运行时按当前语言解析）。
+  'tab.workflow': '工作流',
+  // tab 内的单实例过滤空态：本主代理会话没有绑定实例（没有任何实例绑到本会话）。
+  // 文案与列表页的空态**成对同义**（InstanceList 的 `panel.empty.instances*`），
+  // 故这里只在「按会话过滤后为空」时另给一句更准确的说明。
+  'tab.workflow.empty': '本会话暂无可查看的工作流实例',
+  'tab.workflow.empty.hint': '在该会话里运行一个工作流（sandore_workflow_run）后，这里会出现它的执行视图',
+  // discussion 右侧「每 step 一档」的轮次条（替代旧的「每轮」刻度；见 step-view/StepRail.tsx）。
+  'run.step.rail.label': '步骤导航',
+  'run.step.rail.jump': '跳转到步骤 {name}',
   'view.placeholder': '从左侧选择一个工作流进行查看或编辑',
   'view.editor.error': '加载定义失败：{message}',
   'overlay.close': '关闭',
@@ -219,10 +253,14 @@ export const zh = {
   'run.time.daysAgo': '{count} 天前',
   'run.time.you': '你',
   'run.user.kind.input': '需求',
-  'run.user.kind.resume': '继续',
-  'run.user.kind.retry': '重试',
-  'run.user.kind.answer': '回答',
-  'run.user.kind.message': '讨论',
+  // 工具行内嵌「工作流导航」（run / control 三个工具的调用行）
+  'run.tool.toggle': '{name}：展开/折叠工作流导航',
+  'run.tool.progress': '{done}/{total} 步',
+  'run.tool.loading': '正在读取实例状态…',
+  'run.tool.error': '实例状态读取失败：{message}',
+  'run.tool.empty': '该实例还没有可展示的阶段/步骤',
+  'run.tool.action.pause': '暂停',
+  'run.tool.action.continue': '继续',
   'run.step.attempt': '第 {n} 次执行',
   // 收尾阶段徽标（finalizeMeta.currentPhase）
   'run.step.finalize.phase.detecting': '检测中',
@@ -244,6 +282,57 @@ export const zh = {
   'run.step.chat.unavailable': '子代理会话消息暂不支持内嵌预览（宿主 rc.1），可打开会话查看完整消息',
   'run.step.chat.runningUnavailable': '子代理正在独立会话中运行，实时消息请打开会话查看',
   'run.step.chat.openSession': '查看会话',
+  // 批 A：更早历史分页（键名/取值对齐 rc.1 ui-chat 的 chat.loadOlder /
+  // 全局 loading——面板只多一个「加载中…」态的本地化写法）。
+  'run.step.chat.paging.loadOlder': '加载更早',
+  'run.step.chat.paging.loading': '加载中…',
+  // 批 A2：自动补齐完整历史进行中的列首提示行（补齐结束即消失；上限/失败后由
+  // 「加载更早」按钮接管）。
+  'run.step.chat.paging.autofill': '正在加载更早的消息…',
+  // 批 A（A4）：官方原生出口——把宿主会话视图切到该子代理会话（DSH 自己的
+  // 对话页），文案对齐 rc.1 「打开会话」族但强调「原生」出口。
+  'run.step.chat.openNative': '用 DSH 原生对话打开',
+  // B4b：简化对话输入框（视觉/用语对齐 rc.1 ui-conversation composer：
+  // placeholder.default 前半段——@/slash 指令已裁剪；input.send 原值；排队语义
+  // 用语同 rc.1 queue/settings.enter.queue「排队发送」；发送中/失败为面板文案）。
+  // **需求 1**：面板不再挂载输入框，这一族键随 ComposerBar 保留为「恢复面板输入框」
+  // 的入口（键不得删——删了恢复时会缺文案）。
+  'run.step.chat.composer.placeholder': '发消息或做任务…',
+  'run.step.chat.composer.send': '发送消息',
+  'run.step.chat.composer.sending': '发送中…',
+  'run.step.chat.composer.queueHint': '排队发送：子代理当前轮结束后送达',
+  'run.step.chat.composer.sendFailed': '发送失败，请重试',
+  // 批 B2：面板内「重试」行（failed 的真实子代理 step → 输入区上方的模式行 +
+  // 回退点下拉 + 重试按钮）。模式/回退点标签直接复用 DiscussionInput 既有的
+  // run.retry.mode.* / run.retry.boundary.*（同一语义同一用语，不另起键）；
+  // 这里只补面板自有的动作文案、默认 message、错误行与两条降级提示。
+  'run.step.chat.retry.submit': '重试',
+  'run.step.chat.retry.running': '重试中…',
+  'run.step.chat.retry.defaultMessage': '请重试该步骤',
+  'run.step.chat.retry.failed': '重试失败',
+  'run.step.chat.retry.boundariesFailed': '回退点加载失败：{message}',
+  'run.step.chat.retry.revertUnavailable': '该步骤没有可回退的闭合 turn，建议改用继续或分叉',
+  'run.step.chat.retry.disposed': '子代理会话已销毁：请重新运行该步骤或整个实例',
+  // 批 B2：宿主原生对话页正打开该子代理会话时，输入框只读（根留给宿主页）。
+  'run.step.chat.composer.readonly': '宿主对话页正打开该子代理会话，此处只读',
+  // 需求 2：user 消息行改为「折叠标题行」——标题文案 `用户消息 · <首行摘要>`
+  // （摘要单行省略，展开看完整消息）。视觉与「思考」行同源，故标题只用一词，
+  // 与 message.think（思考）成对。
+  'run.step.chat.user.row': '用户消息',
+  // 批 B1：@step 提及源（输入内核复用）。菜单分组标题/候选描述/降级兜底；语气对齐
+  // DSH ui-reference 的 section.* 与 Candidate 描述（「状态 · 产物」一行摘要）。
+  'step.mention.section': '步骤',
+  'step.mention.artifacts': '{count} 个产物',
+  'step.mention.noArtifacts': '无产物',
+  'step.mention.serializeFailed': '步骤「{name}」的上下文暂不可用，已按名称引用',
+  // 批 B3：候选浮层自身的文案（逐字照 DSH ui-input-trigger 的 slash.menu 字典：
+  // 加载中/列表 aria/面包屑导航/下钻提示与键帽），使面板菜单与宿主菜单文案一致。
+  'step.mention.menu.loading': '正在加载…',
+  'step.mention.menu.suggestionsAria': '触发候选建议',
+  'step.mention.menu.crumbsAria': '目录导航',
+  'step.mention.menu.drillHint': '进入目录',
+  'step.mention.menu.drillKey': 'Tab',
+  'step.mention.menu.drillAria': '进入目录',
   'copy': '复制',
   'copied': '复制成功',
   'collapse': '收起',
@@ -273,21 +362,46 @@ export const zh = {
   'row.running': '运行中',
   'row.failed': '失败',
   'row.stopped': '已停止',
+  // B2b：工具行 IN/OUT 槽标签与 variant/工具名标题键（zh 对齐 rc.1 conversation 字典）。
+  'row.input': '输入',
+  'row.output': '输出',
+  'tool.title.search': '搜索',
+  'tool.title.read': '读取',
+  'tool.title.bash': 'Bash',
+  'tool.title.write': '写入',
+  'tool.title.edit': '编辑',
+  'tool.title.code': '代码',
+  'tool.title.generic': '工具调用',
+  'tool.title.inspect': '查看',
+  'tool.title.runCordis': '运行 Cordis 插件',
+  'tool.title.stopCordis': '停止 Cordis 插件',
+  'tool.title.removeCordis': '移除 Cordis 插件',
+  'tool.title.pwsh': 'Pwsh',
   'command.running': '执行中…',
   'command.failed': '命令失败',
   'command.done': '已完成',
   'command.title': '命令',
   'message.stopped': '已停止',
+  'message.think': '思考',
   'message.unknownBlock': '未知内容块',
   'message.userMessage': '用户消息',
+  'message.systemPrompt': '系统提示词',
   'message.extraBlock': '附加内容块',
   'json.truncated': '… 已截断，共 {total} 字符',
+  'duration.milliseconds': '{milliseconds}毫秒',
   'duration.seconds': '{seconds}秒',
   'duration.minutes': '{minutes}分{seconds}秒',
   'clock.md': '{m}月{d}日',
   'clock.ymd': '{y}年{m}月{d}日',
   // 以下键抄自 DSH ui-conversation 字典（chat 渲染栈逐字使用；键名与 conversation 一致）
   'chat.toBottom': '回到底部',
+  // B4a：右侧轮次轴（抄自 rc.1 ui-chat 字典的 TurnNavigator 文案；键名沿用其
+  // chat.turnNavigation.* 键名。jumpLoad 随 unloaded 锚点剪除暂不使用——面板无
+  // outline 分页，保留双语对称与 rc.1 对齐，未来接分页时按 rc.1 恢复使用。）
+  'chat.turnNavigation.label': '轮次导航',
+  'chat.turnNavigation.jump': '跳转到第 {turn} 轮',
+  'chat.turnNavigation.jumpLoad': '加载并跳转到第 {turn} 轮',
+  'chat.turnNavigation.turn': '第 {turn} 轮',
   'message.contextInjection': '上下文注入',
   'message.contextRecall': '跨会话召回',
   'message.referenceSummary': '引用会话 · {labels}',
@@ -307,6 +421,7 @@ export const zh = {
   'message.compaction.completed': '已压缩 {items} 条历史记录（约 {tokens} tokens）',
   'message.compaction.expand': '点击查看压缩摘要',
   'message.compaction.unavailable': '压缩摘要不可用',
+  'message.compaction.commandTitle': 'compact',
   'message.unknownSurface': '未知 surface 事件：{type}',
   'message.branch': '在新对话中分支',
   'message.branchUnavailable': '仅可从已完成轮次的最后一条消息分支',
@@ -317,12 +432,28 @@ export const zh = {
   'message.retry.status': '{label}（{retry}/{maximum}） · {seconds}s',
   'message.retry.delay': '重试延迟：',
   'message.retry.failure': '失败原因：',
+  'message.failure.auth': 'API 密钥无效',
   'message.turnError': '本轮运行失败',
   'message.maxTokens': '已达到输出 token 上限',
   'message.maxTokens.hint': '回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。',
   'message.ranFor': '用时 {duration}',
   'message.ttft': '首 token {seconds}秒',
   'message.tokensPerSecond': '{tps} tok/s',
+  // B3：turn-tail 用量药丸 + turn-process 披露头（键名/文案对齐 rc.1 chat 字典；
+  // 数字缩写沿用 rc.1 的 K/M 与千分位逗号）。
+  'number.thousand': '{value}K',
+  'number.million': '{value}M',
+  'number.groupSeparator': ',',
+  'message.turnUsage.count': '{count} tok',
+  'message.turnUsage.consumed': '用量 {total}',
+  'message.turnProcess.toolCalls.one': '{count} 次工具调用',
+  'message.turnProcess.toolCalls.other': '{count} 次工具调用',
+  'message.turnProcess.messages.one': '{count} 条消息',
+  'message.turnProcess.messages.other': '{count} 条消息',
+  'message.turnProcess.subagents.one': '{count} 个 subagent',
+  'message.turnProcess.subagents.other': '{count} 个 subagent',
+  'message.turnProcess.thoughtForAWhile': '已思考',
+  'message.turnProcess.separator': ' · ',
   'terminal.signal': '信号 {signal}',
   'terminal.exitCode': '退出码 {code}',
   'terminal.running': '运行中',
@@ -332,6 +463,8 @@ export const zh = {
   'terminal.collapseAria': '收起输出',
   'terminal.expandAria': '展开其余 {n} 行输出',
   'terminal.expandRest': '… 其余 {n} 行',
+  'terminal.sendInput': '（发送输入）',
+  'terminal.session': '终端 {sessionId}',
   'image.openOriginal': '查看原图',
   'image.openOriginalLabel': '{label}，点击查看原图',
   'image.label': '图片',
@@ -369,6 +502,8 @@ export const zh = {
   'composer.model.warning': '{name} 加载失败：{message}',
   'composer.model.empty': '没有可用的模型。',
   'composer.model.emptyEfforts': '当前模型未提供推理等级。',
+  // 建实例弹窗的「完全访问」风险确认（NewInstanceDialog 用；与 DSH 输入框权限 chip 的
+  // `composer.access.*` 是两处不同文案，互不影响）。
   'composer.permission.confirmTitle': '确认开启完全访问权限',
   'composer.permission.confirmDesc': '完全访问权限将允许引擎访问工作区之外的路径，请确认你了解风险。',
   'composer.permission.acknowledge': '我已了解风险',
@@ -380,7 +515,6 @@ export const zh = {
   'input.target': '@Step',
   'input.target.broadcast': '广播（所有 Step）',
   'input.resume.hint': '恢复 / 广播 / 重试',
-  'input.pause': '暂停',
   'input.send': '发送',
   'input.retry.label': '重试方式',
   'flow.next': '串行连接',
@@ -631,6 +765,24 @@ export const en = {
   'run.status.ready': 'Ready',
   'run.members': '{count} members',
   'run.abort': 'Abort',
+  // 主代理席位（呈现层统一）：见 zh 段同名键注释。
+  'run.mainAgent.name': 'Main agent',
+  'run.mainAgent.placeholder': 'Message the main agent...',
+  'run.mainAgent.unavailable': 'The main agent session is not ready yet — try again shortly',
+  'run.mainAgent.status.running': 'Responding',
+  'run.mainAgent.status.idle': 'Ready',
+  'run.mainAgent.toggle': '{name}: expand / collapse messages',
+  'composer.accessMode': 'Access mode, current: {name}',
+  'composer.access.confirmTitle': 'Enable Full access?',
+  'composer.access.confirmDesc': 'Full access reduces confirmation steps and lets the agent perform more actions directly, including sensitive operations, file changes, or external commands. Only use it when you trust the current task.',
+  'composer.access.acknowledge': 'I understand the risks and want to continue',
+  'composer.access.cancel': 'Cancel',
+  'composer.access.confirmEnable': 'Enable Full access',
+  'composer.access.readOnly': 'Read Only',
+  'composer.access.workspaceWrite': 'Workspace Write',
+  'composer.access.fullAccess': 'Full access',
+  // See the zh block: composer.stop / run.pause.title / input.pause were removed together with
+  // the input-area stop button (third real-machine feedback round).
   'run.pauseAll': 'Pause all',
   'run.resumeAll': 'Resume all',
   'run.trajectory.title': 'Execution trace',
@@ -694,6 +846,11 @@ export const en = {
   'step.retry.boundary.empty': 'No revert points available',
   'step.retry.boundary.loading': 'Loading revert points…',
   'view.workflow': 'Workflow',
+  'tab.workflow': 'Workflow',
+  'tab.workflow.empty': 'No workflow instance bound to this session',
+  'tab.workflow.empty.hint': 'Run a workflow in this session (sandore_workflow_run) and its run view appears here',
+  'run.step.rail.label': 'Step navigation',
+  'run.step.rail.jump': 'Jump to step {name}',
   'view.placeholder': 'Select a workflow on the left to view or edit',
   'view.editor.error': 'Failed to load definition: {message}',
   'overlay.close': 'Close',
@@ -731,10 +888,14 @@ export const en = {
   'run.time.daysAgo': '{count}d ago',
   'run.time.you': 'you',
   'run.user.kind.input': 'Request',
-  'run.user.kind.resume': 'Resume',
-  'run.user.kind.retry': 'Retry',
-  'run.user.kind.answer': 'Answer',
-  'run.user.kind.message': 'Message',
+  // Tool-row workflow navigation (the run / control tool calls)
+  'run.tool.toggle': '{name}: expand/collapse workflow navigation',
+  'run.tool.progress': '{done}/{total} steps',
+  'run.tool.loading': 'Loading instance state…',
+  'run.tool.error': 'Failed to read instance state: {message}',
+  'run.tool.empty': 'This instance has no stages/steps to show yet',
+  'run.tool.action.pause': 'Pause',
+  'run.tool.action.continue': 'Continue',
   'run.step.attempt': 'Attempt #{n}',
   // Finalize-phase badge (finalizeMeta.currentPhase)
   'run.step.finalize.phase.detecting': 'Detecting',
@@ -755,6 +916,63 @@ export const en = {
   'run.step.chat.unavailable': 'Subagent messages are not previewable inline on this host (0.1.2-rc.1); open the session to view the full conversation',
   'run.step.chat.runningUnavailable': 'The subagent is running in its own session; open it to watch live messages',
   'run.step.chat.openSession': 'Open session',
+  // Batch A: earlier-history paging (keys/values align with the rc.1 ui-chat
+  // chat.loadOlder / global loading strings).
+  'run.step.chat.paging.loadOlder': 'Load earlier',
+  'run.step.chat.paging.loading': 'Loading…',
+  // Batch A2: the in-progress hint row for auto-filling the complete history (it
+  // disappears when the fill ends; the manual button takes over on limit/failure).
+  'run.step.chat.paging.autofill': 'Loading earlier messages...',
+  // Batch A (A4): official native exit — flips the host conversation view onto
+  // this subagent session (DSH's own chat page).
+  'run.step.chat.openNative': 'Open in DSH chat',
+  // B4b: simplified composer (copy aligns with the rc.1 ui-conversation composer:
+  // first half of placeholder.default — the @/slash command affordances are cut;
+  // input.send verbatim; queue wording from the rc.1 queue/Enter-behavior family;
+  // sending/failed lines are panel-owned copy).
+  // Requirement 1: the panel no longer mounts the input box; this key family is
+  // kept with ComposerBar as the restore entry (do not delete — restoring would
+  // lose the copy).
+  'run.step.chat.composer.placeholder': 'Message or run a task...',
+  'run.step.chat.composer.send': 'Send message',
+  'run.step.chat.composer.sending': 'Sending…',
+  'run.step.chat.composer.queueHint': 'Queued: sent after the subagent finishes its current turn',
+  'run.step.chat.composer.sendFailed': 'Send failed, try again',
+  // Batch B2: the in-panel retry row (failed real subagent step → mode row above the
+  // input, revert-point select, retry button). Mode/boundary labels reuse the
+  // existing run.retry.mode.* / run.retry.boundary.* keys (same meaning, same
+  // wording); only the panel-owned action copy, default message, error line, and
+  // the two downgrade hints are new here.
+  'run.step.chat.retry.submit': 'Retry',
+  'run.step.chat.retry.running': 'Retrying…',
+  'run.step.chat.retry.defaultMessage': 'Please retry this step',
+  'run.step.chat.retry.failed': 'Retry failed',
+  'run.step.chat.retry.boundariesFailed': 'Failed to load revert points: {message}',
+  'run.step.chat.retry.revertUnavailable': 'No closed turn to revert to; continue or fork instead',
+  'run.step.chat.retry.disposed': 'The subagent session was disposed; re-run this step or the whole instance',
+  // Batch B2: the host chat page is showing this subagent session → the in-panel
+  // composer is read-only (the editor root stays with the host page).
+  'run.step.chat.composer.readonly': 'The host chat page owns this subagent composer; read-only here',
+  // Requirement 2: user messages render as the same disclosure row as "Think" —
+  // title `User message · <first-line summary>` (single-line ellipsis; expand for
+  // the full message), hence a one-word title pairing with message.think.
+  'run.step.chat.user.row': 'User message',
+  // Batch B1: the @step mention source (DSH input kernel reuse). Menu group title,
+  // candidate description, and the downgrade line; wording matches the DSH
+  // ui-reference section.* / candidate-summary family.
+  'step.mention.section': 'Steps',
+  'step.mention.artifacts': '{count} artifacts',
+  'step.mention.noArtifacts': 'no artifacts',
+  'step.mention.serializeFailed': 'Step "{name}" context is unavailable; referenced by name',
+  // Batch B3: the candidate overlay's own copy, word-for-word from the DSH
+  // ui-input-trigger `slash.menu` dictionary (loading / listbox aria / crumbs /
+  // drill hint and keycap) so the in-panel menu reads like the host menu.
+  'step.mention.menu.loading': 'Loading…',
+  'step.mention.menu.suggestionsAria': 'Trigger suggestions',
+  'step.mention.menu.crumbsAria': 'Folder navigation',
+  'step.mention.menu.drillHint': 'Browse folder',
+  'step.mention.menu.drillKey': 'Tab',
+  'step.mention.menu.drillAria': 'Browse folder',
   'copy': 'Copy',
   'copied': 'Copied',
   'collapse': 'Collapse',
@@ -784,15 +1002,33 @@ export const en = {
   'row.running': 'Running',
   'row.failed': 'Failed',
   'row.stopped': 'Stopped',
+  // B2b: tool-row IN/OUT gutter labels and variant/tool title keys (en mirrors rc.1 conversation dict).
+  'row.input': 'IN',
+  'row.output': 'OUT',
+  'tool.title.search': 'Search',
+  'tool.title.read': 'Read',
+  'tool.title.bash': 'Bash',
+  'tool.title.write': 'Write',
+  'tool.title.edit': 'Edit',
+  'tool.title.code': 'Code',
+  'tool.title.generic': 'Tool call',
+  'tool.title.inspect': 'Inspect',
+  'tool.title.runCordis': 'Run Cordis Plugin',
+  'tool.title.stopCordis': 'Stop Cordis Plugin',
+  'tool.title.removeCordis': 'Remove Cordis Plugin',
+  'tool.title.pwsh': 'Pwsh',
   'command.running': 'Running…',
   'command.failed': 'Command failed',
   'command.done': 'Completed',
   'command.title': 'Command',
   'message.stopped': 'Stopped',
+  'message.think': 'Think',
   'message.unknownBlock': 'Unknown content block',
   'message.userMessage': 'User Message',
+  'message.systemPrompt': 'System prompt',
   'message.extraBlock': 'Extra content block',
   'json.truncated': '… truncated, {total} characters total',
+  'duration.milliseconds': '{milliseconds}ms',
   'duration.seconds': '{seconds}s',
   'duration.minutes': '{minutes}m {seconds}s',
   'clock.md': '{m}/{d}',
@@ -800,6 +1036,13 @@ export const en = {
   // Keys copied from the DSH ui-conversation dictionary (used verbatim by the
   // copied ChatView render stack; key names match the conversation namespace)
   'chat.toBottom': 'Back to bottom',
+  // B4a: turn-navigation rail (copied from the rc.1 ui-chat dict; key names keep
+  // their chat.turnNavigation.* names. jumpLoad is unused while unloaded anchors
+  // are trimmed — the panel has no outline paging; kept bilingual for rc.1 parity.)
+  'chat.turnNavigation.label': 'Turn navigation',
+  'chat.turnNavigation.jump': 'Jump to turn {turn}',
+  'chat.turnNavigation.jumpLoad': 'Load and jump to turn {turn}',
+  'chat.turnNavigation.turn': 'Turn {turn}',
   'message.contextInjection': 'Context injection',
   'message.contextRecall': 'Session recall',
   'message.referenceSummary': 'Referenced session · {labels}',
@@ -819,6 +1062,7 @@ export const en = {
   'message.compaction.completed': 'Compacted {items} history items (~{tokens} tokens)',
   'message.compaction.expand': 'View compaction summary',
   'message.compaction.unavailable': 'Compaction summary unavailable',
+  'message.compaction.commandTitle': 'compact',
   'message.unknownSurface': 'Unknown surface event: {type}',
   'message.branch': 'Branch into a new conversation',
   'message.branchUnavailable': 'Available only on the last message of a completed turn',
@@ -829,12 +1073,27 @@ export const en = {
   'message.retry.status': '{label} ({retry}/{maximum}) · {seconds}s',
   'message.retry.delay': 'Retry delay: ',
   'message.retry.failure': 'Failure reason: ',
+  'message.failure.auth': 'API key is invalid',
   'message.turnError': 'This turn failed',
   'message.maxTokens': 'Output token limit reached',
   'message.maxTokens.hint': 'The reply was cut off; earlier output is preserved in the conversation. Send "continue" to let the model resume.',
   'message.ranFor': 'Ran for {duration}',
   'message.ttft': 'TTFT {seconds}s',
   'message.tokensPerSecond': '{tps} tok/s',
+  // B3: turn-tail usage pill + turn-process disclosure (keys/copy mirror the rc.1 chat dict).
+  'number.thousand': '{value}K',
+  'number.million': '{value}M',
+  'number.groupSeparator': ',',
+  'message.turnUsage.count': '{count} tok',
+  'message.turnUsage.consumed': 'Usage {total}',
+  'message.turnProcess.toolCalls.one': '{count} tool call',
+  'message.turnProcess.toolCalls.other': '{count} tool calls',
+  'message.turnProcess.messages.one': '{count} message',
+  'message.turnProcess.messages.other': '{count} messages',
+  'message.turnProcess.subagents.one': '{count} subagent',
+  'message.turnProcess.subagents.other': '{count} subagents',
+  'message.turnProcess.thoughtForAWhile': 'Thought for a while',
+  'message.turnProcess.separator': ' · ',
   'terminal.signal': 'signal {signal}',
   'terminal.exitCode': 'exit code {code}',
   'terminal.running': 'Running',
@@ -844,6 +1103,8 @@ export const en = {
   'terminal.collapseAria': 'Collapse output',
   'terminal.expandAria': 'Expand the remaining {n} output lines',
   'terminal.expandRest': '… {n} more lines',
+  'terminal.sendInput': '(send input)',
+  'terminal.session': 'Terminal {sessionId}',
   'image.openOriginal': 'View original',
   'image.openOriginalLabel': '{label}, click to view original',
   'image.label': 'Image',
@@ -881,6 +1142,8 @@ export const en = {
   'composer.model.warning': '{name} failed to load: {message}',
   'composer.model.empty': 'No models available.',
   'composer.model.emptyEfforts': 'This model provides no effort levels.',
+  // Create-instance dialog's full-access confirmation (NewInstanceDialog; distinct copy from the
+  // composer permission chip's `composer.access.*`).
   'composer.permission.confirmTitle': 'Enable full access',
   'composer.permission.confirmDesc': 'Full access lets the engine reach paths outside the workspace. Please acknowledge the risk.',
   'composer.permission.acknowledge': 'I understand the risk',
@@ -892,7 +1155,6 @@ export const en = {
   'input.target': '@Step',
   'input.target.broadcast': 'Broadcast (all steps)',
   'input.resume.hint': 'Resume / broadcast / retry',
-  'input.pause': 'Pause',
   'input.send': 'Send',
   'input.retry.label': 'Retry mode',
   'flow.next': 'Serial connection',

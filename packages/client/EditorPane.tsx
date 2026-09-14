@@ -22,10 +22,24 @@ export interface EditorPaneProps {
   face: WorkflowOverlayFace
   /** 保存成功后刷新左列表（由 overlay 逐级透传）。 */
   onSaved(id: string): void
+  /**
+   * **宿主会话过滤**（可选；只有主代理会话内的「工作流」tab 传 = 该会话 id）。
+   *
+   * 为什么必须逐级透传到 `RunView`：选中实例存在**共享的** `workflow-store` 里，
+   * 切到本 tab 时可能残留**别的会话**的选中实例；`RunView` 的 `hostFilter` 语义正是
+   * 「只认领属于该会话的实例」，认领不到就显示该视图自己的分支（绝不显示别的会话的实例）。
+   * 侧栏席位不传 ⇒ 行为与改动前完全一致。
+   */
+  hostFilter?: string | undefined
+  /**
+   * 是否渲染运行视图底部的讨论输入面（`DiscussionInput`）。
+   * 缺省 `true`（侧栏席位保持现状）；主代理会话内的 tab 传 `false`（该 tab 里不得有输入面）。
+   */
+  showDiscussionInput?: boolean | undefined
 }
 
 /** 渲染右栏编辑区。 */
-export function EditorPane({ t, face, onSaved }: EditorPaneProps) {
+export function EditorPane({ t, face, onSaved, hostFilter, showDiscussionInput }: EditorPaneProps) {
   const mode = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().mode)
   const selectedInstanceId = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedInstanceId)
   const selectedDefinition = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().selectedDefinition)
@@ -56,6 +70,8 @@ export function EditorPane({ t, face, onSaved }: EditorPaneProps) {
             key={selectedInstanceId}
             t={t}
             instanceId={selectedInstanceId}
+            {...(hostFilter === undefined ? {} : { hostFilter })}
+            {...(showDiscussionInput === undefined ? {} : { showDiscussionInput })}
             remote={face.remote}
             openSession={face.openSession}
             modelDirectory={face.modelDirectory}

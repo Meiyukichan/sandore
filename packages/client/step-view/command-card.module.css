@@ -1,0 +1,96 @@
+/* command-card.module.css（B2b step-view 版）：抄自 DSH 0.1.2-rc.1
+   ui-chat chat/GenericCommandCard.module.css（只读参考 deepseek-harness）——
+   命令行 root（running sweep 层 + 摘要 + 可展开错误/结算文本 body）。颜色/字号
+   全部令牌化；running 态 glare sweep 与工具行同族但独立动画名。 */
+
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 行外壳圆角（rc.1 ChatView.module.css .callRow）。 */
+.callRow {
+  border-radius: 6px;
+}
+
+.row {
+  position: relative;
+  overflow: hidden;
+}
+
+.root[data-state='running'] .row::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent) 55%,
+    transparent 100%
+  );
+  animation: dsh-command-row-sweep 2.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dsh-command-row-sweep {
+  0% { left: -300px; }
+  90%, 100% { left: 100%; }
+}
+
+.leading {
+  flex-shrink: 0;
+}
+
+.chevron {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.title {
+  font-weight: 400;
+}
+
+.separator {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 1px;
+  background: var(--dsw-alias-label-caption);
+}
+
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary[data-error],
+.body[data-error] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.body {
+  max-height: 260px;
+  margin: 4px 0 4px 4px;
+  padding: 12px 16px;
+  overflow: auto;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-markdown-code-block);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-markdown-code-block-small);
+  white-space: pre-wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root[data-state='running'] .row::after {
+    animation: none;
+  }
+}

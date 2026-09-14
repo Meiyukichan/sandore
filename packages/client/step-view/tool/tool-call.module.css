@@ -1,0 +1,16 @@
+/* tool-call.module.css（B2b step-view 版）：抄自 DSH 0.1.2-rc.1
+   ui-tool tool/ToolCallTree.module.css（只读参考 deepseek-harness）——
+   根/子调用行几何：callRow 圆角 + subCalls 左竖线缩进组（0.5px l2 hairline）。 */
+
+.callRow {
+  border-radius: 6px;
+}
+
+.subCalls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 2px 22px;
+  padding-left: 8px;
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+}

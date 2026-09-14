@@ -122,7 +122,6 @@ function makeHarness(options?: {
   const creates: CreateAgentOptions[] = [];
   const forks: Array<{ source: string; boundary: number | undefined }> = [];
   const retried: Array<{ stepId: string; mode: RetryMode; name: string; loopIteration?: number[] }> = [];
-  const userMessages: Array<{ kind: string; target: string; content: string }> = [];
   let resumeCount = 0;
   const sessions = options?.sessions ?? new Map<string, ForkSourceSession>();
   let forked = options?.forked ?? { events: [] as readonly DshSessionEvent[] };
@@ -137,10 +136,6 @@ function makeHarness(options?: {
     },
     followup: async (childId, content) => {
       followups.push({ childId, content });
-    },
-    appendUserMessage: (record) => {
-      userMessages.push({ kind: record.kind, target: record.target, content: record.content });
-      state = { ...state, userMessages: [...(state.userMessages ?? []), record], updatedAt: record.createdAt };
     },
     createAgent: async (createOptions) => {
       creates.push(createOptions);
@@ -185,7 +180,6 @@ function makeHarness(options?: {
     creates,
     forks,
     retried,
-    userMessages,
     getResumeCount: () => resumeCount,
     sessions,
     setForked: (events: readonly DshSessionEvent[]) => {
@@ -374,7 +368,8 @@ describe('RecoveryManager.retryStep continue mode', () => {
     expect(step?.retryHistory?.[0]?.mode).toBe('continue');
     expect(step?.retryHistory?.[0]?.userMessage).toBe('please retry');
     expect(step?.parentSessionId).toBeUndefined();
-    expect(harness.userMessages).toEqual([{ kind: 'retry', target: 'step-1', content: 'please retry' }]);
+    // 新语义：retryStep **不写 state.userMessages**（指令已在子代理会话里、重试记在段内 retryHistory）。
+    expect(harness.getState().userMessages ?? []).toEqual([]);
     expect(harness.getResumeCount()).toBe(1);
   });
 
@@ -404,6 +399,11 @@ describe('RecoveryManager.retryStep revert mode', () => {
 
     const newChildId = harness.creates[0]?.sessionId;
     expect(newChildId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    // 子代理列表标题：`retry <Step 名称> · <childId>`（名称缺失时回退 step id —— 本用例的
+    // fixture 段无 `name`，故呈现为 `retry step-1 · <uuid>`）；引擎消费该字段补写身份事件，
+    // 与 step 执行/门禁/收尾/判断四类同款形态（见 workflow/subagent-identity.ts）。
+    expect((harness.creates[0] as { descriptorLabel?: string })?.descriptorLabel)
+      .toBe(`retry step-1 · ${String(newChildId)}`);
     const step = newSegmentOf(harness.getState());
     expect(step?.sessionMeta?.childId).toBe(newChildId);
     expect(step?.sessionMeta?.synthetic).toBe(false);

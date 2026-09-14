@@ -59,6 +59,16 @@ export interface ResolveNextNodesContext {
    * （判断降级为临时会话）。
    */
   readonly recentStepSessionId?: string;
+  /**
+   * 路由判断 fork 子代理创建后回调（上报真实 `routingSessionId`，供调用方立即
+   * commit running + id）——与 Phase B 的 `onForkCreated` 同一套机制/命名。
+   *
+   * 由 `stage-executor` 在 Phase D 注入：fork 一建好就把真实 id 写进
+   * `finalizeMeta.routingResult`（running），UI 的「判断中」徽标因此**运行期即可点**
+   * （没有 id 时它会退化成不可点的纯文本）。条件分支（`evaluateConditions`）与循环跳出
+   * （`checkLoopBreak`）两条判断路径都透传本回调。
+   */
+  readonly onRoutingCreated?: (routingSessionId: string) => void;
 }
 
 /** `resolveNextNodes` 的返回：下一批节点 ID 与评估现场。 */
@@ -176,6 +186,11 @@ export class StepNavigator {
         {
           ...(context.recentStepSessionId === undefined ? {} : { stepSessionId: context.recentStepSessionId }),
           stepId: node.id,
+          // 循环跳出 fork 子代理的可读标签同样用 **step 名**（与 {@link branchEvalOptions}
+          // 同因：漏传会退回定义 id，列表标题显示 `route step-1846d923-…` 而不是 `route sce1`）。
+          stepName: node.name,
+          // Phase D 早报：循环跳出这条判断路径的 fork 建好后同样上报真实 id。
+          ...(context.onRoutingCreated === undefined ? {} : { onRoutingCreated: context.onRoutingCreated }),
           passThroughVars: context.passThroughVars,
         },
       );
@@ -259,6 +274,13 @@ export class StepNavigator {
       loopMaxIterations: loopContext.loopMaxIterations,
       ...(context.recentStepSessionId === undefined ? {} : { stepSessionId: context.recentStepSessionId }),
       stepId: node.id,
+      // 路由 fork 子代理的可读标签用 **step 名**（真机缺陷：`route step-1846d923-…`，
+      // 用户要求显示 `route sce1`——`name` 在 buildStepIndex 已按 `merged.name ?? flowStep.id`
+      // 解析好，此处漏传会退回定义 id）。
+      stepName: node.name,
+      // Phase D 早报：条件分支批量判断的 fork 建好后上报真实 routingSessionId
+      // （与 Phase B 的 onForkCreated 同一套机制；缺了它「判断中」运行期不可点）。
+      ...(context.onRoutingCreated === undefined ? {} : { onRoutingCreated: context.onRoutingCreated }),
       ...(context.signal === undefined ? {} : { signal: context.signal }),
     };
   }

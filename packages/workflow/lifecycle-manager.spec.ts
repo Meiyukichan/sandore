@@ -19,11 +19,23 @@ import { FakeSubagents } from '../tests/mocks/subagents.ts';
 import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
 import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
 import { SandoreEngineRuntime, SandoreError } from './index.ts';
-import type { SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
+import type { DagRun, DagStartRequest, SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
 import { LifecycleManager } from './lifecycle-manager.ts';
 import { SandorePersistence } from './persistence.ts';
 import type { ShellExecutor } from './shell.ts';
 import { parseWorkflowYaml } from './yaml-parser.ts';
+
+/**
+ * 启动实例并让它真正跑起来（入口归一后 `startInstance` 只做第一阶段）。
+ *
+ * 架构决策 1：`startInstance` = 建真实顶层会话 + 绑定（id ≡ 会话 id）+ 注入协作上下文，
+ * 返回 `{instanceId, status:'pending'}`；执行由该会话调用 `sandore_workflow_run`
+ * （引擎 `runInstanceInSession`）触发。本 helper 串起两阶段，语义等价于「宿主会话发起 run」。
+ */
+async function startWorkflow(engine: SandoreEngine, request: DagStartRequest): Promise<DagRun> {
+  const run = await engine.startInstance(request);
+  return await engine.runInstanceInSession(run.instanceId, request);
+}
 
 /** 两 Step（shell → agent）定义：shell 立即完成、agent 子代理可挂起（暂停目标）。 */
 const pauseYaml = `id: wfl-pause
@@ -223,7 +235,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -268,7 +280,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -296,7 +308,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -318,7 +330,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -348,7 +360,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -369,7 +381,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -410,7 +422,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -428,7 +440,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -454,7 +466,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     const child = prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -480,7 +492,7 @@ describe('LifecycleManager pause/resume via engine', () => {
     provideLlmDirectory(llm);
     prepareHangingAgent(agents);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -527,7 +539,7 @@ describe('LifecycleManager pause/resume via engine', () => {
 
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -573,7 +585,7 @@ describe('LifecycleManager pause/resume full loop', () => {
     const records = recordSandoreEvents(ctx);
     const stepStarted = waitForStepId(ctx, 'step-agent');
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-agent');
 
@@ -622,7 +634,7 @@ describe('LifecycleManager non-subagent pause guard', () => {
     agents.register(child);
 
     const stepStarted = waitForStepId(ctx, 'step-prompt');
-    const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-prompt', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-prompt');
 
@@ -648,7 +660,7 @@ describe('LifecycleManager non-subagent pause guard', () => {
     agents.register(child);
 
     const stepStarted = waitForStepId(ctx, 'step-prompt');
-    const run = await engine.startInstance({ workflowId: 'wfl-prompt', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-prompt', originalInput: 'do it', cwd: '/tmp' });
     await stepStarted;
     await waitForChildStarted(persistence, run.instanceId, 'step-prompt');
 
@@ -659,6 +671,128 @@ describe('LifecycleManager non-subagent pause guard', () => {
     expect(state?.executedSteps.find(s => s.stepId === 'step-prompt')?.status).toBe('paused');
     expect(state?.pausedChildIds).toEqual(['child-1']);
     expect(subagents.interrupts).toHaveLength(1);
+  });
+});
+
+/**
+ * 恢复（resume）与暂停落态的竞态：**resume 成功后实例 status 必须回到 running**。
+ *
+ * 实机 e2e（M5）现象：paused → DiscussionInput 发送恢复提示词（`resumeAll`）→
+ * `sandore/step-resumed` 恰 1 次、无错误提示，但 `getInstanceState` 仍为 `paused`。
+ * 三条成因（本组用例钉住前两条；第三条为同类加固）：
+ *
+ * - **C（根因，探针实测）**：`buildActiveInstance` 的 `sandore/subagent-settled` 监听器
+ *   （workflow-engine.ts:1992-2004）在 resolver 判定**之前**无条件写 `settlementBuffer`
+ *   （原实现 :1957），故 pause 的 `interrupt` 发出的 `{stopReason:'aborted'}` 虽已被在等的
+ *   awaiter 消费，仍以陈旧副本残留缓冲。resume 后新段 `collectSubagentOutput` →
+ *   `awaitSubagentSettlement` 直接命中该陈旧副本（探针：`BUFFER HIT child-1 aborted`，
+ *   而期间并无新的 settle）→ `STEP_PAUSED`（step-runner.ts:707-710）→ stage-executor
+ *   把段/实例重新判为 paused（stage-executor.ts:1405-1408）→ 实例停在 paused。
+ * - **A 落态被回写**：执行器 `commitState({ status: 'paused' })`（stage-executor.ts:886 /
+ *   :1407）若晚于 `resumeAllSteps` 的 `commitPausedRegistry`（lifecycle-manager.ts:208-217）
+ *   写入的 `running`，内存态被打回 `paused`——与 aborted 双发同一类「落态被回写」缺陷。
+ * - **B 唤醒丢失**：`resumeAllSteps` 在**无已注册 waiter** 时只置 `'*'` 标志
+ *   （workflow-engine.ts:2192-2201 `resumeRequested.add`），而主循环
+ *   `waitForResume(active, pausedStepId)`（:2169）只查具体 stepId key、从不消费 `'*'` →
+ *   恢复手势先于暂停落态到达时（子代理 settle 慢于用户点击）唤醒被永久丢弃。修复：
+ *   `resumeAllSteps`（:1033）先按登记表 childId 反查各 Step 的对外 stepId，恢复后对这些
+ *   key 逐个 notifyResume——与主循环 parked 时的 key 同源。
+ */
+describe('LifecycleManager resume vs 暂停落态竞态', () => {
+  /** 真实时序排空：settle 消费 → 执行器落态 → 主循环等待/唤醒 → 续跑均为异步链。 */
+  async function drainLoop(): Promise<void> {
+    for (let round = 0; round < 10; round += 1) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+
+  it('resume 手势先于暂停落态到达：实例终态仍回 running、step-resumed 恰一次、段被续跑', async () => {
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
+    await putDefinition(persistence, 'wfl-pause', pauseYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    provideLlmDirectory(llm);
+    const child = prepareHangingAgent(agents);
+
+    const records = recordSandoreEvents(ctx);
+    let instanceId = '';
+    ctx.on('sandore/start', info => { instanceId = info.taskId; });
+    // step-start 在 `onStepStart` 处发出（stage-executor.ts:854），**早于** 执行器注册
+    // settle awaiter（`runner.resumeSubagent` → collectSubagentOutput）——故此处同步暂停：
+    // interrupt 的 settle(aborted) 落入引擎 settle 缓冲（无 awaiter），紧接着同步发起
+    // resume 手势（= e2e 实机「用户点击发送早于子代理 settle」的确定性版本）。
+    const stepStarted = waitForStepId(ctx, 'step-agent');
+    ctx.on('sandore/step-start', (_info, stepId) => {
+      if (stepId !== 'step-agent') return;
+      void engine.pauseAllSteps(instanceId);
+      void engine.resumeAllSteps(instanceId, '继续');
+    });
+
+    const ended = waitForEnd(ctx);
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    await stepStarted;
+    await drainLoop();
+
+    // 恢复手势自身只投递一次（不因竞态重复）。
+    expect(records.filter(r => r.name === 'sandore/step-resumed')).toHaveLength(1);
+    expect(subagents.followups).toHaveLength(1);
+    expect(subagents.followups[0]?.childId).toBe('child-1');
+    // 实例状态回到 running（内存态 = UI `getInstanceState` 读取面）。
+    expect(engine.getState(run.instanceId).status).toBe('running');
+    expect(persistence.state.get(run.instanceId)?.status).toBe('running');
+    // 续跑入口确实被驱动：resumePendingPaused 基于旧段新建段（attemptIndex 1）——且**只建一个**
+    // （陈旧 settle 若被续跑段消费，会出现 attemptIndex 1 = paused + attemptIndex 2 的多余重试段）。
+    const segments = engine.getState(run.instanceId).executedSteps.filter(s => s.stepId === 'step-agent');
+    expect(segments.map(s => [s.attemptIndex ?? 0, s.status])).toEqual([[0, 'paused'], [1, 'running']]);
+
+    // 续跑段等待的是**新的** settle（陈旧 {aborted} 已被消费、不得复活）：子代理给出
+    // 续跑产出后，工作流应真正推进到 completed（而非再次被判为 paused 卡死）。
+    child.session.append(assistantMessageEvent([{ type: 'text', text: 'resumed output' }]));
+    subagents.settleChild('child-1', 'completed');
+    await ended;
+
+    const finalState = persistence.state.get(run.instanceId);
+    expect(finalState?.status).toBe('completed');
+    const resumed = finalState?.executedSteps
+      .filter(s => s.stepId === 'step-agent')
+      .sort((a, b) => (b.attemptIndex ?? 0) - (a.attemptIndex ?? 0))[0];
+    expect(resumed?.attemptIndex).toBe(1);
+    expect(resumed?.status).toBe('completed');
+    expect(records.filter(r => r.name === 'sandore/step-resumed')).toHaveLength(1);
+  });
+
+  it('正常时序（先落 paused 并驻留，再 resume）：驻留期保持 paused，resume 后回 running 并续跑', async () => {
+    const { ctx, engine, persistence, llm, shell, subagents, agents } = await harness();
+    await putDefinition(persistence, 'wfl-pause', pauseYaml);
+    shell.runHandler = async spec => successResult(spec, 'ok');
+    provideLlmDirectory(llm);
+    prepareHangingAgent(agents);
+
+    const records = recordSandoreEvents(ctx);
+    const stepStarted = waitForStepId(ctx, 'step-agent');
+    const run = await startWorkflow(engine, { workflowId: 'wfl-pause', originalInput: 'do it', cwd: '/tmp' });
+    await stepStarted;
+    await waitForChildStarted(persistence, run.instanceId, 'step-agent');
+
+    // ① 暂停 → 排空（执行器落 paused、主循环驻留 waitForResume）→ 状态保持 paused。
+    await engine.pauseAllSteps(run.instanceId);
+    await drainLoop();
+    expect(engine.getState(run.instanceId).status).toBe('paused');
+    expect(persistence.state.get(run.instanceId)?.status).toBe('paused');
+    expect(records.filter(r => r.name === 'sandore/step-paused')).toHaveLength(1);
+
+    // ② resume → 主循环被唤醒 → running + 续跑段（attemptIndex 1）创建。
+    await engine.resumeAllSteps(run.instanceId, '继续');
+    await drainLoop();
+
+    expect(records.filter(r => r.name === 'sandore/step-resumed')).toHaveLength(1);
+    expect(engine.getState(run.instanceId).status).toBe('running');
+    expect(persistence.state.get(run.instanceId)?.status).toBe('running');
+    expect(persistence.state.get(run.instanceId)?.pausedChildIds).toEqual([]);
+    // 段序列精确断言：旧段保持 paused 定格 + **恰好一个**续跑段（attemptIndex 1, running）。
+    // 若陈旧 settle 被续跑段消费（根因 C），续跑段会再被判 paused 并多出一个重试段
+    // （实测 [0 paused, 1 paused, 2 running]）——本断言即钉住该回归。
+    const segments = engine.getState(run.instanceId).executedSteps.filter(s => s.stepId === 'step-agent');
+    expect(segments.map(s => [s.attemptIndex ?? 0, s.status])).toEqual([[0, 'paused'], [1, 'running']]);
   });
 });
 

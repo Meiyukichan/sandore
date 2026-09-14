@@ -1,0 +1,248 @@
+/**
+ * step-chat-panel.module.css：StepChatPanel 的「面板内滚动 + view-node 行」布局
+ * 样式（StepChatPanel.tsx / StepChatBody 专用）。
+ *
+ * 结构对齐 DSH ChatView（css.root > css.scroll > css.column[data-chat-flow]）：
+ *   css.stepChatPanel（timeline.module.css：页边距容器）
+ *     └ .stepChatScroll[data-conversation-scroll]       ← 面板自己的滚动视口
+ *         └ .stepChatColumn[data-chat-flow]              ← 行（B2a 起 rc.1 视觉）
+ *
+ * 滚动语义（保守方案，B1 显式折衷）：step 卡/UnifiedTimeline 不给面板约束高度
+ * （面板此前整体随外层时间线滚动），无法像会话宿主那样用 flex min-height 链条获得
+ * 滚动区，故采用「面板滚动优先」：滚动视口设 max-height + overflow-y:auto——
+ * 内容矮于上限时与旧平铺表现一致，超过上限后面板自己滚动，不再无限撑开外层时间线。
+ * 若后续 RunView 改为给 step 卡约束高度，可移除 max-height 并改用
+ * flex:1 1 auto + min-height:0 链条（DSH .root/.scroll 同款），此文件单点改动即可。
+ *
+ * 深浅色/字号跟随机制（B1 核实结论，B4 实现视觉时沿用，勿新造变量）：
+ * - 深浅色：DSH ui-theme 的 design-platform.css 在 `body`（浅）与
+ *   `body[data-ds-dark-theme]`（深）两组作用域定义全部 --dsw-static-* 与
+ *   --dsw-alias-* 令牌；host 端 ThemePresenter 切换 body 属性
+ *   `data-ds-dark-theme`（boot 期由 ui-theme bootTheme 脚本写入同名字段）。
+ *   因此抄来的组件 CSS 只需引用 --dsw-alias-*/--dsw-static-*/--dsw-shadow-* 等令牌
+ *   （勿用写死的浅色值）即自动跟随全局深浅色。
+ * - 字号：host 把内容字号以 `--dsh-content-font-size`（整数 px 内联）写在
+ *   document.body.style 上；ui-theme 的 gradient-shadow-text.css 在 body 派生
+ *   --dsh-content-font-delta / --dsh-content-font-size-secondary /
+ *   --dsh-content-font-delta-secondary 及 --dsw-font-markdown-* 复合令牌。
+ *   正文文本统一读 var(--dsh-content-font-size, 14px)，次级文本统一读
+ *   var(--dsh-content-font-size-secondary, 13px)（行高随 delta 走），即自动跟随字号。
+ *
+ * B2a 之后的行级视觉样式在 step-view/ 各 module.css（逐 kind，rc.1 抄录）：
+ * 本文件只保留行壳（锚点挂载层）与占位行（未实现 kind 的 kind 徽标 + 摘要）。
+ */
+
+/* 滚动视口：面板内获得独立滚动区（保守 max-height 方案，见文件头注释）。
+   批 A（A3）：本元素是面板唯一带 `data-conversation-scroll` 的滚动器（DSH 的
+   滚动归属标记；属性在 StepChatPanel.tsx 上，此处只记约束）——外层 RunView 的
+   消息滚动区与 UnifiedTimeline 的任何滚动元素都不得标该属性，否则 DSH 的
+   `closest('[data-conversation-scroll]')` 会解析到错误的坐标原点。 */
+.stepChatScroll {
+  display: block;
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  /* 内边距对齐 sandore chat/ChatView.module.css .scroll 的裁剪值（DSH 为
+     composer clearance + 16px，面板无 composer，故固定 16px）。 */
+  padding: 16px;
+  overscroll-behavior: contain;
+  /* B4a：本视口兼作 query container（rc.1 .scroll 同款 container-type:
+     inline-size）——轮次轴的窄面板降级（@container 收起）与预览卡宽度
+     （100cqw）都以它为容器。 */
+  container-type: inline-size;
+}
+
+/* 消息列：对齐 ChatView .column（会话列宽随 --dsh-chat-content-width 全局变量；
+   面板不在会话宿主树内时该变量可能未定义，回退 100% 保持旧平铺宽度）。
+   行间距走 rc.1 ChatView.module.css 的 sibling margin 规则（非 flex gap）：
+   B3 起行可能带 `hidden="until-found"`（折叠的进程成员行/未激活控制节点行，保留
+   DOM 与锚点）或为空壳（渲染器主动放弃的行），二者经 display:none 退出布局，随后
+   的可见行仍恰好一条 --dsh-chat-flow-gap（16px，缺省）间距；flex gap 无法区分
+   display:none 项，故与 rc.1 一致改用 margin-top 规则。 */
+.stepChatColumn {
+  display: flex;
+  flex-direction: column;
+  max-width: var(--dsh-chat-content-width, 100%);
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* 可见行之间的纵向间距（rc.1 .column > :not([hidden])… 同款）。 */
+.stepChatColumn > :not([hidden]):not(:empty)
+  ~ :not([hidden]):not(:empty) {
+  margin-top: var(--dsh-chat-flow-gap, 16px);
+}
+
+/* ── 批 A（A1）：更早历史分页行 ────────────────────────────────────────────── */
+
+/* 「加载更早」行（rc.1 ChatView.module.css 的 .older 逐值抄录：居中 + 胶囊小
+   按钮；disabled 降透明度、鼠标不变手型）。按钮出现在消息列首行之前，随
+   `.stepChatColumn > :not([hidden]):not(:empty) ~ …` 的间距节奏与首行相隔
+   --dsh-chat-flow-gap。`hasMore` 为假时整行不渲染（面板不产出空壳）。 */
+.stepChatOlder {
+  display: flex;
+  justify-content: center;
+}
+
+.stepChatOlder button {
+  border: none;
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+  cursor: pointer;
+}
+
+.stepChatOlder button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ── 批 A2：自动补齐进行中的提示行 ────────────────────────────────────────── */
+
+/* 与「加载更早」按钮同一行节奏（沿用 .stepChatOlder 的居中胶囊槽位），但只是
+   静态提示：补齐进行中显示，结束（hasMore=false / 页数上限 / 失败 / 门关闭）
+   即消失。视觉取按钮同款胶囊（同字号/圆角/次要前景色与 hover 底色），不做
+   hover/cursor 交互——它不是可点元素。 */
+.stepChatAutofillHint {
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+
+/* ── view-node 行壳 ────────────────────────────────────────────────────────── */
+
+/* 行壳：与 DSH flowItem 同职责（settled-flow 身份边界；data-* 锚点挂此层，
+   B4 轮次轴 / toBottom / scroll 恢复均按 [data-chat-anchor-key|flow-key|turn]
+   查询）。布局中立（display:block）：B2a 已实现 kind 的视觉布局由 step-view/
+   各自的 module.css 负责（气泡/正文/披露行的宽度与行高各取所需）。 */
+
+/* 关合进程读作「披露头紧接其答复」：折叠的紧凑答复行把上方间距收窄为 8px
+   （rc.1 .flowItem[data-turn-process-answer]）；展开后回到普通 16px 节奏。 */
+.stepChatViewRow[data-turn-process-answer] {
+  --dsh-chat-flow-gap: 8px;
+}
+
+/* 行壳默认不设 display（rc.1 .flowItem 同款），由规则显式隐藏： */
+.stepChatViewRow {
+  min-width: 0;
+}
+
+/* `hidden="until-found"`（折叠成员行/未激活控制节点行）与空壳行（渲染器主动
+   放弃——如无 closing 的 turn-tail、无正文的 assistant 壳）退出布局且不产间距
+   （rc.1 同款：hidden attr + .flowItem:empty { display:none }；legacy FlowRow
+   空壳由 chat/ChatView.module.css 的 .flowItem:empty 规则自理）。 */
+.stepChatViewRow[hidden],
+.stepChatViewRow:empty {
+  display: none;
+}
+
+/* ── B1 占位行（未实现 kind 的调试/摘要行；逐 kind 视觉由 B2 批接手后仅剩
+   stepChatNodePreview 兜底使用；样式即旧 B1 行骨架原样下移一层） ──────────── */
+
+/* 占位行内容层：kind 徽标 + key + 摘要（旧 .stepChatViewRow 的行式布局）。 */
+.stepChatViewPlaceholder {
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+  overflow-wrap: anywhere;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  color: var(--dsw-alias-label-secondary, #8f9aa7);
+}
+
+/* kind 徽标（占位阶段的辨识信息；未实现 kind 的调试行用）。 */
+.stepChatViewKind {
+  flex: none;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: var(--dsw-alias-label-secondary, #5c6570);
+  background: var(--dsw-alias-interactive-bg-hover-solid, rgba(38, 49, 72, 0.06));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* 节点 key（等宽小字，调试定位用）。 */
+.stepChatViewKey {
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary, #a6adb6);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 摘要（纯文本预览；未实现 kind 占位行主体）。 */
+.stepChatViewSummary {
+  min-width: 0;
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: 1.5;
+  color: var(--dsw-alias-label-primary, #171c24);
+  white-space: pre-wrap;
+}
+
+/* ── 自旧 chat/ChatView.module.css 迁入（StepChatPanel 不再 import 旧 chat 路径） ── */
+
+/* Turn activity keeps the former loader's one-line footprint. A pale
+   brand-blue band sweeps from left to right; reduced-motion keeps it static. */
+.turnStatus {
+  align-self: flex-start;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  font: var(--dsw-font-s-strong-14);
+  white-space: nowrap;
+  background: linear-gradient(
+    90deg,
+    var(--dsw-static-deepseek-500) 0%,
+    var(--dsw-static-deepseek-500) 40%,
+    var(--dsw-static-deepseek-200) 50%,
+    var(--dsw-static-deepseek-500) 60%,
+    var(--dsw-static-deepseek-500) 100%
+  );
+  background-position: 100% 0;
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: dsh-turn-status-shimmer 1.8s linear infinite;
+}
+
+.turnStatusClock {
+  margin-left: 8px;
+  font: var(--dsw-font-xs-13);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-caption);
+  -webkit-text-fill-color: var(--dsw-alias-label-caption);
+}
+
+@keyframes dsh-turn-status-shimmer {
+  to {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turnStatus {
+    background-position: 0 0;
+    background-size: 100% 100%;
+    animation: none;
+  }
+}
+
+/* Host open-path refusal: same dialog family as the workspace folder error. */
+.modalAction {
+  min-width: 72px;
+}
+

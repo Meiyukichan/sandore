@@ -21,11 +21,38 @@ import {
 } from './workflow-store.ts'
 import css from './WorkflowOverlay.module.css'
 
+/** WorkflowOverlay 接收的可选参数（**两个 WebUI 宿主的唯一差异**）。 */
+export interface WorkflowOverlayProps {
+  /**
+   * 是否忽略 `workflow-store.open` 恒常渲染（默认 false = 侧栏席位：按 store 开合）。
+   *
+   * 主代理会话内的「工作流」tab 传 `true`：那个宿主常驻（没有开合概念），
+   * 而且它与侧栏**共用同一份 `workflow-store`**（同一份页面状态），若照读 open，
+   * 关掉侧栏会连带把 tab 里的页面变成 null。
+   */
+  readonly alwaysVisible?: boolean | undefined
+  /**
+   * **宿主会话过滤**（可选；只有主代理会话内的 tab 传 = 该会话 id）：
+   * 实例列表只列绑定到该会话的实例（硬约束：绝不列别的会话的实例）；
+   * 右栏执行视图也只渲染属于该会话的实例。侧栏不传 ⇒ 行为与改动前完全一致。
+   */
+  readonly hostFilter?: string | undefined
+  /**
+   * 是否渲染运行视图底部的讨论输入面（`DiscussionInput`）。
+   * 缺省 `true`（侧栏席位保持现状）；tab 传 `false`（该 tab 里不得出现任何输入面）。
+   */
+  readonly showDiscussionInput?: boolean | undefined
+}
+
 /**
  * 渲染中心列内嵌工作流视图（关闭时渲染 null；face 未就绪时降级 null——
  * mount 在 install 之后，理论不发生，防御即可）。
+ *
+ * **两个宿主共用**：侧栏席位（`view-seat.tsx`，无参）与主代理会话内的「工作流」tab
+ * （`main-agent-workflow-tab.tsx`，传 `alwaysVisible` + `hostFilter` + `showDiscussionInput=false`）。
+ * 参数只有上面三个，页面本体（列表/模式切换/搜索/运行工作流/新增定义/编辑器）完全同一份。
  */
-export function WorkflowOverlay() {
+export function WorkflowOverlay({ alwaysVisible = false, hostFilter, showDiscussionInput }: WorkflowOverlayProps = {}) {
   const open = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().open)
   const listWidth = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().listWidth)
   const listCollapsed = useSyncExternalStore(subscribeWorkflowState, () => getWorkflowState().listCollapsed)
@@ -37,7 +64,7 @@ export function WorkflowOverlay() {
   useSeatLocaleRevision()
   const [refreshKey, setRefreshKey] = useState(0)
 
-  if (!open) return null
+  if (!alwaysVisible && !open) return null
   if (face === undefined) return null
 
   return (
@@ -48,7 +75,14 @@ export function WorkflowOverlay() {
           <ListRail t={t} onExpand={toggleListCollapse} />
         ) : (
           <>
-            <WorkflowList t={t} workspaces={workspaces} face={face} refreshKey={refreshKey} width={listWidth} />
+            <WorkflowList
+              t={t}
+              workspaces={workspaces}
+              face={face}
+              refreshKey={refreshKey}
+              width={listWidth}
+              {...(hostFilter === undefined ? {} : { hostFilter })}
+            />
             <DragHandle side="list" className={css.dragHandle} onDrag={resizeListWidth} />
           </>
         )}
@@ -56,6 +90,8 @@ export function WorkflowOverlay() {
           t={t}
           face={face}
           onSaved={() => { setRefreshKey(key => key + 1) }}
+          {...(hostFilter === undefined ? {} : { hostFilter })}
+          {...(showDiscussionInput === undefined ? {} : { showDiscussionInput })}
         />
       </div>
     </div>

@@ -80,6 +80,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     pauseAll: (input: PauseAllInput) => Promise<RemoteResult<void>>
     resumeAll: (input: ResumeAllInput) => Promise<RemoteResult<void>>
     retryStep: (input: RetryStepInput) => Promise<RemoteResult<void>>
+    /** @deprecated 架构决策 3 去掉回退点（revert）功能；仅为兼容既有 client 呈现层保留。 */
     listRevertBoundaries: (input: ListRevertBoundariesInput) => Promise<RemoteResult<RevertBoundaryOption[]>>
     sendStepMessage: (input: SendStepMessageInput) => Promise<RemoteResult<void>>
     updateInstancePermissionMode: (input: UpdateInstancePermissionModeInput) => Promise<RemoteResult<void>>
@@ -119,6 +120,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'sandore/pauseAll': (input: PauseAllInput) => Promise<RemoteResult<void>>
     'sandore/resumeAll': (input: ResumeAllInput) => Promise<RemoteResult<void>>
     'sandore/retryStep': (input: RetryStepInput) => Promise<RemoteResult<void>>
+    /** @deprecated 架构决策 3 去掉回退点（revert）功能；仅为兼容既有 client 呈现层保留。 */
     'sandore/listRevertBoundaries': (input: ListRevertBoundariesInput) => Promise<RemoteResult<RevertBoundaryOption[]>>
     'sandore/sendStepMessage': (input: SendStepMessageInput) => Promise<RemoteResult<void>>
     'sandore/updateInstancePermissionMode': (input: UpdateInstancePermissionModeInput) => Promise<RemoteResult<void>>

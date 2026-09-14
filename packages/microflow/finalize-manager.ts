@@ -41,6 +41,7 @@ import { fileExists, findFilesByGlob, findFilesByRegex, hasUnresolvedVars, isGlo
 import { describeError, escapeXml, resolveProviderModel, textSummary } from './internal.ts';
 import { driveAgentRound, forkStepSubagent } from './fork-session.ts';
 import { finalAssistantOutput } from './subagents.ts';
+import { assertFreshSubagentProvider, FRESH_SUBAGENT_PROVIDER } from './subagents.ts';
 import { sessionEventList } from './session-events.ts';
 import type { Agent, AgentHandle, AgentOptions, ChildPromptDelivery, CreateAgentOptions, MessageId, SubagentSettlement } from './subagents.ts';
 import type { PassThroughVarValue } from './stage-executor.ts';
@@ -98,9 +99,13 @@ export interface FinalizeManagerConfig {
    */
   readonly awaitSubagentSettlement?: (childId: string, signal: AbortSignal) => Promise<SubagentSettlement>;
   /**
-   * DSH subagent provider 注册名（`startContinuable` 的 `provider`；缺省 `'fork'`，
-   * DSH base bundle 已注册）。与模型路由解耦：模型路由经 `request.agentOptions`
-   * 承载（`resolveForkAgentOptions`），不要把模型 provider id 填到这里。
+   * DSH subagent provider 注册名（`startContinuable` 的 `provider`）。
+   *
+   * 缺省 {@link FRESH_SUBAGENT_PROVIDER}（`spawn`）：门禁子代理与 step 子代理一样必须
+   * **全新**——不继承父会话（宿主主代理）历史；覆盖成 `fork` 会被
+   * {@link assertFreshSubagentProvider} 拒绝。与模型路由解耦：模型路由经
+   * `request.agentOptions` 承载（`resolveForkAgentOptions`），不要把模型 provider id
+   * 填到这里。
    */
   readonly subagentProvider?: string;
   /**
@@ -157,6 +162,11 @@ export interface FinalizeGateInput {
    * assess 与 gate 之间的变量竞态。
    */
   readonly vars?: Readonly<Record<string, string>>;
+  /**
+   * 门禁子代理创建后回调（透传自 {@link FinalizeStepRequest.onGateCreated}）：子代理一建好
+   * 就上报真实 `gateSessionId`，调用方据此立即 commit running 快照（UI「门禁中」可点）。
+   */
+  readonly onGateCreated?: (gateSessionId: string) => void;
   readonly signal?: AbortSignal;
 }
 
@@ -178,12 +188,24 @@ export interface FinalizeStepRequest {
    * 收尾阶段流转回调（由引擎注入，发射 `sandore/step-phase` 事件）。
    *
    * 每次 `commitFinalize(currentPhase)` 写入 finalizeMeta 后触发一次；
-   * `childId` 取执行段 `sessionMeta.childId`（shell 等无真实会话时为合成占位，
-   * 可能为 undefined——引擎侧自行回退）。microflow 只透传、不发射事件。
+   * `childId` 取执行段 `sessionMeta.childId`（2026-09-09 起无合成占位：shell 等无
+   * 真实会话时为 undefined）。microflow 只透传、不发射事件。
    */
   readonly onPhaseChange?: (step: WorkflowStep, childId: string | undefined, phase: FinalizePhase) => void;
   /** fork 子代理创建后回调（上报真实 forkSessionId，供调用方立即 commit running + id）。 */
   readonly onForkCreated?: (forkSessionId: string) => void;
+  /**
+   * 门禁子代理（Phase C）创建后回调（上报真实 `gateSessionId`，供调用方立即
+   * commit running + id）——与 {@link onForkCreated} 同一套机制/命名：创建期回调 →
+   * 调用方立刻 `commitFinalize(..., 'gating')` 写 running 快照。
+   *
+   * 为什么需要：Phase C 开跑前那次 commit 的 running 快照里 `gateSessionId` 只能是空串
+   * （门禁子代理还没建），而 UI 的「门禁中」徽标**只在有会话 id 时才渲染成可点按钮**
+   * （否则退化成纯文本 `<span>`）→ 真机运行期点不到「门禁中」。有了本回调，子代理一建好
+   * 就把真实 id 写进快照（与 Phase B 的「收尾中」完全对齐）。
+   * 非 AI 门禁（primary 纯代码校验）与降级临时会话（未建子代理）不触发。
+   */
+  readonly onGateCreated?: (gateSessionId: string) => void;
 }
 
 /** Assessor 解析出的 ask 判定结果（未含会话/原始输出字段；**不判完成度**）。 */
@@ -917,6 +939,8 @@ export class FinalizeAssessor {
       const forked = await forkStepSubagent(this.ctx, input.stepSessionId, {
         hostAgentId,
         stepId: input.step.id,
+        // 可读标签（子代理列表展示；引擎据此补写身份事件，防「会话记录损坏」）。
+        label: `finalize ${input.step.name ?? input.step.id}`,
         ...(input.workdir === undefined ? {} : { cwd: input.workdir }),
         ...(this.config.getStepSessionEvents === undefined ? {} : { getEvents: this.config.getStepSessionEvents }),
         createAgent,
@@ -1136,22 +1160,32 @@ export class GateEvaluator {
     }
     try {
       const agentOptions = resolveForkAgentOptions(this.config);
+      // `provider` 是 DSH subagent provider 注册名（缺省 {@link FRESH_SUBAGENT_PROVIDER}
+      // = `spawn`：**全新子代理**，不继承父会话上下文），与模型路由解耦：模型路由经
+      // `request.agentOptions` 承载（resolveForkAgentOptions）——不要把模型 provider id
+      // 填到这里。不变量守卫见 assertFreshSubagentProvider。
+      const provider = this.config.subagentProvider ?? FRESH_SUBAGENT_PROVIDER;
+      assertFreshSubagentProvider(this.ctx.subagents, provider);
+      // 引擎生成纯 UUID childId + 标题 `gate <名称> · <childId>`（与 step 执行同款）。
+      const gateChildId = globalThis.crypto.randomUUID();
       const started = await this.ctx.subagents.startContinuable({
-        // `provider` 是 DSH subagent provider 注册名（缺省 'fork'，DSH base bundle 已
-        // 注册），与模型路由解耦：模型路由经 `request.agentOptions` 承载
-        // （resolveForkAgentOptions）——不要把模型 provider id 填到这里。
-        provider: this.config.subagentProvider ?? 'fork',
-        label: `gate ${input.step.id}`,
+        provider,
+        childId: gateChildId,
+        label: `gate ${input.step.name ?? input.step.id} · ${gateChildId}`,
         request: {
           prompt: [{ type: 'text', text: promptText }],
           parent: this.config.hostAgent,
           ...(agentOptions === undefined ? {} : { agentOptions }),
           // ask 工具全局注册 + gate（上游适配）：屏蔽 DSH 全局版 ask_user_question，
-          // 门禁子代理不提供向用户提问通道（判断子代理无需提问）。
-          toolFilter: { deny: ['ask_user_question'] },
+          // 门禁子代理不提供向用户提问通道（判断子代理无需提问）；同时屏蔽
+          // send_message（架构决策 5：工作流子代理不向主代理汇报，产出由引擎收集）。
+          toolFilter: { deny: ['ask_user_question', 'send_message'] },
         },
         signal: input.signal ?? new AbortController().signal,
       });
+      // 与 Phase B 的 `onForkCreated` 同一套机制/时机：子代理一建好就上报真实 id，
+      // 调用方据此立即 commit running 快照（含真实 gateSessionId）→ UI「门禁中」是**可点按钮**。
+      input.onGateCreated?.(started.childId);
       // 2026-08-25：解析失败（非合法 done/error）给**同一个子代理**纠正重试
       // （上限 MAX_SECONDARY_GATE_RETRIES，纠正提示携带失败原因，对齐 batch/loop-break）；
       // 合法 `error`（不通过）不算解析失败、不重试。上游 `subagents.followup` 已删，
@@ -1375,6 +1409,7 @@ export class FinalizeManager {
       vars: outputToVars,
       ...(request.stepSessionId === undefined ? {} : { stepSessionId: request.stepSessionId }),
       ...(request.signal === undefined ? {} : { signal: request.signal }),
+      ...(request.onGateCreated === undefined ? {} : { onGateCreated: request.onGateCreated }),
     });
   }
 

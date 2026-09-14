@@ -1,0 +1,78 @@
+/* turn-tail.module.css（B3 step-view 版）：抄自 DSH 0.1.2-rc.1
+   ui-chat chat/TurnTailNodeView.module.css + TurnUsagePanel.module.css 的
+   pill 规则（只读参考 deepseek-harness）。
+   - .root/.actions：rc.1 TurnTailNodeView.module.css 逐字（root 纵向列、16px
+     gap 留给未来 feature tail；actions 左移 6px 对齐正文边缘）。
+   - .statRoot/.statPill/.statLabel：rc.1 TurnUsagePanel.module.css 的
+     .root/.trigger/.label pill 几何（28px 命中高随字号 delta、15px 图标、紧凑
+     tabular 数字），B3 裁剪交互——只读 span，无 hover/aria-expanded 态、无
+     明细浮层（对话框面板类不抄）；窄视口图标化规则保留。 */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.actions {
+  margin-left: -6px;
+}
+
+/* ── 静态读数药丸（rc.1 .root） ───────────────────────────────────────────── */
+
+.statRoot {
+  display: inline-flex;
+  min-width: 0;
+}
+
+/* 相邻药丸（用量→时长）彼此回补 6px（rc.1 .root + .root）。 */
+.statRoot + .statRoot {
+  margin-left: -6px;
+}
+
+/* rc.1 .trigger 几何（28px 命中区随 --dsh-content-font-delta；无 hover 规则）。 */
+.statPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: calc(28px + var(--dsh-content-font-delta, 0px));
+  padding: 6px 8px;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  font-variant-numeric: tabular-nums;
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  white-space: nowrap;
+}
+
+.statPill svg {
+  width: calc(15px + var(--dsh-content-font-delta, 0px));
+  height: calc(15px + var(--dsh-content-font-delta, 0px));
+  flex: none;
+}
+
+/* 窄列把 label 省略成图标药丸（rc.1 label 截断 + 480px 图标化）。 */
+.statLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 480px) {
+  .statPill {
+    justify-content: center;
+    width: calc(28px + var(--dsh-content-font-delta, 0px));
+    padding: 6px;
+  }
+
+  .statLabel {
+    display: none;
+  }
+
+  .statRoot + .statRoot {
+    margin-left: 0;
+  }
+}

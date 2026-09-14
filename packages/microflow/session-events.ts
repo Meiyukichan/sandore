@@ -31,7 +31,10 @@ export function sessionEventList<T = unknown>(
   if (Array.isArray(direct)) return direct as readonly T[]
   const snap = (session as { snapshotEvents?: unknown }).snapshotEvents
   if (typeof snap === 'function') {
-    const snapshot = (snap as () => unknown)()
+    // .call(session) 保住 this=session：rc.1 的 snapshotEvents() 默认参数
+    // `toSeqExclusive = this.seq`（getter）依赖 this 为会话对象；裸调 snap() 会让
+    // this=undefined → 「Cannot read properties of undefined (reading 'seq')」。
+    const snapshot = (snap as () => unknown).call(session)
     return Array.isArray(snapshot) ? snapshot as readonly T[] : []
   }
   return []

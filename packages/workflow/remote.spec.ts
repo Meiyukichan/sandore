@@ -144,10 +144,13 @@ async function harness(): Promise<{
     const now = new Date().toISOString()
     const state: WorkflowTaskState = {
       taskId: instanceId,
+      // 显式落地宿主主代理会话 id（恒等于 taskId；与 makeInitialState 一致）。
+      hostSessionId: instanceId,
       workflowId: request.workflowId,
       // cwd 必填（wire schema 已校验），mock 原样透传。
       cwd: request.cwd,
-      status: 'running',
+      // 入口归一（架构决策 1）：本 RPC 只建会话 + 绑实例 → pending；执行由 run 触发。
+      status: 'pending',
       originalInput: request.originalInput,
       currentStageId: '',
       executedSteps: [],
@@ -165,7 +168,7 @@ async function harness(): Promise<{
       updatedAt: now,
     }
     void persistence.saveWorkflowState(state)
-    return { instanceId, status: 'running' }
+    return { instanceId, status: 'pending' }
   }
   const engine = {
     startInstance,
@@ -175,6 +178,9 @@ async function harness(): Promise<{
       await persistence.saveWorkflowState({ ...current, status: 'aborted', updatedAt: new Date().toISOString() })
     },
     getInstanceState: vi.fn((_instanceId: string): WorkflowTaskState | undefined => undefined),
+    // `getInstanceState` RPC 读时装饰：从各段子代理会话按需回填 sessionMessages
+    // （该字段已不再持久化）。测试里无会话可读 → 原样返回。
+    hydrateStateMessages: vi.fn(async (state: WorkflowTaskState): Promise<WorkflowTaskState> => state),
     replyQuestion: vi.fn(async (_instanceId: string, _requestId: string, _answers: AskUserQuestionAnswer) => {}),
     rejectQuestion: vi.fn(async (_instanceId: string, _requestId: string) => {}),
     replyPermission: vi.fn(async (_instanceId: string, _requestId: string, _reply: 'once' | 'always' | 'reject') => {}),
@@ -486,11 +492,15 @@ describe('SandoreRemote instance lifecycle', () => {
 
     const run = await remote.startInstance({ workflowId: definition.id, originalInput: '测试需求', cwd: '/tmp' })
     expect(run.instanceId).toBeTruthy()
-    expect(run.status).toBe('running')
+    // 入口归一（架构决策 1）：本 RPC = 第一阶段（建会话 + 绑实例 + 注入上下文），
+    // 返回 pending；执行由该会话调用 sandore_workflow_run 触发。
+    expect(run.status).toBe('pending')
 
-    const state = remote.getInstanceState(run.instanceId)
+    const state = await remote.getInstanceState(run.instanceId)
     expect(state.originalInput).toBe('测试需求')
     expect(state.workflowId).toBe(definition.id)
+    // 显式落地宿主主代理会话 id（恒等于 taskId；旧快照读取回退 `?? taskId`）。
+    expect(state.hostSessionId).toBe(run.instanceId)
     expect(persistence.state.get(run.instanceId)?.originalInput).toBe('测试需求')
   })
 
@@ -512,17 +522,19 @@ describe('SandoreRemote instance lifecycle', () => {
     ).rejects.toBeInstanceOf(ZodError)
   })
 
-  it('forwards the optional hostSessionId to the engine startInstance', async () => {
+  it('no longer accepts a hostSessionId (入口归一：宿主会话恒为本 RPC 新建的会话)', async () => {
     const { remote, startRequests } = await harness()
     const definition = await remote.createDefinition({ yaml: validV2Yaml })
 
-    // 未传 hostSessionId：引擎请求不含该字段。
-    await remote.startInstance({ workflowId: definition.id, originalInput: 'a', cwd: '/tmp' })
+    // wire schema 已删该字段：即便调用方硬塞，也不会到达引擎请求（zod strip）。
+    await remote.startInstance({
+      workflowId: definition.id,
+      originalInput: 'a',
+      cwd: '/tmp',
+      hostSessionId: 'host-1',
+    } as StartInstanceInput)
     expect(startRequests[0]).not.toHaveProperty('hostSessionId')
-
-    // 传入 hostSessionId：原样透传（复用宿主主代理会话，不新建）。
-    await remote.startInstance({ workflowId: definition.id, originalInput: 'b', cwd: '/tmp', hostSessionId: 'host-1' })
-    expect(startRequests[1]?.hostSessionId).toBe('host-1')
+    expect(startRequests[0]).toEqual({ workflowId: definition.id, originalInput: 'a', cwd: '/tmp' })
   })
 
   it('derives instance summaries for every state row (no job filter)', async () => {
@@ -543,7 +555,7 @@ describe('SandoreRemote instance lifecycle', () => {
     const run = await remote.startInstance({ workflowId: definition.id, originalInput: 'x', cwd: '/tmp' })
 
     await remote.deleteInstance(run.instanceId)
-    expect(catchCode(() => remote.getInstanceState(run.instanceId))).toBe('NODE_NOT_FOUND')
+    expect(await catchCodeAsync(() => remote.getInstanceState(run.instanceId))).toBe('NODE_NOT_FOUND')
     expect(remote.listInstances()).toHaveLength(0)
   })
 
@@ -577,7 +589,7 @@ describe('SandoreRemote instance lifecycle', () => {
     })
     engine.getInstanceState.mockReturnValueOnce(liveState)
 
-    const state = remote.getInstanceState('inst-live')
+    const state = await remote.getInstanceState('inst-live')
     expect(state.taskId).toBe('inst-live')
     expect(state.executedSteps[0]?.finalizeMeta?.currentPhase).toBe('finalizing')
   })
@@ -589,7 +601,7 @@ describe('SandoreRemote instance lifecycle', () => {
     // 持久化有快照
     await persistence.saveWorkflowState(makeState({ taskId: 'inst-done', status: 'completed' }))
 
-    const state = remote.getInstanceState('inst-done')
+    const state = await remote.getInstanceState('inst-done')
     expect(state.taskId).toBe('inst-done')
     expect(state.status).toBe('completed')
   })
@@ -599,7 +611,7 @@ describe('SandoreRemote instance lifecycle', () => {
     // 引擎内存无此实例
     engine.getInstanceState.mockReturnValueOnce(undefined)
 
-    expect(catchCode(() => remote.getInstanceState('inst-nonexistent'))).toBe('NODE_NOT_FOUND')
+    expect(await catchCodeAsync(() => remote.getInstanceState('inst-nonexistent'))).toBe('NODE_NOT_FOUND')
   })
 
   it('getArtifacts throws NODE_NOT_FOUND for a nonexistent instance', async () => {

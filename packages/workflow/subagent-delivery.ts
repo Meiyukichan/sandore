@@ -84,13 +84,20 @@ function resolveQueueDeliverer(subagents: SubagentRuntime): QueueDeliverer | und
   // ① HEAD 运行时符号：末位 delivery 模式固定 'queue'（独立 FIFO 轮次语义）。
   const headDeliverer = runtime[DELIVER_PROMPT];
   if (typeof headDeliverer === 'function') {
+    // **必须带接收者调用**：DSH 侧实现体是 `this.requireContinuations()…`（
+    // `packages/subagent/subagent/src/index.ts` 的 deliverPrompt/queuePrompt），把符号
+    // 方法解下来裸调会得到 `this === undefined`（真机表象：gateway/internal
+    // `Cannot read properties of undefined (reading 'requireContinuations')`，
+    // run 级 DiscussionInput 的定点发送全部失败；单测因桩是箭头函数而漏掉）。
     return (parent, childId, content, source, signal) =>
-      (headDeliverer as HeadPromptDeliverer[typeof DELIVER_PROMPT])(parent, childId, content, source, signal, 'queue');
+      (headDeliverer as HeadPromptDeliverer[typeof DELIVER_PROMPT])
+        .call(runtime, parent, childId, content, source, signal, 'queue');
   }
   // ② npm 0.1.2-rc.1 符号：5 参 Queue 分发（queueHostSubagentPrompt 的内联等价——
   // 该封装仅做 runtime[queuePrompt](parent, childId, content, source, signal)）。
   const rcDeliverer = runtime[QUEUE_PROMPT];
   if (typeof rcDeliverer === 'function') {
+    // 同 ①：符号方法必须在原接收者（subagents 服务实例）上调用。
     return (parent, childId, content, source, signal) =>
       (rcDeliverer as (
         parent: Agent,
@@ -98,7 +105,7 @@ function resolveQueueDeliverer(subagents: SubagentRuntime): QueueDeliverer | und
         content: ContentBlock[],
         source: MessageSource,
         signal: AbortSignal,
-      ) => Promise<MessageId>)(parent, childId, content, source, signal);
+      ) => Promise<MessageId>).call(runtime, parent, childId, content, source, signal);
   }
   return undefined;
 }

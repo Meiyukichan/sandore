@@ -1,0 +1,213 @@
+/* 运行页主代理输入框（**独立实现**）：视觉细节**逐值照抄** DSH 默认会话输入框。
+ *
+ * 只读参考（不 import DSH 内部模块、不挂 DSH 输入内核，见 main-agent-input.tsx 文件头）：
+ * - `deepseek-harness/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css`
+ *   （卡壳 / 文本面 / 占位层 / 工具行 / 主按钮 / 状态行）
+ * - 每一处值都在下面标注了出处行号，便于核对「一模一样」。
+ *
+ * **宽度基准（真机反馈修正）**：不再照抄 DSH 对话列的
+ * `clamp(680px, 列宽 × 0.64, 920px)` / `卡 = 内容宽 + 32px`（那条规则搬到运行视图里偏宽，
+ * 真机实测 712px 就是证据），改为**以运行视图里 step 消息列为基准**：
+ * `--sandore-msg-content-width`（消息列实测内容宽，由 `run-view-metrics.ts` 在 `.feedCol`
+ * 上发布）+ 24px 外扩、与消息列同轴心（`margin-inline: auto`）。
+ *
+ * 唯一的**结构性**差异（用户明确要求）：不复刻 `.add`（左下角 `+` 指令按钮）。
+ * 席位：左 `.tools` = 权限下拉；右 `.trailing` = 停止生成（DSH 原生停止席位）→ 模型下拉 → 发送。 */
+
+/* ── 根容器：DSH InputBar `.root`（InputBar.module.css:2-11）───────────────────── */
+.root {
+  --dsh-composer-text-max-height: 336px;
+  /* DSH 是 16px（InputBar.module.css:17）；这里用 8px，让「消息宽 + 24px」在窄列里也能完整
+     放下并居中（真机反馈：输入框只需比消息宽一点，不要被两侧留白挤窄）。 */
+  --dsh-composer-side-clearance: 8px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 底部 8px 同 DSH（figma Input_Bottom L32/R32/B8）。 */
+  padding: 0 var(--dsh-composer-side-clearance) 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 状态行（错误 / 发送中）：DSH `.notice`（InputBar.module.css:20-30）逐值 +
+   与卡片同一宽度基准。 */
+.notice {
+  width: min(calc(var(--sandore-msg-content-width, 100%) + 24px), 100%);
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ── 卡壳：DSH `.card`（InputBar.module.css:32-64）逐值（除宽度，见文件头）─────── */
+.card {
+  box-sizing: border-box;
+  position: relative; /* overlay anchor positioning context */
+  display: flex;
+  flex-direction: column;
+  /* figma Input 75:8208：文本区与按钮行之间 12px；卡内文本面前 10px 上留白。 */
+  gap: 12px;
+  /* 消息列内容宽 + 24px（左右各比消息宽 12px），并与消息列同轴心。 */
+  width: min(calc(var(--sandore-msg-content-width, 100%) + 24px), 100%);
+  margin-inline: auto;
+  padding-top: 10px;
+  /* 输入框描边：l2 中性色，经 elevation hairline 绘制（不占布局）；阴影是 soft 档；
+     底色 = 输入面令牌（深色下为 elevated）。 */
+  border: 0;
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+  border-radius: 22px;
+  background: var(--dsw-specific-input-major);
+  box-shadow: var(--dsw-elevation-soft);
+  /* 草稿跟随设置里的字号偏好（textarea / 占位层都从这里继承）；行高保持默认 10px 行距。 */
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  /* 深色下 elevated 面：草稿滚动条取 l2 对（在卡上声明，自定义属性会继承到真正滚动的盒子）。 */
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* ── 草稿滚动口：DSH `.scroll`（InputBar.module.css:118-132）逐值 ──────────── */
+.scroll {
+  max-height: var(--dsh-composer-text-max-height);
+  overflow-y: auto;
+  /* 让滚动条离卡右边框 4px；`.input` 的右侧内距把这 4px 还回去，文本列宽不变。 */
+  margin-right: 4px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  margin-top: 8px;
+}
+
+/* 自增高锚点：DSH `.grow`（InputBar.module.css:136-138）——文本面在常规流里决定高度。 */
+.grow {
+  position: relative;
+}
+
+/* ── 文本面：DSH `.input`（InputBar.module.css:158-171）逐值 ──────────────────
+   figma .InputText 34:10434：pl 16 / pr 12 / pt 4（右 pad 这里 8 + .scroll 的 4px 滚动条内缩）。 */
+.input {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 4px 8px 0 16px;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--dsw-font-family);
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+  /* 业务蓝，不是 brand-primary（该令牌在本主题里解析为墨色）。 */
+  caret-color: var(--dsw-alias-state-business-primary);
+}
+
+/* DSH `.inputDisabled`（InputBar.module.css:197-200）。 */
+.inputDisabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: not-allowed;
+}
+
+/* ── 占位层：DSH `.placeholder`（InputBar.module.css:189-195）逐值 ────────────
+   figma 34:10434：#ADB2B8 light / #81858C dark（caption 对）。右侧内缩镜像 .input 的 8px
+   （另外 4px 在 .scroll 上）。 */
+.placeholder {
+  position: absolute;
+  inset: 4px 8px auto 16px;
+  color: var(--dsw-alias-label-caption);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── 工具行：DSH `.row`（InputBar.module.css:214-230）逐值 ───────────────────
+   左侧附件+模式 chip、右侧模型+发送（figma Input_Bottom chrome）。`container-type: inline-size`
+   让内部 chip 的 @container 折叠规则（PermissionSelect 的窄屏收起标签）生效——DSH 同名规则就在
+   这一行上，且容器名是**匿名**的（CSS module 会给命名容器加哈希，跨模块匹配不上）。 */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  /* 底部留白挪 2px 到顶部：整行控件在卡内低 2px（对照文本区不再显高），卡高与控件自身居中不变。 */
+  padding: 2px 8px 6px;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+/* DSH `.tools, .modes, .trailing`（InputBar.module.css:232-238）。 */
+.tools,
+.modes,
+.trailing {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* DSH `.tools` gap 16（InputBar.module.css:243-245）：`+` 与模式 chip 之间 16px。
+   本输入框没有 `+`，左侧只有权限 chip，间距按同一令牌给。 */
+.tools {
+  gap: 16px;
+}
+
+/* DSH `.modes` gap 12（InputBar.module.css:247-249）。 */
+.modes {
+  gap: 12px;
+}
+
+/* DSH `.trailing`（InputBar.module.css:251-260）：靠右、换行时自动重锚。 */
+.trailing {
+  flex: none;
+  margin-left: auto;
+  gap: 12px;
+}
+
+/* 模型下拉席位（DSH 里是 `conversation.input.model` slot 的位置：trailing 内、发送钮左侧）。 */
+.modelSeat {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* ── 主按钮（发送）：DSH `.primary`（InputBar.module.css:321-349）逐值 ───────
+   figma IconButton 34:10465：34px 圆钮，#3964FE light / #679EFE dark（info-fill 对，
+   不是 button-primary 的墨色）；白色 glyph；空文本 = 0.4 透明度。 */
+.primary {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-button-info-fill);
+  /* 静态白，不用前景令牌：两种主题下箭头都保持白色（设计 34:10465）。 */
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+  /* 抵消 `.row` 的 2px 下移：发送圆钮保持原位置，只让更小的 chip 低 2px（DSH 同款）。 */
+  transform: translateY(-2px);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.primary svg {
+  width: 16px;
+  height: 16px;
+}

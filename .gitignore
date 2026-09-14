@@ -33,7 +33,13 @@ lib/
 # Sandbox scratch files — local-only workflow task dumps / test output, never commit.
 a.json
 test-output.txt
+# Ad-hoc hand-off / decision scratch note kept at the repo root; real docs live under docs/.
+test.md
 # Sandbox design / proposal scratch files — never commit (project-side plans live in docs/openspec or PRs).
 artifacts/
 # Sandbox ad-hoc diagnostic / inspection scripts — never commit.
 scripts/tmp-*
+
+# Playwright e2e artifacts (traces / html report / screenshots / test-results).
+# The e2e suite lives in e2e/** (sources ARE versioned); only its outputs are ignored.
+e2e/.artifacts/

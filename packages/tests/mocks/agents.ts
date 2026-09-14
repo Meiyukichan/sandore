@@ -78,6 +78,14 @@ export class FakeAgent implements Agent {
   status: AgentStatus = 'idle';
   /** 记录每次 `followup` 的入参（content + source）。 */
   readonly followups: Array<{ content: ContentBlock[]; source?: unknown }> = [];
+  /**
+   * 记录每次 `steer` 的入参（content + source）。
+   *
+   * 引擎的宿主投递按状态分流（空闲 followup / 正忙 steer，对齐 DSH
+   * `continuation.ts:1574-1577`）：把 `status` 置为 `running` 即可断言「并进当前 turn」
+   * 那条路（`followups` 不再增长、`steers` 增长）。
+   */
+  readonly steers: Array<{ content: ContentBlock[]; source?: unknown }> = [];
   /** `whenIdle` 被 await 的次数（Phase B/C 收尾真 fork 的驱动断言）。 */
   whenIdleCount = 0;
   /**
@@ -106,6 +114,11 @@ export class FakeAgent implements Agent {
     }
   }
 
+  /** 排入当前 turn 的下一步（引擎在宿主正忙时用它投递，对齐 DSH `Agent.steer`）。 */
+  steer(message: { content: ContentBlock[]; source?: unknown }): void {
+    this.steers.push({ content: message.content, source: message.source });
+  }
+
   async whenIdle(): Promise<void> {
     this.whenIdleCount += 1;
     // mock：无驱动活动，立即 idle。
@@ -115,6 +128,8 @@ export class FakeAgent implements Agent {
 /** 内存 mock AgentRegistry：`get`/`create`/`resume` + 显式注册。 */
 export class FakeAgentRegistry implements AgentRegistry {
   private readonly agents = new Map<SessionId, FakeAgent>();
+  /** 每次 `create` 记录的完整选项（含引擎私有 `descriptorLabel`；身份补写断言的数据源）。 */
+  readonly createCalls: CreateAgentOptions[] = [];
   /** 每次 `create` 记录的 `meta.cwd`（用于断言 setup/meta 回放）。 */
   readonly createCwds: Array<string | undefined> = [];
   /** 每次 `create` 记录的完整 `meta`（收尾真 fork 的 parentSession/origin/isSeeded 断言）。 */
@@ -144,6 +159,22 @@ export class FakeAgentRegistry implements AgentRegistry {
    * （appendDelegatedPolicyOverrides 断言数据源；缺省策略为空时不产生记录）。
    */
   readonly setupPolicyAppends: Array<{ type: string; data: unknown }> = [];
+  /**
+   * setup 执行期 `agentCtx.tools.restrict(filter)` 的调用记录（架构决策 5：fork 子代理
+   * 经 scoped restrict 屏蔽 `send_message` 的断言数据源）。
+   */
+  readonly toolsRestrictions: Array<{ deny?: readonly string[] }> = [];
+  /** 若设置，setup 内 `tools.restrict` 抛出该错误（模拟「命名未注册工具/无 scoped ctx」的降级路径）。 */
+  restrictError?: Error;
+  /**
+   * setup 期 `agentCtx.on(name, handler)` 的调用记录（DSH 官方 `installModelSelection`
+   * 装配断言的数据源：'system-prompt/assemble' + 'agent/request' 两个 scoped 监听器）。
+   */
+  readonly setupListeners: Array<{ name: string; handler: (...args: never[]) => unknown }> = [];
+  /** 每次 `create` 记录的 `agentOptions`（宿主会话模型路由断言：修复前为空 → 宿主 turn 起不来）。 */
+  readonly createAgentOptions: Array<AgentOptions | undefined> = [];
+  /** 每次 `resume` 记录的 `agentOptions`（崩溃恢复路径的宿主会话模型路由断言）。 */
+  readonly resumeAgentOptions: Array<AgentOptions | undefined> = [];
   /** 每次 `create` 生成的 FakeAgent（供断言 followup/whenIdle 驱动）。 */
   readonly createdAgents: FakeAgent[] = [];
   /** 每次 `create`/`resume` 执行 `setup` 回调的次数。 */
@@ -178,10 +209,12 @@ export class FakeAgentRegistry implements AgentRegistry {
     if ((options.inheritedEventCount ?? 0) > 0 && options.meta?.isSeeded !== true) {
       throw new Error('inheritedEventCount requires meta.isSeeded');
     }
+    this.createCalls.push(options);
     this.createCwds.push(options.meta?.cwd);
     this.createMetas.push(options.meta);
     this.createInheritedEventCounts.push(options.inheritedEventCount);
     this.createSeeds.push(options.seed);
+    this.createAgentOptions.push(options.agentOptions);
     // 先记录 setup 入参再执行（记录不受 setupError 抛错影响，时序对齐 DSH
     // setupAndPublish 的 create 期 `setup?.(prepared.agent.ctx)` 执行点）。
     this.createSetups.push(options.setup);
@@ -210,6 +243,7 @@ export class FakeAgentRegistry implements AgentRegistry {
   }
 
   async resume(options: ResumeAgentOptions): Promise<AgentHandle> {
+    this.resumeAgentOptions.push(options.agentOptions);
     await this.runSetup(options.setup);
     const existing = this.agents.get(options.resumeSessionId);
     const agent = existing ?? new FakeAgent(options.resumeSessionId, options.agentOptions);
@@ -247,7 +281,19 @@ export class FakeAgentRegistry implements AgentRegistry {
           },
         },
       },
-      tools: { register: () => {} },
+      tools: {
+        register: () => {},
+        // 架构决策 5：fork/create 子代理经 scoped `tools.restrict` 屏蔽 send_message。
+        // mock 记录调用（不真的过滤工具表）；`restrictError` 时抛出，覆盖「工具未注册/
+        // 无 scoped ctx」的容错分支（真实 DSH 会抛 names unknown global tool）。
+        restrict: (filter: { deny?: readonly string[] }) => {
+          if (registry.restrictError !== undefined) {
+            throw registry.restrictError;
+          }
+          registry.toolsRestrictions.push(filter);
+          return () => {};
+        },
+      },
       systemPrompt: {
         section: () => {},
         context: (declaration) => {
@@ -255,6 +301,13 @@ export class FakeAgentRegistry implements AgentRegistry {
           return () => {};
         },
         getContextOrder: (name: string) => (name === 'SUBAGENT_DELEGATION' ? 70 : 99),
+      },
+      // scoped 事件订阅最小面：DSH 官方 `installModelSelection` 在 setup 内注册
+      // `system-prompt/assemble` + `agent/request` 两个 waterfall 监听器（宿主会话
+      // 模型选择装配）。mock 记录（handler 可被测试直接驱动），disposer 为 no-op。
+      on: (name: string, handler: (...args: never[]) => unknown) => {
+        registry.setupListeners.push({ name, handler });
+        return () => {};
       },
       get: (name) => (name === 'agentPresets'
         ? {

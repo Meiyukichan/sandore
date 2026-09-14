@@ -1,0 +1,12 @@
+/* accessibility.module.css（B2b step-view 版）：抄自 DSH 0.1.2-rc.1
+   ui-chat chat/accessibility.module.css（只读参考 deepseek-harness）——辅助技术
+   专用视觉隐藏工具类。 */
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

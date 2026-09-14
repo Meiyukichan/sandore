@@ -1,0 +1,238 @@
+/**
+ * composer-trigger-menu.module.css（批 B3）：step 面板 composer 的触发词候选浮层。
+ *
+ * 逐值抄自 DSH 0.1.2-rc.1 `ui-input-trigger/src/client/MenuView.module.css`
+ * （只读参考 deepseek-harness；不 import）：圆角 20px 菜单面、4px 内边距、
+ * `--dsw-specific-menu` 底、elevation 发丝描边 + prominent 投影、40px 行高候选、
+ * 12px 小节标题、`--dsw-alias-interactive-bg-hover` 单一高亮、骨架呼吸条、
+ * 面包屑一族。
+ *
+ * 与 DSH 的两点**显式差异**（都因「挂载位置不同」，不是取色/几何差异）：
+ * 1. **定位锚**：DSH 的浮层挂在会话页 composer 卡的上方（slot 的 anchor 就是卡宽），
+ *    本文件的 `.menu` 挂在 step 面板自己的 `.menuAnchor`（见 composer-bar.module.css）
+ *    ——同样是 `bottom: calc(100% + 4px)` + 左右 0，故与输入卡**边到边**对齐一致。
+ * 2. **不做视口高度钳制**：DSH 的 MenuView 用 `useAnchoredMaxHeight` 把 320px 设计上限
+ *    再按「菜单下缘到视口顶」的距离收窄（页面级 composer 贴底时防溢出）。step 面板的
+ *    输入卡在**面板自己的滚动容器**里（卡上方就是消息列，不是视口边缘），照搬那条
+ *    钳制会在面板上部把菜单压成 0 高；这里保留 320px 设计上限，溢出由面板滚动容器
+ *    负责裁剪（`.viewport` 自身仍是可滚列表）。
+ *
+ * 滚动条令牌（--dsh-scrollbar-*）与 DSH 同法：取 l2 一对（菜单是抬升面）。
+ */
+
+/* 浮层本体（DSH .menu 逐值）。 */
+.menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  max-height: 320px;
+  overflow: hidden;
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 20px;
+  background: var(--dsw-specific-menu);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent);
+}
+
+.viewport {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+}
+
+/* 唯一高亮：指针 hover 经控制器把 highlight 停在这里，故没有额外的 :hover 底色。 */
+.item.active {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sectionTitle {
+  flex: none;
+  min-height: 26px;
+  padding: 6px 10px 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.sectionTitle:not(:first-child) {
+  margin-top: 4px;
+}
+
+.itemIcon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.itemName {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemDescription {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 可下钻行的行尾席位：Tab 键帽提示 + 下钻箭头，仅在该行持有高亮时露出。 */
+.trailing {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.drillHintText {
+  display: none;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.drillHint {
+  display: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-caption);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.item.active .drillHintText,
+.item.active .drillHint {
+  display: inline-flex;
+}
+
+.drill {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.drill:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 分组标题（source 名）：非交互小灰字，内边距与候选行对齐。 */
+.groupTitle {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* pending 源骨架行：候选行度量 + 呼吸条（2s 脉冲，仅 opacity）。 */
+.skeletonRow {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.skeletonBar {
+  height: 20px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-skeleton);
+  animation: sd-composer-menu-skeleton 2s cubic-bezier(0.36, 0, 0.64, 1) infinite;
+}
+
+@keyframes sd-composer-menu-skeleton {
+  0% { opacity: 1; }
+  40% { opacity: 0.6; }
+  80%, 100% { opacity: 1; }
+}
+
+/* 下钻源的面包屑头：钉在 .viewport 之外，列表滚动时仍可回退。 */
+.crumbs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px 4px 6px;
+  margin-bottom: 2px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.crumb {
+  flex: 0 1 auto;
+  max-width: 40%;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumb:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.crumbCurrent,
+.crumbCurrent:hover {
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: default;
+}
+
+.crumbSeparator {
+  flex: none;
+  display: inline-flex;
+  color: var(--dsw-alias-label-caption);
+}

@@ -1,0 +1,45 @@
+/* assistant-markdown.module.css（B2a step-view 版）：抄自 DSH 0.1.2-rc.1
+   ui-chat chat/AssistantMarkdown.module.css——字号走 --dsh-content-font-size
+   与行高 delta、颜色走 --dsw-alias-* 令牌。裁剪见 AssistantMarkdown.tsx 头注释：
+   宽表格越界规则（md-table-wide）未抄（面板滚动容器非 inline-size query
+   container）；隐藏 reasoning 负 margin 规则（data-turn-process-inline）随
+   turn-process 一起留到 B3。 */
+
+/* Assistant flow body: full-width narration (figma 16/28 scaled 0.875 → 14/24
+   with the markdown token ladder), block gap 16. The Settings font-size
+   preference rides the body-published axis: size follows
+   --dsh-content-font-size and the line height keeps the 10px leading via the
+   shared px delta. */
+.root {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--dsh-content-font-size, 14px);
+  line-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  color: var(--dsw-alias-label-primary);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Interrupted-turn terminal marker: quiet inline tag, no animation. Fixed
+   size like the small/code token variants — 11px is dense secondary text
+   that would fall to an illegible 9px at the 12px floor. */
+.stopped {
+  align-self: flex-start;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* Finalized footer offset (figma 43:32997); chrome lives in MessageIconActions. */
+.actions {
+  margin-top: 16px;
+  /* Optical align with 28px icon hit targets that pad 6px past the glyph. */
+  margin-left: -6px;
+}

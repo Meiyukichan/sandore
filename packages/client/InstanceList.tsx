@@ -17,6 +17,7 @@ import type { InstanceSummary } from '@meiyukichan/dsh-sandore/remote'
 
 import { deriveGroups, formatTimestamp, matchesInstanceQuery } from './panel-model.ts'
 import { describeError } from './describe-error.ts'
+import { instanceBoundToHost } from './main-agent-workflow-model.ts'
 import { runDotState } from './run-view-model.ts'
 import type { DagRunStatus } from './run-view-model.ts'
 import type { SandoreKey } from './locales.ts'
@@ -51,6 +52,15 @@ export interface InstanceListProps {
   query: string
   /** 当前选中实例 id（高亮行；缺省不高亮）。 */
   activeId?: string | undefined
+  /**
+   * **宿主会话过滤**（可选）：只有主代理会话内的「工作流」tab 会传（= 该会话 id）；
+   * 侧栏工作流页不传 ⇒ 列全部实例（行为不变）。
+   *
+   * 为什么在**数据层**过滤而不是渲染层：硬约束是「绝不列出别的会话的实例」，
+   * 过滤放在 `listInstances()` 结果进入 state 之前，别的会话的实例根本不会进组件树。
+   * 空态判定也基于过滤后的集合（本会话没有实例 ⇒ 页面自己的空态）。
+   */
+  hostFilter?: string | undefined
   /** 拉取实例摘要（RPC 已解包）。 */
   listInstances(): Promise<InstanceSummary[]>
   /** 删除实例（RPC 已解包；state 表行级删除）。 */
@@ -110,7 +120,7 @@ function DeleteInstanceModal({ target, deleting, errorMessage, t, onCancel, onCo
 }
 
 /** 渲染 InstanceList。 */
-export function InstanceList({ t, workspaces, query, activeId, listInstances, deleteInstance, onInstanceDeleted, onOpen }: InstanceListProps) {
+export function InstanceList({ t, workspaces, query, activeId, hostFilter, listInstances, deleteInstance, onInstanceDeleted, onOpen }: InstanceListProps) {
   const [state, setState] = useState<InstanceListState>({ kind: 'loading' })
   const [confirmTarget, setConfirmTarget] = useState<InstanceSummary | undefined>(undefined)
   const [deleting, setDeleting] = useState(false)
@@ -122,11 +132,17 @@ export function InstanceList({ t, workspaces, query, activeId, listInstances, de
   const refresh = useCallback(async (): Promise<void> => {
     try {
       const instances = await listInstances()
-      if (!disposedRef.current) setState({ kind: 'ready', instances })
+      // 宿主会话过滤（只有主代理会话内的 tab 传 `hostFilter`；侧栏不传 ⇒ 原样全列）。
+      // 纯函数在 `main-agent-workflow-model.ts`（单测覆盖），过滤键 = instanceId
+      // （引擎恒等式 `hostSessionId ≡ instanceId`）。
+      const scoped = hostFilter === undefined
+        ? instances
+        : instances.filter(instance => instanceBoundToHost(instance, hostFilter))
+      if (!disposedRef.current) setState({ kind: 'ready', instances: scoped })
     } catch (error) {
       if (!disposedRef.current) setState({ kind: 'error', message: describeError(error) })
     }
-  }, [listInstances])
+  }, [listInstances, hostFilter])
 
   // Round 12：焦点/可见性恢复刷新（替代递归 setTimeout）
   useFocusRefresh(refresh)

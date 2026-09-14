@@ -20,10 +20,22 @@ import { FakeSubprocess } from '../tests/mocks/subprocess.ts';
 import { FakeUserQuestions } from '../tests/mocks/user-questions.ts';
 import { FakeWorkspace, FakeWorkspaceRegistry } from '../tests/mocks/workspace.ts';
 import { SandoreEngineRuntime } from './index.ts';
-import type { SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
+import type { DagRun, DagStartRequest, SandoreConfig, SandoreEngine, WorkflowTaskState } from './index.ts';
 import { SandorePersistence } from './persistence.ts';
 import type { ShellExecutor } from './shell.ts';
 import { parseWorkflowYaml } from './yaml-parser.ts';
+
+/**
+ * 启动实例并让它真正跑起来（入口归一后 `startInstance` 只做第一阶段）。
+ *
+ * 架构决策 1：`startInstance` = 建真实顶层会话 + 绑定（id ≡ 会话 id）+ 注入协作上下文，
+ * 返回 `{instanceId, status:'pending'}`；执行由该会话调用 `sandore_workflow_run`
+ * （引擎 `runInstanceInSession`）触发。本 helper 串起两阶段，等价于「宿主会话发起 run」。
+ */
+async function startWorkflow(engine: SandoreEngine, request: DagStartRequest): Promise<DagRun> {
+  const run = await engine.startInstance(request);
+  return await engine.runInstanceInSession(run.instanceId, request);
+}
 
 /** UUID 正则（合成 sessionId 统一纯 UUID 格式）。 */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -151,16 +163,25 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
       return textChunks('');
     };
 
-    // 收集 step-phase 事件
+    // 收集 step-phase 事件 + **每次 commit 落盘后的快照**（用于断言 running 中间态带真实 id：
+    // commitFinalize 先持久化再发事件，故事件回调里读到的就是该次 commit 的快照）。
     const phaseEvents: Array<{ stepId: string; phase: string }> = [];
+    const gateSnapshots: Array<{ phase: string; status: string | undefined; sessionId: string | undefined }> = [];
     ctx.on('sandore/step-phase', (...args: unknown[]) => {
+      const info = args[0] as { readonly taskId: string };
       const stepId = args[1] as string;
       const phase = args[3] as string;
       phaseEvents.push({ stepId, phase });
+      const step = persistence.state.get(info.taskId)?.executedSteps.find(s => s.stepId === stepId);
+      gateSnapshots.push({
+        phase,
+        status: step?.finalizeMeta?.gateResult?.status,
+        sessionId: step?.finalizeMeta?.gateResult?.gateSessionId,
+      });
     });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-e2e-phase', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-e2e-phase', originalInput: 'do it', cwd: '/tmp' });
     await ended;
 
     // 断言 1：完整事件序列（基础身份字段，从 state 的 Result 读一切详情）
@@ -168,14 +189,24 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
     // Phase B assessForked 降级 llm.stream（child 无事件源），
     // Phase C secondary gate 经 startContinuable 子代理 settle 取输出。
     // 门禁通过后执行 Phase D routing，然后 completed。
-    // 序列：[finalizing → gating → gating → routing → completed]
+    // 序列：[finalizing → gating(空 id running) → gating(早报+真实 id running) → gating(done)
+    //        → routing → completed]
     expect(phaseEvents.map(e => e.phase)).toEqual([
       'finalizing',      // 收尾完成（assessForked 完成；降级路径无 running 中间态）
-      'gating',          // 进入门禁（running 快照）
+      'gating',          // 进入门禁（running 快照，此时门禁子代理尚未创建）
+      'gating',          // 门禁子代理创建 → 早报（onGateCreated）→ running 快照带真实 id
       'gating',          // 门禁完成（evaluateGates 通过）
       'routing',         // 进入路由（running 快照；routingResult 随 completed 写入）
       'completed',       // 最终完成
     ]);
+
+    // 断言 1b（本次引擎早报修复的靶心）：门禁 running 中间态**必须带真实 gateSessionId**
+    // ——UI 的「门禁中」徽标只在有会话 id 时才渲染成可点按钮（否则退化成纯文本 span，
+    // 真机运行期点不到）。第 2 个 gating = 早报那次 commit。
+    expect(gateSnapshots.filter(s => s.phase === 'gating').map(s => ({ status: s.status, sessionId: s.sessionId }))).toHaveLength(3);
+    const earlyGate = gateSnapshots.filter(s => s.phase === 'gating')[1]!;
+    expect(earlyGate.status).toBe('running');
+    expect(earlyGate.sessionId).toBe('child-2'); // 真实子代理 id（不是空串桩）
 
     // 断言 2：从 state 的 Result 读取详情（用户原则：从 state 的 Result 读一切）
     const stepEntry = persistence.state.get(run.instanceId)!.executedSteps.find(s => s.stepId === 'step-prompt')!;
@@ -229,24 +260,37 @@ describe('SandoreEngineRuntime e2e phase flow', () => {
 
     // 收集 step-phase 事件
     const phaseEvents: Array<{ stepId: string; phase: string }> = [];
+    const gateSnapshots: Array<{ phase: string; status: string | undefined; sessionId: string | undefined }> = [];
     ctx.on('sandore/step-phase', (...args: unknown[]) => {
+      const info = args[0] as { readonly taskId: string };
       const stepId = args[1] as string;
       const phase = args[3] as string;
       phaseEvents.push({ stepId, phase });
+      const step = persistence.state.get(info.taskId)?.executedSteps.find(s => s.stepId === stepId);
+      gateSnapshots.push({
+        phase,
+        status: step?.finalizeMeta?.gateResult?.status,
+        sessionId: step?.finalizeMeta?.gateResult?.gateSessionId,
+      });
     });
 
     const ended = waitForEnd(ctx);
-    const run = await engine.startInstance({ workflowId: 'wfl-e2e-phase', originalInput: 'do it', cwd: '/tmp' });
+    const run = await startWorkflow(engine, { workflowId: 'wfl-e2e-phase', originalInput: 'do it', cwd: '/tmp' });
     await ended;
 
     // 断言 1：事件序列（基础身份字段，从 state 的 Result 读一切详情）
-    // Round 17：降级路径无 onForkCreated，只有 1 个 finalizing(done)
-    // 序列：[finalizing → gating → gating]
+    // Round 17：降级路径无 onForkCreated，只有 1 个 finalizing(done)。
+    // 序列：[finalizing → gating(空 id running) → gating(早报+真实 id running) → gating(失败)]
     expect(phaseEvents.map(e => e.phase)).toEqual([
       'finalizing',      // 收尾完成（assessForked 完成；降级路径无 running 中间态）
-      'gating',          // 进入门禁（running 快照）
+      'gating',          // 进入门禁（running 快照，门禁子代理尚未创建）
+      'gating',          // 门禁子代理创建 → 早报（onGateCreated）→ running 快照带真实 id
       'gating',          // 门禁失败（evaluateGates 不通过）
     ]);
+    // 早报那次 commit 的 running 快照必须带真实 gateSessionId（UI「门禁中」运行期可点）。
+    const failedEarlyGate = gateSnapshots.filter(s => s.phase === 'gating')[1]!;
+    expect(failedEarlyGate.status).toBe('running');
+    expect(failedEarlyGate.sessionId).toBe('child-2');
 
     // 断言 2：从 state 的 Result 读取详情（用户原则：从 state 的 Result 读一切）
     const stepEntry = persistence.state.get(run.instanceId)!.executedSteps.find(s => s.stepId === 'step-prompt')!;

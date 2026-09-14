@@ -37,9 +37,9 @@ declare module '@deepseek-ai/cordis' {
     'sandore/start'(info: DagRunInfo): void;
     'sandore/stage-start'(info: DagRunInfo, stageId: string): void;
     'sandore/stage-completed'(info: DagRunInfo, stageId: string, contract: StageContract): void;
-    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void;
-    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string, output: ContentBlock[], name: string, loopIteration?: number[]): void;
-    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string, error: string, name: string, loopIteration?: number[]): void;
+    'sandore/step-start'(info: DagRunInfo, stepId: string, childId: string | undefined, name: string, loopIteration?: number[]): void;
+    'sandore/step-completed'(info: DagRunInfo, stepId: string, childId: string | undefined, output: ContentBlock[], name: string, loopIteration?: number[]): void;
+    'sandore/step-failed'(info: DagRunInfo, stepId: string, childId: string | undefined, error: string, name: string, loopIteration?: number[]): void;
     'sandore/step-paused'(info: DagRunInfo, stepId: string, childId: string, name: string, loopIteration?: number[]): void;
     'sandore/step-resumed'(info: DagRunInfo, stepId: string, childId: string, resumePrompt: string | undefined, name: string, loopIteration?: number[]): void;
     'sandore/step-retried'(info: DagRunInfo, stepId: string, mode: string, name: string, loopIteration?: number[]): void;
@@ -57,7 +57,7 @@ declare module '@deepseek-ai/cordis' {
      * 供对话流 step 节点渲染可点击阶段 badge。
      * @mode emit
      */
-    'sandore/step-phase'(info: DagRunInfo, stepId: string, childId: string, phase: FinalizePhase, name: string, loopIteration?: number[]): void;
+    'sandore/step-phase'(info: DagRunInfo, stepId: string, childId: string | undefined, phase: FinalizePhase, name: string, loopIteration?: number[]): void;
     'sandore/question'(info: DagRunInfo, question: PendingQuestionEntry): void;
     'sandore/permission'(info: DagRunInfo, permission: PendingPermissionEntry): void;
     'sandore/question_rejected'(info: DagRunInfo, question: PendingQuestionEntry): void;
@@ -71,16 +71,16 @@ declare module '@deepseek-ai/dsh-session/types' {
     'sandore/start': { taskId: string; workflowId: string };
     'sandore/stage-start': { taskId: string; stageId: string };
     'sandore/stage-completed': { taskId: string; stageId: string; stageContract: StageContract };
-    'sandore/step-start': { stepId: string; childId: string; name: string; loopIteration?: number[] };
-    'sandore/step-completed': { stepId: string; childId: string; output: ContentBlock[]; name: string; loopIteration?: number[] };
-    'sandore/step-failed': { stepId: string; childId: string; error: string; name: string; loopIteration?: number[] };
+    'sandore/step-start': { stepId: string; childId?: string; name: string; loopIteration?: number[] };
+    'sandore/step-completed': { stepId: string; childId?: string; output: ContentBlock[]; name: string; loopIteration?: number[] };
+    'sandore/step-failed': { stepId: string; childId?: string; error: string; name: string; loopIteration?: number[] };
     'sandore/step-paused': { stepId: string; childId: string; name: string; loopIteration?: number[] };
     'sandore/step-resumed': { stepId: string; childId: string; resumePrompt?: string; name: string; loopIteration?: number[] };
     'sandore/step-retried': { stepId: string; mode: string; name: string; loopIteration?: number[] };
     'sandore/step-message': { stepId: string; childId: string; message: string; name: string };
     'sandore/step-phase': {
       stepId: string;
-      childId: string;
+      childId?: string;
       phase: FinalizePhase;
       name: string;
       loopIteration?: number[];
@@ -104,8 +104,17 @@ export abstract class SandoreEngine extends Service implements SandoreEngineSurf
     super(ctx, 'sandoreEngine');
   }
 
-  /** 启动一个新的工作流实例。 */
+  /**
+   * 启动实例（入口归一第一阶段）：新建真实顶层会话 → 绑定 → 注入协作上下文，
+   * 返回 `{instanceId, status:'pending'}`（**不执行**；执行由第二阶段
+   * {@link runInstanceInSession} 承担）。
+   */
   abstract startInstance(request: DagStartRequest): Promise<DagRun>;
+  /**
+   * 启动实例（入口归一第二阶段 / 唯一启动入口）：在调用方会话内拉起工作流。
+   * @param hostSessionId - 调用会话 id（恒等于该实例的 hostAgent.id 与 instanceId）。
+   */
+  abstract runInstanceInSession(hostSessionId: string, request: DagStartRequest): Promise<DagRun>;
   /** 恢复一个已存在的工作流实例。 */
   abstract recoverInstance(instanceId: string): Promise<DagRun>;
   /** 批量恢复孤儿实例（进程重启后内存未命中但快照非终态），返回 { recovered, errors }。 */
@@ -147,14 +156,12 @@ export abstract class SandoreEngine extends Service implements SandoreEngineSurf
   abstract listRevertBoundaries(instanceId: string, stepId: string): RevertBoundaryOption[];
 
   /**
-   * 向运行中实例的指定 Step 子代理追加一条用户 @mention 消息（缺陷 31）。
+   * 向运行中实例的指定 Step 子代理追加一条用户消息。
    *
-   * 复用 DSH 宿主 `ctx.subagents.followup`（向子代理会话追加消息并取回新回复）：
-   * requireActive + 终态守卫 → 按 stepId 反查最后活跃段 sessionMeta.childId →
-   * synthetic===false 才 followup（synthetic 步骤抛 INVALID_OPERATION）→ 追加
-   * userMessages `{kind:'message', target:stepId}` → persistState → 双发
-   * `sandore/step-message`。@mention 由 UI 端 @Step 选择器产出 stepId，引擎端
-   * 不做文本解析。
+   * requireActive + 终态守卫 → 按 stepId 反查最后活跃段（状态门槛：仅
+   * running/interacting；synthetic 段抛 INVALID_OPERATION）→ 投递到子代理会话 →
+   * 单发 `sandore/step-message`。**不写 `state.userMessages`**（消息只落在子代理
+   * 会话与事件里，discussion 页只展示 step agent 消息与主代理消息）。
    */
   abstract sendStepMessage(instanceId: string, stepId: string, message: string): Promise<void>;
 
@@ -170,6 +177,16 @@ export abstract class SandoreEngine extends Service implements SandoreEngineSurf
    * 用于 `getInstanceState` RPC 的内存优先路径。
    */
   abstract getInstanceState(instanceId: string): WorkflowTaskState | undefined;
+  /**
+   * 按需为 state 的执行段补上 `sessionMessages`（展示派生数据，不再持久化）。
+   *
+   * `getInstanceState` RPC 返回前调用：从各段子代理会话（`sessionMeta.childId`）现算
+   * 展示行，使消费面（client / e2e）字段名与形状不变，而 state 不再背这份副本
+   * （实测占 state 的 41%–54%）。
+   * @param state - 待装饰的 state。
+   * @returns 带 `sessionMessages` 的 state（无段可补时原样返回）。
+   */
+  abstract hydrateStateMessages(state: WorkflowTaskState): Promise<WorkflowTaskState>;
   /** 查询实例的当前状态快照。 */
   abstract getState(instanceId: string): DagInstanceState;
 }
@@ -217,6 +234,10 @@ export class SandoreEngineStub extends SandoreEngine {
 
   startInstance(request: DagStartRequest): Promise<DagRun> {
     throw new Error('SandoreEngineStub.startInstance is not implemented');
+  }
+
+  runInstanceInSession(hostSessionId: string, request: DagStartRequest): Promise<DagRun> {
+    throw new Error('SandoreEngineStub.runInstanceInSession is not implemented');
   }
 
   recoverInstance(instanceId: string): Promise<DagRun> {
@@ -285,6 +306,11 @@ export class SandoreEngineStub extends SandoreEngine {
 
   getInstanceState(_instanceId: string): WorkflowTaskState | undefined {
     throw new Error('SandoreEngineStub.getInstanceState is not implemented');
+  }
+
+  hydrateStateMessages(state: WorkflowTaskState): Promise<WorkflowTaskState> {
+    // 桩：无会话可读，原样返回（消费面把缺省当「无消息行」）。
+    return Promise.resolve(state);
   }
 
   getState(instanceId: string): DagInstanceState {

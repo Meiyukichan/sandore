@@ -12,8 +12,19 @@ import type { RecoverOrphanedInstancesResult, RevertBoundaryOption } from './wir
 
 /** 工作流引擎实例级操作结构面（seam `SandoreEngine` 与 tool 包共享）。 */
 export interface SandoreEngineSurface {
-  /** 启动一个新的工作流实例。 */
+  /**
+   * 启动实例（入口归一第一阶段）：新建真实顶层会话 → 绑定实例（id ≡ 会话 id）→
+   * 注入协作上下文 → 返回 `{instanceId, status:'pending'}`；**不执行**工作流。
+   */
   startInstance(request: DagStartRequest): Promise<DagRun>;
+  /**
+   * 启动实例（入口归一第二阶段 / **唯一启动入口**）：在调用方会话内拉起工作流
+   * （pending 实例直接开跑，或新建绑定调用会话），返回 `{instanceId, status:'running'}`。
+   *
+   * `hostSessionId` 是**调用会话 id**（`sandore_workflow_run` 的调用方），不是请求字段：
+   * 恒等式 `hostAgent.id ≡ 宿主会话 id ≡ instanceId ≡ 调用会话`。
+   */
+  runInstanceInSession(hostSessionId: string, request: DagStartRequest): Promise<DagRun>;
   /** 恢复一个已存在的工作流实例。 */
   recoverInstance(instanceId: string): Promise<DagRun>;
   /** 批量恢复孤儿实例（进程重启后内存未命中但快照非终态），返回 { recovered, errors }。 */
@@ -34,20 +45,32 @@ export interface SandoreEngineSurface {
   pauseAllSteps(instanceId: string): Promise<void>;
   /** 恢复实例内所有 Step（可选附带恢复提示词）。 */
   resumeAllSteps(instanceId: string, resumePrompt?: string): Promise<void>;
-  /** 重试单个 Step（revert 模式可选 `revertBoundary` 指定更早闭合 turn/end）。 */
+  /**
+   * 重试单个 Step。
+   *
+   * @deprecated `mode:'revert'` 与 `revertBoundary` 按架构决策 3（回滚会话/回退点功能
+   * 去掉）**不再对外提供**：新工具面 `sandore_workflow_control` 只用 `'continue'`
+   * （paused 续跑现有子代理）与 `'fork'`（failed 重建子代理）两种机制，引擎按 Step
+   * 状态自动选择。保留 revert 仅为兼容既有 client 呈现层（不在本次改造范围内）。
+   */
   retryStep(instanceId: string, stepId: string, mode: 'continue' | 'revert' | 'fork', message: string, revertBoundary?: number): Promise<void>;
-  /** 列出某 Step 子代理会话中可用的闭合 turn 回退点候选（revert 回退点选择数据源）。 */
+  /**
+   * 列出某 Step 子代理会话中可用的闭合 turn 回退点候选（revert 回退点选择数据源）。
+   *
+   * @deprecated 见 {@link retryStep}：回退点功能已去掉，仅为兼容既有 client 保留。
+   */
   listRevertBoundaries(instanceId: string, stepId: string): RevertBoundaryOption[];
   /**
-   * 向运行中实例的指定 Step 子代理追加一条用户 @mention 消息（缺陷 31）。
+   * 向运行中实例的指定 Step 子代理追加一条用户消息。
    *
-   * 复用 DSH 宿主 `ctx.subagents.followup`（向子代理会话追加消息并取回新回复）：
-   * requireActive + 终态守卫 → 按 stepId 反查最后活跃段 sessionMeta.childId →
-   * synthetic===false 才 followup（synthetic 步骤抛 INVALID_OPERATION——shell
-   * 合成 session 无真实子代理可发消息）→ 追加 userMessages `{kind:'message',
-   * target:stepId}`（不复用 'input' 以免污染 originalInput 语义）→ persistState →
-   * 双发 `sandore/step-message`。@mention 由 UI 端 @Step 选择器产出 stepId，
-   * 引擎端不做文本解析。
+   * 复用引擎的 queue 投递通道（向子代理会话追加消息并驱动它继续）：
+   * requireActive + 终态守卫 → 按 stepId 反查最后活跃段并校验状态门槛
+   * （仅 running/interacting；synthetic 段抛 INVALID_OPERATION——shell 合成 session
+   * 无真实子代理可发消息）→ 投递 → 单发 `sandore/step-message`。
+   *
+   * **不写 `state.userMessages`**（用户要求：讨论页只展示 step agent 消息与主代理消息）：
+   * 这条消息本身就在子代理会话里（= 该 step 面板的「step agent 消息」），投递凭据是
+   * `sandore_workflow_send_message` 返回的 `data.delivered` 与 `sandore/step-message` 事件。
    */
   sendStepMessage(instanceId: string, stepId: string, message: string): Promise<void>;
   /**

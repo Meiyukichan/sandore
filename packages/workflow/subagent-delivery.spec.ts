@@ -58,6 +58,54 @@ describe('createChildPromptDelivery（上游 followup 删除后的投递通道�
     expect(calls[0]).toEqual([parent, 'child-1', [{ type: 'text', text: 'hi' }], { kind: 'user' }, signal, 'queue']);
   });
 
+  it('invokes the HEAD symbol on the runtime receiver so this-bound implementations work', async () => {
+    const parent = makeParent();
+    const signal = new AbortController().signal;
+    const seen: Array<unknown[]> = [];
+    // DSH 真机实现体是 `this.requireContinuations().queuePrompt(…)`（
+    // packages/subagent/subagent/src/index.ts）：桩必须**依赖 this**，箭头函数桩会把
+    // 「符号方法被解下来裸调 → this === undefined」这个真机缺陷掩盖掉（真机表象：
+    // gateway/internal `Cannot read properties of undefined (reading 'requireContinuations')`，
+    // run 级 DiscussionInput 的定点发送全部失败）。`this.tail` 读取即绑定探针。
+    const runtime = makeRuntime({
+      tail: 'queue-token',
+      [DELIVER_PROMPT](this: { tail: string }, ...args: unknown[]) {
+        seen.push([...args, this.tail]);
+        return Promise.resolve('msg-head');
+      },
+    });
+
+    const delivery = createChildPromptDelivery(runtime);
+    const messageId = await delivery(parent, 'child-1', [{ type: 'text', text: 'hi' }], { kind: 'user' }, signal);
+
+    expect(messageId).toBe('msg-head');
+    expect(seen).toHaveLength(1);
+    // 6 参分发（末位 'queue'）+ 绑定探针尾项。
+    expect(seen[0]?.[5]).toBe('queue');
+    expect(seen[0]?.[6]).toBe('queue-token');
+  });
+
+  it('invokes the npm rc queuePrompt symbol on the runtime receiver too', async () => {
+    const parent = makeParent();
+    const signal = new AbortController().signal;
+    const seen: Array<unknown[]> = [];
+    const runtime = makeRuntime({
+      tail: 'rc-token',
+      [QUEUE_PROMPT](this: { tail: string }, ...args: unknown[]) {
+        seen.push([...args, this.tail]);
+        return Promise.resolve('msg-rc');
+      },
+    });
+
+    const delivery = createChildPromptDelivery(runtime);
+    const messageId = await delivery(parent, 'child-1', [{ type: 'text', text: 'hi' }], { kind: 'user' }, signal);
+
+    expect(messageId).toBe('msg-rc');
+    // 5 参分发 + 绑定探针尾项。
+    expect(seen[0]?.[4]).toBe(signal);
+    expect(seen[0]?.[5]).toBe('rc-token');
+  });
+
   it('falls through to the npm rc queuePrompt symbol when the HEAD symbol is absent', async () => {
     const parent = makeParent();
     const signal = new AbortController().signal;
